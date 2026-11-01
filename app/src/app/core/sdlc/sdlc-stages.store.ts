@@ -1,11 +1,12 @@
 import { Injectable, signal } from '@angular/core';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeOffer } from '@bindings/ChangeOffer';
 
 /** What the home page last saw of one change in this session: its stage or the error that stopped the read, and whether a pass is checking it again. */
 export type StageRow = { info: ChangeInfo | null; error: string | null; checking: boolean };
 
 /** One line of the home page's change list: a change folder with whatever the page has read of it so far. */
-export type ChangeRow = { system: string; change: string; title: string | null; info: ChangeInfo | null; error: string | null; checking: boolean };
+export type ChangeRow = { system: string; change: string; title: string | null; info: ChangeInfo | null; error: string | null; checking: boolean; offer?: ChangeOffer | null };
 
 /** The key of a change in `rows`. */
 export const stageKey = (system: string, change: string): string => `${system}/${change}`;

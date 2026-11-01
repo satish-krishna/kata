@@ -2,6 +2,9 @@ import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { ChangeName } from '@bindings/ChangeName';
+import type { ChangeState } from '@bindings/ChangeState';
+import type { ChangeView } from '@bindings/ChangeView';
+import type { SystemView } from '@bindings/SystemView';
 import type { Readiness } from '@bindings/Readiness';
 import type { StageEvent } from '@bindings/StageEvent';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
@@ -1104,6 +1107,88 @@ describe('SdlcHomeViewModel stage passes', () => {
     pass.finish(pass.id(), [await infoFor(transport, b, 'plan-ready')]);
     expect(stageOf(vm, a)).toMatchObject({ info: null, error: 'worker panicked' });
     expect(stageOf(vm, b)?.info?.stage).toBe('plan-ready');
+  });
+});
+
+/* --- R1.4: the changes list reads every change in one pass --- */
+
+const gate = { candidate: false, stop: null, accept: [] };
+const stateOf = (change: string): ChangeState => ({
+  change,
+  master: '/m',
+  folder: `/m/intent/commerce/${change}`,
+  inCopy: false,
+  title: null,
+  track: 'full',
+  documents: {
+    intent: { exists: true, inHead: true, headStatus: 'accepted', workingStatus: 'accepted', uncommitted: false, pin: null },
+    spec: { exists: false, inHead: false, headStatus: null, workingStatus: null, uncommitted: false, pin: null },
+    plan: { exists: false, inHead: false, headStatus: null, workingStatus: null, uncommitted: false, pin: null },
+  },
+  scenarios: null,
+  tasks: null,
+  buildLogs: {},
+  review: { committed: 0, draft: 'none' },
+  fix: null,
+  ready: { spec: gate, plan: gate, build: gate, review: gate, done: gate, reject: gate },
+});
+const viewOf = (change: string, text: string, readiness: Readiness): ChangeView => ({
+  state: stateOf(change),
+  offer: { stage: 'spec-ready', label: { step: 'spec', text, tone: 'muted' }, actions: [] },
+  live: { runLive: false, buildStopped: false, buildLive: false },
+  readiness,
+});
+const READY: Readiness = { kind: 'ready', plugin: { dir: '/p', version: '1.1.0', layouts: [1, 2] }, gh: 'present' };
+const BLOCKED: Readiness = { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 1.0.0.' };
+/** The plugin's answer for a system with `n` changes, each labeled by the plugin with words of its own. */
+const systemViewOf = (n: number, readiness: Readiness = READY): SystemView => ({
+  system: 'commerce',
+  readiness,
+  canStartChange: readiness.kind === 'ready',
+  startChangeReason: readiness.kind === 'blocked' ? readiness.message : null,
+  changes: Array.from({ length: n }, (_, i) => viewOf(`2026-10-${String(10 + i).padStart(2, '0')}-change-${i}`, `The plugin says ${i}`, readiness)),
+  problems: [],
+});
+
+describe('SdlcHomeViewModel changes list', () => {
+  it('names show at once and every stage fills in from one state read (R1.4)', async () => {
+    const { vm, transport } = setup();
+    const answer = systemViewOf(20);
+    const read = vi.spyOn(transport, 'sdlcState').mockResolvedValue(answer);
+    const names = vi.spyOn(transport, 'sdlcChangeNames');
+    const stages = vi.spyOn(transport, 'sdlcReadStages');
+    // The slow reads never finish: the names must be on screen without them.
+    const health = vi.spyOn(transport, 'sdlcContextHealth').mockImplementation(() => new Promise(() => undefined));
+    void vm.init();
+    await vi.waitFor(() => expect(vm.rows().length).toBe(20));
+    expect(health).toHaveBeenCalled();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(names).not.toHaveBeenCalled();
+    expect(stages).not.toHaveBeenCalled();
+    expect(vm.rows().map((r) => r.change)).toEqual(answer.changes.map((c) => c.state.change));
+    expect(vm.rows().map((r) => r.offer?.label.text)).toEqual(answer.changes.map((c) => c.offer.label.text));
+  });
+
+  it('a blocked readiness offers no new change (R10.1)', async () => {
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'sdlcState').mockResolvedValue(systemViewOf(2, BLOCKED));
+    await vm.init();
+    await vi.waitFor(() => expect(vm.rows().length).toBe(2));
+    expect(vm.canStartChange()).toBe(false);
+    expect(vm.startChangeReason()).toBe(BLOCKED.message);
+    vm.openNewChange();
+    expect(vm.newChangeOpen()).toBe(false);
+    expect(toastText()).toContain('1.1.0');
+  });
+
+  it('a ready readiness offers a new change (R10.1)', async () => {
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'sdlcState').mockResolvedValue(systemViewOf(1));
+    await vm.init();
+    expect(vm.canStartChange()).toBe(true);
+    expect(vm.startChangeReason()).toBeNull();
+    vm.openNewChange();
+    expect(vm.newChangeOpen()).toBe(true);
   });
 });
 

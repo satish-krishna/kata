@@ -111,7 +111,7 @@ export class SdlcHomeViewModel {
     const stored = id === null ? {} : this.stages.rows(id);
     return this.names().map((n) => {
       const row = stored[stageKey(n.system, n.change)];
-      return { ...n, info: row?.info ?? null, error: row?.error ?? null, checking: row?.checking ?? false };
+      return { ...n, info: row?.info ?? null, error: row?.error ?? null, checking: row?.checking ?? false, offer: null };
     });
   });
   /** The stages read so far. */
@@ -182,6 +182,9 @@ export class SdlcHomeViewModel {
     if (scan.marker_error !== null) return 'marker-error';
     return isSetUp(scan) ? 'ready' : 'not-set-up';
   });
+  /** Stub until the plugin's answer decides it. */
+  readonly canStartChange = computed(() => false);
+  readonly startChangeReason = computed<string | null>(() => null);
   /** Anything that starts work in a workspace is offered only here. */
   readonly canWork = computed(() => this.state() === 'ready');
 

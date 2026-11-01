@@ -61,6 +61,7 @@ const rows: Row[] = [
   ['sdlcContextHealth', (t) => t.sdlcContextHealth('/w', 'm', 's', 'r'), 'sdlc_context_health', { folder: '/w', master: 'm', system: 's', repo: 'r' }],
   ['sdlcInstructions', (t) => t.sdlcInstructions('/w', 'm'), 'sdlc_instructions', { folder: '/w', masterRepo: 'm' }],
   ['sdlcChangeNames', (t) => t.sdlcChangeNames('/m', 's'), 'sdlc_change_names', { master: '/m', system: 's' }],
+  ['sdlcState', (t) => t.sdlcState('/w', 's'), 'sdlc_state', { folder: '/w', system: 's' }],
   ['sdlcReadStages', (t) => t.sdlcReadStages('/m', 's'), 'sdlc_read_stages', { master: '/m', system: 's' }],
   ['sdlcReadStages with a first change', (t) => t.sdlcReadStages('/m', 's', 'c'), 'sdlc_read_stages', { master: '/m', system: 's', first: 'c' }],
   ['sdlcReadChange', (t) => t.sdlcReadChange('/m', 's', 'c'), 'sdlc_read_change', { master: '/m', system: 's', change: 'c' }],

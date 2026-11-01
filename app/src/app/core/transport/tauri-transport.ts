@@ -12,6 +12,7 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { SystemView } from '@bindings/SystemView';
 import type { ChangeName } from '@bindings/ChangeName';
 import type { StageEvent } from '@bindings/StageEvent';
 import type { BranchInfo } from '@bindings/BranchInfo';
@@ -91,6 +92,7 @@ export class TauriTransport extends KataTransport {
   sdlcReadContext(master: string, system: string, repo: string) { return this.ipc.invoke<string | null>('sdlc_read_context', { master, system, repo }); }
   sdlcInstructions(folder: string, masterRepo: string) { return this.ipc.invoke<InstructionsState>('sdlc_instructions', { folder, masterRepo }); }
   sdlcChangeNames(master: string, system: string) { return this.ipc.invoke<ChangeName[]>('sdlc_change_names', { master, system }); }
+  sdlcState(folder: string, system: string) { return this.ipc.invoke<SystemView>('sdlc_state', { folder, system }); }
   sdlcReadStages(master: string, system: string, first?: string | null) { return this.ipc.invoke<number>('sdlc_read_stages', { master, system, first }); }
   sdlcReadChange(master: string, system: string, change: string) { return this.ipc.invoke<ChangeInfo>('sdlc_read_change', { master, system, change }); }
   sdlcMissingFolders(folders: string[]) { return this.ipc.invoke<string[]>('sdlc_missing_folders', { folders }); }

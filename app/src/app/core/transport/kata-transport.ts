@@ -9,6 +9,7 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { SystemView } from '@bindings/SystemView';
 import type { ChangeName } from '@bindings/ChangeName';
 import type { StageEvent } from '@bindings/StageEvent';
 import type { BranchInfo } from '@bindings/BranchInfo';
@@ -97,6 +98,8 @@ export abstract class KataTransport {
   abstract sdlcReadContext(master: string, system: string, repo: string): Promise<string | null>;
   /** The changes of a system with the title of each intent, from the folder alone: no stage is read and no program is started. */
   abstract sdlcChangeNames(master: string, system: string): Promise<ChangeName[]>;
+  /** Every change of a system as the plugin reports it, with what each shows and offers, from one read. */
+  abstract sdlcState(folder: string, system: string): Promise<SystemView>;
   /** Start reading the stage of every change in the background and resolve to the pass id at once. Each result arrives through `onStageEvent`. A pass started while another is running supersedes it; the superseded pass reports nothing more. `first` names a change to read before the others. */
   abstract sdlcReadStages(master: string, system: string, first?: string | null): Promise<number>;
   /** One change read in full, for the list row and the change page. Rejects with the reason when the change cannot be read. */

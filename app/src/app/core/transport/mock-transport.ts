@@ -9,6 +9,7 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { SystemView } from '@bindings/SystemView';
 import type { ChangeName } from '@bindings/ChangeName';
 import type { StageEvent } from '@bindings/StageEvent';
 import type { BranchInfo } from '@bindings/BranchInfo';
@@ -191,6 +192,10 @@ export class MockTransport extends KataTransport {
   sdlcReadContext(_master: string, _system: string, repo: string): Promise<string | null> { return Promise.resolve(this.sdlc.readContext(repo)); }
   sdlcInstructions(_folder: string, _masterRepo: string): Promise<InstructionsState> { return Promise.resolve(this.sdlc.instructions()); }
   sdlcChangeNames(_master: string, _system: string): Promise<ChangeName[]> { return Promise.resolve(this.sdlc.changeNames()); }
+  /** Not scripted yet: an empty answer. */
+  sdlcState(_folder: string, system: string): Promise<SystemView> {
+    return Promise.resolve({ system, readiness: { kind: 'blocked', reason: 'pluginMissing', message: '' }, canStartChange: false, startChangeReason: null, changes: [], problems: [] });
+  }
   /** Plays a scripted pass: one `stage` per change and a `progress` after each, spread over about a second, then `done`. A new pass cancels the one before. */
   sdlcReadStages(_master: string, _system: string, first?: string | null): Promise<number> {
     this.stageTimers.forEach(clearTimeout);
