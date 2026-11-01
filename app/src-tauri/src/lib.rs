@@ -1,5 +1,6 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 mod build_host;
+mod close_guard;
 mod history;
 mod running;
 mod runs;
