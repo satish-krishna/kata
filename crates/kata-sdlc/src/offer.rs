@@ -1,7 +1,7 @@
 //! What a change shows and offers: its stage, its label and the actions the Workbench puts on it, decided
 //! from the plugin's answer (`ChangeState`) and the few facts only the Workbench has (`LiveFacts`).
 //! The frontend arranges this answer; it decides nothing.
-use crate::ai_sdlc::state::ChangeState;
+use crate::ai_sdlc::state::{ChangeState, ChangeTrack, SourcePin, StateDocument};
 use serde::{Deserialize, Serialize};
 
 /// What only the Workbench knows about a change right now. Per change: another change's run never counts.
@@ -154,10 +154,246 @@ pub struct ChangeOffer {
     pub actions: Vec<OfferedAction>,
 }
 
+fn accepted(doc: &StateDocument) -> bool {
+    doc.working_status.as_deref() == Some("accepted")
+}
+
+/// Rows 8 to 17 of the full-track table; a fix whose three documents are accepted (row 8 of its own table)
+/// goes on from here as well.
+fn plan_stage(change: &ChangeState, live: &LiveFacts) -> OfferStage {
+    let docs = &change.documents;
+    if docs.spec.pin != Some(SourcePin::Holds) {
+        return OfferStage::PlanOutOfDate {
+            cause: OutOfDateCause::SpecPin,
+        };
+    }
+    if !docs.plan.exists {
+        return OfferStage::PlanReady;
+    }
+    if docs.plan.working_status.as_deref() == Some("superseded") {
+        return OfferStage::PlanSuperseded;
+    }
+    if !accepted(&docs.plan) {
+        return OfferStage::PlanAwaiting;
+    }
+    if docs.plan.uncommitted {
+        return OfferStage::PlanAcceptedUncommitted;
+    }
+    if docs.plan.pin != Some(SourcePin::Holds) {
+        return OfferStage::PlanOutOfDate {
+            cause: OutOfDateCause::PlanPin,
+        };
+    }
+    let Some(tasks) = &change.tasks else {
+        return OfferStage::PlanUnreadable;
+    };
+    if tasks.values().all(|repo| repo.unlogged.is_empty()) {
+        OfferStage::BuildFinished
+    } else if live.build_stopped {
+        OfferStage::BuildStopped
+    } else {
+        OfferStage::BuildReady
+    }
+}
+
+fn stage_of(change: &ChangeState, live: &LiveFacts) -> OfferStage {
+    let docs = &change.documents;
+    if docs.intent.head_status.as_deref() == Some("rejected") {
+        return OfferStage::Rejected;
+    }
+    if change.track == ChangeTrack::Fix {
+        // The plugin's fix-state row: rows 1 to 7 are stages of their own and row 8 (all three documents
+        // accepted) goes on to the plan rows. Any other row is a table this Workbench does not know.
+        return match change.fix.as_ref().map(|f| f.row) {
+            Some(1) => OfferStage::Rejected,
+            Some(3) => OfferStage::FixInProgress,
+            Some(4 | 5) => OfferStage::FixAccepting,
+            Some(6 | 7) => OfferStage::FixAwaiting,
+            Some(8) => plan_stage(change, live),
+            _ => OfferStage::FixUnsettled,
+        };
+    }
+    if !accepted(&docs.intent) {
+        return if docs.intent.uncommitted {
+            OfferStage::IntentInProgress
+        } else {
+            OfferStage::IntentAwaiting
+        };
+    }
+    if docs.intent.uncommitted {
+        return OfferStage::IntentAcceptedUncommitted;
+    }
+    if !docs.spec.exists {
+        return OfferStage::SpecReady;
+    }
+    if !accepted(&docs.spec) {
+        return OfferStage::SpecAwaiting;
+    }
+    if docs.spec.uncommitted {
+        return OfferStage::SpecAcceptedUncommitted;
+    }
+    plan_stage(change, live)
+}
+
+fn label_of(stage: OfferStage, unreadable_fix: bool) -> StageLabel {
+    use LabelStep as S;
+    use LabelTone as T;
+    use OfferStage::*;
+    let (step, text, tone) = match stage {
+        IntentInProgress => (S::Intent, "Intent · in progress (not committed)", T::Muted),
+        IntentAwaiting => (S::Intent, "Intent · awaiting acceptance", T::Warning),
+        IntentAcceptedUncommitted => (S::Intent, "Intent · accepted, not committed", T::Warning),
+        Rejected => (S::Closed, "Closed · rejected", T::Error),
+        SpecReady => (S::Spec, "Spec · ready to start", T::Muted),
+        SpecAwaiting => (S::Spec, "Spec · awaiting acceptance", T::Warning),
+        SpecAcceptedUncommitted => (S::Spec, "Spec · accepted, not committed", T::Warning),
+        PlanReady => (S::Plan, "Plan · ready to start", T::Muted),
+        PlanAwaiting => (S::Plan, "Plan · awaiting acceptance", T::Warning),
+        PlanAcceptedUncommitted => (S::Plan, "Plan · accepted, not committed", T::Warning),
+        PlanOutOfDate { .. } => (S::Plan, "Plan · out of date", T::Warning),
+        PlanUnreadable => (S::Plan, "Plan · could not be read", T::Warning),
+        PlanSuperseded => (S::Plan, "Plan · superseded", T::Warning),
+        BuildReady => (S::Build, "Build · ready to start", T::Muted),
+        BuildStopped => (S::Build, "Build · in progress (stopped)", T::Warning),
+        BuildFinished => (S::Build, "Build · finished, not yet done", T::Success),
+        FixInProgress => (S::Intent, "Fix · changes not recorded", T::Warning),
+        FixUnsettled if unreadable_fix => (S::Intent, "Fix · could not be read", T::Warning),
+        FixUnsettled => (S::Intent, "Fix · statuses not settled", T::Warning),
+        FixAwaiting => (S::Intent, "Fix · awaiting acceptance", T::Warning),
+        FixAccepting => (S::Plan, "Fix · acceptance stopped", T::Warning),
+    };
+    StageLabel {
+        step,
+        text: text.into(),
+        tone,
+    }
+}
+
+/// The actions a stage lists, in order, before any is enabled or refused.
+fn listed(stage: OfferStage, change: &ChangeState) -> Vec<StageAction> {
+    use OfferStage::*;
+    use StageAction::*;
+    let mut actions = if change.track == ChangeTrack::Fix {
+        match stage {
+            FixInProgress => vec![FinishFixDraft],
+            FixAwaiting if change.fix.as_ref().map(|f| f.row) == Some(6) => {
+                // Only the row "never accepted or built" may be closed by the full pipeline: an accepted
+                // document or a built task is work it would discard.
+                vec![AcceptFix, ChangeFix, FullPipelineInstead, RejectFix]
+            }
+            FixAwaiting | FixAccepting => vec![AcceptFix, ChangeFix, RejectFix],
+            BuildReady => vec![StartBuild, ReopenFix],
+            BuildStopped => vec![ContinueBuild, AnotherRound, ReopenFix],
+            BuildFinished => vec![DeclareDone, AnotherRound, RunReview, ReopenFix],
+            PlanOutOfDate { .. } => vec![ReopenFix],
+            _ => vec![],
+        }
+    } else {
+        match stage {
+            IntentInProgress => vec![ContinueIntent],
+            IntentAwaiting => vec![ContinueIntent, AcceptIntent, RejectIntent],
+            IntentAcceptedUncommitted => vec![CommitAcceptance, ContinueIntent],
+            Rejected => vec![],
+            SpecReady => vec![StartSpec, ReopenIntent],
+            SpecAwaiting => vec![ContinueSpec, AcceptSpec, ReopenIntent],
+            SpecAcceptedUncommitted => vec![CommitAcceptance, ContinueSpec],
+            PlanReady => vec![StartPlan, ReopenSpec, ReopenIntent],
+            PlanAwaiting => vec![AcceptPlan, RerunPlan, ReopenIntent],
+            PlanAcceptedUncommitted => vec![CommitAcceptance, RerunPlan],
+            PlanOutOfDate {
+                cause: OutOfDateCause::SpecPin,
+            } => vec![ReopenSpec],
+            PlanOutOfDate {
+                cause: OutOfDateCause::PlanPin,
+            } => vec![RerunPlan],
+            // The plan could not be read, so nothing may be built or rewritten from what is shown.
+            PlanUnreadable => vec![],
+            PlanSuperseded => vec![RerunPlan],
+            BuildReady => vec![StartBuild, ReopenSpec, ReopenIntent],
+            BuildStopped => vec![ContinueBuild, AnotherRound, ReopenSpec, ReopenIntent],
+            BuildFinished => vec![
+                DeclareDone,
+                AnotherRound,
+                RunReview,
+                ReopenSpec,
+                ReopenIntent,
+            ],
+            FixInProgress | FixUnsettled | FixAwaiting | FixAccepting => vec![],
+        }
+    };
+    if !matches!(stage, IntentInProgress | IntentAwaiting | Rejected) {
+        actions.push(Rename);
+    }
+    actions
+}
+
+/// The plugin's stop for the gate an action belongs to; `None` when the plugin does not refuse it.
+fn gate_stop(action: StageAction, change: &ChangeState) -> Option<&str> {
+    use StageAction::*;
+    let ready = &change.ready;
+    let gate = match action {
+        StartSpec | ContinueSpec => &ready.spec,
+        StartPlan | RerunPlan => &ready.plan,
+        StartBuild | ContinueBuild | AnotherRound => &ready.build,
+        RunReview => &ready.review,
+        RejectIntent | RejectFix => &ready.reject,
+        _ => return None,
+    };
+    gate.stop.as_deref()
+}
+
+/// Actions that regenerate a document that already exists.
+fn revisits(action: StageAction) -> bool {
+    use StageAction::*;
+    matches!(
+        action,
+        ContinueIntent
+            | ReopenIntent
+            | ContinueSpec
+            | ReopenSpec
+            | RerunPlan
+            | FinishFixDraft
+            | ChangeFix
+            | ReopenFix
+    )
+}
+
+/// Reopening a fix needs no feedback only when its plan is out of date because a pin no longer holds: the
+/// documents did not change, so there is nothing to correct.
+fn feedback_required(action: StageAction, stage: OfferStage) -> bool {
+    match action {
+        StageAction::ChangeFix => true,
+        StageAction::ReopenFix => !matches!(stage, OfferStage::PlanOutOfDate { .. }),
+        _ => false,
+    }
+}
+
 /// What a change shows and offers, from the plugin's answer and the Workbench's live facts.
 pub fn of(change: &ChangeState, live: &LiveFacts) -> ChangeOffer {
-    let _ = (change, live);
-    unimplemented!("offer::of")
+    let stage = stage_of(change, live);
+    let unreadable_fix = change.track == ChangeTrack::Fix && change.fix.is_none();
+    let actions = listed(stage, change)
+        .into_iter()
+        .map(|action| {
+            let reason = if live.run_live && action != StageAction::CancelBuild {
+                Some("A run of this change is live.".to_string())
+            } else {
+                gate_stop(action, change).map(String::from)
+            };
+            OfferedAction {
+                action,
+                enabled: reason.is_none(),
+                reason,
+                feedback_required: feedback_required(action, stage),
+                revisits: revisits(action),
+            }
+        })
+        .collect();
+    ChangeOffer {
+        stage,
+        label: label_of(stage, unreadable_fix),
+        actions,
+    }
 }
 
 #[cfg(test)]
