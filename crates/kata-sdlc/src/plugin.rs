@@ -152,6 +152,22 @@ pub fn readiness(env: &Machine) -> Readiness {
     }
 }
 
+/// The plugin rows of [`readiness`] alone (rows 1 and 2), for a caller that only needs the plugin and runs
+/// with whatever `PATH` it was given: `gh` is not looked at and is reported as missing.
+pub fn plugin_readiness(plugin_dir: &Path) -> Readiness {
+    let plugin = version(plugin_dir).map(|version| Installed {
+        dir: plugin_dir.to_path_buf(),
+        version,
+    });
+    let machine = Machine {
+        plugin,
+        node: Some(MIN_NODE.to_string()),
+        git: true,
+        gh: false,
+    };
+    readiness(&machine)
+}
+
 impl Machine {
     /// Looks at this machine: the plugin installed at `plugin_dir` (`None` when the catalog has none),
     /// `node --version`, and `git` and `gh` on `PATH`. Neither `git` nor `gh` is started.

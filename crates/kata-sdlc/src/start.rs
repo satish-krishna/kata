@@ -212,7 +212,7 @@ pub fn prepare(
         return refuse(format!("the master repo has no branch {branch}"));
     }
     if let Gate::Refuse { message, problems } = build::gate(
-        &plugin::readiness(&plugin::Machine::detect(Some(plugin))),
+        &plugin::plugin_readiness(plugin),
         &master,
         system,
         change,

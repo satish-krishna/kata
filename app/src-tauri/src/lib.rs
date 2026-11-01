@@ -1627,7 +1627,7 @@ name: build
         .unwrap();
         std::fs::write(
             plugin.join(".claude-plugin").join("plugin.json"),
-            r#"{"name":"ai-sdlc","version":"0.9.0"}"#,
+            r#"{"name":"ai-sdlc","version":"1.1.0"}"#,
         )
         .unwrap();
         let empty_home = root.join("home");
@@ -1693,7 +1693,7 @@ name: build
         std::fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
         std::fs::write(
             plugin.join(".claude-plugin").join("plugin.json"),
-            r#"{"name":"ai-sdlc","version":"0.9.0"}"#,
+            r#"{"name":"ai-sdlc","version":"1.1.0"}"#,
         )
         .unwrap();
         let mut plugins = std::collections::BTreeMap::new();
