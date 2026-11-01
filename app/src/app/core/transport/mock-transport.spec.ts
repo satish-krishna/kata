@@ -240,7 +240,8 @@ describe('MockTransport', () => {
       vi.advanceTimersByTime(30000);
       const history = await t.sdlcRunHistory(id);
       expect(history.length).toBeGreaterThan(2);
-      expect(history[0].type).toBe(runScriptHead[0].ev.type);
+      expect(history[0].event.type).toBe(runScriptHead[0].ev.type);
+      expect(history.map((h) => h.seq)).toEqual(history.map((_, i) => i));
       expect(await t.sdlcRunHistory('no-such-run')).toEqual([]);
     });
 

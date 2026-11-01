@@ -4,6 +4,7 @@
 // are the source of truth. Moving them into `kata-sdlc`'s `view` module would generate them.
 import type { BuildState } from '@bindings/BuildState';
 import type { Given } from '@bindings/Given';
+import type { KataEvent } from './events';
 
 /** A change as the webview names it. */
 export interface ChangeRef { workspace: string; system: string; change: string }
@@ -54,6 +55,9 @@ export interface RunForm {
   /** The items the engineer switched off in the preview. */
   given?: Given | null;
 }
+
+/** One event of a run with its position in the run, counted from 0. */
+export interface HistoryEntry { seq: number; event: KataEvent }
 
 /** A run of a change that waits on the engineer. */
 export interface RunRef { run: number; kind: RunKind; repo: string | null }

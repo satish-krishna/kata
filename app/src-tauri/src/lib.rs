@@ -222,7 +222,7 @@ fn start_run(
                                 });
                             }
                         }
-                        history.push(id, &v);
+                        let seq = history.push(id, &v);
                         let announce = matches!(
                             v.get("type").and_then(Value::as_str),
                             Some(
@@ -232,14 +232,14 @@ fn start_run(
                                     | "permission.decided"
                             )
                         );
-                        let _ = app.emit(RUN_EVENT, runs::wrap(id, v));
+                        let _ = app.emit(RUN_EVENT, runs::wrap(id, seq, v));
                         if announce {
                             announce_running(&app);
                         }
                     }
-                    Err(_) => relay_log(&app, id, &bytes),
+                    Err(_) => relay_log(&app, &history, id, &bytes),
                 },
-                CommandEvent::Stderr(bytes) => relay_log(&app, id, &bytes),
+                CommandEvent::Stderr(bytes) => relay_log(&app, &history, id, &bytes),
                 CommandEvent::Terminated(payload) => {
                     if !terminal_seen {
                         let code = payload.code.unwrap_or(-1);
@@ -251,8 +251,8 @@ fn start_run(
                             "type": "run.error",
                             "message": format!("engine exited ({code}) without a result"),
                         });
-                        history.push(id, &ev);
-                        let _ = app.emit(RUN_EVENT, runs::wrap(id, ev));
+                        let seq = history.push(id, &ev);
+                        let _ = app.emit(RUN_EVENT, runs::wrap(id, seq, ev));
                     }
                     break;
                 }
@@ -263,8 +263,8 @@ fn start_run(
                         error: Some(err.clone()),
                     });
                     let ev = json!({ "type": "run.error", "message": err });
-                    history.push(id, &ev);
-                    let _ = app.emit(RUN_EVENT, runs::wrap(id, ev));
+                    let seq = history.push(id, &ev);
+                    let _ = app.emit(RUN_EVENT, runs::wrap(id, seq, ev));
                 }
                 _ => {}
             }
@@ -329,7 +329,10 @@ fn sdlc_mark_opened(
 
 /// Every event of a run from its start, in order, for a session opened after the run began.
 #[tauri::command]
-fn sdlc_run_history(history: State<Arc<history::RunHistory>>, run_id: String) -> Vec<Value> {
+fn sdlc_run_history(
+    history: State<Arc<history::RunHistory>>,
+    run_id: String,
+) -> Vec<history::HistoryEntry> {
     parse_run_id(&run_id)
         .map(|id| history.replay(id))
         .unwrap_or_default()
@@ -1441,17 +1444,13 @@ where
 }
 
 /// Relay a non-JSON stdout/stderr line as a warn-level log event.
-fn relay_log(app: &AppHandle, run_id: u64, bytes: &[u8]) {
+fn relay_log(app: &AppHandle, history: &history::RunHistory, run_id: u64, bytes: &[u8]) {
     let line = String::from_utf8_lossy(bytes);
     let line = line.trim();
     if !line.is_empty() {
-        let _ = app.emit(
-            RUN_EVENT,
-            runs::wrap(
-                run_id,
-                json!({ "type": "log", "level": "warn", "message": line }),
-            ),
-        );
+        let event = json!({ "type": "log", "level": "warn", "message": line });
+        let seq = history.push(run_id, &event);
+        let _ = app.emit(RUN_EVENT, runs::wrap(run_id, seq, event));
     }
 }
 

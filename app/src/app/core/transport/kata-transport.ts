@@ -50,7 +50,7 @@ import type { BuildState } from '@bindings/BuildState';
 import type { RoundOffer } from '@bindings/RoundOffer';
 import type { RoundPicks } from '@bindings/RoundPicks';
 import type { RoundPlan } from '@bindings/RoundPlan';
-import type { BuildEvent, BuildForm, ChangeRef, CloseOutcome, DocumentKind, HeldRepo, RunForm, RunningStrip, StartOutcome } from '../../lib/build-host';
+import type { BuildEvent, BuildForm, HistoryEntry, ChangeRef, CloseOutcome, DocumentKind, HeldRepo, RunForm, RunningStrip, StartOutcome } from '../../lib/build-host';
 
 /** A system's naming setting as the backend reads it: none declared, the patterns, or why they cannot be used. `reason` tells the failures apart. */
 export type NamingState =
@@ -77,8 +77,8 @@ export abstract class KataTransport {
   abstract previewRun(spec: RunSpec): Promise<Resolved>;
   /** Start a run. Resolves to its run id. `group` (`build:<system>/<change>`) tells the backend which runs belong to one build. */
   abstract runSpec(spec: RunSpec, group?: string): Promise<string>;
-  /** Every event of a run from its start, in order, for a session opened after the run began. Empty for a run the backend does not know. */
-  abstract sdlcRunHistory(runId: string): Promise<KataEvent[]>;
+  /** Every event of a run from its start, in order, each with its position in the run, for a session opened after the run began. Empty for a run the backend does not know. */
+  abstract sdlcRunHistory(runId: string): Promise<HistoryEntry[]>;
   /** Start a document run (intent, spec, plan, triage or fix) of a change that exists. The backend composes the run-spec with the change's deny rules and claims the change's own lane. Resolves to the run id. */
   abstract sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm): Promise<string>;
   /** Start a change's build; nothing starts unless every repository it needs is free. */
@@ -213,8 +213,8 @@ export abstract class KataTransport {
   abstract onRunning(cb: (strip: RunningStrip) => void): Promise<() => void>;
   /** Register for the question the backend asks when the window is closed while runs are live. Resolves to the unlisten function. */
   abstract onCloseAsked(cb: (ask: CloseOutcome) => void): Promise<() => void>;
-  /** Register for relayed run events, each tagged with the id of the run it came from. Resolves to the unlisten function. */
-  abstract onRunEvent(cb: (runId: string, ev: KataEvent) => void): Promise<() => void>;
+  /** Register for relayed run events, each tagged with the id of the run it came from and its position in that run (`seq`, absent only in a fixture). Resolves to the unlisten function. */
+  abstract onRunEvent(cb: (runId: string, ev: KataEvent, seq?: number) => void): Promise<() => void>;
 }
 
 export const NO_BACKEND = 'this action needs the Kata desktop app (Tauri backend unavailable)';

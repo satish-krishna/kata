@@ -55,7 +55,7 @@ import type { BuildState } from '@bindings/BuildState';
 import type { RoundOffer } from '@bindings/RoundOffer';
 import type { RoundPicks } from '@bindings/RoundPicks';
 import type { RoundPlan } from '@bindings/RoundPlan';
-import type { BuildEvent, BuildForm, ChangeRef, CloseOutcome, DocumentKind, HeldRepo, RunForm, RunningStrip, StartOutcome } from '../../lib/build-host';
+import type { BuildEvent, BuildForm, HistoryEntry, ChangeRef, CloseOutcome, DocumentKind, HeldRepo, RunForm, RunningStrip, StartOutcome } from '../../lib/build-host';
 import { KataTransport, NO_BACKEND, type NamingState, type RenameResult } from './kata-transport';
 
 /** How long the first scan of the demo setup folder takes, long enough to see the checking steps. */
@@ -90,7 +90,7 @@ interface ScriptedRun {
  *  each tagged with its own id. */
 export class MockTransport extends KataTransport {
   /** Every run store listening for events: a build starts several runs, each with its own listener. */
-  private readonly listeners = new Set<(runId: string, ev: KataEvent) => void>();
+  private readonly listeners = new Set<(runId: string, ev: KataEvent, seq?: number) => void>();
   /** Everything listening for what publishing is doing. */
   private readonly publishListeners = new Set<(step: PublishStep) => void>();
   private readonly runs = new Map<string, ScriptedRun>();
@@ -102,7 +102,7 @@ export class MockTransport extends KataTransport {
   private buildLayout: Record<string, unknown> = {};
 
   /** Everything each run said, in order, for a session opened late. */
-  private readonly histories = new Map<string, KataEvent[]>();
+  private readonly histories = new Map<string, HistoryEntry[]>();
   private readonly buildListeners = new Set<(event: BuildEvent) => void>();
   private readonly runningListeners = new Set<(strip: RunningStrip) => void>();
   private readonly closeListeners = new Set<(ask: CloseOutcome) => void>();
@@ -117,8 +117,9 @@ export class MockTransport extends KataTransport {
   });
 
   private emit(runId: string, ev: KataEvent): void {
-    this.histories.set(runId, [...(this.histories.get(runId) ?? []), ev]);
-    for (const listen of [...this.listeners]) listen(runId, ev);
+    const seen = this.histories.get(runId) ?? [];
+    this.histories.set(runId, [...seen, { seq: seen.length, event: ev }]);
+    for (const listen of [...this.listeners]) listen(runId, ev, seen.length);
     if (ev.type === 'ask.requested' || ev.type === 'ask.answered' || ev.type === 'permission.requested' || ev.type === 'permission.decided') this.announceRunning();
   }
 
@@ -352,7 +353,7 @@ export class MockTransport extends KataTransport {
     return () => { this.publishListeners.delete(cb); };
   }
 
-  async onRunEvent(cb: (runId: string, ev: KataEvent) => void): Promise<() => void> {
+  async onRunEvent(cb: (runId: string, ev: KataEvent, seq?: number) => void): Promise<() => void> {
     this.listeners.add(cb);
     return () => { this.listeners.delete(cb); };
   }
@@ -375,7 +376,7 @@ export class MockTransport extends KataTransport {
     this.closeListeners.add(cb);
     return () => { this.closeListeners.delete(cb); };
   }
-  async sdlcRunHistory(runId: string): Promise<KataEvent[]> { return [...(this.histories.get(runId) ?? [])]; }
+  async sdlcRunHistory(runId: string): Promise<HistoryEntry[]> { return [...(this.histories.get(runId) ?? [])]; }
   async sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm): Promise<string> {
     void kind;
     return this.runSpec({ ...seedSpec(), name: form.name, task: form.task, workdir: change.workspace });

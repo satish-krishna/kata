@@ -135,7 +135,8 @@ impl<C> RunTable<C> {
 }
 
 /// Put the run id around a kata event, leaving the event itself unchanged.
-pub fn wrap(run_id: u64, event: Value) -> Value {
+pub fn wrap(run_id: u64, seq: u64, event: Value) -> Value {
+    let _ = seq;
     serde_json::json!({ "runId": run_id, "event": event })
 }
 
@@ -293,9 +294,9 @@ mod tests {
     }
 
     #[test]
-    fn wrap_puts_the_run_id_around_the_event_unchanged() {
+    fn wrap_puts_the_run_id_and_the_position_around_the_event_unchanged() {
         let event = json!({ "type": "turn", "n": 3 });
-        let wrapped = wrap(7, event.clone());
-        assert_eq!(wrapped, json!({ "runId": 7, "event": event }));
+        let wrapped = wrap(7, 12, event.clone());
+        assert_eq!(wrapped, json!({ "runId": 7, "seq": 12, "event": event }));
     }
 }

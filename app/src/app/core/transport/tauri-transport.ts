@@ -53,7 +53,7 @@ import type { BuildState } from '@bindings/BuildState';
 import type { RoundOffer } from '@bindings/RoundOffer';
 import type { RoundPicks } from '@bindings/RoundPicks';
 import type { RoundPlan } from '@bindings/RoundPlan';
-import type { BuildEvent, BuildForm, ChangeRef, CloseOutcome, DocumentKind, HeldRepo, RunForm, RunningStrip, StartOutcome } from '../../lib/build-host';
+import type { BuildEvent, BuildForm, HistoryEntry, ChangeRef, CloseOutcome, DocumentKind, HeldRepo, RunForm, RunningStrip, StartOutcome } from '../../lib/build-host';
 import { KataTransport, type NamingState, type RenameResult } from './kata-transport';
 
 /** The Tauri functions the transport needs, injectable so tests need no module mocking. */
@@ -102,7 +102,7 @@ export class TauriTransport extends KataTransport {
   sdlcSnapshot(master: string) { return this.ipc.invoke<Snapshot>('sdlc_snapshot', { master }); }
   sdlcLeftovers(master: string, before: Snapshot, productRepos: string[], build?: BuildScope) { return this.ipc.invoke<Leftovers>('sdlc_leftovers', { master, before, productRepos, build }); }
   sdlcDiscard(master: string, before: Snapshot, paths: string[], build?: BuildScope) { return this.ipc.invoke<void>('sdlc_discard', { master, before, paths, build }); }
-  sdlcRunHistory(runId: string) { return this.ipc.invoke<KataEvent[]>('sdlc_run_history', { runId }); }
+  sdlcRunHistory(runId: string) { return this.ipc.invoke<HistoryEntry[]>('sdlc_run_history', { runId }); }
   sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm) { return this.ipc.invoke<string>('sdlc_run_change', { change, kind, form }); }
   sdlcBuildStart(change: ChangeRef, form: BuildForm) { return this.ipc.invoke<StartOutcome>('sdlc_build_start', { change, form }); }
   sdlcBuildContinue(change: ChangeRef, repo: string) { return this.ipc.invoke<StartOutcome>('sdlc_build_continue', { change, repo }); }
@@ -183,7 +183,7 @@ export class TauriTransport extends KataTransport {
   onCloseAsked(cb: (ask: CloseOutcome) => void) {
     return this.ipc.listen<CloseOutcome>('sdlc://close-asked', (e) => cb(e.payload));
   }
-  onRunEvent(cb: (runId: string, ev: KataEvent) => void) {
-    return this.ipc.listen<{ runId: number; event: KataEvent }>('kata://event', (e) => cb(String(e.payload.runId), e.payload.event));
+  onRunEvent(cb: (runId: string, ev: KataEvent, seq?: number) => void) {
+    return this.ipc.listen<{ runId: number; seq: number; event: KataEvent }>('kata://event', (e) => cb(String(e.payload.runId), e.payload.event));
   }
 }

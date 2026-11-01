@@ -18,6 +18,13 @@ pub enum Pending {
     Permission { action: String, since_ms: u64 },
 }
 
+/// One event of a run with its position in the run.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct HistoryEntry {
+    pub seq: u64,
+    pub event: Value,
+}
+
 #[derive(Default)]
 pub struct RunHistory {
     runs: Mutex<HashMap<u64, Vec<(u64, Value)>>>,
@@ -34,21 +41,30 @@ fn str_of<'a>(event: &'a Value, key: &str) -> &'a str {
 }
 
 impl RunHistory {
-    /// Append one event to the run's history, stamped with the time it arrived.
-    pub fn push(&self, run_id: u64, event: &Value) {
+    /// Append one event to the run's history, stamped with the time it arrived. The answer is the event's
+    /// position in the run, counted from 0: the number the relayed event carries.
+    pub fn push(&self, run_id: u64, event: &Value) -> u64 {
         self.runs
             .lock()
             .unwrap()
             .entry(run_id)
             .or_default()
             .push((now_ms(), event.clone()));
+        0
     }
 
-    /// Every event of the run, from its start, in the order they were pushed.
-    pub fn replay(&self, run_id: u64) -> Vec<Value> {
+    /// Every event of the run, from its start, in the order they were pushed, each with its position.
+    pub fn replay(&self, run_id: u64) -> Vec<HistoryEntry> {
         let runs = self.runs.lock().unwrap();
         runs.get(&run_id)
-            .map(|v| v.iter().map(|(_, e)| e.clone()).collect())
+            .map(|v| {
+                v.iter()
+                    .map(|(_, e)| HistoryEntry {
+                        seq: 0,
+                        event: e.clone(),
+                    })
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -135,8 +151,26 @@ mod tests {
         for e in &events {
             h.push(1, e);
         }
-        assert_eq!(h.replay(1), events);
+        let replayed: Vec<Value> = h.replay(1).into_iter().map(|e| e.event).collect();
+        assert_eq!(replayed, events);
         assert!(h.replay(2).is_empty());
+    }
+
+    #[test]
+    fn every_event_gets_its_position_in_its_own_run() {
+        let h = RunHistory::default();
+        let seqs: Vec<u64> = (0..3)
+            .map(|n| h.push(1, &json!({"type": "turn", "n": n})))
+            .collect();
+        assert_eq!(seqs, vec![0, 1, 2]);
+        assert_eq!(h.push(2, &json!({"type": "run.started"})), 0);
+        assert_eq!(h.push(1, &json!({"type": "turn", "n": 3})), 3);
+        let entries = h.replay(1);
+        assert_eq!(
+            entries.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
+        assert_eq!(entries[2].event, json!({"type": "turn", "n": 2}));
     }
 
     #[test]

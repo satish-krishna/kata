@@ -173,6 +173,17 @@ describe('TauriTransport', () => {
     expect(seen).toEqual([['3', ev]]);
   });
 
+  it('hands the position of a relayed event over with it', async () => {
+    const ipc = fakeIpc();
+    const t = new TauriTransport(asIpc(ipc));
+    const seen: [string, KataEvent, number | undefined][] = [];
+    await t.onRunEvent((runId, e, seq) => seen.push([runId, e, seq]));
+    const [, handler] = ipc.listen.mock.calls[0] as unknown as [string, (e: { payload: { runId: number; seq: number; event: KataEvent } }) => void];
+    const event = { type: 'turn', n: 1 } as KataEvent;
+    handler({ payload: { runId: 7, seq: 12, event } });
+    expect(seen).toEqual([['7', event, 12]]);
+  });
+
   it('hands the payload of sdlc://publish-step over as the step', async () => {
     const ipc = fakeIpc();
     const t = new TauriTransport(asIpc(ipc));

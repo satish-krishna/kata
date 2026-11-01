@@ -231,7 +231,7 @@ export class RunStore {
     rec.unlisten = unlisten;
     let history: KataEvent[];
     try {
-      history = await this.transport.sdlcRunHistory(runId);
+      history = (await this.transport.sdlcRunHistory(runId)).map((e) => e.event);
     } catch (e) {
       if (gen !== rec.gen) return;
       buffered = null;
