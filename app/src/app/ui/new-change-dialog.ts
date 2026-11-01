@@ -23,7 +23,7 @@ export type NewChange = { system: string; idea: string; track: StartTrack };
 export class NewChangeDialog {
   readonly open = input.required<boolean>();
   readonly systems = input.required<string[]>();
-  /** Whether the plugin on this machine can triage a change (ai-sdlc 0.13.0 or later). */
+  /** Whether the plugin on this machine can triage a change (ai-sdlc 1.1.0 or later). */
   readonly lightTrack = input(false);
   /** The description the dialog opens with, for describing a change again. */
   readonly initialIdea = input('');
@@ -60,7 +60,7 @@ export class NewChangeDialog {
   protected readonly trackHint = computed(() =>
     this.lightTrack()
       ? 'The workflow reads the description and picks the light track or the full pipeline.'
-      : 'Needs ai-sdlc 0.13.0 or later.',
+      : 'Needs ai-sdlc 1.1.0 or later.',
   );
 
   /** Reopening starts from the given description, empty when none was given, on the first system. */

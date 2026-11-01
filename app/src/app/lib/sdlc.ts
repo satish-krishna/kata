@@ -168,7 +168,7 @@ const LABELS: Record<Stage, StageLabel> = {
   "fix-unsettled": { step: "intent", text: "Fix · statuses not settled", tone: "warning" },
   "fix-awaiting": { step: "intent", text: "Fix · awaiting acceptance", tone: "warning" },
   "fix-accepting": { step: "plan", text: "Fix · acceptance stopped", tone: "warning" },
-  "fix-needs-plugin": { step: "intent", text: "Fix · needs ai-sdlc 0.13.0", tone: "warning" },
+  "fix-needs-plugin": { step: "intent", text: "Fix · needs ai-sdlc 1.1.0", tone: "warning" },
 };
 
 /**

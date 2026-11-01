@@ -138,7 +138,6 @@ const RESULT_MAX = 120;
 const EXIT_WAIT_MS = 15000;
 const TERMINAL: readonly RunState[] = ['success', 'warning', 'error'];
 const INSTALL_PLUGIN = 'Install the ai-sdlc plugin, then start the build again.';
-const updatePlugin = (need: string): string => `Update the ai-sdlc plugin to ${need} or later, then start the build again.`;
 const DIRTY = 'uncommitted changes';
 const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
 
@@ -410,10 +409,9 @@ export class SdlcRunner {
     try {
       readiness = await this.transport.sdlcPluginReadiness(req.folder);
     } catch {
-      readiness = { kind: 'missing' };
+      readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
     }
-    if (readiness.kind === 'tooOld') return { kind: 'refused', reason: updatePlugin(readiness.need) };
-    if (readiness.kind === 'missing') return { kind: 'refused', reason: INSTALL_PLUGIN };
+    if (readiness.kind === 'blocked') return { kind: 'refused', reason: readiness.reason === 'pluginMissing' ? INSTALL_PLUGIN : readiness.message };
     try {
       const out = await this.transport.sdlcBuildPrepare(req.folder, req.masterRepo, req.system, req.change, req.continueWithLeftovers, req.pending ?? [], req.action);
       if (out.kind === 'refused') return { kind: 'refused', reason: out.message, problems: out.problems };

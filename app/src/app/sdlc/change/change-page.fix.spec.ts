@@ -13,7 +13,7 @@ import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
 const FIX = '2026-10-12-product-photo-upload';
-const NEEDS = 'Needs ai-sdlc 0.13.0 or later.';
+const NEEDS = 'Needs ai-sdlc 1.1.0 or later.';
 const BUSY = 'Another task is already running.';
 const FIX_ACTIONS: StageAction[] = ['finish-fix-draft', 'accept-fix', 'change-fix', 'reopen-fix'];
 
@@ -40,7 +40,7 @@ async function mountFix(stage: Stage, lightTrack = true, track: 'fix' | 'full' =
     [await real(m, s, n)].map((c) => (c.change === FIX ? { ...c, stage, track, ...docs } : c))[0],
   );
   const ready = await transport.sdlcPluginReadiness(null);
-  vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(ready.kind === 'ready' ? { ...ready, lightTrack } : ready);
+  vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(lightTrack ? ready : { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 1.0.0.' });
   const run = vi.spyOn(transport, 'runSpec').mockResolvedValue('1');
   const out = await render(ChangePage, {}, [
     provideRouter([]),

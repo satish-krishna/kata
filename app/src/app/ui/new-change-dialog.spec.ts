@@ -105,7 +105,7 @@ describe('NewChangeDialog', () => {
       await settle();
       expect(radio('Let the workflow decide').disabled).toBe(true);
       expect(radio('Full pipeline').getAttribute('aria-checked')).toBe('true');
-      expect(dialog()!.textContent).toContain('Needs ai-sdlc 0.13.0 or later.');
+      expect(dialog()!.textContent).toContain('Needs ai-sdlc 1.1.0 or later.');
       const got: { track: string }[] = [];
       fixture.componentInstance.start.subscribe((v) => got.push(v));
       await type('an idea');

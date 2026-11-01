@@ -726,10 +726,10 @@ describe('ChangePageViewModel', () => {
 
     it('a refusal is shown and starts nothing', async () => {
       const { vm, transport } = setup(BUILD);
-      vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'tooOld', have: '0.7.9', need: '0.9.0' });
+      vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.' });
       await ready(vm);
       await vm.submitBuild(REQUEST);
-      expect(vm.refusal()).toBe('Update the ai-sdlc plugin to 0.9.0 or later, then start the build again.');
+      expect(vm.refusal()).toBe('The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.');
       expect(TestBed.inject(BuildPageViewModel).current()).toBeNull();
       vm.closeRefusal();
       expect(vm.refusal()).toBeNull();

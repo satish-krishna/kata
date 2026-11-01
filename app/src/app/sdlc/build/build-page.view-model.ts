@@ -1653,7 +1653,7 @@ export class BuildPageViewModel {
     try {
       readiness = await this.transport.sdlcPluginReadiness(this.ctx!.folder);
     } catch {
-      readiness = { kind: 'missing' };
+      readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
     }
     this.reviewDocNotice.set(shownPart({ layout: document.layout, problems: document.problems }, readiness).notice);
   }

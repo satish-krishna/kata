@@ -123,14 +123,14 @@ export class SdlcHomeViewModel {
   readonly readingProgress = this.progress.view(PROGRESS_OWNER);
   readonly contexts = signal<Record<string, ContextState>>({});
   readonly lastRuns = signal<Record<string, number>>({});
-  private readonly readiness = signal<Readiness>({ kind: 'missing' });
+  private readonly readiness = signal<Readiness>({ kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' });
   /** Above the change list when a plan could not be read; null when every plan was. */
   readonly listNotice = computed(() => {
     const unreadable = this.changes().filter((c) => c.plan_unreadable);
     // A fix's own reason is worded for the fix and shown as it is; only a plan's goes behind "Could not read this document".
     const fixReason = (c: ChangeInfo) =>
       c.stage === 'fix-needs-plugin'
-        ? (c.plan_unreadable_reason ?? 'Needs ai-sdlc 0.13.0 or later.')
+        ? (c.plan_unreadable_reason ?? 'Needs ai-sdlc 1.1.0 or later.')
         : fixProgramFailed(c)
           ? `Kata could not read where ${c.change} stands: ${c.plan_unreadable_reason ?? 'the program gave no message'}`
           : null;
@@ -198,7 +198,7 @@ export class SdlcHomeViewModel {
   /** Whether the plugin on this machine can triage a change. */
   readonly lightTrack = computed(() => {
     const r = this.readiness();
-    return r.kind === 'ready' && r.lightTrack;
+    return r.kind === 'ready';
   });
   readonly settingsOpen = signal(false);
 
@@ -945,7 +945,7 @@ export class SdlcHomeViewModel {
     let names: NameRow[] = [];
     let lastRuns: Record<string, number> = {};
     const repo = masterRepo(scan);
-    let readiness: Readiness = { kind: 'missing' };
+    let readiness: Readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
     try {
       readiness = await this.transport.sdlcPluginReadiness(w.folder);
     } catch {
@@ -983,7 +983,7 @@ export class SdlcHomeViewModel {
       } catch (e) {
         this.toasts.error(`Could not read the workspace: ${message(e)}`);
       }
-      if (readiness.kind === 'ready' && readiness.lightTrack) {
+      if (readiness.kind === 'ready') {
         try {
           instructions = await this.transport.sdlcInstructions(w.folder, repo);
         } catch (e) {

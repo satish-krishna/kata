@@ -37,7 +37,6 @@ const REQUEST: BuildRequest = {
   action: 'start',
   continueWithLeftovers: false,
 };
-const UPDATE_PLUGIN = 'Update the ai-sdlc plugin to 0.9.0 or later, then start the build again.';
 const INSTALL_PLUGIN = 'Install the ai-sdlc plugin, then start the build again.';
 
 type FakeSnapshot = { state: RunState; events: KataEvent[]; summary: null; asks: []; permissions: []; exit?: number | null };
@@ -62,7 +61,7 @@ class FakeTransport {
   sdlcChecksDir = vi.fn(async () => '/kata/workbench/checks');
   sdlcSettings = vi.fn(async () => ({ mode: null, remember: false, permission_mode: 'bypass' as const }));
   catalog = vi.fn(async (..._a: unknown[]) => seedCatalog);
-  readiness: Readiness = { kind: 'ready', dir: '/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2], lightTrack: false, naming: false };
+  readiness: Readiness = { kind: 'ready', plugin: { dir: '/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2] }, gh: 'present' };
   prepared: PrepareOutcome | (() => Promise<PrepareOutcome>) = { kind: 'ready', start: BUILD_START };
   sdlcPluginReadiness = vi.fn(async (..._a: unknown[]) => { this.calls.push('readiness'); return this.readiness; });
   sdlcBuildPrepare = vi.fn(async (..._a: unknown[]) => {
@@ -705,9 +704,9 @@ describe('SdlcRunner build', () => {
   describe('prepareBuild', () => {
     it('start refuses a plugin the backend finds too old before preparing (R2.5, R10.1)', async () => {
       const ctx = setup();
-      ctx.fake.readiness = { kind: 'tooOld', have: '0.7.9', need: '0.9.0' };
+      ctx.fake.readiness = { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.' };
       const out = await ctx.runner.prepareBuild(REQUEST);
-      expect(out).toEqual({ kind: 'refused', reason: UPDATE_PLUGIN });
+      expect(out).toEqual({ kind: 'refused', reason: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.' });
       expect(ctx.fake.sdlcPluginReadiness).toHaveBeenCalledWith(REQUEST.folder);
       expect(ctx.fake.sdlcBuildPrepare).not.toHaveBeenCalled();
       expect(ctx.startRun).not.toHaveBeenCalled();
@@ -716,7 +715,7 @@ describe('SdlcRunner build', () => {
 
     it('refuses when the backend finds the plugin missing', async () => {
       const ctx = setup();
-      ctx.fake.readiness = { kind: 'missing' };
+      ctx.fake.readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
       const out = await ctx.runner.prepareBuild(REQUEST);
       expect(out).toEqual({ kind: 'refused', reason: INSTALL_PLUGIN });
       expect(ctx.fake.sdlcBuildPrepare).not.toHaveBeenCalled();

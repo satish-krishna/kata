@@ -146,7 +146,7 @@ describe("actions of a fix (R4.1, R7.3)", () => {
   });
 
   it("a fix that needs the plugin is labelled so, as a warning, with no actions", () => {
-    expect(stageLabel("fix-needs-plugin")).toEqual({ step: "intent", text: "Fix · needs ai-sdlc 0.13.0", tone: "warning" });
+    expect(stageLabel("fix-needs-plugin")).toEqual({ step: "intent", text: "Fix · needs ai-sdlc 1.1.0", tone: "warning" });
     expect(actionsForChange(fixAt("fix-needs-plugin"))).toEqual([]);
   });
 

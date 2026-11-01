@@ -192,12 +192,12 @@ describe('ChangePage', () => {
 
     it('a refused build opens the refusal dialog', async () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
-      vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'tooOld', have: '0.7.9', need: '0.9.0' });
+      vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.' });
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
       await settle();
       await confirmPreview();
       await vi.waitFor(() => expect(document.body.textContent).toContain('The build did not start'));
-      expect(document.body.textContent).toContain('Update the ai-sdlc plugin to 0.9.0 or later');
+      expect(document.body.textContent).toContain('The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.');
     });
 
     it('leftovers open the confirm dialog titled and listing each repository and file', async () => {
@@ -869,7 +869,7 @@ describe('ChangePage way back', () => {
       [await real(m, s, n)].map((c) => (c.change === PHOTOS_CHANGE ? { ...c, stage: 'fix-awaiting' as const, track: 'fix' as const } : c))[0],
     );
     const ready = await transport.sdlcPluginReadiness(null);
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(ready.kind === 'ready' ? { ...ready, lightTrack: true } : ready);
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(ready.kind === 'ready' ? ready : ready);
     const { container } = await mount(PHOTOS_CHANGE, transport);
     const send = vi.spyOn(transport, 'sendMessage');
     const started = vi.spyOn(transport, 'runSpec');

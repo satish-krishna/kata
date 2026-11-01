@@ -68,7 +68,7 @@ export const MOCK_BUILD_CHANGE = '2026-10-19-build-demo';
 /** A change whose build finished and whose three pull requests are open: the toolbar's links and its "Build · done" pill. */
 export const MOCK_DONE_CHANGE = '2026-10-18-photo-limits-shipped';
 /** The version the demo's `ai-sdlc` plugin reports. */
-export const MOCK_PLUGIN_VERSION = '0.13.0';
+export const MOCK_PLUGIN_VERSION = '1.1.0';
 /** A fix awaiting acceptance: the light track's three documents are drafted. */
 export const MOCK_FIX_CHANGE = '2026-10-22-photo-retry-fix';
 /** A fix that was rejected, so it is closed. */

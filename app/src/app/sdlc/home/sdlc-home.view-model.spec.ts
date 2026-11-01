@@ -547,12 +547,12 @@ describe('SdlcHomeViewModel runs', () => {
     });
   });
 
-  it('offers the light track only when the plugin reports it', async () => {
+  it('offers the light track only when the plugin is ready', async () => {
     const { vm, transport } = setup();
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.9.0', layouts: [1], lightTrack: false, naming: false });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.9.0.' });
     await vm.init();
     expect(vm.lightTrack()).toBe(false);
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true, naming: false });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', plugin: { dir: '/p', version: '1.1.0', layouts: [1] }, gh: 'present' });
     await vm.selectWorkspace(vm.workspaces()[0].id);
     expect(vm.lightTrack()).toBe(true);
   });
@@ -700,7 +700,7 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
   it("says to install the plugin on the change list when a plan could not be read and the plugin is missing", async () => {
     const { vm, transport } = setup();
     withUnreadablePlan(transport);
-    vi.spyOn(transport, "sdlcPluginReadiness").mockResolvedValue({ kind: "missing" });
+    vi.spyOn(transport, "sdlcPluginReadiness").mockResolvedValue({ kind: "blocked", reason: "pluginMissing", message: "Install the ai-sdlc plugin" });
     await vm.init();
     await settled(vm);
     expect(noticeOf(vm)?.text).toBe("Install the ai-sdlc plugin to read this document");
@@ -710,10 +710,10 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
   it("says to update the plugin when it is too old", async () => {
     const { vm, transport } = setup();
     withUnreadablePlan(transport);
-    vi.spyOn(transport, "sdlcPluginReadiness").mockResolvedValue({ kind: "tooOld", have: "0.6.0", need: "0.9.0" });
+    vi.spyOn(transport, "sdlcPluginReadiness").mockResolvedValue({ kind: "blocked", reason: "pluginTooOld", message: "The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.6.0." });
     await vm.init();
     await settled(vm);
-    expect(noticeOf(vm)?.text).toBe("Update the ai-sdlc plugin to 0.9.0 or later");
+    expect(noticeOf(vm)?.text).toBe("The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.6.0.");
   });
 
   it("says a plan could not be read when the plugin is usable but the program did not run", async () => {
@@ -739,10 +739,10 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
 
   it("shows a fix's needs-the-plugin reason as it is, without the document prefix (F5)", async () => {
     const { vm, transport } = setup();
-    withFix(transport, { stage: "fix-needs-plugin", fix_row: null, plan_unreadable_reason: "Needs ai-sdlc 0.13.0 or later." });
+    withFix(transport, { stage: "fix-needs-plugin", fix_row: null, plan_unreadable_reason: "Needs ai-sdlc 1.1.0 or later." });
     await vm.init();
     await settled(vm);
-    expect(noticeOf(vm)?.text).toBe("Needs ai-sdlc 0.13.0 or later.");
+    expect(noticeOf(vm)?.text).toBe("Needs ai-sdlc 1.1.0 or later.");
   });
 
   it("names the change when the program could not say where a fix stands (F5)", async () => {
@@ -771,12 +771,12 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
 });
 
 describe('SdlcHomeViewModel workspace instructions', () => {
-  const lightReady: Readiness = { kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true, naming: false };
+  const lightReady: Readiness = { kind: 'ready', plugin: { dir: '/p', version: '1.1.0', layouts: [1] }, gh: 'present' };
 
   it('reads the instructions state only when the plugin supports the light track', async () => {
     const { vm, transport } = setup();
     const read = vi.spyOn(transport, 'sdlcInstructions');
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ ...lightReady, version: '0.9.0', lightTrack: false });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.9.0.' });
     await vm.init();
     expect(read).not.toHaveBeenCalled();
     expect(vm.instructions()).toBeNull();
@@ -889,7 +889,7 @@ describe('SdlcHomeViewModel stage passes', () => {
     const names = vi.spyOn(transport, 'sdlcChangeNames');
     const health = vi.spyOn(transport, 'sdlcContextHealth');
     const instructions = vi.spyOn(transport, 'sdlcInstructions');
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true, naming: false });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', plugin: { dir: '/p', version: '1.1.0', layouts: [1] }, gh: 'present' });
     controlledPass(transport);
     await vm.init();
     expect(health).toHaveBeenCalled();

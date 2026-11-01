@@ -129,7 +129,7 @@ const RUNS: Record<Exclude<StageAction, HandledAction>, StageRun> = {
 };
 /** The fix runs, which need a plugin that has the light track. */
 const FIX_RUNS: readonly StageAction[] = ['finish-fix-draft', 'change-fix', 'reopen-fix', 'accept-fix'];
-const NEEDS_LIGHT_TRACK = 'Needs ai-sdlc 0.13.0 or later.';
+const NEEDS_LIGHT_TRACK = 'Needs ai-sdlc 1.1.0 or later.';
 const NEEDS_NAME = 'Name the branch first.';
 /** The actions that start or continue build work: they wait for the branch's name. */
 const NEEDS_BRANCH: readonly StageAction[] = ['start-build', 'continue-build', 'another-round', 'run-review'];
@@ -271,7 +271,7 @@ export class ChangePageViewModel {
     if (c === null) return null;
     // An older plugin or a program failure: the reason alone, since no status was read.
     if (c.stage === 'fix-needs-plugin') {
-      return { tone: 'warning', text: c.plan_unreadable_reason ?? 'Needs ai-sdlc 0.13.0 or later.', lines: [] };
+      return { tone: 'warning', text: c.plan_unreadable_reason ?? 'Needs ai-sdlc 1.1.0 or later.', lines: [] };
     }
     if (c.stage !== 'fix-unsettled') return null;
     const text = 'The workflow does not leave a fix in these statuses, so nothing can be run on it.';
@@ -1065,7 +1065,7 @@ export class ChangePageViewModel {
   /** Whether the plugin on this machine can triage a change. */
   readonly lightTrack = computed(() => {
     const r = this.readiness();
-    return r !== null && r.kind === 'ready' && r.lightTrack;
+    return r !== null && r.kind === 'ready';
   });
   /** The fix whose rejection waits on the other-edits confirm, after its replacement opened; null when none does. */
   private readonly pendingFix = signal<FixClose | null>(null);
@@ -1640,7 +1640,7 @@ export class ChangePageViewModel {
     try {
       return await this.transport.sdlcPluginReadiness(folder);
     } catch {
-      return { kind: 'missing' };
+      return { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
     }
   }
 

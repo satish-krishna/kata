@@ -6,7 +6,7 @@ import { shownBuild, shownChangeList, shownDocument, shownPart, type DocNotice, 
 /* The owner of "the Workbench never shows less than a document holds without saying so", tested row by row against
  * the table in the plan, written by hand. */
 
-const ready: Extract<Readiness, { kind: 'ready' }> = { kind: 'ready', dir: 'plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2], lightTrack: false, naming: false };
+const ready: Extract<Readiness, { kind: 'ready' }> = { kind: 'ready', plugin: { dir: 'plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2] }, gh: 'present' };
 const problems: Problem[] = [
   { file: 'spec.md', line: 14, message: 'requirement has no ID' },
   { file: 'spec.md', line: 31, message: 'scenario is outside a requirement' },
@@ -23,17 +23,17 @@ type Row = { name: string; read: ReadResult | ReadError | null; readiness: Readi
 
 /** One entry per row of the table and per branch of a row. */
 const ROWS: Row[] = [
-  { name: 'plugin missing, a document read', read: read(2), readiness: { kind: 'missing' }, shown: { show: 'plain', notice: INSTALL } },
-  { name: 'plugin missing, nothing read', read: null, readiness: { kind: 'missing' }, shown: { show: 'plain', notice: INSTALL } },
-  { name: 'plugin missing beats an error', read: error, readiness: { kind: 'missing' }, shown: { show: 'plain', notice: INSTALL } },
-  { name: 'plugin missing beats problems and a newer layout', read: read(3, problems), readiness: { kind: 'missing' }, shown: { show: 'plain', notice: INSTALL } },
-  { name: 'plugin too old', read: read(2), readiness: { kind: 'tooOld', have: '0.6.0', need: '0.9.0' }, shown: { show: 'plain', notice: warn('Update the ai-sdlc plugin to 0.9.0 or later') } },
-  { name: 'plugin too old names the version it needs', read: error, readiness: { kind: 'tooOld', have: '0.7.0', need: '0.9.1' }, shown: { show: 'plain', notice: warn('Update the ai-sdlc plugin to 0.9.1 or later') } },
+  { name: 'plugin missing, a document read', read: read(2), readiness: { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' }, shown: { show: 'plain', notice: INSTALL } },
+  { name: 'plugin missing, nothing read', read: null, readiness: { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' }, shown: { show: 'plain', notice: INSTALL } },
+  { name: 'plugin missing beats an error', read: error, readiness: { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' }, shown: { show: 'plain', notice: INSTALL } },
+  { name: 'plugin missing beats problems and a newer layout', read: read(3, problems), readiness: { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' }, shown: { show: 'plain', notice: INSTALL } },
+  { name: 'plugin too old', read: read(2), readiness: { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.6.0.' }, shown: { show: 'plain', notice: warn('The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.6.0.') } },
+  { name: 'plugin too old shows the message', read: error, readiness: { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.0.' }, shown: { show: 'plain', notice: warn('The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.0.') } },
   { name: 'ready, the program could not read the document (F4)', read: error, readiness: ready, shown: { show: 'plain', notice: warn('Could not read this document: front matter is not closed') } },
   { name: 'ready, layout not accepted', read: read(3), readiness: ready, shown: { show: 'parsed', notice: NEWER } },
   { name: 'ready, layout not accepted, with problems', read: read(4, problems), readiness: ready, shown: { show: 'parsed', notice: NEWER } },
-  { name: 'ready, accepted layouts come from readiness, not a maximum', read: read(3), readiness: { ...ready, layouts: [2, 3] }, shown: { show: 'parsed', notice: null } },
-  { name: 'ready, a layout missing from the accepted list is not accepted', read: read(1), readiness: { ...ready, layouts: [2, 3] }, shown: { show: 'parsed', notice: NEWER } },
+  { name: 'ready, accepted layouts come from readiness, not a maximum', read: read(3), readiness: { ...ready, plugin: { ...ready.plugin, layouts: [2, 3] } }, shown: { show: 'parsed', notice: null } },
+  { name: 'ready, a layout missing from the accepted list is not accepted', read: read(1), readiness: { ...ready, plugin: { ...ready.plugin, layouts: [2, 3] } }, shown: { show: 'parsed', notice: NEWER } },
   { name: 'ready, accepted layout 2 with problems', read: read(2, problems), readiness: ready, shown: { show: 'parsed', notice: warn('This document does not follow the layout', lines) } },
   { name: 'ready, layout 1 with problems shows the problems, not the label (F3)', read: read(1, problems), readiness: ready, shown: { show: 'parsed', notice: warn('This document does not follow the layout', lines) } },
   { name: 'ready, layout 1 without problems', read: read(1), readiness: ready, shown: { show: 'parsed', notice: { tone: 'idle', text: 'Older layout', lines: [] } } },
@@ -89,7 +89,7 @@ describe('shownBuild', () => {
   });
 
   it('a plugin that cannot read says so, whatever the parts hold', () => {
-    expect(shownBuild([older], { kind: 'missing' }).notice).toEqual(INSTALL);
+    expect(shownBuild([older], { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' }).notice).toEqual(INSTALL);
   });
 });
 
@@ -99,7 +99,7 @@ describe('shownPart', () => {
   });
 
   it('gives the plugin rows when the plugin is unusable', () => {
-    expect(shownPart({ layout: 2, problems }, { kind: 'missing' }).notice).toEqual(INSTALL);
+    expect(shownPart({ layout: 2, problems }, { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' }).notice).toEqual(INSTALL);
   });
 });
 
@@ -129,7 +129,7 @@ describe('shownChangeList (F26)', () => {
   });
 
   it('keeps the plugin rows above any cause', () => {
-    expect(list({ kind: 'missing' }, ['layout 3 is newer'])).toEqual(INSTALL);
+    expect(list({ kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' }, ['layout 3 is newer'])).toEqual(INSTALL);
   });
 
   it('falls back to the plain notice when a plan is unreadable and no cause came with it', () => {
