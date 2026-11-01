@@ -218,7 +218,7 @@ describe('declaring done', () => {
       layout: 2,
       problems: [],
       reviews: [{ number: 1, reviewed_at: '2026-10-22', commits, findings: [finding] }],
-      master_moved: ['plugin/format/check.mjs'],
+      master_moved: ['plugin/tools/ai-sdlc.ts'],
     });
     await vm.act('declare-done');
     expect(vm.doneReport()!.review).toEqual({ missing: 'stale' });

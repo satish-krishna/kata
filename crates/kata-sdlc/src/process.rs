@@ -45,22 +45,6 @@ pub(crate) struct CapturedExit {
     pub stderr: String,
 }
 
-/// Like `run`, but keeps all of stdout (a parsed document can be far larger than the 64 KiB tail)
-/// and keeps stderr apart from it. A timeout kills the process tree and returns `TimedOut` with
-/// the stderr captured so far.
-pub(crate) fn run_capture(
-    argv: &[String],
-    cwd: &Path,
-    timeout: Duration,
-) -> Result<CapturedExit, ProcessError> {
-    let (code, stderr, stdout) = run_argv(argv, cwd, timeout, true, false)?;
-    Ok(CapturedExit {
-        code,
-        stdout,
-        stderr,
-    })
-}
-
 /// Runs `argv` in `cwd` and returns the exit code, the output tail and the kept stdout.
 fn run_argv(
     argv: &[String],

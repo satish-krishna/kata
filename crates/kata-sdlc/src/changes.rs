@@ -1675,7 +1675,7 @@ mod tests {
         repo
     }
     fn calls(plugin: &Path) -> Vec<String> {
-        std::fs::read_to_string(plugin.join("format").join("calls.log"))
+        std::fs::read_to_string(plugin.join("tools").join("calls.log"))
             .map(|t| t.lines().map(str::to_string).collect())
             .unwrap_or_default()
     }
@@ -2367,8 +2367,8 @@ source_spec_commit: {spec_pin}
     fn read_parsed_reads_a_spec_and_a_plan_and_refuses_the_rest() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
-        let spec = include_str!("../tests/ai-sdlc-format/examples/spec/2/valid.md");
-        let plan = include_str!("../tests/ai-sdlc-format/examples/plan/2/valid.md");
+        let spec = include_str!("../tests/ai-sdlc-tools/examples/spec/2/valid.md");
+        let plan = include_str!("../tests/ai-sdlc-tools/examples/plan/2/valid.md");
         testutil::write(&repo, "intent/s/2026-10-12-x/spec.md", spec);
         testutil::write(&repo, "intent/s/2026-10-12-x/plan.md", plan);
         let plugin = testutil::plugin_dir();
@@ -2713,18 +2713,18 @@ source_spec_commit: {spec_pin}
                 }
             }
         }
-        let vendored = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format");
-        copy(&vendored, &dir.join("format"));
-        std::fs::rename(dir.join("format/check.mjs"), dir.join("format/real.mjs")).unwrap();
+        let vendored = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools");
+        copy(&vendored, &dir.join("tools"));
+        std::fs::rename(dir.join("tools/ai-sdlc.ts"), dir.join("tools/real.ts")).unwrap();
         std::fs::write(
-            dir.join("format/check.mjs"),
+            dir.join("tools/ai-sdlc.ts"),
             format!(
                 "import {{ readFileSync }} from 'node:fs';\n\
                  const args = process.argv.slice(2);\n\
                  let slow = {slow_batch} && args[0] === 'fix-state' && args.length > 3;\n\
                  if (args[0] === 'read') {{ try {{ slow = readFileSync(args[2], 'utf8').includes('KATA-SLOW'); }} catch {{}} }}\n\
                  if (slow) await new Promise((r) => setTimeout(r, 600000));\n\
-                 await import('./real.mjs');\n"
+                 await import('./real.ts');\n"
             ),
         )
         .unwrap();
@@ -2901,12 +2901,12 @@ source_spec_commit: {spec_pin}
         // The wrapper logs one line for every `read` of a document that holds the broken layout line;
         // the build status stages a copy of the plan, so the log counts content, not paths.
         std::fs::write(
-            plugin.join("format/check.mjs"),
+            plugin.join("tools/ai-sdlc.ts"),
             format!(
                 "import {{ readFileSync, appendFileSync }} from 'node:fs';\n\
                  const args = process.argv.slice(2);\n\
                  if (args[0] === 'read') {{ try {{ if (readFileSync(args[2], 'utf8').includes('layout: soon')) appendFileSync({log:?}, 'broken plan\\n'); }} catch {{}} }}\n\
-                 await import('./real.mjs');\n"
+                 await import('./real.ts');\n"
             ),
         )
         .unwrap();
@@ -2949,7 +2949,7 @@ source_spec_commit: {spec_pin}
             names.push(fix.to_string());
         }
         let ctx = ReadContext::new(Some(&plugin), &repo);
-        ctx.limit_format_calls(std::time::Duration::from_secs(3));
+        ctx.limit_format_calls(std::time::Duration::from_secs(10));
         let events = pass_over(&ctx, &names);
         for fix in &names[1..] {
             let info = stage_of(&events, fix);

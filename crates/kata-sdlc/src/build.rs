@@ -150,7 +150,7 @@ pub(crate) fn unreadable(error: FormatError) -> GitError {
 
 /// The format program inside the ai-sdlc plugin folder.
 pub(crate) fn program(plugin: &Path) -> PathBuf {
-    plugin.join("format").join("check.mjs")
+    plugin.join("tools").join("ai-sdlc.ts")
 }
 
 /// Where the committed documents are put for the program to read: the program takes a document's
@@ -1277,21 +1277,21 @@ mod tests {
 
     // ---- the build gate (R8, R10.1) ----
 
-    const VALID_PLAN: &str = include_str!("../tests/ai-sdlc-format/examples/plan/2/valid.md");
+    const VALID_PLAN: &str = include_str!("../tests/ai-sdlc-tools/examples/plan/2/valid.md");
     const PLAN_WITHOUT_TESTS: &str =
-        include_str!("../tests/ai-sdlc-format/examples/plan/2/task-without-tests-section.md");
-    const VALID_LOG: &str = include_str!("../tests/ai-sdlc-format/examples/build-log/2/valid.md");
+        include_str!("../tests/ai-sdlc-tools/examples/plan/2/task-without-tests-section.md");
+    const VALID_LOG: &str = include_str!("../tests/ai-sdlc-tools/examples/build-log/2/valid.md");
     const LOG_WITH_TWICE: &str =
-        include_str!("../tests/ai-sdlc-format/examples/build-log/2/entry-recorded-twice.md");
+        include_str!("../tests/ai-sdlc-tools/examples/build-log/2/entry-recorded-twice.md");
 
     /// A stand-in plugin folder whose format program answers every read with an empty document: a
     /// plan in `plan_layout` and a build log in `log_layout`.
     fn plugin_reading(plan_layout: u32, log_layout: u32) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        let format = dir.path().join("format");
+        let format = dir.path().join("tools");
         std::fs::create_dir_all(&format).unwrap();
         std::fs::write(
-            format.join("check.mjs"),
+            format.join("ai-sdlc.ts"),
             format!(
                 "const file = process.argv[4] ?? '';\n\
                  const plan = file.endsWith('plan.md');\n\
@@ -1576,10 +1576,10 @@ repo: api",
         // reads of two changes took turns, the first would give up waiting and never meet the other.
         let rendezvous = tempfile::tempdir().unwrap();
         let plugin = tempfile::tempdir().unwrap();
-        let format_dir = plugin.path().join("format");
+        let format_dir = plugin.path().join("tools");
         std::fs::create_dir_all(&format_dir).unwrap();
         std::fs::write(
-            format_dir.join("check.mjs"),
+            format_dir.join("ai-sdlc.ts"),
             format!(
                 "import {{ readdirSync, writeFileSync }} from 'node:fs';
                  if (process.argv[2] === 'check') process.exit(0);

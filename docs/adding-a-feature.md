@@ -97,7 +97,7 @@ Work test-first. TDD is the workflow, not a suggestion.
    cargo test -p kata-sdlc --features ts export_bindings
    ```
 
-3. **Follow the type into the frontend**, then do shape D for any new command, mock fixture or route. `kata-sdlc` never touches the run-spec or the event protocol, so `CONTRACTS.md` does not apply. A change to how a plan, spec, build log or review is read belongs in the ai-sdlc plugin's format program: refresh the vendored copy with `node scripts/vendor-ai-sdlc-format.mjs` and run `cargo test -p kata-sdlc --test format_conformance` (needs Node.js 20).
+3. **Follow the type into the frontend**, then do shape D for any new command, mock fixture or route. `kata-sdlc` never touches the run-spec or the event protocol, so `CONTRACTS.md` does not apply. A change to how a plan, spec, build log or review is read belongs in the ai-sdlc plugin's format program: refresh the vendored copy with `node scripts/vendor-ai-sdlc-tools.mjs` and run `cargo test -p kata-sdlc --test format_conformance` (needs Node.js 20).
 
 ---
 

@@ -75,8 +75,8 @@ fn node_missing_is_reported_on_every_change_that_needs_it() {
     let git_program = find_program("git");
     let plugin = dir.path().join("plugin");
     copy_dir(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format"),
-        &plugin.join("format"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools"),
+        &plugin.join("tools"),
     );
     fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
     fs::write(

@@ -1,14 +1,15 @@
-//! Runs the ai-sdlc plugin's format program (`check.mjs`) and reads its answer.
+//! Runs the ai-sdlc plugin's format program (`ai-sdlc.ts`) and reads its answer.
 //!
 //! The program is the one place that knows how a spec, a plan, a build log or a review is laid
 //! out; Kata never parses those documents itself. `read` asks it for the parsed document
-//! (`check.mjs read --json`) and `check_change` asks it to check a change's documents against each
-//! other (`check.mjs check`). The program is spawned with an argv array (never a shell), a null
+//! (`ai-sdlc.ts read --json`) and `check_change` asks it to check a change's documents against each
+//! other (`ai-sdlc.ts check`). The program is spawned with an argv array (never a shell), a null
 //! stdin and a 30-second timeout that kills its whole process tree.
 //!
 //! The types below mirror `schema/read-result.schema.json` field for field, so they keep the
 //! program's snake_case names.
-use crate::process::{self, ProcessError};
+use crate::ai_sdlc::Failure;
+use crate::process;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -181,7 +182,7 @@ pub struct ParsedReview {
 /// The document layout versions Kata can read; a document in any other layout is shown as plain text and blocks building.
 pub const ACCEPTED_LAYOUTS: &[u32] = &[1, 2];
 
-/// What `check.mjs read --json <file>` prints: the parsed document, its layout version, and every
+/// What `ai-sdlc.ts read --json <file>` prints: the parsed document, its layout version, and every
 /// problem found in it.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
@@ -236,7 +237,7 @@ impl ReadResult {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FormatError {
     /// `node` is not on this machine's PATH.
-    #[error("Node.js was not found on this machine; ai-sdlc needs Node.js 20 or later")]
+    #[error("Node.js was not found on this machine; ai-sdlc needs Node.js 22.18 or later")]
     NodeMissing,
     /// The program ran and said it could not work on the file (exit 2), or was killed.
     #[error("the format program could not run: {0}")]
@@ -303,7 +304,12 @@ fn key_of(program: &Path, relative: &str, bytes: &[u8], canonical: &Path) -> Cac
         hasher.update(bytes);
     };
     // The program is part of the key: a different plugin version may read the same bytes differently.
+    // The entry is a small file that imports the rest, so the plugin's version (its manifest, or the
+    // `VERSION` file of a vendored copy) stands for the files it imports.
     part(&std::fs::read(program).unwrap_or_default());
+    let tools = program.parent().unwrap_or(Path::new("."));
+    part(&std::fs::read(tools.join("VERSION")).unwrap_or_default());
+    part(&std::fs::read(tools.join("../.claude-plugin/plugin.json")).unwrap_or_default());
     part(relative.as_bytes());
     part(bytes);
     if relative == "plan.md" {
@@ -410,7 +416,7 @@ fn disk_store(path: &Path, result: &ReadResult) {
     }
 }
 
-/// Reads one document with `program` (the path of `check.mjs`). A document with the same name below
+/// Reads one document with `program` (the path of `ai-sdlc.ts`). A document with the same name below
 /// its change folder and the same bytes is read once, wherever it sits: the next call returns the
 /// earlier answer without starting the program. Never uses the parse cache on disk.
 pub fn read(program: &Path, file: &Path) -> Result<ReadResult, FormatError> {
@@ -583,7 +589,7 @@ pub struct FixFacts {
     pub built: bool,
 }
 
-/// What `check.mjs fix-state --json <change folder>` prints: the row of the fix-state table (1 to 8)
+/// What `ai-sdlc.ts fix-state --json <change folder>` prints: the row of the fix-state table (1 to 8)
 /// and the facts it was decided on.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct FixState {
@@ -617,7 +623,7 @@ pub struct RenderedNames {
     pub pull_request_title: Option<String>,
 }
 
-/// What `check.mjs naming --json` prints.
+/// What `ai-sdlc.ts naming --json` prints.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct NamingAnswer {
     /// The system has a `naming` key.
@@ -966,17 +972,16 @@ fn run_within(
     }
 }
 
-/// Starts `node <program> <args>` in `cwd` and reads its exit.
+/// Starts `node <program> <args>` in `cwd` through the one door ([`crate::ai_sdlc::execute`]) and reads
+/// its exit.
 fn start(
     program: &Path,
     cwd: &Path,
     args: &[&str],
     timeout: Duration,
 ) -> Result<process::CapturedExit, FormatError> {
-    let mut argv = vec!["node".to_string(), program.display().to_string()];
-    argv.extend(args.iter().map(|a| a.to_string()));
     RUNS.fetch_add(1, Ordering::SeqCst);
-    match process::run_capture(&argv, cwd, timeout) {
+    match crate::ai_sdlc::execute(Path::new("node"), program, cwd, args, timeout) {
         Ok(out) if matches!(out.code, Some(0 | 1)) => Ok(out),
         Ok(out) => Err(FormatError::CouldNotRun(match out.stderr.trim() {
             "" => format!(
@@ -985,11 +990,9 @@ fn start(
             ),
             stderr => stderr.to_string(),
         })),
-        Err(ProcessError::SpawnFailed(message)) if message.contains("was not found") => {
-            Err(FormatError::NodeMissing)
-        }
-        Err(ProcessError::SpawnFailed(message)) => Err(FormatError::CouldNotRun(message)),
-        Err(ProcessError::TimedOut { secs, .. }) => Err(FormatError::CouldNotRun(format!(
+        Err(Failure::NodeMissing) => Err(FormatError::NodeMissing),
+        Err(Failure::Other(message)) => Err(FormatError::CouldNotRun(message)),
+        Err(Failure::TimedOut { secs }) => Err(FormatError::CouldNotRun(format!(
             "it did not finish in {secs} seconds"
         ))),
     }
@@ -1067,7 +1070,7 @@ mod tests {
         let plugin = crate::testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
         let folders = folders_of(tmp.path(), 45);
         let got = fix_states(&crate::build::program(&plugin), &folders);
-        let calls = std::fs::read_to_string(plugin.join("format").join("calls.log")).unwrap();
+        let calls = std::fs::read_to_string(plugin.join("tools").join("calls.log")).unwrap();
         assert_eq!(calls.lines().collect::<Vec<_>>(), vec!["fix-state 45"]);
         assert_eq!(got.len(), 45);
         assert!(got.iter().all(|r| r.as_ref().is_ok_and(|s| s.row == 6)));
@@ -1088,7 +1091,7 @@ mod tests {
             .collect();
         let program = crate::build::program(&plugin);
         let got = fix_states(&program, &folders);
-        let calls = std::fs::read_to_string(plugin.join("format").join("calls.log")).unwrap();
+        let calls = std::fs::read_to_string(plugin.join("tools").join("calls.log")).unwrap();
         let sizes: Vec<usize> = calls
             .lines()
             .map(|l| l.trim_start_matches("fix-state ").parse().unwrap())
@@ -1103,7 +1106,7 @@ mod tests {
     fn a_chunk_that_times_out_fails_only_its_own_folders_f1() {
         let tmp = tempfile::tempdir().unwrap();
         let plugin = crate::testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
-        let check = plugin.join("format").join("check.mjs");
+        let check = plugin.join("tools").join("ai-sdlc.ts");
         let text = std::fs::read_to_string(&check).unwrap();
         std::fs::write(
             &check,
@@ -1143,7 +1146,7 @@ mod tests {
         let file = dir.path().join("build/review.md");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, text).unwrap();
-        let program = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format/check.mjs");
+        let program = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts");
         match read(&program, &file).unwrap() {
             ReadResult::Review {
                 document, problems, ..

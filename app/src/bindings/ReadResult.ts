@@ -6,7 +6,7 @@ import type { ParsedSpec } from "./ParsedSpec";
 import type { Problem } from "./Problem";
 
 /**
- * What `check.mjs read --json <file>` prints: the parsed document, its layout version, and every
+ * What `ai-sdlc.ts read --json <file>` prints: the parsed document, its layout version, and every
  * problem found in it.
  */
 export type ReadResult = { "kind": "spec", layout: number, document: ParsedSpec, problems: Array<Problem>, } | { "kind": "plan", layout: number, document: ParsedPlan, problems: Array<Problem>, } | { "kind": "build-log", layout: number, document: ParsedBuildLog, problems: Array<Problem>, } | { "kind": "review", layout: number, document: ParsedReview, problems: Array<Problem>, };

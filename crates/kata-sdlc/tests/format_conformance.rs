@@ -1,7 +1,7 @@
 //! Kata reads every document exactly as the ai-sdlc format program does (R6.2).
 //!
-//! These tests run the vendored copy of the plugin's format folder in `tests/ai-sdlc-format/`
-//! (refreshed with `node scripts/vendor-ai-sdlc-format.mjs`), never the plugin repository. The
+//! These tests run the vendored copy of the plugin's format folder in `tests/ai-sdlc-tools/`
+//! (refreshed with `node scripts/vendor-ai-sdlc-tools.mjs`), never the plugin repository. The
 //! running Workbench always runs the installed plugin's program instead.
 #![allow(clippy::disallowed_methods)]
 use kata_sdlc::format::{self, FormatError, Problem};
@@ -11,11 +11,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn vendored() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools")
 }
 
 fn program() -> PathBuf {
-    vendored().join("check.mjs")
+    vendored().join("ai-sdlc.ts")
 }
 
 /// Every file below `dir` whose name ends with `suffix`, sorted.
@@ -161,24 +161,36 @@ fn the_vendored_copy_matches_the_sibling_checkout() {
     let plugin = std::env::var_os("KATA_AI_SDLC_PLUGIN")
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../ai-sdlc/plugin"));
-    let source = plugin.join("format");
+    let source = plugin.join("tools");
     if !source.is_dir() {
         println!("sibling ai-sdlc checkout not found; copy not compared");
         return;
     }
     let copy = vendored();
     let mut differences = Vec::new();
-    for entry in [
-        "check.mjs",
-        "THIRD_PARTY_LICENSES.txt",
-        "schema",
-        "examples",
-    ] {
-        compare_trees(&source.join(entry), &copy.join(entry), &mut differences);
+    // Everything the program runs from, and its examples; the development files are not copied.
+    let left_out = [
+        "node_modules",
+        "test",
+        "scripts",
+        "package.json",
+        "package-lock.json",
+        "tsconfig.json",
+    ];
+    let mut entries: Vec<_> = fs::read_dir(&source)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .chain(fs::read_dir(&copy).unwrap().map(|e| e.unwrap().file_name()))
+        .filter(|name| name != "VERSION" && !left_out.contains(&name.to_str().unwrap()))
+        .collect();
+    entries.sort();
+    entries.dedup();
+    for entry in entries {
+        compare_trees(&source.join(&entry), &copy.join(&entry), &mut differences);
     }
     assert!(
         differences.is_empty(),
-        "run node scripts/vendor-ai-sdlc-format.mjs; {differences:#?}"
+        "run node scripts/vendor-ai-sdlc-tools.mjs; {differences:#?}"
     );
     let manifest = fs::read_to_string(plugin.join(".claude-plugin/plugin.json")).unwrap();
     let manifest: Value = serde_json::from_str(&manifest).unwrap();

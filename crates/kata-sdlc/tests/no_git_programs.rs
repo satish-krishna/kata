@@ -187,8 +187,8 @@ fn fixture_on(branch: &str, record: bool) -> Fx {
     };
     fs::create_dir_all(&fx.folder).unwrap();
     copy_dir(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format"),
-        &fx.plugin.join("format"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools"),
+        &fx.plugin.join("tools"),
     );
     fs::create_dir_all(fx.plugin.join(".claude-plugin")).unwrap();
     fs::write(

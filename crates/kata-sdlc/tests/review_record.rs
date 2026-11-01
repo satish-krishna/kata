@@ -1,6 +1,6 @@
 //! Which findings a change shows comes from its review document, `build/review.md` (R14, R15, R16).
 //!
-//! These tests run the vendored copy of the plugin's format program in `tests/ai-sdlc-format/`.
+//! These tests run the vendored copy of the plugin's format program in `tests/ai-sdlc-tools/`.
 #![allow(clippy::disallowed_methods)]
 use kata_sdlc::format::Severity;
 use kata_sdlc::review;
@@ -23,12 +23,12 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
-/// A stand-in for the plugin folder: its `format/` is the vendored program.
+/// A stand-in for the plugin folder: its `tools/` is the vendored program.
 fn plugin(tmp: &Path) -> PathBuf {
     let dir = tmp.join("plugin");
     copy_dir(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format"),
-        &dir.join("format"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools"),
+        &dir.join("tools"),
     );
     dir
 }
@@ -176,12 +176,12 @@ fn a_master_that_gained_a_product_commit_after_the_review_lists_its_files() {
     let tmp = tempfile::tempdir().unwrap();
     let master = reviewed_master(tmp.path());
     fs::create_dir_all(master.join("plugin")).unwrap();
-    fs::write(master.join("plugin/check.mjs"), "// changed\n").unwrap();
+    fs::write(master.join("plugin/ai-sdlc.ts"), "// changed\n").unwrap();
     git(&master, &["add", "."]);
     git(&master, &["commit", "-q", "-m", "product"]);
     assert_eq!(
         moved_since_review(tmp.path(), &master),
-        serde_json::json!(["plugin/check.mjs"])
+        serde_json::json!(["plugin/ai-sdlc.ts"])
     );
 }
 

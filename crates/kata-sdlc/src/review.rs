@@ -176,7 +176,7 @@ mod tests {
     fn started() -> (tempfile::TempDir, std::path::PathBuf, String) {
         let dir = tempfile::tempdir().unwrap();
         let master = testutil::repo(dir.path(), "m");
-        testutil::commit_file(&master, "plugin/format/check.mjs", "// program\n", "plugin");
+        testutil::commit_file(&master, "plugin/tools/ai-sdlc.ts", "// program\n", "plugin");
         let since = git::run(&master, &["rev-parse", "HEAD"]).unwrap();
         (dir, master, since)
     }
@@ -221,10 +221,10 @@ mod tests {
     fn a_run_that_also_committed_under_plugin_is_flagged_with_that_file() {
         let (_dir, master, since) = started();
         testutil::commit_file(&master, REVIEW, "# Review\n", "review");
-        testutil::commit_file(&master, "plugin/format/check.mjs", "// changed\n", "oops");
+        testutil::commit_file(&master, "plugin/tools/ai-sdlc.ts", "// changed\n", "oops");
         assert_eq!(
             verify_run(&master, S, C, &since, &BTreeMap::new()),
-            Err(vec!["plugin/format/check.mjs".to_string()])
+            Err(vec!["plugin/tools/ai-sdlc.ts".to_string()])
         );
     }
 
@@ -243,13 +243,13 @@ mod tests {
     #[test]
     fn uncommitted_edits_elsewhere_are_flagged() {
         let (_dir, master, since) = started();
-        testutil::write(&master, "plugin/format/check.mjs", "// edited\n");
+        testutil::write(&master, "plugin/tools/ai-sdlc.ts", "// edited\n");
         testutil::write(&master, "notes/new.md", "n\n");
         assert_eq!(
             verify_run(&master, S, C, &since, &BTreeMap::new()),
             Err(vec![
                 "notes/new.md".to_string(),
-                "plugin/format/check.mjs".to_string()
+                "plugin/tools/ai-sdlc.ts".to_string()
             ])
         );
     }
@@ -290,13 +290,13 @@ mod tests {
         let before = dirty_now(&master);
         testutil::write(
             &master,
-            "plugin/format/check.mjs",
+            "plugin/tools/ai-sdlc.ts",
             "// edited
 ",
         );
         assert_eq!(
             verify_run(&master, S, C, &since, &before),
-            Err(vec!["plugin/format/check.mjs".to_string()])
+            Err(vec!["plugin/tools/ai-sdlc.ts".to_string()])
         );
     }
 
@@ -327,7 +327,7 @@ mod tests {
         let (_dir, master, since) = started();
         testutil::write(
             &master,
-            "plugin/format/check.mjs",
+            "plugin/tools/ai-sdlc.ts",
             "// held work
 ",
         );
@@ -338,10 +338,10 @@ mod tests {
 ",
         );
         let before = dirty_now(&master);
-        git::run(&master, &["checkout", "--", "plugin/format/check.mjs"]).unwrap();
+        git::run(&master, &["checkout", "--", "plugin/tools/ai-sdlc.ts"]).unwrap();
         assert_eq!(
             verify_run(&master, S, C, &since, &before),
-            Err(vec!["plugin/format/check.mjs".to_string()])
+            Err(vec!["plugin/tools/ai-sdlc.ts".to_string()])
         );
     }
 
@@ -350,7 +350,7 @@ mod tests {
         let (_dir, master, since) = started();
         testutil::write(
             &master,
-            "plugin/format/check.mjs",
+            "plugin/tools/ai-sdlc.ts",
             "// held work
 ",
         );
@@ -361,7 +361,7 @@ mod tests {
 ",
         );
         let before = dirty_now(&master);
-        git::run(&master, &["checkout", "--", "plugin/format/check.mjs"]).unwrap();
+        git::run(&master, &["checkout", "--", "plugin/tools/ai-sdlc.ts"]).unwrap();
         let got = verify_run(&master, S, C, &since, &before).unwrap_err();
         assert!(!got.contains(&"notes/stray.md".to_string()));
     }

@@ -186,7 +186,7 @@ describe('reviewState judges the master repository by what it committed since th
   });
 
   it('a master that gained a product commit after the review makes the review stale', () => {
-    expect(reviewState([], [], FULL, SCOPE, document(['plugin/format/check.mjs']), 'master')).toEqual({ kind: 'stale' });
+    expect(reviewState([], [], FULL, SCOPE, document(['plugin/tools/ai-sdlc.ts']), 'master')).toEqual({ kind: 'stale' });
   });
 
   it('a master that gained only the review document commit leaves the review current', () => {

@@ -632,12 +632,12 @@ describe('the build page starts, stops and continues the same runs as the build 
     it('a review run that also changed plugin/ names the file and is not the current review (F7)', async () => {
       const { vm, transport, lock } = setup();
       withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
-      const verify = verifying(transport, ['plugin/format/check.mjs']);
+      const verify = verifying(transport, ['plugin/tools/ai-sdlc.ts']);
       await vm.start(await handoffFor(transport), CTX);
       await drive(vm, lock, shown(vm));
       expect(verify).toHaveBeenCalledWith(expect.any(String), 'commerce', MOCK_BUILD_CHANGE, '0'.repeat(40), expect.anything());
       expect(vm.reviewNotice()?.tone).toBe('warning');
-      expect(vm.reviewNotice()?.lines).toEqual(['plugin/format/check.mjs']);
+      expect(vm.reviewNotice()?.lines).toEqual(['plugin/tools/ai-sdlc.ts']);
       expect(vm.findings()).toEqual([]);
       expect(vm.emptyText()).toBe('The review did not record its findings');
     });
@@ -665,10 +665,10 @@ describe('the build page starts, stops and continues the same runs as the build 
     it('a file the review run left dirty is still flagged beside one that was dirty before (F18)', async () => {
       const { vm, transport, lock } = setup();
       withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
-      treeCheck(transport, { 'notes/stray.md': 'aaaa' }, { 'notes/stray.md': 'aaaa', 'plugin/format/check.mjs': 'bbbb' });
+      treeCheck(transport, { 'notes/stray.md': 'aaaa' }, { 'notes/stray.md': 'aaaa', 'plugin/tools/ai-sdlc.ts': 'bbbb' });
       await vm.start(await handoffFor(transport), CTX);
       await drive(vm, lock, shown(vm));
-      expect(vm.reviewNotice()?.lines).toEqual(['plugin/format/check.mjs']);
+      expect(vm.reviewNotice()?.lines).toEqual(['plugin/tools/ai-sdlc.ts']);
       expect(vm.findings()).toEqual([]);
     });
 
