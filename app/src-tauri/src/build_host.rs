@@ -895,6 +895,8 @@ mod tests {
         check: Mutex<Option<Result<Value, ProgramError>>>,
         starts: Mutex<HashMap<String, Result<Value, ProgramError>>>,
         calls: Mutex<Vec<Vec<String>>>,
+        /// The next `states` call announces itself on `.0` and waits for `.1`.
+        gate: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
     }
 
     impl FakeTools {
@@ -909,6 +911,7 @@ mod tests {
                 check: Mutex::new(None),
                 starts: Mutex::new(HashMap::new()),
                 calls: Mutex::new(Vec::new()),
+                gate: Mutex::new(None),
             })
         }
 
@@ -1019,6 +1022,11 @@ mod tests {
             }
         }
         fn states(&self, _place: &Place, _system: &str) -> Result<Vec<ChangeState>, ProgramError> {
+            let gate = self.gate.lock().unwrap().take();
+            if let Some((entered, release)) = gate {
+                entered.send(()).unwrap();
+                release.recv().unwrap();
+            }
             Ok(self.states.lock().unwrap().clone())
         }
         fn plan(&self, _place: &Place, state: &ChangeState) -> Result<ParsedPlan, String> {
@@ -1719,6 +1727,59 @@ mod tests {
             .unwrap()
             .claim(Path::new("D:/ws/ai-sdlc"), &lane)
             .is_err());
+    }
+
+    // R4.1 and R11.1 hold for several changes at once: a slow call of the plugin for one change
+    // never stops another change's build.
+    #[test]
+    fn a_slow_plugin_call_does_not_block_another_changes_build() {
+        use std::sync::mpsc::{channel, RecvTimeoutError};
+        use std::time::Duration;
+        let r = rig();
+        r.simple("A", &["api"]);
+        r.change(
+            "B",
+            &[("kata", &["T1"], &[]), ("bob", &["T2"], &[])],
+            &[("T1", "kata", &[]), ("T2", "bob", &["T1"])],
+        );
+        assert!(matches!(
+            r.host.start(&cref("B"), form()),
+            StartOutcome::Started { .. }
+        ));
+        // A's start asks the plugin for the state, and the plugin is slow.
+        let (entered_tx, entered_rx) = channel();
+        let (release_tx, release_rx) = channel();
+        *r.tools.gate.lock().unwrap() = Some((entered_tx, release_rx));
+        let host_a = r.host.clone();
+        let slow = std::thread::spawn(move || host_a.start(&cref("A"), form()));
+        entered_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("A's start reached the plugin");
+        // Meanwhile B's run ends and B goes on.
+        let (done_tx, done_rx) = channel();
+        let host_b = r.host.clone();
+        let launcher = r.launcher.clone();
+        let tools = r.tools.clone();
+        std::thread::spawn(move || {
+            tools.log("B", "kata", "T1");
+            launcher.finish(launcher.launched("kata")[0], 0);
+            let launched = launcher.launched("bob").len();
+            let answered = host_b.state(&cref("B")).is_some();
+            let _ = done_tx.send((launched, answered));
+        });
+        let seen = done_rx.recv_timeout(Duration::from_secs(5));
+        release_tx.send(()).unwrap();
+        match seen {
+            Ok((launched, answered)) => {
+                assert_eq!(launched, 1, "B's next repository launched");
+                assert!(answered, "state(B) answered");
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                panic!("B was blocked behind A's slow plugin call")
+            }
+            Err(e) => panic!("{e}"),
+        }
+        assert!(matches!(slow.join().unwrap(), StartOutcome::Started { .. }));
     }
 
     // R20.2
