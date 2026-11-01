@@ -1,10 +1,7 @@
 //! What closing the Workbench does while runs are live: ask first, naming every running change,
 //! then cancel them all on a confirm. Pure, so the table of outcomes is tested without a window;
 //! the `CloseRequested` handler and `sdlc_close_answer` in `lib.rs` are thin wrappers.
-// Stub for the failing tests; the implementation follows.
-#![allow(dead_code)]
-
-use crate::runs::LiveSummary;
+use crate::runs::{Lane, LiveSummary, RunKind};
 use serde::Serialize;
 
 /// The channel the question is announced on.
@@ -45,8 +42,65 @@ pub enum CloseOutcome {
     Stay,
 }
 
-pub fn on_close(_live: &[LiveSummary], _answer: CloseAnswer) -> CloseOutcome {
-    CloseOutcome::Close
+/// What a run does, from its kind and repository.
+fn what(run: &LiveSummary) -> String {
+    let repo = run.repo.as_deref();
+    match (run.kind, repo) {
+        (RunKind::Build, Some(repo)) => format!("building in {repo}"),
+        (RunKind::Build, None) => "building".into(),
+        (RunKind::Review, Some(repo)) => format!("reviewing {repo}"),
+        (RunKind::Review, None) => "reviewing".into(),
+        (RunKind::Intent, _) => "writing its intent".into(),
+        (RunKind::Spec, _) => "writing its spec".into(),
+        (RunKind::Plan, _) => "writing its plan".into(),
+        (RunKind::Triage, _) => "triaging".into(),
+        (RunKind::Fix, _) => "writing its fix".into(),
+        (RunKind::Setup, _) => "setting up the workspace".into(),
+        (RunKind::Context, _) => "building context".into(),
+        (RunKind::Solo, _) => "running a task in the Workbench".into(),
+    }
+}
+
+/// One line per change, in the order its first run appears; a run with no change gets its own line.
+fn lines(live: &[LiveSummary]) -> Vec<RunningLine> {
+    let mut out: Vec<(Option<(String, String)>, RunningLine)> = Vec::new();
+    for run in live {
+        let owner = match &run.lane {
+            Lane::Change { key, .. } => Some((key.system.clone(), key.change.clone())),
+            _ => None,
+        };
+        let text = what(run);
+        let found = owner
+            .as_ref()
+            .and_then(|o| out.iter_mut().find(|(k, _)| k.as_ref() == Some(o)));
+        match found {
+            Some((_, line)) => line.what = format!("{} and {text}", line.what),
+            None => out.push((
+                owner.clone(),
+                RunningLine {
+                    change: owner.map(|(_, change)| change),
+                    what: text,
+                },
+            )),
+        }
+    }
+    out.into_iter().map(|(_, line)| line).collect()
+}
+
+/// Decide what closing the window does. The question is asked only while runs are live; a confirm
+/// that arrives after they ended closes at once, as a confirm with nothing to cancel.
+pub fn on_close(live: &[LiveSummary], answer: CloseAnswer) -> CloseOutcome {
+    match answer {
+        CloseAnswer::NotAsked if live.is_empty() => CloseOutcome::Close,
+        CloseAnswer::NotAsked => CloseOutcome::Ask {
+            running: lines(live),
+        },
+        CloseAnswer::Confirm if live.is_empty() => CloseOutcome::Close,
+        CloseAnswer::Confirm => CloseOutcome::CancelThenClose {
+            ids: live.iter().map(|r| r.id).collect(),
+        },
+        CloseAnswer::Decline => CloseOutcome::Stay,
+    }
 }
 
 #[cfg(test)]

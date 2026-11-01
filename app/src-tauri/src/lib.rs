@@ -1469,6 +1469,60 @@ fn cancel_by_id(control: &RunControl, id: u64) {
     }
 }
 
+/// The close guard's wrapper: apply `on_close` to the live runs. A confirm cancels every live run
+/// as `cancel_run` does, waits up to ten seconds in total for the table to empty, then destroys the
+/// window (a plain `close` would ask again). No lock is held across the wait.
+fn close_window(app: &AppHandle, answer: close_guard::CloseAnswer) {
+    let live = app.state::<RunControl>().state.lock().unwrap().live();
+    match close_guard::on_close(&live, answer) {
+        close_guard::CloseOutcome::Close => destroy_main(app),
+        ask @ close_guard::CloseOutcome::Ask { .. } => {
+            let _ = app.emit(close_guard::CLOSE_ASKED_EVENT, ask);
+        }
+        close_guard::CloseOutcome::Stay => {}
+        close_guard::CloseOutcome::CancelThenClose { ids } => {
+            let app = app.clone();
+            std::thread::spawn(move || {
+                let control = app.state::<RunControl>();
+                for id in &ids {
+                    cancel_by_id(&control, *id);
+                }
+                let deadline = std::time::Instant::now()
+                    + std::time::Duration::from_secs(close_guard::CANCEL_WAIT_SECS);
+                for id in ids {
+                    let left = deadline.saturating_duration_since(std::time::Instant::now());
+                    wait_idle(
+                        &control.state,
+                        id,
+                        left,
+                        std::time::Duration::from_millis(50),
+                    );
+                }
+                destroy_main(&app);
+            });
+        }
+    }
+}
+
+fn destroy_main(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.destroy();
+    }
+}
+
+/// The engineer's answer to the close question.
+#[tauri::command]
+fn sdlc_close_answer(app: AppHandle, confirm: bool) {
+    close_window(
+        &app,
+        if confirm {
+            close_guard::CloseAnswer::Confirm
+        } else {
+            close_guard::CloseAnswer::Decline
+        },
+    );
+}
+
 /// Poll until run `id` is no longer live (the reader task has seen the engine
 /// exit and removed it), or until `timeout` passes. True when the engine is gone.
 fn wait_idle<C>(
@@ -1700,6 +1754,16 @@ pub fn run() {
                 .open_js_links_on_click(false)
                 .build(),
         )
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let app = window.app_handle();
+                let live = app.state::<RunControl>().state.lock().unwrap().live();
+                if !live.is_empty() {
+                    api.prevent_close();
+                    close_window(app, close_guard::CloseAnswer::NotAsked);
+                }
+            }
+        })
         .manage(RunControl::default())
         .manage(Arc::new(StagePasses::default()))
         .manage(Arc::new(history::RunHistory::default()))
@@ -1738,6 +1802,7 @@ pub fn run() {
             sdlc_review_start,
             sdlc_review_waiting,
             sdlc_running,
+            sdlc_close_answer,
             sdlc_mark_opened,
             sdlc_round_offer,
             sdlc_round_plan,
