@@ -10,6 +10,7 @@ import { BehaviorSubject } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
+import { RunStore } from '../../core/run/run.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/given';
@@ -519,6 +520,7 @@ describe('ChangePageViewModel', () => {
       const { vm, runAgent } = setup(PHOTOS_CHANGE);
       await ready(vm);
       await vm.act('continue-spec');
+    await vm.runWithFeedback('Cover refunds too.');
       await vm.runWithFeedback('');
       expect(specOf(runAgent).name).toBe(`sdlc-commerce-${PHOTOS_CHANGE}-spec`);
       expect(specOf(runAgent).task).toContain(PHOTOS_CHANGE);
@@ -1279,5 +1281,49 @@ describe('ChangePageViewModel shows the plugin report', () => {
     expect(vm.disabledFor(action!)).toBe(true);
     expect(vm.titleFor(action!)).toBe(stop);
     expect(vm.buildNotice()).toEqual({ tone: 'warning', text: stop, lines: [] });
+  });
+});
+
+describe('ChangePageViewModel while another change builds (R11.6)', () => {
+  const BUILDING = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE };
+
+  it('document actions are offered while another change builds', async () => {
+    const { vm, transport, runAgent } = setup(PHOTOS_CHANGE);
+    await ready(vm);
+    expect((await transport.sdlcBuildStart(BUILDING, { timeoutSecs: 7200 })).kind).toBe('started');
+    const runsBefore = await transport.sdlcBuildRuns(BUILDING);
+    expect(runsBefore.length).toBeGreaterThan(0);
+    expect(vm.actions().length).toBeGreaterThan(0);
+    for (const action of vm.actions()) expect(vm.disabledFor(action), action).toBe(false);
+    await vm.act('continue-spec');
+    await vm.runWithFeedback('Cover refunds too.');
+    expect(runAgent).toHaveBeenCalledTimes(1);
+    await vm.act('accept-spec');
+    expect(toastText()).not.toContain('Another task is already running.');
+    expect(await transport.sdlcBuildRuns(BUILDING)).toEqual(runsBefore);
+    await transport.sdlcBuildCancel(BUILDING, null);
+  });
+});
+
+describe('ChangePageViewModel leaving a change (R11.6)', () => {
+  it('leaving a change with a live document run does not cancel it', async () => {
+    const transport = new MockTransport();
+    const { vm, runAgent, navigate } = setup(PHOTOS_CHANGE, transport);
+    runAgent.mockRestore();
+    const cancel = vi.spyOn(transport, 'cancelRun');
+    const lock = TestBed.inject(LockStore);
+    const runs = TestBed.inject(RunStore);
+    await ready(vm);
+    void vm.act('start-spec');
+    await vi.waitFor(() => expect(['running', 'awaiting']).toContain(runs.state()));
+    expect(lock.active()?.kind).toBe('run');
+    await vm.toHome();
+    expect(navigate).toHaveBeenCalledWith(['/sdlc']);
+    TestBed.tick();
+    expect(cancel).not.toHaveBeenCalled();
+    expect(['running', 'awaiting']).toContain(runs.state());
+    lock.cancel();
+    await vi.waitFor(() => expect(lock.active()).toMatchObject({ kind: 'run', finished: expect.anything() }));
+    lock.close();
   });
 });

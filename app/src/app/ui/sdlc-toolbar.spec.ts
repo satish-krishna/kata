@@ -142,3 +142,21 @@ describe('SdlcToolbar without counts (R3.1)', () => {
     expect('counts' in fixture.componentInstance).toBe(false);
   });
 });
+
+describe('SdlcToolbar while a change builds (R11.6)', () => {
+  it('the changes list opens while another change builds', async () => {
+    const { fixture, container } = await render(SdlcToolbar, inputs({ crumbs: ['c1'], back: 'Changes' }));
+    // A running build never reaches the toolbar: it has no lock input, and every control stays enabled.
+    expect('locked' in fixture.componentInstance).toBe(false);
+    const went: string[] = [];
+    fixture.componentInstance.goBack.subscribe(() => went.push('back'));
+    fixture.componentInstance.switchMode.subscribe(() => went.push('mode'));
+    fixture.componentInstance.openSettings.subscribe(() => went.push('settings'));
+    for (const label of ['Back to the changes list', 'Switch mode (ai-sdlc)', 'AI-SDLC settings']) {
+      expect(byLabel(container, label).disabled, label).toBe(false);
+      byLabel(container, label).click();
+    }
+    expect(went).toEqual(['back', 'mode', 'settings']);
+    expect(switcher(container).disabled).toBe(false);
+  });
+});
