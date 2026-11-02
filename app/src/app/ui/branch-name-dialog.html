@@ -1,22 +1,8 @@
 <hlm-dialog [state]="request() !== null ? 'open' : 'closed'" (stateChanged)="onState($event)">
   <hlm-dialog-content *hlmDialogPortal="let ctx">
-    <div hlmDialogTitle>{{ request()?.rename ? 'Pick a new branch name' : 'Name the branch' }}</div>
+    <div hlmDialogTitle>Pick a new branch name</div>
     @if (request(); as req) {
       <div class="k-form">
-        @if (!req.rename) {
-        <app-field label="Work type">
-          <hlm-select [value]="req.workType" (valueChange)="onType($event)">
-            <hlm-select-trigger aria-label="Work type">
-              <hlm-select-value placeholder="Choose a work type" />
-            </hlm-select-trigger>
-            <hlm-select-content *hlmSelectPortal>
-              @for (t of req.workTypes; track t) {
-                <hlm-select-item [value]="t">{{ t }}</hlm-select-item>
-              }
-            </hlm-select-content>
-          </hlm-select>
-        </app-field>
-        }
         <app-field label="Branch name" [hint]="hint()" [error]="req.error !== null" hintId="branch-name-hint" [live]="true">
           <input
             hlmInput

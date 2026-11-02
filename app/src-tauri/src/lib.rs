@@ -802,13 +802,41 @@ fn sdlc_discard(
         .map_err(|e| e.to_string())
 }
 
+/// The name the plugin will be asked to give a change described by `title`, so a preview can show it.
+#[tauri::command]
+fn sdlc_change_name(title: String) -> String {
+    let first = title.lines().map(str::trim).find(|l| !l.is_empty());
+    sdlc::naming::change_name(&start_change::today(), first.unwrap_or_default())
+}
+
+/// Start a change through the plugin: its branch and its own copy of the master repository. Kata makes
+/// neither itself. A refusal is an answer carrying the plugin's reasons; an error is a plugin that could
+/// not run.
 #[tauri::command(async)]
-fn sdlc_start_change(master: String) -> Result<String, String> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_secs();
-    sdlc::branch::start_pending(Path::new(&master), now).map_err(|e| e.to_string())
+fn sdlc_start_change(
+    folder: String,
+    system: String,
+    title: String,
+    work_type: String,
+    scope: String,
+    branch: Option<String>,
+) -> Result<start_change::ChangeStart, String> {
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&folder)?);
+    let place = program
+        .resolve(Path::new(&folder))
+        .map_err(|e| e.to_string())?;
+    start_change::start_change(
+        &program,
+        &place,
+        &start_change::today(),
+        &start_change::StartRequest {
+            system: &system,
+            title: &title,
+            work_type: &work_type,
+            scope: &scope,
+            branch: branch.as_deref(),
+        },
+    )
 }
 
 /// A system's naming setting as the window sees it: none declared, the patterns, or why they cannot be
@@ -868,46 +896,6 @@ fn sdlc_naming(folder: String, master_repo: String, system: String) -> NamingSta
 fn sdlc_check_scope(folder: String, scope: String) -> Result<Vec<String>, String> {
     let plugin = ai_sdlc_readiness(Some(&folder));
     sdlc::naming::check_scope(&plugin, &scope).map_err(|e| e.to_string())
-}
-
-/// The branch name the system's setting gives `change`.
-#[tauri::command(async)]
-fn sdlc_suggest_branch(
-    folder: String,
-    master_repo: String,
-    system: String,
-    change: String,
-    work_type: String,
-) -> Result<String, String> {
-    let plugin = ai_sdlc_readiness(Some(&folder));
-    let master = Path::new(&folder).join(&master_repo);
-    sdlc::branch::suggest_branch(&plugin, &master, &system, &change, &work_type)
-        .map_err(|e| e.to_string())
-}
-
-/// Rename the pending branch to the engineer's chosen `name` and record it for the change.
-#[tauri::command(async)]
-fn sdlc_confirm_branch(
-    folder: String,
-    master_repo: String,
-    system: String,
-    change: String,
-    pending: String,
-    name: String,
-    work_type: String,
-) -> Result<sdlc::branch::FinishOutcome, String> {
-    let plugin = ai_sdlc_readiness(Some(&folder));
-    sdlc::branch::confirm_branch(
-        &plugin,
-        Path::new(&folder),
-        &master_repo,
-        &system,
-        &change,
-        &pending,
-        &name,
-        &work_type,
-    )
-    .map_err(|e| e.to_string())
 }
 
 /// What a rename did, for the window.
@@ -984,14 +972,6 @@ fn sdlc_remote_clashes(
         &branch,
     )
     .map_err(|e| e.to_string())
-}
-
-#[tauri::command(async)]
-fn sdlc_finish_change(
-    master: String,
-    pending: String,
-) -> Result<sdlc::branch::FinishOutcome, String> {
-    sdlc::branch::finish_pending(Path::new(&master), &pending).map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -1855,12 +1835,10 @@ pub fn run() {
             sdlc_snapshot,
             sdlc_leftovers,
             sdlc_discard,
+            sdlc_change_name,
             sdlc_start_change,
-            sdlc_finish_change,
             sdlc_naming,
             sdlc_check_scope,
-            sdlc_suggest_branch,
-            sdlc_confirm_branch,
             sdlc_rename_branch,
             sdlc_remote_clashes,
             sdlc_checkout,

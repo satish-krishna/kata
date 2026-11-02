@@ -22,6 +22,16 @@
       @if (namingError(); as e) {
         <p class="k-field__hint k-field__hint--error" role="alert" data-testid="naming-error">{{ e }}</p>
       }
+      @if (asksBranch()) {
+        <div class="k-field__hint k-field__hint--error" role="alert" data-testid="branch-problems">
+          @for (p of branchProblems(); track $index) {
+            <p>{{ p }}</p>
+          }
+        </div>
+        <app-field label="Branch name" hint="Another name for the change's branch." hintId="new-change-branch-hint">
+          <input hlmInput variant="mono" aria-label="Branch name" aria-describedby="new-change-branch-hint" aria-invalid="true" [value]="branch()" (input)="onBranch($event)" />
+        </app-field>
+      }
       @if (note(); as n) {
         <p class="k-field__hint" data-testid="new-change-note">{{ n }}</p>
       }

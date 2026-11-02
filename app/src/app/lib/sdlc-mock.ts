@@ -67,7 +67,7 @@ import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { Decision } from '@bindings/Decision';
 import type { DocState } from '@bindings/DocState';
-import type { FinishOutcome } from '@bindings/FinishOutcome';
+import type { ChangeStart } from '@bindings/ChangeStart';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
@@ -643,8 +643,6 @@ export class SdlcMock {
   private docs: Record<string, string> = { ...DOCS };
   private setupDone = false;
   private instructionsWritten = false;
-  /** Set when the scripted triage's light track has created its fix folder. */
-  private fixCreated = false;
   private cancelledRun = false;
   private discarded = new Set<string>();
   /** Review runs that finished: the scripted plugin records one review in the review document at the end of each. */
@@ -784,33 +782,40 @@ export class SdlcMock {
   /** Out of date until a setup run with `--instructions` has finished. */
   instructions(): InstructionsState { return this.instructionsWritten ? 'current' : 'out-of-date'; }
 
-  /** The scripted triage ended on the light track: the fix folder exists once the run is finished. */
-  createFix(): void { this.fixCreated = true; }
-
-  startChange(): string {
-    this.current = MOCK_PENDING_BRANCH;
-    return MOCK_PENDING_BRANCH;
+  /** The scripted triage ended on the light track: its skill started the fix through the plugin, so the fix folder exists now. */
+  createFix(): void {
+    if (this.changes.some((c) => c.change === MOCK_STARTED_FIX)) return;
+    this.others = [...this.others, MOCK_STARTED_FIX];
+    this.changes = [change(MOCK_STARTED_FIX, doc('draft', false), doc('draft', false), doc('draft', false), 'fix-awaiting', 'fix'), ...this.changes];
+    Object.assign(this.docs, fixDocs(MOCK_STARTED_FIX, 'Flag suspicious prices on import'));
   }
 
-  finishChange(): FinishOutcome {
-    this.current = MOCK_BASE;
-    if (this.fixCreated) {
-      this.fixCreated = false;
-      this.others = [...this.others, MOCK_STARTED_FIX];
-      this.changes = [change(MOCK_STARTED_FIX, doc('draft', false), doc('draft', false), doc('draft', false), 'fix-awaiting', 'fix'), ...this.changes];
-      Object.assign(this.docs, fixDocs(MOCK_STARTED_FIX, 'Flag suspicious prices on import'));
-      return { renamed: { branch: `change/${MOCK_STARTED_FIX}`, change: MOCK_STARTED_FIX } };
+  /** The name the plugin gives a change described by `title`: the demo date, then the first words. */
+  changeName(title: string): string {
+    const words = title
+      .split(/[\s_/-]+/)
+      .map((w) => w.replace(/[^A-Za-z0-9]/g, '').toLowerCase())
+      .filter((w) => w !== '')
+      .slice(0, 5);
+    return `${MOCK_NEW_CHANGE.slice(0, 10)}-${words.length > 0 ? words.join('-') : 'change'}`;
+  }
+
+  /** Starting a change the way the plugin does: a taken or invalid branch name is refused and nothing is made; otherwise the change exists, on its own branch, and the master stays where it was. */
+  startChange(title: string, branch?: string): ChangeStart {
+    const name = this.changeName(title);
+    if (branch !== undefined) {
+      if (branch === MOCK_BASE || this.others.includes(branch.replace(/^change\//, ''))) {
+        return { outcome: 'refused', kind: 'branchTaken', problems: [`${branch} is taken in ${MOCK_MASTER} by the branch ${branch}`] };
+      }
+      if (/\s/.test(branch)) {
+        return { outcome: 'refused', kind: 'branchInvalid', problems: [`${branch}: a branch name cannot contain a space`] };
+      }
     }
-    // A pending branch whose run created no new change folder is deleted.
-    if (this.changes.some((c) => c.change === MOCK_NEW_CHANGE)) return 'deleted';
-    const branch = `change/${MOCK_NEW_CHANGE}`;
-    this.others = [...this.others, MOCK_NEW_CHANGE];
-    this.changes = [
-      change(MOCK_NEW_CHANGE, doc('draft', false), doc(null), doc(null), 'intent-awaiting'),
-      ...this.changes,
-    ];
-    this.docs[`${MOCK_NEW_CHANGE}/intent`] = '---\nstatus: draft\n---\n# New change\n\nDrafted from the idea you gave the agent.\n';
-    return { renamed: { branch, change: MOCK_NEW_CHANGE } };
+    const made = branch ?? `change/${name}`;
+    this.others = [...this.others, name];
+    this.changes = [change(name, doc('draft', false), doc(null), doc(null), 'intent-awaiting'), ...this.changes];
+    this.docs[`${name}/intent`] = '---\nstatus: draft\n---\n# New change\n\nDrafted from the idea you gave the agent.\n';
+    return { outcome: 'started', change: name, branch: made, copy: `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${name}` };
   }
 
   checkout(branch: string): void {
@@ -823,9 +828,6 @@ export class SdlcMock {
 
   /** The demo system declares a naming setting; the patterns are the ones the ai-sdlc plugin documents. */
   naming(): NamingState { return { kind: 'setting', branch: '{type}/{scope}-{slug}', pullRequestTitle: '{type}({scope}): {title}' }; }
-  /** The branch the pattern gives: the type, the demo scope and the change name without its date. */
-  suggestBranch(changeName: string, workType: string): string { return `${workType}/PROJ-123-${changeName.replace(/^\d{4}-\d{2}-\d{2}-/, '')}`; }
-  confirmBranch(changeName: string, name: string): FinishOutcome { return { renamed: { branch: name, change: changeName } }; }
   renameBranch(changeName: string, newName: string): RenameResult { return { old: `change/${changeName}`, new: newName, repos: [MOCK_MASTER] }; }
   /** Only `?demo=clash` finds the branch taken before anything is pushed: the first touched repository holds other work on the change's branch. */
   remoteClashes(repos: PublishRepo[], changeName: string): RemoteClash[] {

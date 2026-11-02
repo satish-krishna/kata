@@ -16,7 +16,6 @@ import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { ChangeStart } from '@bindings/ChangeStart';
-import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Decision } from '@bindings/Decision';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { RunLink } from '@bindings/RunLink';
@@ -293,13 +292,10 @@ export class MockTransport extends KataTransport {
   sdlcSnapshot(_master: string): Promise<Snapshot> { return Promise.resolve(this.sdlc.snapshot()); }
   sdlcLeftovers(_master: string, _before: Snapshot, _productRepos: string[], _build?: BuildScope): Promise<Leftovers> { return Promise.resolve(this.sdlc.leftovers()); }
   sdlcDiscard(_master: string, _before: Snapshot, paths: string[], _build?: BuildScope): Promise<void> { this.sdlc.discard(paths); return Promise.resolve(); }
-  sdlcChangeName(_title: string): Promise<string> { return Promise.resolve(''); }
-  sdlcStartChange(_folder: string, _system: string, _title: string, _workType: string, _scope: string, _branch?: string): Promise<ChangeStart> { return Promise.resolve({ outcome: 'refused', kind: 'other', problems: [] }); }
-  sdlcFinishChange(_master: string, _pending: string): Promise<FinishOutcome> { return Promise.resolve(this.sdlc.finishChange()); }
+  sdlcChangeName(title: string): Promise<string> { return Promise.resolve(this.sdlc.changeName(title)); }
+  sdlcStartChange(_folder: string, _system: string, title: string, _workType: string, _scope: string, branch?: string): Promise<ChangeStart> { return Promise.resolve(this.sdlc.startChange(title, branch)); }
   sdlcNaming(_folder: string, _masterRepo: string, _system: string): Promise<NamingState> { return Promise.resolve(this.sdlc.naming()); }
   sdlcCheckScope(_folder: string, scope: string): Promise<string[]> { return Promise.resolve(scope.includes(' ') ? ['a scope cannot contain a space'] : []); }
-  sdlcSuggestBranch(_folder: string, _masterRepo: string, _system: string, change: string, workType: string): Promise<string> { return Promise.resolve(this.sdlc.suggestBranch(change, workType)); }
-  sdlcConfirmBranch(_folder: string, _masterRepo: string, _system: string, change: string, _pending: string, name: string, _workType: string): Promise<FinishOutcome> { return Promise.resolve(this.sdlc.confirmBranch(change, name)); }
   sdlcRenameBranch(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, change: string, newName: string): Promise<RenameResult> { return Promise.resolve(this.sdlc.renameBranch(change, newName)); }
   sdlcRemoteClashes(touched: PublishRepo[], _masterRepo: string, _system: string, change: string): Promise<RemoteClash[]> { return Promise.resolve(this.sdlc.remoteClashes(touched, change)); }
   sdlcCheckout(_master: string, branch: string): Promise<void> { this.sdlc.checkout(branch); return Promise.resolve(); }

@@ -231,9 +231,6 @@ const declare = async (page) => {
 };
 const DONE = 'sdlc/commerce/2026-10-18-photo-limits-shipped';
 const DIALOG_STEPS = {
-  'sdlc/commerce/2026-10-19-build-demo?demo=naming': [
-    { label: 'branch name dialog, name mode', text: 'Work type', run: (page) => page.getByRole('button', { name: 'Name the branch' }).click() },
-  ],
   [`${DONE}?demo=clash`]: [
     { label: 'done dialog, clash row', text: 'Branch is taken on GitHub', run: declare },
     {

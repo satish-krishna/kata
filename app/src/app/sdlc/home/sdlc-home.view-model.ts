@@ -543,7 +543,6 @@ export class SdlcHomeViewModel {
   }
 
   async newChange(system: string, idea: string, track: StartTrack, branch?: string): Promise<void> {
-    void branch;
     const answer = this.naming();
     // A broken setting never falls back to `change/` naming (R3.2), and a setting needs its checked scope.
     if (answer?.kind === 'error' || (answer?.kind === 'setting' && !this.namingReady())) {
@@ -551,24 +550,39 @@ export class SdlcHomeViewModel {
       return;
     }
     const picked: PickedNaming | null = answer?.kind === 'setting' ? { workType: this.workType(), scope: this.scope().trim() } : null;
-    this.clearNaming();
     this.newChangeOpen.set(false);
     this.triageNotice.set(null);
+    this.branchProblems.set([]);
     const workspace = this.current();
     const scan = this.scan();
     const master = this.masterDir();
-    if (!workspace || !scan || !master) return;
+    if (!workspace || !scan || !master) {
+      this.clearNaming();
+      return;
+    }
     try {
       const target = { workspace, master, productRepos: productRepos(scan) };
       const confirm = (spec: RunSpec) => this.confirm(spec);
-      const outcome = picked
-        ? await this.runner.newChange(target, system, idea, track, confirm, picked)
-        : await this.runner.newChange(target, system, idea, track, confirm);
+      const more: [PickedNaming?, string?] = branch ? [picked ?? undefined, branch] : picked ? [picked] : [];
+      const outcome = await this.runner.newChange(target, system, idea, track, confirm, ...more);
       if (outcome.kind === 'none' && track === 'decide') this.triageNotice.set({ idea: outcome.idea, runId: outcome.runId });
+      if (outcome.kind === 'retry') this.askAgain(system, idea, track, outcome);
     } catch (e) {
       this.toasts.error(`Could not start the change: ${message(e)}`);
     }
+    if (!this.newChangeOpen()) this.clearNaming();
     await this.loadCurrent();
+  }
+
+  /** The plugin refused the branch name or the scope: the dialog opens again on the same description, with what the engineer picked, and shows the plugin's reasons. */
+  private askAgain(system: string, idea: string, track: StartTrack, retry: { ask: 'branch' | 'scope'; problems: string[] }): void {
+    this.newChangeIdea.set(idea);
+    this.newChangeTrack.set(track);
+    this.newChangeSystem.set(system);
+    this.newChangeNote.set(null);
+    if (retry.ask === 'branch') this.branchProblems.set(retry.problems);
+    else this.scopeProblems.set(retry.problems);
+    this.newChangeOpen.set(true);
   }
 
   openNewChange(): void {
@@ -580,6 +594,8 @@ export class SdlcHomeViewModel {
     this.newChangeIdea.set('');
     this.newChangeTrack.set('decide');
     this.newChangeNote.set(null);
+    this.newChangeSystem.set(null);
+    this.branchProblems.set([]);
     this.beginNaming();
     this.newChangeOpen.set(true);
   }
@@ -591,6 +607,8 @@ export class SdlcHomeViewModel {
     this.newChangeIdea.set(notice.idea);
     this.newChangeTrack.set('decide');
     this.newChangeNote.set('The last triage created no change. Change the description and start again.');
+    this.newChangeSystem.set(null);
+    this.branchProblems.set([]);
     this.beginNaming();
     this.newChangeOpen.set(true);
   }
@@ -607,6 +625,7 @@ export class SdlcHomeViewModel {
   }
 
   closeNewChange(): void {
+    this.branchProblems.set([]);
     this.clearNaming();
     this.newChangeOpen.set(false);
   }

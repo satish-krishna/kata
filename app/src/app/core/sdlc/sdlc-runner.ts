@@ -1,14 +1,14 @@
-import { defaultWorkType, orderedWorkTypes, type WorkType } from '../../lib/sdlc-naming';
+import type { WorkType } from '../../lib/sdlc-naming';
 import { Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Router } from '@angular/router';
 import type { BuildScope } from '@bindings/BuildScope';
-import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunState } from '../../lib/events';
 import type { ChangeRef } from '@bindings/ChangeRef';
+import type { ChangeStart } from '@bindings/ChangeStart';
 import { documentForm, type DocumentKind } from '../../lib/build-host';
 import { IDLE, type RunSnapshot } from '../run/reduce';
 import { ChangeRunStore, changeRunKey } from '../run/change-run.store';
@@ -35,8 +35,6 @@ export type RunTarget = {
    * so a run that stops after creating the master can still report what it left behind there.
    */
   firstSetup?: { folder: string; repos: string[] };
-  /** The pending branch of a new change, named in the toast when the engine does not exit in time. */
-  pendingBranch?: string;
 };
 
 /** `exited` is false when the engine was still alive after the wait: nothing was read or cleaned up then. */
@@ -47,8 +45,10 @@ export type RunOutcome = { state: RunState; runId: string | null; snapshot: Snap
 export type Confirm = (spec: RunSpec) => Promise<RunSpec | null>;
 
 /**
- * What starting a change came to. `opened` names the change and its branch, which the master repository is left on. `none`: the run ended and no change folder was created (the idea and the run's id let the engineer describe it again or read the verdict).
- * `stopped`: nothing to report, because no run started or the run's branch was kept for the engineer to settle; a toast already said why where one was due.
+ * What starting a change came to. `opened` names the change and the branch the plugin gave it (null when a triage's own skill started it).
+ * `retry`: the plugin refused the branch name or the scope and the engineer is asked again, with the plugin's reasons as they are.
+ * `none`: a triage ended and no change was started (the idea and the run's id let the engineer describe it again or read the verdict).
+ * `stopped`: nothing to report, because no run started or the run's engine was still stopping; a toast already said why where one was due.
  */
 export type NewChangeOutcome =
   | { kind: 'opened'; change: string; branch: string | null }
@@ -57,30 +57,18 @@ export type NewChangeOutcome =
   | { kind: 'stopped' }
   | { kind: 'none'; idea: string; runId: string | null };
 
-/** The branch name confirmation of one change: what the dialog shows and the engineer may edit. */
+/** The branch name dialog of one change: what it shows and the engineer may edit. */
 export type NameRequest = {
   system: string;
   change: string;
-  pending: string;
-  workType: WorkType;
-  workTypes: WorkType[];
+  /** The branch the change has now, which the name starts from. */
+  current: string;
   suggestion: string;
-  /** Why the last attempt was refused, or why no name could be suggested; null otherwise. */
+  /** Why the last attempt was refused; null otherwise. */
   error: string | null;
   busy: boolean;
-  /** The confirmation renames a branch that already has a name: no type to pick, and the suggestion is the current name. */
-  rename?: boolean;
-};
-
-/** What the confirmation needs to name one change's pending branch. `workType` is the start pick, null when there was none; `track` is the change's own. */
-export type NameAsk = {
-  folder: string;
-  masterRepo: string;
-  system: string;
-  change: string;
-  pending: string;
-  workType: WorkType | null;
-  track: 'full' | 'fix';
+  /** The dialog renames a branch that already has a name. */
+  rename: true;
 };
 
 /** What renaming a change's branch needs: the branch it has now is the starting name. */
@@ -107,7 +95,6 @@ const RESULT_MAX = 120;
 /** How long to wait for the engine process to exit before touching the repo. */
 const EXIT_WAIT_MS = 15000;
 const TERMINAL: readonly RunState[] = ['success', 'warning', 'error'];
-const DIRTY = 'uncommitted changes';
 const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
 
 const repoName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path;
@@ -118,10 +105,7 @@ const siblingsOf = (master: string, repos: string[]): string[] => {
   const root = master.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '');
   return repos.map((r) => masterPath(root, r));
 };
-const stillStopping = (branch: string | undefined): string =>
-  branch
-    ? `The engine is still stopping. Nothing was cleaned up; the pending branch ${branch} was kept.`
-    : 'The engine is still stopping. Nothing was cleaned up.';
+const STILL_STOPPING = 'The engine is still stopping. Nothing was cleaned up.';
 
 function summarize(result: string | null | undefined): string {
   const flat = (result ?? '').replace(/\s+/g, ' ').trim();
@@ -160,49 +144,14 @@ export class SdlcRunner {
   private readonly afterRun = signal(0);
   /** A run has ended but its after-run work (engine exit, report) is still going: the session view cannot close yet. */
   readonly settling = computed(() => this.afterRun() > 0);
-  private readonly picked = signal<WorkType | null>(null);
-  /** The work type picked for the change being started, kept for the confirmation of its branch name; null without a naming setting. */
-  readonly pickedWorkType = this.picked.asReadonly();
-
   private readonly request = signal<NameRequest | null>(null);
   /** The branch name confirmation on show; null when none is open. */
   readonly nameRequest = this.request.asReadonly();
   private readonly namedCount = signal(0);
   /** Counts the branches named so far; a page showing the change reads it again when this moves. */
   readonly named = this.namedCount.asReadonly();
-  private ask: NameAsk | null = null;
   private renameAsk: RenameAsk | null = null;
   private settleName: ((named: { branch: string; change: string } | null) => void) | null = null;
-  private nameSeq = 0;
-  /** The type picked at the start of the change that is waiting for a name, kept for opening the confirmation again. */
-  private pickedFor: { change: string; type: WorkType } | null = null;
-
-  /**
-   * Ask the engineer to confirm the name of `change`'s pending branch. The type starts as the start pick, else the change's own track's default.
-   * Resolves with the renamed branch, or null when the dialog was closed.
-   */
-  async requestName(ask: NameAsk): Promise<{ branch: string; change: string } | null> {
-    this.closeName();
-    const picked = this.pickedFor?.change === ask.change ? this.pickedFor.type : null;
-    const track = defaultWorkType(ask.track === 'fix' ? 'decide' : 'full');
-    const workType = ask.workType ?? picked ?? track;
-    this.ask = ask;
-    this.request.set({
-      system: ask.system,
-      change: ask.change,
-      pending: ask.pending,
-      workType,
-      workTypes: orderedWorkTypes(ask.track === 'fix' ? 'decide' : 'full'),
-      suggestion: '',
-      error: null,
-      busy: true,
-    });
-    const named = new Promise<{ branch: string; change: string } | null>((resolve) => {
-      this.settleName = resolve;
-    });
-    await this.suggest(workType);
-    return named;
-  }
 
   /**
    * Ask the engineer for a new name for the branch `ask.current`, in every repository that has it. No type is picked and the
@@ -214,9 +163,7 @@ export class SdlcRunner {
     this.request.set({
       system: ask.system,
       change: ask.change,
-      pending: ask.current,
-      workType: defaultWorkType('full'),
-      workTypes: [],
+      current: ask.current,
       suggestion: ask.current,
       error: null,
       busy: false,
@@ -227,52 +174,11 @@ export class SdlcRunner {
     });
   }
 
-  /** The engineer picked another type: the suggestion follows it. */
-  async setNameType(type: WorkType): Promise<void> {
-    const cur = this.request();
-    if (cur === null) return;
-    this.request.set({ ...cur, workType: type, busy: true });
-    await this.suggest(type);
-  }
-
-  private async suggest(type: WorkType): Promise<void> {
-    const ask = this.ask;
-    if (ask === null) return;
-    const seq = ++this.nameSeq;
-    let suggestion = '';
-    let error: string | null = null;
-    try {
-      suggestion = await this.transport.sdlcSuggestBranch(ask.folder, ask.masterRepo, ask.system, ask.change, type);
-    } catch (e) {
-      error = message(e);
-    }
-    const cur = this.request();
-    if (seq !== this.nameSeq || cur === null) return;
-    this.request.set({ ...cur, suggestion, error, busy: false });
-  }
-
-  /** Rename the pending branch to `name`. A refusal stays on the request and the confirmation stays open. */
+  /** Rename the change's branch to `name`. A refusal stays on the request and the dialog stays open. */
   async confirmName(name: string): Promise<void> {
-    const ask = this.ask;
     const cur = this.request();
-    if (cur === null || cur.busy) return;
-    if (this.renameAsk !== null) return this.confirmRename(this.renameAsk, name);
-    if (ask === null) return;
-    this.request.set({ ...cur, error: null, busy: true });
-    let outcome: FinishOutcome;
-    try {
-      outcome = await this.transport.sdlcConfirmBranch(ask.folder, ask.masterRepo, ask.system, ask.change, ask.pending, name, cur.workType);
-    } catch (e) {
-      this.request.update((r) => (r === null ? r : { ...r, error: message(e), busy: false }));
-      return;
-    }
-    if (typeof outcome === 'string' || !('renamed' in outcome)) {
-      this.request.update((r) => (r === null ? r : { ...r, error: 'The branch was not renamed.', busy: false }));
-      return;
-    }
-    this.pickedFor = null;
-    this.finishName(outcome.renamed);
-    this.namedCount.update((n) => n + 1);
+    if (cur === null || cur.busy || this.renameAsk === null) return;
+    return this.confirmRename(this.renameAsk, name);
   }
 
   /** Rename the change's branch everywhere. A refusal stays on the request and the confirmation stays open. */
@@ -287,7 +193,7 @@ export class SdlcRunner {
     }
   }
 
-  /** Close the confirmation without naming: the change stays on its pending branch and offers the confirmation again. */
+  /** Close the dialog without renaming anything. */
   closeName(): void {
     this.finishName(null);
   }
@@ -295,9 +201,7 @@ export class SdlcRunner {
   private finishName(named: { branch: string; change: string } | null): void {
     const settle = this.settleName;
     this.settleName = null;
-    this.ask = null;
     this.renameAsk = null;
-    this.nameSeq++;
     this.request.set(null);
     settle?.(named);
   }
@@ -386,7 +290,7 @@ export class SdlcRunner {
       // The terminal event reaches the UI before the engine process is gone; a cancelled engine may still be
       // writing. Nothing reads or changes the repo until it has exited.
       if (!(await this.engineExited(change ? (backendId ?? undefined) : undefined, change !== undefined))) {
-        this.toasts.error(stillStopping(target.pendingBranch));
+        this.toasts.error(STILL_STOPPING);
         return { state, runId: transcript, snapshot, exited: false };
       }
       const label = target.label ?? title;
@@ -469,20 +373,28 @@ export class SdlcRunner {
   }
 
   /**
-   * New change: branch off `change/pending-<stamp>`, run the intent skill (`full`) or the triage that decides the track (`decide`),
-   * then rename or delete the branch once the run is over, whatever its outcome. `confirm` is the preview: it gets the built spec and answers with the spec to
-   * run, or null when the engineer cancelled, in which case no branch is made.
+   * New change. `full`: the plugin starts the change (its branch and its own copy), then the intent skill runs inside the copy. `decide`: the
+   * triage runs, and when its skill starts a change (the light track's fix, through the plugin) that change is opened. `confirm` is the
+   * preview: it gets the built spec and answers with the spec to run, or null when the engineer cancelled, in which case nothing is made.
+   * `branch` is the name the engineer gave after the plugin refused the first one.
    */
-  async newChange(target: ChangeTarget, system: string, idea: string, track: StartTrack, confirm?: Confirm, naming?: PickedNaming, askedBranch?: string): Promise<NewChangeOutcome> {
-    void askedBranch;
+  async newChange(
+    target: ChangeTarget,
+    system: string,
+    idea: string,
+    track: StartTrack,
+    confirm?: Confirm,
+    naming?: PickedNaming,
+    branch?: string,
+  ): Promise<NewChangeOutcome> {
     const { workspace, master, productRepos } = target;
     if (this.isBusy()) {
       this.toasts.error('Another task is already running.');
       return { kind: 'refused' };
     }
     const decide = track === 'decide';
-    this.picked.set(naming?.workType ?? null);
     let spec: RunSpec;
+    let previewed: string | null = null;
     try {
       const [settings, catalog] = await Promise.all([this.transport.sdlcSettings(), this.transport.catalog(workspace.folder)]);
       const ctx = { folder: workspace.folder, system, change: null, idea, ...(naming ? { scope: naming.scope } : {}) };
@@ -490,108 +402,107 @@ export class SdlcRunner {
         const restricted = restrictedFor(workspace.folder, await this.transport.sdlcScan(workspace.folder), await this.transport.sdlcChecksDir());
         spec = specFor('triage', null, ctx, settings, catalog, restricted);
       } else {
-        spec = specFor('intent', null, ctx, settings, catalog);
+        previewed = await this.transport.sdlcChangeName(idea);
+        spec = specFor('intent', null, { ...ctx, change: previewed }, settings, catalog);
       }
     } catch (e) {
       this.toasts.error(`Could not prepare the ${decide ? 'triage' : 'intent'} run: ${message(e)}`);
       return { kind: 'stopped' };
     }
-    // The preview comes before the branch: cancelling it leaves nothing behind.
+    // The preview comes before anything is made: cancelling it leaves nothing behind.
     if (confirm) {
       const confirmed = await confirm(spec);
       if (!confirmed) return { kind: 'stopped' };
       spec = confirmed;
     }
-    let branch: string;
+    return decide
+      ? this.triage(workspace, master, productRepos, system, idea, spec)
+      : this.startAndRun(workspace, master, productRepos, system, idea, spec, previewed, naming, branch);
+  }
+
+  /** Full track: ask the plugin to start the change, then run the intent skill in it. */
+  private async startAndRun(
+    workspace: WorkspaceEntry,
+    master: string,
+    productRepos: string[],
+    system: string,
+    idea: string,
+    confirmed: RunSpec,
+    previewed: string | null,
+    naming: PickedNaming | undefined,
+    branch: string | undefined,
+  ): Promise<NewChangeOutcome> {
+    let started: ChangeStart;
     try {
-      branch = 'change/pending-1';
+      started = await this.transport.sdlcStartChange(workspace.folder, system, idea, naming?.workType ?? 'feat', naming?.scope ?? '', ...(branch ? [branch] : []));
     } catch (e) {
       this.toasts.error(`Could not start a change: ${message(e)}`);
       return { kind: 'stopped' };
     }
-    const out = await this.run('Starting a change', spec, {
-      workspaceId: workspace.id,
-      master,
-      productRepos,
-      link: null,
-      label: decide ? 'Triage' : 'Intent',
-      pendingBranch: branch,
-    });
+    if (started.outcome === 'refused') {
+      // The plugin's words, as they are: the dialog shows them when the engineer can answer, a toast otherwise.
+      if (started.kind === 'branchTaken' || started.kind === 'branchInvalid') return { kind: 'retry', ask: 'branch', problems: started.problems };
+      if (started.kind === 'scope') return { kind: 'retry', ask: 'scope', problems: started.problems };
+      this.toasts.error(started.problems.join('\n'));
+      return { kind: 'stopped' };
+    }
+    const { change } = started;
+    // The name was settled before the preview; a start across midnight can differ, and the run must be about the change that exists.
+    const rename = (text: string): string => (previewed !== null && previewed !== change ? text.split(previewed).join(change) : text);
+    const spec: RunSpec = { ...confirmed, name: rename(confirmed.name), task: rename(confirmed.task) };
+    const out = await this.run(
+      'Starting a change',
+      spec,
+      { workspaceId: workspace.id, master, productRepos, link: null, label: 'Intent' },
+      { ref: { workspace: workspace.folder, system, change }, kind: 'intent' },
+    );
     if (!out.exited) return { kind: 'stopped' };
     await this.leftoversClosed();
-    const outcome = await this.finish(master, branch, out.snapshot, productRepos);
-    if (outcome === null) return { kind: 'stopped' };
-    if (outcome === 'deleted') {
-      // The triage's verdict is in the run's record: the home says so, and no toast or navigation talks over it.
-      if (!decide) {
-        this.toasts.info('No change was created.');
-        await this.router.navigate(['/sdlc']);
-      }
-      return { kind: 'none', idea, runId: out.runId };
-    }
-    const waiting = 'needs-name' in outcome;
-    const change = waiting ? outcome['needs-name'].change : outcome.renamed.change;
-    if (out.runId) {
+    await this.linkAndOpen(workspace, system, change, 'intent', out.runId);
+    return { kind: 'opened', change, branch: started.branch };
+  }
+
+  /** Light-track start: the triage runs; a change its skill started through the plugin is opened, and none is a verdict for the home to show. */
+  private async triage(
+    workspace: WorkspaceEntry,
+    master: string,
+    productRepos: string[],
+    system: string,
+    idea: string,
+    spec: RunSpec,
+  ): Promise<NewChangeOutcome> {
+    const listed = async (): Promise<string[] | null> => {
       try {
-        await this.transport.sdlcLinkRun({
-          workspace_id: workspace.id,
-          system,
-          change,
-          stage: decide ? 'start' : 'intent',
-          run_id: out.runId,
-          started_at: Math.floor(Date.now() / 1000),
-        });
+        return (await this.transport.sdlcState(workspace.folder, system)).changes.map((c) => c.state.change);
+      } catch (e) {
+        this.toasts.error(`Could not read the changes of ${system}: ${message(e)}`);
+        return null;
+      }
+    };
+    const before = await listed();
+    if (before === null) return { kind: 'stopped' };
+    const out = await this.run('Starting a change', spec, { workspaceId: workspace.id, master, productRepos, link: null, label: 'Triage' });
+    if (!out.exited) return { kind: 'stopped' };
+    await this.leftoversClosed();
+    const after = await listed();
+    if (after === null) return { kind: 'stopped' };
+    const change = after.find((c) => !before.includes(c));
+    // The triage's verdict is in the run's record: the home says so, and no toast or navigation talks over it.
+    if (change === undefined) return { kind: 'none', idea, runId: out.runId };
+    await this.linkAndOpen(workspace, system, change, 'start', out.runId);
+    return { kind: 'opened', change, branch: null };
+  }
+
+  /** Link the run that made a change to it, then open the change. */
+  private async linkAndOpen(workspace: WorkspaceEntry, system: string, change: string, stage: string, runId: string | null): Promise<void> {
+    if (runId) {
+      try {
+        await this.transport.sdlcLinkRun({ workspace_id: workspace.id, system, change, stage, run_id: runId, started_at: Math.floor(Date.now() / 1000) });
       } catch (e) {
         this.toasts.error(`Could not link the run to the change: ${message(e)}`);
       }
     }
     await this.router.navigate(['/sdlc', system, change]);
-    if (!waiting) return { kind: 'opened', change, branch: outcome.renamed.branch };
-    // The change page shows the confirmation. Closing it leaves the change on its pending branch, which the page offers it again for.
-    if (naming) this.pickedFor = { change, type: naming.workType };
-    const named = await this.requestName({
-      folder: workspace.folder,
-      masterRepo: repoName(master),
-      system,
-      change,
-      pending: outcome['needs-name'].pending,
-      workType: naming?.workType ?? null,
-      track: await this.trackOf(workspace.folder, system, change, decide),
-    });
-    return named === null ? { kind: 'stopped' } : { kind: 'opened', change: named.change, branch: named.branch };
-  }
-
-  /** The track the change ended on, for the type the confirmation preselects; the start's own track when it cannot be read. */
-  private async trackOf(folder: string, system: string, change: string, decide: boolean): Promise<'full' | 'fix'> {
-    try {
-      return (await this.transport.sdlcChangeState(folder, system, change)).state.track;
-    } catch {
-      return decide ? 'fix' : 'full';
-    }
-  }
-
-  /** Finish the pending branch. A dirty tree opens the leftover dialog once and retries after it closes. */
-  private async finish(
-    master: string,
-    branch: string,
-    snapshot: Snapshot | null,
-    productRepos: string[],
-  ): Promise<FinishOutcome | null> {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        return await this.transport.sdlcFinishChange(master, branch);
-      } catch (e) {
-        const dirty = message(e).includes(DIRTY);
-        const data = dirty && attempt === 0 && snapshot ? await this.readLeftovers(master, snapshot, productRepos) : EMPTY;
-        if (snapshot && hasLeftovers(data)) {
-          this.setPending([this.entry(master, snapshot, data)]);
-          await this.leftoversClosed();
-          continue;
-        }
-        this.toasts.error(`Could not finish the change: ${message(e)}. The pending branch ${branch} was kept.`);
-        return null;
-      }
-    }
   }
 
   private async reportStopped(

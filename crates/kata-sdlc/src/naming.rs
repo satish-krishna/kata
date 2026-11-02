@@ -184,8 +184,22 @@ pub fn names(
 /// The name of a new change: `date` (`YYYY-MM-DD`) and the title's first words, at most five, in lowercase
 /// kebab-case. Only ASCII letters and digits are kept; a title with no usable word gives `change`.
 pub fn change_name(date: &str, title: &str) -> String {
-    let _ = (date, title);
-    String::new()
+    let words: Vec<String> = title
+        .split(|c: char| c.is_whitespace() || matches!(c, '-' | '_' | '/'))
+        .map(|w| {
+            w.chars()
+                .filter(char::is_ascii_alphanumeric)
+                .collect::<String>()
+                .to_ascii_lowercase()
+        })
+        .filter(|w| !w.is_empty())
+        .take(5)
+        .collect();
+    if words.is_empty() {
+        format!("{date}-change")
+    } else {
+        format!("{date}-{}", words.join("-"))
+    }
 }
 
 /// Refuses a branch name git or Kata would not accept. Called before any branch is created or renamed

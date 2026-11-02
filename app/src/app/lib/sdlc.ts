@@ -150,6 +150,8 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): s
       return `Use the ai-sdlc context skill for system ${system}, repositories: ${(ctx.repos ?? []).join(", ")}. Refresh each existing context file, even one that is current.`;
     case "intent": {
       if (change === null) return `Use the ai-sdlc intent skill for system ${system}. The idea: ${ctx.idea ?? ""}${scopeArg(ctx)}`;
+      // A change the workflow started before the run: its branch and its own copy exist, so the skill writes in them and starts nothing.
+      if (ctx.idea) return `Use the ai-sdlc intent skill for system ${system} on change folder ${change}. The change is already started: its branch and its own copy exist, so do not start it again. The idea: ${ctx.idea}${scopeArg(ctx)}`;
       const resume = `Use the ai-sdlc intent skill for system ${system} on the existing change folder ${change}. Resume the draft.`;
       return action === "reopen-intent"
         ? `${resume} The user has already confirmed reopening this accepted intent; do not ask again.`

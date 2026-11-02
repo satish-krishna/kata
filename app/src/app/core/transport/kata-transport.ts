@@ -15,7 +15,6 @@ import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { ChangeStart } from '@bindings/ChangeStart';
-import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Decision } from '@bindings/Decision';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { RunLink } from '@bindings/RunLink';
@@ -160,13 +159,8 @@ export abstract class KataTransport {
   abstract sdlcChangeName(title: string): Promise<string>;
   /** Ask the plugin to start a change: its branch and its own copy. A refusal is an answer with the plugin's reasons, not an error. */
   abstract sdlcStartChange(folder: string, system: string, title: string, workType: string, scope: string, branch?: string): Promise<ChangeStart>;
-  abstract sdlcFinishChange(master: string, pending: string): Promise<FinishOutcome>;
   /** The system's naming setting, or why it cannot be used. */
   abstract sdlcNaming(folder: string, masterRepo: string, system: string): Promise<NamingState>;
-  /** The branch name the setting gives the change, or the reason it cannot be made. */
-  abstract sdlcSuggestBranch(folder: string, masterRepo: string, system: string, change: string, workType: string): Promise<string>;
-  /** Rename the pending branch to the engineer's chosen name and record it. */
-  abstract sdlcConfirmBranch(folder: string, masterRepo: string, system: string, change: string, pending: string, name: string, workType: string): Promise<FinishOutcome>;
   /** Rename the change's branch in every repository that has it. Rejects while a build run is live. */
   abstract sdlcRenameBranch(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, newName: string): Promise<RenameResult>;
   /** Repositories where the change's branch name is already taken on GitHub by work this machine does not have. */

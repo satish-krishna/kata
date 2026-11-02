@@ -218,6 +218,8 @@
     [initialIdea]="vm.newChangeIdea()"
     [initialTrack]="vm.newChangeTrack()"
     [note]="vm.newChangeNote()"
+    [initialSystem]="vm.newChangeSystem()"
+    [branchProblems]="vm.branchProblems()"
     [workTypes]="vm.workTypes()"
     [workType]="vm.workType()"
     [scope]="vm.scope()"
@@ -229,7 +231,7 @@
     (trackChange)="vm.pickTrack($event)"
     (workTypeChange)="vm.pickWorkType($event)"
     (scopeChange)="vm.setScope($event)"
-    (start)="vm.newChange($event.system, $event.idea, $event.track)"
+    (start)="vm.newChange($event.system, $event.idea, $event.track, $event.branch)"
     (cancel)="vm.closeNewChange()"
   />
   @if (vm.settings(); as s) {

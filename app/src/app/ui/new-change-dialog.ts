@@ -79,9 +79,22 @@ export class NewChangeDialog {
   });
   protected readonly system = linkedSignal<string | null>(() => {
     this.open();
-    return this.systems()[0] ?? null;
+    return this.initialSystem() ?? this.systems()[0] ?? null;
   });
-  protected readonly ready = computed(() => this.system() !== null && this.idea().trim() !== '' && this.namingReady());
+  /** Another branch name, asked for after the plugin refused the one it would have given. */
+  protected readonly branch = linkedSignal(() => {
+    this.open();
+    this.branchProblems();
+    return '';
+  });
+  protected readonly asksBranch = computed(() => this.branchProblems().length > 0);
+  protected readonly ready = computed(
+    () => this.system() !== null && this.idea().trim() !== '' && this.namingReady() && (!this.asksBranch() || this.branch().trim() !== ''),
+  );
+
+  protected onBranch(e: Event): void {
+    this.branch.set((e.target as HTMLInputElement).value);
+  }
 
   protected onSystem(value: unknown): void {
     if (typeof value !== 'string') return;
@@ -111,7 +124,8 @@ export class NewChangeDialog {
   protected submit(): void {
     const system = this.system();
     if (!this.ready() || system === null) return;
-    this.start.emit({ system, idea: this.idea().trim(), track: this.track() });
+    const branch = this.asksBranch() ? this.branch().trim() : '';
+    this.start.emit({ system, idea: this.idea().trim(), track: this.track(), ...(branch === '' ? {} : { branch }) });
   }
 
   /** Escape and a backdrop click close the overlay from inside; surface that as cancel. */

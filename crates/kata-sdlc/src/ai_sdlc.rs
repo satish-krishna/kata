@@ -28,6 +28,7 @@ const PLACED: &[&str] = &[
     "hooks",
     "status",
     "commit",
+    "change",
 ];
 
 /// Where an ai-sdlc command works: the master repository and the workspace around it.

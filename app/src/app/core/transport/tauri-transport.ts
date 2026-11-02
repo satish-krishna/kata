@@ -18,7 +18,6 @@ import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { ChangeStart } from '@bindings/ChangeStart';
-import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Decision } from '@bindings/Decision';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { RunLink } from '@bindings/RunLink';
@@ -131,10 +130,7 @@ export class TauriTransport extends KataTransport {
   sdlcCloseAnswer(confirm: boolean) { return this.ipc.invoke<void>('sdlc_close_answer', { confirm }); }
   sdlcChangeName(title: string) { return this.ipc.invoke<string>('sdlc_change_name', { title }); }
   sdlcStartChange(folder: string, system: string, title: string, workType: string, scope: string, branch?: string) { return this.ipc.invoke<ChangeStart>('sdlc_start_change', { folder, system, title, workType, scope, ...(branch === undefined ? {} : { branch }) }); }
-  sdlcFinishChange(master: string, pending: string) { return this.ipc.invoke<FinishOutcome>('sdlc_finish_change', { master, pending }); }
   sdlcNaming(folder: string, masterRepo: string, system: string) { return this.ipc.invoke<NamingState>('sdlc_naming', { folder, masterRepo, system }); }
-  sdlcSuggestBranch(folder: string, masterRepo: string, system: string, change: string, workType: string) { return this.ipc.invoke<string>('sdlc_suggest_branch', { folder, masterRepo, system, change, workType }); }
-  sdlcConfirmBranch(folder: string, masterRepo: string, system: string, change: string, pending: string, name: string, workType: string) { return this.ipc.invoke<FinishOutcome>('sdlc_confirm_branch', { folder, masterRepo, system, change, pending, name, workType }); }
   sdlcRenameBranch(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, newName: string) { return this.ipc.invoke<RenameResult>('sdlc_rename_branch', { folder, workspaceId, masterRepo, system, change, newName }); }
   sdlcRemoteClashes(touched: PublishRepo[], masterRepo: string, system: string, change: string) { return this.ipc.invoke<RemoteClash[]>('sdlc_remote_clashes', { touched, masterRepo, system, change }); }
   sdlcCheckScope(folder: string, scope: string) { return this.ipc.invoke<string[]>('sdlc_check_scope', { folder, scope }); }

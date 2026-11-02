@@ -74,7 +74,7 @@ import { inTauri } from '../../lib/mock';
 import { taskRecord, withRows, type TaskView } from '../../lib/task-view';
 import { shownSection } from '../../lib/sdlc-review';
 import { masterPath, masterRepo, productRepos } from '../../lib/sdlc-workspace';
-import { namingRefusal, type WorkType } from '../../lib/sdlc-naming';
+import { namingRefusal } from '../../lib/sdlc-naming';
 
 export type ChangeState = 'loading' | 'ready' | 'not-found';
 
@@ -131,11 +131,6 @@ const RUNS: Record<Exclude<StageAction, HandledAction>, StageRun> = {
 /** The fix runs, which need a plugin that has the light track. */
 const FIX_RUNS: readonly StageAction[] = ['finish-fix-draft', 'change-fix', 'reopen-fix', 'accept-fix'];
 const NEEDS_LIGHT_TRACK = 'Needs ai-sdlc 1.1.0 or later.';
-const NEEDS_NAME = 'Name the branch first.';
-/** The actions that start or continue build work: they wait for the branch's name. */
-const NEEDS_BRANCH: readonly StageAction[] = ['start-build', 'continue-build', 'another-round', 'run-review'];
-/** The branch a change is created on, until its name is confirmed. */
-const PENDING_PREFIX = 'change/pending-';
 
 const FILE: Record<Decision, 'intent.md' | 'spec.md' | 'plan.md'> = {
   'accept-intent': 'intent.md',
@@ -310,19 +305,6 @@ export class ChangePageViewModel {
   private pickSeq = 0;
 
   readonly masterBranch = computed(() => this.branches()?.current ?? null);
-  /** The system's naming setting as last read; null before the first load and when it could not be read. */
-  private readonly naming = signal<NamingState | null>(null);
-  /**
-   * The change was created on a pending branch, the system declares naming, and the engineer has not confirmed a name: the master stands on that
-   * pending branch (and only that change: another change opened meanwhile is not waiting for a name), which a confirmation renames in the same step. A change with a branch record, or one started before the setting existed, is on its own branch.
-   */
-  readonly needsName = computed(
-    () =>
-      this.change() !== null &&
-      this.naming()?.kind === 'setting' &&
-      (this.masterBranch() ?? '').startsWith(PENDING_PREFIX) &&
-      this.branches()?.pending_change === `${this.system()}/${this.changeName()}`,
-  );
   /** The branch name confirmation on show. */
   readonly nameRequest = this.runner.nameRequest;
   readonly crumbs = computed(() => (this.changeName() === '' ? [] : [this.changeName()]));
@@ -445,16 +427,12 @@ export class ChangePageViewModel {
   }
   /** Whether an action's button is off: the lock holds it, or it is a fix run the plugin on this machine cannot do. */
   disabledFor(action: StageAction): boolean {
-    return this.locked() || this.needsLightTrack(action) || this.waitsForName(action) || this.refusedWith(action) !== null;
+    return this.locked() || this.needsLightTrack(action) || this.refusedWith(action) !== null;
   }
   /** Why a fix run is unavailable; null for any other action and while it is available. */
   titleFor(action: StageAction): string | null {
-    if (this.waitsForName(action)) return NEEDS_NAME;
     if (this.needsLightTrack(action)) return NEEDS_LIGHT_TRACK;
     return this.refusedWith(action);
-  }
-  private waitsForName(action: StageAction): boolean {
-    return this.needsName() && NEEDS_BRANCH.includes(action);
   }
   private needsLightTrack(action: StageAction): boolean {
     return FIX_RUNS.includes(action) && !this.lightTrack();
@@ -836,21 +814,7 @@ export class ChangePageViewModel {
     if (this.state() === 'ready') await this.runStage('continue-spec');
   }
 
-  // --- naming
-
-  /** Open the branch name confirmation of this change. Closing it changes nothing: the page keeps asking. */
-  async openNameDialog(): Promise<void> {
-    const w = this.current();
-    const master = this.scanMaster();
-    const pending = this.masterBranch();
-    const change = this.change();
-    if (w === null || master === null || pending === null || change === null || this.refuseWhileLocked()) return;
-    await this.runner.requestName({ folder: w.folder, masterRepo: master, system: this.system(), change: this.changeName(), pending, workType: null, track: change.state.track });
-  }
-
-  nameType(type: WorkType): void {
-    void this.runner.setNameType(type);
-  }
+  // --- renaming
 
   acceptName(name: string): void {
     void this.runner.confirmName(name);
@@ -867,10 +831,6 @@ export class ChangePageViewModel {
     if (action !== 'cancel-build' && this.refuseWhileLocked()) return;
     if (this.needsLightTrack(action)) {
       this.toasts.error(NEEDS_LIGHT_TRACK);
-      return;
-    }
-    if (this.waitsForName(action)) {
-      this.toasts.error(NEEDS_NAME);
       return;
     }
     switch (action) {
@@ -1577,15 +1537,6 @@ export class ChangePageViewModel {
     }
   }
 
-  /** The system's naming setting; null when it cannot be read, which the page treats as no declaration. */
-  private async readNaming(folder: string, repo: string, system: string): Promise<NamingState | null> {
-    try {
-      return await this.transport.sdlcNaming(folder, repo, system);
-    } catch {
-      return null;
-    }
-  }
-
   /** Read the change from disk. A newer call supersedes an older one still in flight. */
   /** A run picked from the running changes may belong to another workspace than the open one: make that workspace the open one, as picking it in the switcher does, before the page reads the change. */
   private async openAskedWorkspace(workspaces: WorkspaceEntry[], system: string, change: string): Promise<void> {
@@ -1689,13 +1640,12 @@ export class ChangePageViewModel {
         return;
       }
       const master = masterPath(w.folder, repo);
-      const [branches, own, links, records, catalog, naming, recorded] = await Promise.all([
+      const [branches, own, links, records, catalog, recorded] = await Promise.all([
         this.transport.sdlcBranches(master),
         this.readOwnChange(w.folder, system, name),
         this.transport.sdlcRunLinks(),
         this.transport.listRuns(),
         this.transport.catalog(w.folder),
-        this.readNaming(w.folder, repo, system),
         this.readRecordedBranch(w.folder, repo, system, name),
       ]);
       const found = own.info;
@@ -1719,7 +1669,6 @@ export class ChangePageViewModel {
       this.scan.set(scan);
       this.branches.set(branches);
       this.recordedBranch.set(recorded);
-      this.naming.set(naming);
       this.links.set(links);
       this.records.set(records);
       this.catalog.set(catalog);

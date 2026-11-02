@@ -2,6 +2,7 @@
 //! and Kata only asks. Kata never creates a branch or a copy itself; a refusal is the plugin's own reason,
 //! sorted by what the engineer can do about it.
 use kata_sdlc::ai_sdlc::{Place, Program};
+use kata_sdlc::{decide, naming};
 use serde::Serialize;
 
 /// Why the plugin refused to start a change, by what the engineer can change.
@@ -55,6 +56,46 @@ pub struct StartRequest<'a> {
     pub branch: Option<&'a str>,
 }
 
+/// The date part of a change name for now: today, in UTC, as `YYYY-MM-DD`.
+pub fn today() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let (y, m, d) = civil_from_days((secs / 86_400) as i64);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Days since 1970-01-01 as (year, month, day): Howard Hinnant's public-domain `civil_from_days`.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let y = yoe as i64 + era * 400;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// Sorts the plugin's problems by what the engineer can do about them. The program prints no code, only
+/// words, so this reads the prefixes and phrases its `change start` check uses.
+fn classify(problems: &[String]) -> StartRefusal {
+    let any = |f: &dyn Fn(&str) -> bool| problems.iter().any(|p| f(p));
+    if any(&|p| p.starts_with("the scope:")) {
+        StartRefusal::Scope
+    } else if any(&|p| p.starts_with("the team naming on the base branch")) {
+        StartRefusal::Naming
+    } else if any(&|p| p.contains(" is taken in ") || p.contains(" clashes in ")) {
+        StartRefusal::BranchTaken
+    } else if any(&|p| p.contains("a branch name cannot")) {
+        StartRefusal::BranchInvalid
+    } else {
+        StartRefusal::Other
+    }
+}
+
 /// Asks the plugin to start a change named from `date` and the title. An `Err` is a plugin that could not
 /// run at all; a refusal is an answer.
 pub fn start_change(
@@ -63,10 +104,61 @@ pub fn start_change(
     date: &str,
     request: &StartRequest,
 ) -> Result<ChangeStart, String> {
-    let _ = (program, place, date, request);
+    let title = request
+        .title
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or_default();
+    let change = naming::change_name(date, title);
+    let scope = match request.scope.trim() {
+        "" => decide::change_scope(&place.master, request.system, &change),
+        typed => typed.to_string(),
+    };
+    let mut command = vec![
+        "change",
+        "start",
+        "--json",
+        "--system",
+        request.system,
+        "--change",
+        &change,
+        "--type",
+        request.work_type,
+        "--scope",
+        &scope,
+        "--title",
+        title,
+    ];
+    if let Some(branch) = request.branch {
+        command.extend(["--branch", branch]);
+    }
+    let answer = program.run(&command, place).map_err(|e| e.to_string())?;
+    let details = &answer["details"];
+    if answer["outcome"] == "passed" {
+        let text = |key: &str| details[key].as_str().map(str::to_string);
+        if let (Some(branch), Some(copy)) = (text("branch"), text("copy")) {
+            return Ok(ChangeStart::Started {
+                change,
+                branch,
+                copy,
+            });
+        }
+        return Err(format!(
+            "the plugin started {change} but named no branch or copy"
+        ));
+    }
+    let problems: Vec<String> = answer["problems"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|p| p.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
     Ok(ChangeStart::Refused {
-        kind: StartRefusal::Other,
-        problems: Vec::new(),
+        kind: classify(&problems),
+        problems,
     })
 }
 
@@ -190,6 +282,13 @@ mod tests {
             assert_eq!(checkout_state(&place), before, "{label}");
             assert!(!place.master.join("intent").exists(), "{label}");
         }
+    }
+
+    #[test]
+    fn civil_dates_are_right() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(20_758), (2026, 11, 1));
+        assert_eq!(civil_from_days(19_782), (2024, 2, 29));
     }
 
     #[test]

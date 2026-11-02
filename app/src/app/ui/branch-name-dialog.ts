@@ -3,23 +3,20 @@ import type { BrnDialogState } from '@spartan-ng/brain/dialog';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmDialogImports } from '@spartan-ng/helm/dialog';
 import { HlmInputImports } from '@spartan-ng/helm/input';
-import { HlmSelectImports } from '@spartan-ng/helm/select';
 import type { NameRequest } from '../core/sdlc/sdlc-runner';
-import type { WorkType } from '../lib/sdlc-naming';
 import { Field } from './field';
 
-/* Name the branch: the work type and the suggested name, editable. The name follows the type until the engineer types in it. */
+/* Rename the branch: the current name, editable. */
 @Component({
   selector: 'app-branch-name-dialog',
   host: { class: 'contents' },
-  imports: [HlmDialogImports, HlmButtonImports, HlmInputImports, HlmSelectImports, Field],
+  imports: [HlmDialogImports, HlmButtonImports, HlmInputImports, Field],
   templateUrl: './branch-name-dialog.html',
 })
 export class BranchNameDialog {
   /** What to confirm; the dialog is open while there is one. */
   readonly request = input<NameRequest | null>(null);
 
-  readonly typeChange = output<WorkType>();
   readonly accept = output<string>();
   readonly cancel = output<void>();
 
@@ -33,14 +30,10 @@ export class BranchNameDialog {
     const req = this.request();
     return req !== null && !req.busy && this.name().trim() !== '';
   });
-  protected readonly hint = computed(() => this.request()?.error ?? (this.request()?.rename ? 'The change moves to this branch in every repository that has it.' : 'The branch the change is built on, in every repository.'));
+  protected readonly hint = computed(() => this.request()?.error ?? 'The change moves to this branch in every repository that has it.');
 
   protected onName(e: Event): void {
     this.typed.set((e.target as HTMLInputElement).value);
-  }
-
-  protected onType(value: unknown): void {
-    if (typeof value === 'string') this.typeChange.emit(value as WorkType);
   }
 
   protected submit(): void {
@@ -54,4 +47,4 @@ export class BranchNameDialog {
 }
 
 /** The same confirmation seen again (a suggestion or a refusal arrived), as opposed to a new one. */
-const sameChange = (a: NameRequest, b: NameRequest): boolean => a.system === b.system && a.change === b.change && a.pending === b.pending;
+const sameChange = (a: NameRequest, b: NameRequest): boolean => a.system === b.system && a.change === b.change && a.current === b.current;

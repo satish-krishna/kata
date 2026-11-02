@@ -11,19 +11,14 @@ import { BranchNameDialog } from './branch-name-dialog';
 @Component({
   selector: 'app-host',
   imports: [BranchNameDialog],
-  template: `<app-branch-name-dialog
-    [request]="runner.nameRequest()"
-    (typeChange)="runner.setNameType($event)"
-    (accept)="runner.confirmName($event)"
-    (cancel)="runner.closeName()"
-  />`,
+  template: `<app-branch-name-dialog [request]="runner.nameRequest()" (accept)="runner.confirmName($event)" (cancel)="runner.closeName()" />`,
 })
 class Host {
   readonly runner = inject(SdlcRunner);
 }
 
 const CHANGE = '2026-11-02-password-reset';
-const ASK = { folder: '/ws', masterRepo: 'acme-docs', system: 'commerce', change: CHANGE, pending: 'change/pending-1', workType: null, track: 'full' as const };
+const ASK = { folder: '/ws', workspaceId: 'acme', masterRepo: 'acme-docs', system: 'commerce', change: CHANGE, current: `change/${CHANGE}` };
 const dialog = () => document.body.querySelector('[role="dialog"]');
 const button = (label: string) => Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent!.trim() === label)!;
 const nameInput = () => dialog()!.querySelector<HTMLInputElement>('input[aria-label="Branch name"]')!;
@@ -40,10 +35,9 @@ const type = async (value: string) => {
 };
 
 async function open(transport = new MockTransport()) {
-  vi.spyOn(transport, 'sdlcSuggestBranch').mockImplementation(async (_f, _m, _s, _c, workType) => `${workType}/PROJ-123-password-reset`);
   await render(Host, {}, [provideRouter([]), { provide: KataTransport, useValue: transport }]);
   const runner = TestBed.inject(SdlcRunner);
-  const result = runner.requestName(ASK);
+  const result = runner.requestRename(ASK);
   await settle();
   return { transport, runner, result };
 }
@@ -54,43 +48,27 @@ describe('BranchNameDialog', () => {
     expect(dialog()).toBeNull();
   });
 
-  it('accepting the suggested name names the change branch (R6.1)', async () => {
-    const { transport, result } = await open();
-    const confirm = vi.spyOn(transport, 'sdlcConfirmBranch');
-    expect(nameInput().value).toBe('feat/PROJ-123-password-reset');
-    button('Accept').click();
-    await settle();
-    expect(confirm).toHaveBeenCalledWith('/ws', 'acme-docs', 'commerce', CHANGE, 'change/pending-1', 'feat/PROJ-123-password-reset', 'feat');
-    expect(await result).toEqual({ branch: 'feat/PROJ-123-password-reset', change: CHANGE });
-    expect(dialog()).toBeNull();
-  });
-
-  it('an edited name becomes the change branch (R6.2)', async () => {
-    const { transport, result } = await open();
-    const confirm = vi.spyOn(transport, 'sdlcConfirmBranch');
-    await type('feature/PROJ-123');
-    button('Accept').click();
-    await settle();
-    expect(confirm.mock.calls[0][5]).toBe('feature/PROJ-123');
-    expect((await result)?.branch).toBe('feature/PROJ-123');
-  });
-
-  it('changing the type refreshes the suggestion, unless the name was edited', async () => {
+  it('starts from the branch the change has now and offers no work type', async () => {
     await open();
-    const pick = async (t: string) => {
-      TestBed.inject(SdlcRunner).setNameType(t as never);
-      await settle();
-    };
-    await pick('refactor');
-    expect(nameInput().value).toBe('refactor/PROJ-123-password-reset');
+    expect(nameInput().value).toBe(`change/${CHANGE}`);
+    expect(dialog()!.querySelector('hlm-select')).toBeNull();
+  });
+
+  it('an edited name renames the change branch everywhere', async () => {
+    const { transport, result } = await open();
+    const rename = vi.spyOn(transport, 'sdlcRenameBranch');
     await type('feature/PROJ-123');
-    await pick('docs');
-    expect(nameInput().value).toBe('feature/PROJ-123');
+    button('Accept').click();
+    await settle();
+    expect(rename).toHaveBeenCalledWith('/ws', 'acme', 'acme-docs', 'commerce', CHANGE, 'feature/PROJ-123');
+    expect((await result)?.branch).toBe('feature/PROJ-123');
+    expect(dialog()).toBeNull();
   });
 
   it('shows the backend refusal under the field and stays open', async () => {
     const { transport } = await open();
-    vi.spyOn(transport, 'sdlcConfirmBranch').mockRejectedValue(new Error('feat/x clashes with feat/x in acme-docs'));
+    vi.spyOn(transport, 'sdlcRenameBranch').mockRejectedValue(new Error('feat/x clashes with feat/x in acme-docs'));
+    await type('feat/x');
     button('Accept').click();
     await settle();
     expect(dialog()!.textContent).toContain('feat/x clashes with feat/x in acme-docs');
@@ -99,11 +77,11 @@ describe('BranchNameDialog', () => {
 
   it('closing leaves everything as it is', async () => {
     const { transport, result } = await open();
-    const confirm = vi.spyOn(transport, 'sdlcConfirmBranch');
+    const rename = vi.spyOn(transport, 'sdlcRenameBranch');
     button('Cancel').click();
     await settle();
     expect(await result).toBeNull();
-    expect(confirm).not.toHaveBeenCalled();
+    expect(rename).not.toHaveBeenCalled();
     expect(dialog()).toBeNull();
   });
 });

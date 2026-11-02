@@ -62,8 +62,10 @@ function setup(agent: (spec: RunSpec) => Promise<RunState> | RunState = () => 's
   const active = signal<unknown>(null);
   const lock = {
     active,
-    runAgent: vi.fn(async (_title: string, spec: RunSpec, _via?: (s: RunSpec) => Promise<string>) => {
+    runAgent: vi.fn(async (_title: string, spec: RunSpec, via?: (s: RunSpec) => Promise<string>) => {
       fake.calls.push('agent');
+      // The lock starts the run the way the runner asked: a change's run goes through its launch.
+      if (via) await via(spec);
       return agent(spec);
     }),
     dismissed: vi.fn(async () => {
@@ -352,28 +354,19 @@ describe('SdlcRunner.newChange', () => {
   const target = { workspace: WORKSPACE, master: '/ws/commerce-docs', productRepos: [] as string[] };
   const CHANGE = '2026-10-18-flag-prices';
   const REF = { workspace: '/ws', system: 'commerce', change: CHANGE };
-  /** What the run does when the lock starts it: the launch the runner hands over, called as the lock would. */
-  const launched = async (lock: { runAgent: { mock: { calls: unknown[][] } } }) => {
-    const via = lock.runAgent.mock.calls[0][2] as ((s: RunSpec) => Promise<string>) | undefined;
-    expect(via).toBeTypeOf('function');
-    return via!(lock.runAgent.mock.calls[0][1] as RunSpec);
-  };
-
   it('starts the change through the plugin, then runs intent inside it and opens it', async () => {
-    const { runner, fake, lock, navigate } = setup();
+    const { runner, fake, navigate } = setup();
     const outcome = await runner.newChange(target, 'commerce', 'flag prices', 'full');
     expect(fake.calls.filter((c) => c !== 'link')).toEqual(['name', 'start', 'snapshot', 'agent', 'wait', 'dismissed']);
     expect(fake.sdlcStartChange).toHaveBeenCalledWith('/ws', 'commerce', 'flag prices', 'feat', '');
-    expect(await launched(lock)).toBe('41');
     expect(fake.sdlcRunChange).toHaveBeenCalledWith(REF, 'intent', expect.objectContaining({ name: 'sdlc-commerce-2026-10-18-flag-prices-intent' }));
     expect(outcome).toEqual({ kind: 'opened', change: CHANGE, branch: `change/${CHANGE}` });
     expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', CHANGE]);
   });
 
   it('the intent run names the change folder and carries the idea', async () => {
-    const { runner, fake, lock } = setup();
+    const { runner, fake } = setup();
     await runner.newChange(target, 'commerce', 'flag prices', 'full');
-    await launched(lock);
     const form = fake.sdlcRunChange.mock.calls[0][2] as { task: string };
     expect(form.task).toContain(`on change folder ${CHANGE}`);
     expect(form.task).toContain('The idea: flag prices');
@@ -381,10 +374,9 @@ describe('SdlcRunner.newChange', () => {
   });
 
   it('passes the picked type and scope to the plugin and the scope to the intent task (R4.2)', async () => {
-    const { runner, fake, lock } = setup();
+    const { runner, fake } = setup();
     await runner.newChange(target, 'commerce', 'flag prices', 'full', undefined, { workType: 'refactor', scope: 'PROJ-123' });
     expect(fake.sdlcStartChange).toHaveBeenCalledWith('/ws', 'commerce', 'flag prices', 'refactor', 'PROJ-123');
-    await launched(lock);
     const task: string = (fake.sdlcRunChange.mock.calls[0][2] as { task: string }).task;
     expect(task).toContain('scope:PROJ-123');
     expect(task.endsWith('scope:PROJ-123')).toBe(true);
@@ -400,9 +392,8 @@ describe('SdlcRunner.newChange', () => {
   });
 
   it('adds no scope to the task without a naming setting (R2.1)', async () => {
-    const { runner, fake, lock } = setup();
+    const { runner, fake } = setup();
     await runner.newChange(target, 'commerce', 'flag prices', 'full');
-    await launched(lock);
     expect((fake.sdlcRunChange.mock.calls[0][2] as { task: string }).task).not.toContain('scope:');
   });
 
@@ -413,8 +404,9 @@ describe('SdlcRunner.newChange', () => {
   });
 
   it('links the new change to the run', async () => {
+    // The intent run is the change's own run, so its transcript is in that run's events.
     const ctx = setup(async () => {
-      ctx.events.set([transcript('/k/runs/sdlc-commerce-new-intent-1.jsonl')]);
+      ctx.snap('41').update((v) => ({ ...v, events: [transcript('/k/runs/sdlc-commerce-new-intent-1.jsonl')] }));
       TestBed.tick();
       return 'success' as const;
     });

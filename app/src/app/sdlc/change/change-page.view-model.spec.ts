@@ -792,25 +792,6 @@ describe('ChangePageViewModel', () => {
       });
     });
 
-    const pendingBranches = (pending_change: string | null) => ({ current: 'change/pending-20261102T000000Z', others: [], default_base: 'main', pending_change });
-
-    it('does not ask another change for a name while the master stands on a pending branch (R6.6)', async () => {
-      const transport = new MockTransport();
-      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue(pendingBranches('commerce/2026-11-02-password-reset'));
-      const { vm } = setup(PHOTOS_CHANGE, transport);
-      await ready(vm);
-      expect(vm.masterBranch()).toBe('change/pending-20261102T000000Z');
-      expect(vm.needsName()).toBe(false);
-    });
-
-    it('asks the change the pending branch created for a name (R6.6)', async () => {
-      const transport = new MockTransport();
-      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue(pendingBranches(`commerce/${PHOTOS_CHANGE}`));
-      const { vm } = setup(PHOTOS_CHANGE, transport);
-      await ready(vm);
-      expect(vm.needsName()).toBe(true);
-    });
-
     it('reads the strip status from the open document front matter', async () => {
       const { vm } = setup(PHOTOS_CHANGE);
       await ready(vm);
