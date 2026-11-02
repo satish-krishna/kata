@@ -994,6 +994,57 @@ fn sdlc_reject(
     outcome
 }
 
+/// What the change page offers for the change's copy: removal once its pull requests are merged and the
+/// copy holds nothing uncommitted, else the files that keep it, else nothing. Asks GitHub for the states.
+#[tauri::command(async)]
+fn sdlc_copy_removal(
+    change: build_host::ChangeRef,
+) -> Result<sdlc::copy_removal::CopyRemoval, String> {
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let (place, state) = change_standing(&program, &change)?;
+    sdlc::copy_removal::offer(&program, &place, &state)
+}
+
+/// The branch the change's copy holds, as the plugin records it.
+#[tauri::command(async)]
+fn sdlc_copy_branch(change: build_host::ChangeRef) -> Result<String, String> {
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let place = program
+        .resolve(Path::new(&change.workspace))
+        .map_err(|e| e.to_string())?;
+    sdlc::copy_removal::branch(&program, &place, &change.change)
+}
+
+/// Remove the change's copy on the engineer's confirmation. The plugin refuses a copy with uncommitted
+/// files. No run of the change starts while the copy goes, and none may be live when it begins.
+#[tauri::command(async)]
+fn sdlc_remove_copy(
+    control: State<'_, RunControl>,
+    change: build_host::ChangeRef,
+) -> Result<sdlc::copy_removal::RemoveOutcome, String> {
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let key = build_host::key_of(&change);
+    control.state.lock().unwrap().begin_rejecting(&key)?;
+    let outcome = change_standing(&program, &change)
+        .map(|(place, state)| sdlc::copy_removal::remove(&program, &place, &state));
+    control.state.lock().unwrap().end_rejecting(&key);
+    outcome
+}
+
+/// Open the folder of the change's copy in the system file manager. The folder is the plugin's, never one
+/// the webview names, and only a change in a copy has one.
+#[tauri::command(async)]
+fn sdlc_open_copy_folder(app: AppHandle, change: build_host::ChangeRef) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let (_, state) = change_standing(&program, &change)?;
+    open_copy_with(state.in_copy, &state.master, |path| {
+        app.opener()
+            .open_path(path, None::<&str>)
+            .map_err(|e| e.to_string())
+    })
+}
+
 #[tauri::command]
 fn sdlc_run_links() -> Vec<sdlc::store::RunLink> {
     sdlc::store::load_run_links()
@@ -1742,8 +1793,10 @@ fn open_copy_with(
     master: &str,
     open: impl FnOnce(&str) -> Result<(), String>,
 ) -> Result<(), String> {
-    let _ = (in_copy, master, open);
-    Ok(())
+    if !in_copy {
+        return Err("This change has no copy of its own to open.".into());
+    }
+    open(master)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1884,6 +1937,10 @@ pub fn run() {
             sdlc_done_view,
             sdlc_refresh_pr_states,
             sdlc_pull_requests,
+            sdlc_copy_removal,
+            sdlc_copy_branch,
+            sdlc_remove_copy,
+            sdlc_open_copy_folder,
             zoom,
             open_url
         ])

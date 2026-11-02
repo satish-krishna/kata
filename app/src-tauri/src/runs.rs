@@ -67,7 +67,7 @@ pub struct LiveSummary {
 /// Every live run, keyed by id.
 pub struct RunTable<C = CommandChild> {
     runs: BTreeMap<u64, LiveRun<C>>,
-    /// The changes being rejected: the plugin is about to remove their copy, so no run of them may start.
+    /// The changes whose copy the plugin is about to remove (a rejection, or removing a finished change's copy), so no run of them may start.
     rejecting: HashSet<ChangeKey>,
 }
 
@@ -85,7 +85,7 @@ impl<C> RunTable<C> {
     pub fn claim(&self, workdir: &Path, lane: &Lane) -> Result<(), String> {
         if let Lane::Change { key, .. } = lane {
             if self.rejecting.contains(key) {
-                return Err("This change is being rejected.".into());
+                return Err("This change's copy is being removed.".into());
             }
         }
         let folder = RepoKey::of(workdir);
@@ -113,10 +113,13 @@ impl<C> RunTable<C> {
             .values()
             .any(|r| matches!(&r.lane, Lane::Change { key: k, .. } if k == key));
         if live {
-            return Err("A run of this change is live. Reject it after the run ends.".into());
+            return Err(
+                "A run of this change is live. Reject it or remove its copy after the run ends."
+                    .into(),
+            );
         }
         if !self.rejecting.insert(key.clone()) {
-            return Err("This change is already being rejected.".into());
+            return Err("This change's copy is already being removed.".into());
         }
         Ok(())
     }

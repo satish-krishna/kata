@@ -4,9 +4,11 @@
 //! moment it removes it, so a file written after the offer still keeps the copy.
 use crate::ai_sdlc::show::ChangeShow;
 use crate::ai_sdlc::state::ChangeState;
-use crate::ai_sdlc::{Place, Program};
-use crate::git::StatusEntry;
+use crate::ai_sdlc::{Place, Program, ProgramError};
+use crate::git::{Repo, StatusEntry};
 use serde::Serialize;
+use serde_json::Value;
+use std::path::Path;
 
 /// What the change page offers for a change's copy.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -49,34 +51,109 @@ pub enum RemoveOutcome {
 /// True when the change recorded pull requests and every one of them is `MERGED` in `show` (read with
 /// `--refresh`). A pull request the plugin could not read is not merged.
 pub fn merged(show: &ChangeShow) -> bool {
-    let _ = show;
-    false
+    let Some(record) = &show.record else {
+        return false;
+    };
+    let Some(states) = &show.states else {
+        return false;
+    };
+    !record.pull_requests.is_empty()
+        && record
+            .pull_requests
+            .iter()
+            .all(|p| states.get(&p.url).and_then(Option::as_deref) == Some("MERGED"))
 }
 
 /// Whether the copy's removal is offered: `status` is the copy's uncommitted files.
 pub fn decide(change: &ChangeState, status: &[StatusEntry], merged: bool) -> CopyRemoval {
-    let _ = (change, status, merged);
-    CopyRemoval::NotOffered
+    if !change.in_copy || !merged {
+        return CopyRemoval::NotOffered;
+    }
+    if status.is_empty() {
+        CopyRemoval::Offer
+    } else {
+        CopyRemoval::Keep {
+            uncommitted: status.iter().map(|e| e.path.clone()).collect(),
+        }
+    }
 }
 
-/// Reads what is offered for `change`: its pull requests' states from GitHub now, and the copy's files.
+/// Reads what is offered for `change`: its pull requests' states from GitHub now, and the copy's files. A
+/// change that is not in a copy is not offered anything, and GitHub is not asked.
 pub fn offer(
     program: &Program,
     place: &Place,
     change: &ChangeState,
 ) -> Result<CopyRemoval, String> {
-    let _ = (program, place, change);
-    Err(String::new())
+    if !change.in_copy {
+        return Ok(CopyRemoval::NotOffered);
+    }
+    let show = program
+        .change_show(place, &change.change, true)
+        .map_err(|e| e.to_string())?;
+    let status = if merged(&show) {
+        copy_status(&change.master)?
+    } else {
+        Vec::new()
+    };
+    Ok(decide(change, &status, merged(&show)))
+}
+
+/// The branch the change uses, as the plugin records it; the copy holds it.
+pub fn branch(program: &Program, place: &Place, change: &str) -> Result<String, String> {
+    program
+        .change_show(place, change, false)
+        .map(|s| s.branch)
+        .map_err(|e| e.to_string())
 }
 
 /// Removes the change's copy through the plugin (`change remove`, without `--abandon`: the branch stays
 /// unless git sees it merged). `place` is the workspace's own master, so the command works once the copy
-/// is gone.
+/// is gone. The plugin refuses a copy with uncommitted files as it removes it, so a file written after the
+/// offer keeps the copy; the refusal is answered as `Keep` naming the files.
 pub fn remove(program: &Program, place: &Place, change: &ChangeState) -> RemoveOutcome {
-    let _ = (program, place, change);
-    RemoveOutcome::CouldNotRun {
-        message: String::new(),
+    let command = ["change", "remove", "--json", "--change", &change.change];
+    let problems = match program.run(&command, place) {
+        Ok(answer) => {
+            let problems = strings(&answer["problems"]);
+            if problems.is_empty() {
+                return RemoveOutcome::Removed {
+                    kept: strings(&answer["kept"]),
+                };
+            }
+            problems
+        }
+        Err(ProgramError::Refused { stdout }) => vec![stdout],
+        Err(e) => {
+            return RemoveOutcome::CouldNotRun {
+                message: e.to_string(),
+            }
+        }
+    };
+    // The copy is still there when the plugin refused: its files are the reason, or it says another.
+    match copy_status(&change.master) {
+        Ok(files) if !files.is_empty() => RemoveOutcome::Keep {
+            uncommitted: files.into_iter().map(|e| e.path).collect(),
+        },
+        _ => RemoveOutcome::Refused { problems },
     }
+}
+
+fn copy_status(copy: &str) -> Result<Vec<StatusEntry>, String> {
+    Repo::open(Path::new(copy))
+        .and_then(|r| r.status(""))
+        .map_err(|e| e.to_string())
+}
+
+fn strings(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -262,7 +339,15 @@ mod tests {
         let fx = Fx::new();
         assert_eq!(fx.offered(true), CopyRemoval::Offer);
         let outcome = remove(&program(), &fx.place(), &fx.state());
-        assert_eq!(outcome, RemoveOutcome::Removed { kept: Vec::new() });
+        // The plugin names the branch it kept, and why: git does not see it merged into main.
+        let RemoveOutcome::Removed { kept } = outcome else {
+            panic!("the copy is removed: {outcome:?}");
+        };
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert!(
+            kept[0].starts_with(&format!("master: change/{CHANGE}")),
+            "{kept:?}"
+        );
         assert!(!fx.copy.exists(), "the copy folder is gone");
         assert!(
             fx.branches().contains(&format!("change/{CHANGE}")),
