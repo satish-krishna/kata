@@ -550,24 +550,21 @@ export class SdlcRunner {
     idea: string,
     spec: RunSpec,
   ): Promise<NewChangeOutcome> {
-    const listed = async (): Promise<string[] | null> => {
-      try {
-        return (await this.transport.sdlcState(workspace.folder, system)).changes.map((c) => c.state.change);
-      } catch (e) {
-        this.toasts.error(`Could not read the changes of ${system}: ${message(e)}`);
-        return null;
-      }
-    };
-    const before = await listed();
-    if (before === null) return { kind: 'stopped' };
     const out = await this.runAt(null, 'Starting a change', spec, { workspaceId: workspace.id, master, productRepos, link: null, label: 'Triage' });
     if (!out.exited) return { kind: 'stopped' };
     await this.leftoversClosed(out.batch);
-    const after = await listed();
-    if (after === null) return { kind: 'stopped' };
-    const change = after.find((c) => !before.includes(c));
+    // The change is the one the triage's own run started, as the backend reads its record; another change made meanwhile is never it.
+    let change: string | null = null;
+    if (out.runId !== null) {
+      try {
+        change = await this.transport.sdlcTriageChange(out.runId, system);
+      } catch (e) {
+        this.toasts.error(`Could not read which change the triage started: ${message(e)}`);
+        return { kind: 'stopped' };
+      }
+    }
     // The triage's verdict is in the run's record: the home says so, and no toast or navigation talks over it.
-    if (change === undefined) return { kind: 'none', idea, runId: out.runId };
+    if (change === null) return { kind: 'none', idea, runId: out.runId };
     await this.linkAndOpen(workspace, system, change, 'start', out.runId);
     return { kind: 'opened', change, branch: null };
   }

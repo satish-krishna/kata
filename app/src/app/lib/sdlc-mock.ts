@@ -166,6 +166,9 @@ export const sdlcTriageScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
     ] } },
   ],
   mid: [
+    // The fix skill starts the change through the plugin; its answer names the change, which is how the triage's change is found.
+    { delay: 300, ev: { type: 'tool.use', name: 'Bash', input_summary: `node ai-sdlc.ts change start --json --system commerce --change ${MOCK_STARTED_FIX} --type fix --scope commerce`, id: 'toolu_t1s', input: { command: `node ai-sdlc.ts change start --json --system commerce --change ${MOCK_STARTED_FIX} --type fix --scope commerce` } } },
+    { delay: 300, ev: { type: 'tool.result', name: 'Bash', ok: true, summary: 'change started', id: 'toolu_t1s', output: JSON.stringify({ event: 'change.start', system: 'commerce', change: MOCK_STARTED_FIX, outcome: 'passed', details: { branch: `fix/${MOCK_STARTED_FIX}`, created: true } }) } },
     { delay: 300, ev: { type: 'tool.use', name: 'Write', input_summary: 'commerce/2026-10-24-price-flag-fix/intent.md', id: 'toolu_t2', input: { file_path: 'commerce/2026-10-24-price-flag-fix/intent.md' } } },
     { delay: 400, ev: { type: 'tool.result', name: 'Write', ok: true, summary: 'intent.md written', id: 'toolu_t2', output: 'ok' } },
     { delay: 400, ev: { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.03, duration_ms: 18000, result: 'Triage done.' } },

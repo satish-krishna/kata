@@ -178,9 +178,29 @@ pub fn start_change(
     }
 }
 
-/// Stub.
-pub fn started_by_run(_events: &[kata_core::event::KataEvent], _system: &str) -> Option<String> {
-    None
+/// The change a run started through the plugin, read from the run's own events: the last `change start` answer
+/// among its tool results that passed for `system` (the plugin prints it as one JSON object, `event` `change.start`).
+/// None when the run started no change of `system`; a change another run made meanwhile is never named.
+pub fn started_by_run(events: &[kata_core::event::KataEvent], system: &str) -> Option<String> {
+    let started = |text: &str| -> Option<String> {
+        let answer: serde_json::Value = serde_json::from_str(text.trim()).ok()?;
+        let field = |name: &str| answer.get(name).and_then(serde_json::Value::as_str);
+        (field("event") == Some("change.start")
+            && field("system") == Some(system)
+            && field("outcome") == Some("passed"))
+        .then(|| field("change").map(str::to_string))
+        .flatten()
+    };
+    events
+        .iter()
+        .filter_map(|ev| match ev {
+            kata_core::event::KataEvent::ToolResult {
+                output: Some(output),
+                ..
+            } => started(output).or_else(|| output.lines().filter_map(started).last()),
+            _ => None,
+        })
+        .last()
 }
 
 #[cfg(test)]
@@ -208,18 +228,22 @@ mod tests {
             tool_result("intent.md written"),
             tool_result(started),
             // Another system's start, a refused start and a step that is not a start name no change of this triage.
-            tool_result(r#"{"event":"change.start","system":"billing","change":"2026-10-18-other","outcome":"passed"}"#),
-            tool_result(r#"{"event":"change.start","system":"commerce","change":"2026-10-18-taken","outcome":"refused"}"#),
-            tool_result(r#"{"event":"doc.accept","system":"commerce","change":"2026-10-18-x","outcome":"passed"}"#),
+            tool_result(
+                r#"{"event":"change.start","system":"billing","change":"2026-10-18-other","outcome":"passed"}"#,
+            ),
+            tool_result(
+                r#"{"event":"change.start","system":"commerce","change":"2026-10-18-taken","outcome":"refused"}"#,
+            ),
+            tool_result(
+                r#"{"event":"doc.accept","system":"commerce","change":"2026-10-18-x","outcome":"passed"}"#,
+            ),
         ];
         assert_eq!(
             started_by_run(&events, "commerce").as_deref(),
             Some("2026-10-18-fix-login")
         );
         // The answer may follow other output of the same command, one JSON object on its own line.
-        let mixed = vec![tool_result(&format!("starting
-{started}
-"))];
+        let mixed = vec![tool_result(&format!("starting\n{started}\n"))];
         assert_eq!(
             started_by_run(&mixed, "commerce").as_deref(),
             Some("2026-10-18-fix-login")

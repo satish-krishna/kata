@@ -108,6 +108,8 @@ export class MockTransport extends KataTransport {
   private readonly runs = new Map<string, ScriptedRun>();
   /** The change of each document run started through `sdlcRunChange`, by run id; a run that has ended no longer holds the checkout. */
   private readonly changeRunsLive = new Map<string, string>();
+  /** The change each scripted run started through the plugin, by `<system>/<transcript>`, from its `change start` answer. */
+  private readonly triageStarted = new Map<string, string>();
   private nextRun = 0;
   /** `?demo=build-long` (browser only) widens the build demo to three repositories, seventeen tasks, many files and findings, so every area of the build page overflows at 1280 by 800. */
   private readonly sdlc = new SdlcMock(demoParam() === 'build-long', demoParam());
@@ -136,7 +138,22 @@ export class MockTransport extends KataTransport {
     const seen = this.histories.get(runId) ?? [];
     this.histories.set(runId, [...seen, { seq: seen.length, event: ev }]);
     for (const listen of [...this.listeners]) listen(runId, ev, seen.length);
+    if (ev.type === 'tool.result' && ev.output) this.noteStarted(runId, ev.output);
     if (ev.type === 'ask.requested' || ev.type === 'ask.answered' || ev.type === 'permission.requested' || ev.type === 'permission.decided') this.announceRunning();
+  }
+
+  /** A run's tool printed the plugin's `change start` answer: remember the change it started under the run's transcript, as the backend reads it from the run's record. */
+  private noteStarted(runId: string, output: string): void {
+    let answer: { event?: string; system?: string; change?: string; outcome?: string } | null;
+    try {
+      answer = JSON.parse(output) as typeof answer;
+    } catch {
+      return;
+    }
+    if (typeof answer !== 'object' || answer === null || answer.event !== 'change.start' || answer.outcome !== 'passed' || !answer.system || !answer.change) return;
+    const log = (this.histories.get(runId) ?? []).map((h) => h.event).find((e) => e.type === 'log' && e.message.startsWith('transcript: '));
+    const stem = log?.type === 'log' ? (log.message.split(/[\\/]/).pop() ?? '').replace(/\.[^.]*$/, '') : '';
+    if (stem !== '') this.triageStarted.set(`${answer.system}/${stem}`, answer.change);
   }
 
   private finish(run: ScriptedRun): void {
@@ -296,8 +313,10 @@ export class MockTransport extends KataTransport {
   sdlcLeftovers(_master: string, _before: Snapshot, _productRepos: string[], _build?: BuildScope): Promise<Leftovers> { return Promise.resolve(this.sdlc.leftovers()); }
   sdlcDiscard(_master: string, _before: Snapshot, paths: string[], _build?: BuildScope): Promise<void> { this.sdlc.discard(paths); return Promise.resolve(); }
   sdlcChangeName(title: string): Promise<string> { return Promise.resolve(this.sdlc.changeName(title)); }
-  /** Stub. */
-  sdlcTriageChange(_transcript: string, _system: string): Promise<string | null> { return Promise.resolve(null); }
+  /** The change the run's own events name as started: the plugin's `change start` answer among its tool results, as the backend reads the run's record. */
+  sdlcTriageChange(transcript: string, system: string): Promise<string | null> {
+    return Promise.resolve(this.triageStarted.get(`${system}/${transcript}`) ?? null);
+  }
   sdlcStartChange(_folder: string, _system: string, title: string, _workType: string, _scope: string, branch?: string): Promise<ChangeStart> { return Promise.resolve(this.sdlc.startChange(title, branch)); }
   sdlcNaming(_folder: string, _masterRepo: string, _system: string): Promise<NamingState> { return Promise.resolve(this.sdlc.naming()); }
   sdlcCheckScope(_folder: string, scope: string): Promise<string[]> { return Promise.resolve(scope.includes(' ') ? ['a scope cannot contain a space'] : []); }

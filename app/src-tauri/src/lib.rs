@@ -890,6 +890,14 @@ fn sdlc_rename_branch(
     rename_change::rename_change(&program, &place, &system, &change, &to, &legacy)
 }
 
+/// The change a triage run started, named by the run's own record: the plugin's `change start` answer among its
+/// tool results. None when the run started no change of `system`.
+#[tauri::command(async)]
+fn sdlc_triage_change(transcript: String, system: String) -> Result<Option<String>, String> {
+    let run = kata_core::history::load_run(&transcript).map_err(|e| e.to_string())?;
+    Ok(start_change::started_by_run(&run.events, &system))
+}
+
 /// Switch the master checkout to `branch`. Refused while a live run works in that folder, naming its change;
 /// the runs table stays locked through the switch, so no run can claim the folder half way.
 #[tauri::command(async)]
@@ -1768,6 +1776,7 @@ pub fn run() {
             sdlc_discard,
             sdlc_change_name,
             sdlc_start_change,
+            sdlc_triage_change,
             sdlc_naming,
             sdlc_check_scope,
             sdlc_rename_branch,
