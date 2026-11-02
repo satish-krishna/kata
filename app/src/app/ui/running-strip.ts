@@ -1,7 +1,8 @@
 import { NgTemplateOutlet } from '@angular/common';
-import { Component, DestroyRef, ElementRef, afterEveryRender, inject } from '@angular/core';
+import { Component, DestroyRef, ElementRef, afterEveryRender, inject, input, output } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmPopoverImports } from '@spartan-ng/helm/popover';
+import type { StripPick, StripRow } from '../lib/running-strip';
 import { RunningStripViewModel } from '../sdlc/running-strip.view-model';
 
 /* The running-changes strip in both top bars: the backend's first entries and an "All running" list. Picking an entry
@@ -18,6 +19,10 @@ import { RunningStripViewModel } from '../sdlc/running-strip.view-model';
   styleUrl: './running-strip.css',
 })
 export class RunningStrip {
+  readonly shown = input<StripRow[]>([]);
+  readonly all = input<StripRow[]>([]);
+  readonly allLabel = input('');
+  readonly pick = output<StripPick>();
   protected readonly vm = inject(RunningStripViewModel);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private row: Element | null = null;
