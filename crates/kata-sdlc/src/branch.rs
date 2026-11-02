@@ -194,7 +194,7 @@ pub fn checkout(master: &Path, branch: &str) -> Result<(), BranchError> {
 /// branch (one the build never changed) is left out.
 pub fn heads(
     folder: &Path,
-    _master: &Path,
+    master: &Path,
     master_repo: &str,
     system: &str,
     repos: &[String],
@@ -211,7 +211,7 @@ pub fn heads(
             "invalid master repository or system name: {master_repo}, {system}"
         ));
     }
-    let branch = change_branch(&folder.join(master_repo), system, change)?;
+    let branch = change_branch(master, system, change)?;
     let mut out = BTreeMap::new();
     for repo in repos {
         if !is_safe_system(repo) {
@@ -237,7 +237,7 @@ pub fn heads(
 pub fn missing_change_branches(
     plugin: &Path,
     folder: &Path,
-    _master: &Path,
+    master: &Path,
     master_repo: &str,
     system: &str,
     change: &str,
@@ -247,9 +247,8 @@ pub fn missing_change_branches(
             "invalid master repository, system or change name: {master_repo}, {system}, {change}"
         ));
     }
-    let master = folder.join(master_repo);
-    let branch = change_branch(&master, system, change)?;
-    let status = build::status(plugin, &master, system, change).map_err(|e| e.to_string())?;
+    let branch = change_branch(master, system, change)?;
+    let status = build::status(plugin, master, system, change).map_err(|e| e.to_string())?;
     let scan = workspace::scan(folder).map_err(|e| e.to_string())?;
     let in_system = system_repos(&scan, system);
     let mut out = Vec::new();

@@ -461,11 +461,12 @@ pub struct ChangeRepo {
     pub base: BaseInfo,
 }
 
-/// The master first, then every system repository that has `change/<change>` and any change in
+/// The master first, read at `master` (the change's copy, or the checkout for an older change), then every
+/// system repository of the workspace `folder` that has `change/<change>` and any change in
 /// the whole-change part of its diff.
 pub fn change_repos(
     folder: &Path,
-    _master: &Path,
+    master: &Path,
     master_repo: &str,
     system: &str,
     change: &str,
@@ -475,7 +476,7 @@ pub fn change_repos(
             "invalid master repository, system or change name: {master_repo}, {system}, {change}"
         ));
     }
-    let branch = change_branch(&folder.join(master_repo), system, change)?;
+    let branch = change_branch(master, system, change)?;
     let scan = workspace::scan(folder).map_err(|e| e.to_string())?;
     let entry = |name: &str, path: &Path| -> Result<ChangeRepo, String> {
         Ok(ChangeRepo {
@@ -485,8 +486,7 @@ pub fn change_repos(
             base: base_info(path).map_err(|e| e.to_string())?,
         })
     };
-    let master = folder.join(master_repo);
-    let mut out = vec![entry(master_repo, &master)?];
+    let mut out = vec![entry(master_repo, master)?];
     for name in system_repos(&scan, system) {
         if name == master_repo || !is_safe_system(&name) || !scan.repos.contains(&name) {
             continue;
