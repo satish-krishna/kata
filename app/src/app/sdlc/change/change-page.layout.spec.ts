@@ -257,7 +257,7 @@ describe('ChangePage layout', () => {
 
     afterEach(() => vi.useRealTimers());
 
-    it('pulls the pills back to the old tab when the read fails', async () => {
+    it('keeps the picked pill and shows the backend message, with no document, when the read fails', async () => {
       const transport = new MockTransport();
       const { container } = await mount(PHOTOS_CHANGE, transport);
       expect(selected(container)).toEqual(['Spec']);
@@ -271,10 +271,12 @@ describe('ChangePage layout', () => {
       await settle();
       expect(selected(container)).toEqual(['Intent']);
       expect(container.querySelector('[role="tabpanel"]:not([hidden])')!.textContent).toContain('Reading intent.md');
-      fail('permission denied');
+      fail(new Error('permission denied'));
       await settle();
-      expect(selected(container)).toEqual(['Spec']);
-      expect(container.querySelector('[role="tabpanel"]:not([hidden]) app-doc-layout')).not.toBeNull();
+      expect(selected(container)).toEqual(['Intent']);
+      const panel = container.querySelector('[role="tabpanel"]:not([hidden])')!;
+      expect(panel.querySelector('[data-testid="doc-notice"]')!.textContent).toContain('permission denied');
+      expect(panel.querySelector('app-doc-layout')).toBeNull();
     });
 
     it('keeps the Build pill and the Build panel together when a click back on Build outruns a read for another tab', async () => {

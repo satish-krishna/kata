@@ -168,16 +168,16 @@ describe('ChangePageViewModel', () => {
     expect(vm.doc()).toContain('# Spec: photo upload');
   });
 
-  it('stays on the shown document and says why when the picked one cannot be read', async () => {
+  it('shows the backend message and no document when the picked one cannot be read', async () => {
     const transport = new MockTransport();
     const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
     vi.spyOn(transport, 'sdlcReadDoc').mockRejectedValue('permission denied');
     await vm.showDoc('intent');
-    expect(vm.shownDoc()).toBe('spec');
-    expect(vm.docName()).toBe('spec.md');
-    expect(vm.doc()).toContain('# Spec: photo upload');
-    expect(toastText()).toContain('Could not read intent.md: permission denied');
+    expect(vm.shownDoc()).toBe('intent');
+    expect(vm.docName()).toBe('intent.md');
+    expect(vm.doc()).toBeNull();
+    expect(vm.docNotice()?.text).toBe('permission denied');
   });
 
   it('keeps the old tab and its document until the picked one has been read, then switches both together', async () => {
@@ -214,7 +214,7 @@ describe('ChangePageViewModel', () => {
     expect(vm.pendingDoc()).toBe('spec');
     await failing;
     expect(vm.pendingDoc()).toBeNull();
-    expect(vm.shownDoc()).toBe('intent');
+    expect(vm.shownDoc()).toBe('spec');
   });
 
   it('lets a click back on the shown tab cancel a pick still reading', async () => {
@@ -1785,16 +1785,15 @@ describe('ChangePageViewModel: where the change lives', () => {
     expect(vm.pipelineIdea()).toContain('The fix intent is in the copy.');
   });
 
-  it('opens a change with one call that carries the change reference, and reads nothing else for it', async () => {
+  it('opens a change with one call that carries the change reference, and asks for its view no other way', async () => {
     const transport = new MockTransport();
     const open = vi.spyOn(transport, 'sdlcOpenChange');
-    const read = vi.spyOn(transport, 'sdlcReadDoc');
+    const state = vi.spyOn(transport, 'sdlcChangeState');
     const { vm } = setup(MOCK_COPY_CHANGE, transport);
     await ready(vm);
     expect(open).toHaveBeenCalledTimes(1);
     expect(open.mock.calls[0][0]).toEqual(copyRef(MOCK_COPY_CHANGE));
-    expect(open.mock.calls[0][1]).toBe(vm.shownDoc());
-    expect(read.mock.calls.length).toBe(open.mock.calls.length);
+    expect(state).toHaveBeenCalledTimes(1);
   });
 
   it('shows the backend message and no document when the change cannot be placed', async () => {

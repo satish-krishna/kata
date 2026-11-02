@@ -6,6 +6,7 @@ import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { ParsedRequirement } from '@bindings/ParsedRequirement';
+import type { OpenedChange } from '@bindings/OpenedChange';
 import type { ParsedRead } from '@bindings/ParsedRead';
 import type { ReadFailure } from '@bindings/ReadFailure';
 import type { ReadResult } from '@bindings/ReadResult';
@@ -353,7 +354,12 @@ export class ChangePageViewModel {
   /** The review document as the format program reads it; null when the change has none or it could not be read. */
   private readonly reviewRecord = signal<ReviewRecord | null>(null);
   /** The notice above the open spec or plan; null when it needs none. */
-  readonly docNotice = computed<DocNotice | null>(() => this.unsettledNotice() ?? this.shown()?.notice ?? this.refusalNotice());
+  readonly docNotice = computed<DocNotice | null>(() => this.resolutionNotice() ?? this.unsettledNotice() ?? this.shown()?.notice ?? this.refusalNotice());
+  /** The backend's message when it could not place the change or read the shown document, as it sent it. */
+  private readonly resolutionNotice = computed<DocNotice | null>(() => {
+    const text = this.resolutionError();
+    return text === null ? null : { tone: 'warning', text, lines: [] };
+  });
   /** A fix whose documents carry statuses the workflow never leaves on a fix: the page lists them, on every tab. */
   private readonly unsettledNotice = computed<DocNotice | null>(() => {
     const c = this.change();
@@ -1124,15 +1130,20 @@ export class ChangePageViewModel {
       if (seq !== this.pickSeq) return;
       this.doc.set(text);
       this.read.set(read);
+      this.resolutionError.set(null);
       this.picked.set(stem);
       this.rememberTab();
       this.pendingDoc.set(null);
       this.progress.end('doc');
     } catch (e) {
       if (seq !== this.pickSeq) return;
+      // The picked tab shows the backend's message and nothing of the document that was shown before.
+      this.doc.set(null);
+      this.read.set(null);
+      this.resolutionError.set(message(e));
+      this.picked.set(stem);
       this.pendingDoc.set(null);
       this.progress.fail('doc');
-      this.toasts.error(`Could not read ${stem}.md: ${message(e)}`);
     }
   }
 
@@ -1416,25 +1427,6 @@ export class ChangePageViewModel {
     }
   }
 
-  /** The review document; a failed read leaves the notice to the build logs alone. */
-  private async readReviewRecord(ref: ChangeRef): Promise<ReviewRecord | null> {
-    try {
-      return await this.transport.sdlcReviewRecord(ref);
-    } catch {
-      return null;
-    }
-  }
-
-  /** The plan's tasks and rows; a failure is reported and leaves the log empty, never the whole page. */
-  private async readStatus(ref: ChangeRef): Promise<BuildStatus | null> {
-    try {
-      return await this.transport.sdlcBuildStatus(ref);
-    } catch (e) {
-      this.toasts.error(`Could not read the build log: ${message(e)}`);
-      return null;
-    }
-  }
-
   /** Whether the change is done and with which links, from the plugin's record at once, without asking GitHub. A failed read is not an error, it just leaves the change unfinished. */
   private async readPullRequests(folder: string, workspaceId: string, system: string, name: string, buildFinished: boolean): Promise<{ view: PullRequestsView; failed: boolean }> {
     try {
@@ -1469,13 +1461,21 @@ export class ChangePageViewModel {
     this.pullRequests.set(links);
   }
 
-  /** Read this one change; a change the workspace does not have is none, any other failure is raised. */
-  private async readOwnChange(folder: string, system: string, name: string): Promise<{ info: ChangeView | null }> {
+  /**
+   * Open the change with one call: the backend places it, then reads its view, `stem`, the build and the review from that one place.
+   * A change whose stage shows another document is read again for that one. A refusal is the backend's message, as sent.
+   */
+  private async openChange(ref: ChangeRef, stem: DocStem): Promise<{ opened: OpenedChange; text: string | null; read: ReadResult | ReadError | null } | { error: string }> {
     try {
-      return { info: await this.transport.sdlcChangeState(folder, system, name) };
+      const opened = await this.transport.sdlcOpenChange(ref, stem);
+      const want = stemFor(opened.view);
+      if (want !== stem) {
+        const text = await this.transport.sdlcReadDoc(ref, want);
+        return { opened, text, read: await this.readParsed(ref, want) };
+      }
+      return { opened, text: opened.text, read: stem === 'spec' || stem === 'plan' ? shownRead(opened.parsed) : null };
     } catch (e) {
-      if (/there is no change|no change folder/.test(message(e))) return { info: null };
-      throw e;
+      return { error: message(e) };
     }
   }
 
@@ -1552,6 +1552,12 @@ export class ChangePageViewModel {
     this.transport.sdlcMarkOpened({ workspace, system, change }).catch(() => undefined);
   }
 
+  /** The document the first read asks for: the one on show when this change is read again, else the intent every change has. */
+  private openStem(): DocStem {
+    const shown = this.shownDoc();
+    return this.change() !== null && isDocStem(shown) ? shown : 'intent';
+  }
+
   private async load(): Promise<void> {
     const seq = ++this.loadSeq;
     const system = this.system();
@@ -1571,6 +1577,7 @@ export class ChangePageViewModel {
       this.change.set(change);
       this.doc.set(doc);
       this.read.set(read);
+      this.resolutionError.set(null);
       this.state.set(state);
     };
     let workspaces: WorkspaceEntry[];
@@ -1599,21 +1606,27 @@ export class ChangePageViewModel {
         return;
       }
       const master = masterPath(w.folder, repo);
-      const [branches, own, links, records, catalog, recorded] = await Promise.all([
+      const ref: ChangeRef = { workspace: w.folder, system, change: name };
+      const [branches, opening, links, records, catalog, recorded] = await Promise.all([
         this.transport.sdlcBranches(master),
-        this.readOwnChange(w.folder, system, name),
+        this.openChange(ref, this.openStem()),
         this.transport.sdlcRunLinks(),
         this.transport.listRuns(),
         this.transport.catalog(w.folder),
-        this.readRecordedBranch({ workspace: w.folder, system, change: name }, repo),
+        this.readRecordedBranch(ref, repo),
       ]);
-      const found = own.info;
-      const ref: ChangeRef = { workspace: w.folder, system, change: name };
-      const doc = found ? await this.transport.sdlcReadDoc(ref, stemFor(found)) : null;
-      const read = found ? await this.readParsed(ref, stemFor(found)) : null;
-      const status = found?.state.documents.plan.exists ? await this.readStatus(ref) : null;
+      if ('error' in opening) {
+        failRead();
+        finish('not-found', null, null);
+        if (seq === this.loadSeq) this.resolutionError.set(opening.error);
+        return;
+      }
+      const found = opening.opened.view;
+      const doc = opening.text;
+      const read = opening.read;
+      const status = opening.opened.status;
       const readiness = await this.readReadiness(w.folder);
-      const review = found?.state.documents.plan.exists ? await this.readReviewRecord(ref) : null;
+      const review = opening.opened.review;
       const buildFinished = stageNameOf(found ?? null) === 'build-finished';
       const pulls = found?.state.documents.plan.exists
         ? await this.readPullRequests(w.folder, w.id, system, name, buildFinished)

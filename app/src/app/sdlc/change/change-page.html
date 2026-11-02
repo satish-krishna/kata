@@ -91,9 +91,15 @@
         <main class="k-home__state">
           <section class="k-state" aria-labelledby="state-title">
             <h1 id="state-title" class="k-state__title">Change not found</h1>
-            <p class="k-state__body">
-              <code class="k-mono">{{ vm.changeName() }}</code> is not on the branch checked out in the master repo. It may live on another change branch.
-            </p>
+            @if (vm.resolutionError(); as error) {
+              <div class="wb-banner wb-banner--warn" data-testid="resolution-error" role="status">
+                <span class="k-status k-status--warning"><span class="k-status__dot"></span>{{ error }}</span>
+              </div>
+            } @else {
+              <p class="k-state__body">
+                <code class="k-mono">{{ vm.changeName() }}</code> is not on the branch checked out in the master repo. It may live on another change branch.
+              </p>
+            }
             <button hlmBtn variant="secondary" type="button" (click)="vm.toHome()">Back to the workspace</button>
           </section>
         </main>
@@ -179,7 +185,9 @@
                 }
                 @let body = vm.layoutBody();
                 @if (vm.doc() === null) {
-                  <p class="k-state__body k-change__missing">{{ vm.docName() }} is not in this change folder.</p>
+                  @if (vm.resolutionError() === null) {
+                    <p class="k-state__body k-change__missing">{{ vm.docName() }} is not in this change folder.</p>
+                  }
                 } @else if (vm.shownView() === 'list' && stem === 'spec') {
                   <app-requirements-view [requirements]="vm.requirementList()" [picked]="vm.pickedRequirement()" (pick)="vm.pickRequirement($event)" />
                 } @else if (vm.shownView() === 'list') {
