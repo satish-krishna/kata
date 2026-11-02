@@ -1,6 +1,7 @@
 //! Workspace, git, and local-store logic for the Workbench's AI-SDLC mode.
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 
+pub mod accept;
 pub mod ai_sdlc;
 pub mod base;
 pub mod branch;
