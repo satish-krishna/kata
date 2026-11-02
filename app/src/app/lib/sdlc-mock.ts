@@ -95,6 +95,10 @@ export const MOCK_WORKSPACE_FOLDER = DEMO_WORKSPACE_FOLDER;
 /** A folder the demo can add that has repos but no committed `.ai-sdlc.json`, so adding it runs setup. */
 export const MOCK_SETUP_FOLDER = DEMO_SETUP_FOLDER;
 export const MOCK_MASTER = 'commerce-docs';
+/** The engineer's checkout of the master repository, which a change started before copies existed lives in. */
+export const MOCK_CHECKOUT = `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`;
+/** What the plugin no longer lists: the message the backend gives for a change it cannot place. */
+export const MOCK_NOT_LISTED = "This change's copy was removed and the plugin no longer lists it.";
 export const MOCK_SYSTEM = 'commerce';
 export const MOCK_BASE = 'main';
 export const MOCK_NEW_CHANGE = '2026-10-18-new-change';
@@ -106,6 +110,8 @@ export const MOCK_BUILD_SECOND = '2026-10-20-second-build';
 /** A change whose build needs a repository the demo build holds, so it starts held. */
 export const MOCK_HELD_CHANGE = '2026-10-21-held-build';
 /** A change whose build finished and whose three pull requests are open: the toolbar's links and its "Build · done" pill. */
+/** A change that lives only in its own copy: the checkout has no folder for it, so its documents exist under the copy alone. */
+export const MOCK_COPY_CHANGE = '2026-11-02-copy-only';
 export const MOCK_DONE_CHANGE = '2026-10-18-photo-limits-shipped';
 /** The version the demo's `ai-sdlc` plugin reports. */
 export const MOCK_PLUGIN_VERSION = '1.1.0';
@@ -422,6 +428,17 @@ const DEPARTURE_TEXT = 'Reused the existing file picker instead of building a ne
 
 const DOC_STEMS = new Set(['intent', 'spec', 'plan']);
 
+/** The copy of the change that lives only in a copy. */
+const COPY_ONLY_PATH = `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${MOCK_COPY_CHANGE}`;
+
+/** Document text a copy holds, keyed by the copy's folder and then `<change>/<stem>`. The checkout's fixture is `DOCS`. */
+const COPY_DOCS: Record<string, Record<string, string>> = {
+  [COPY_ONLY_PATH]: {
+    [`${MOCK_COPY_CHANGE}/intent`]: '---\nstatus: accepted\n---\n# Copy-only change\n\nThe copy holds this intent.\n',
+    [`${MOCK_COPY_CHANGE}/spec`]: '---\nstatus: draft\n---\n# Spec: copy-only change\n\nThe copy holds this spec.\n',
+  },
+};
+
 /** Document text keyed by `<change>/<stem>`, the way the backend names them. */
 const DOCS: Record<string, string> = {
   '2026-10-16-price-flag/intent': '---\nstatus: draft\n---\n# Flag suspicious prices on import\n\nOwners need a visible price flag on a product so that a suspicious price is reviewed before it is published.\n\n## Outcomes\n\n- A product can be flagged at import.\n- Flagged products are routed to the price review queue.\n',
@@ -585,7 +602,7 @@ export function changeViewOf(
   const stop = refused['start-build'] ?? refused['continue-build'] ?? null;
   return {
     state: {
-      change: c.change, master: copy ?? '/m', folder: `${copy ?? '/m'}/intent/${c.system}/${c.change}`, inCopy: copy !== null, title: null, track: c.track,
+      change: c.change, master: copy ?? MOCK_CHECKOUT, folder: `${copy ?? MOCK_CHECKOUT}/intent/${c.system}/${c.change}`, inCopy: copy !== null, title: null, track: c.track,
       documents: { intent: stateDocument(c.intent), spec: stateDocument(c.spec), plan: stateDocument(c.plan) },
       scenarios: null, tasks, buildLogs: {}, review: { committed: 0, draft: 'none' },
       fix: shown.track === 'fix' && shown.fix_row !== null ? { row: shown.fix_row, facts: FIX_FACTS } : null,
@@ -742,12 +759,16 @@ export class SdlcMock {
   }
   /** Like the backend's `sdlc_change_state`: one change from the plugin's answer; refuses a change the workspace does not have. */
   changeView(changeName: string, readiness: Readiness): ChangeView {
+    if (changeName === MOCK_COPY_CHANGE) {
+      const copied = change(MOCK_COPY_CHANGE, doc('accepted'), doc('draft'), doc(null), 'spec-awaiting');
+      return changeViewOf(copied, readiness, null, {}, COPY_ONLY_PATH);
+    }
     if (changeName === MOCK_REFUSED_CHANGE) {
       const refused = change(MOCK_REFUSED_CHANGE, doc('accepted'), doc('accepted'), doc('accepted'), 'build-ready');
       return changeViewOf(refused, readiness, null, { 'start-build': MOCK_BUILD_STOP });
     }
     const found = this.stagePass().find((c) => c.change === changeName);
-    if (!found) throw new Error(`no change folder named ${changeName}`);
+    if (!found) throw new Error(MOCK_NOT_LISTED);
     return changeViewOf(found, readiness, this.tasksOf(found), {}, this.copyOf(changeName));
   }
   // ---- the change's own copy ----
@@ -757,6 +778,7 @@ export class SdlcMock {
 
   /** The copy folder of a change that has one, else null. */
   private copyOf(changeName: string): string | null {
+    if (changeName === MOCK_COPY_CHANGE) return COPY_ONLY_PATH;
     return this.copies.has(changeName) ? `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${changeName}` : null;
   }
   /** Removal is offered for the finished change with its pull requests merged; the done demos leave it undeclared, so nothing is offered. */
@@ -803,19 +825,34 @@ export class SdlcMock {
   /** Like the backend's `read_doc`: the document is named by its stem; anything else is a caller bug. */
   readDoc(changeName: string, docName: string): string | null {
     if (!DOC_STEMS.has(docName)) throw new Error(`read_doc takes a document stem (intent, spec or plan), not "${docName}"`);
-    return this.docs[`${changeName}/${docName}`] ?? null;
+    return this.docText(changeName, docName);
+  }
+
+  /** Where a change lives, as the plugin would place it: its copy's folder, else the engineer's checkout. Rejects with the message for a change the plugin does not list. */
+  homeOf(changeName: string): string {
+    if (changeName === MOCK_COPY_CHANGE) return COPY_ONLY_PATH;
+    if (changeName === MOCK_REFUSED_CHANGE) return MOCK_CHECKOUT;
+    if (!this.stagePass().some((c) => c.change === changeName)) throw new Error(MOCK_NOT_LISTED);
+    return this.copyOf(changeName) ?? MOCK_CHECKOUT;
+  }
+
+  /** A document's text from the fixture of the folder the change lives in. */
+  private docText(changeName: string, docName: string): string | null {
+    const key = `${changeName}/${docName}`;
+    const home = this.homeOf(changeName);
+    return COPY_DOCS[home]?.[key] ?? (home === COPY_ONLY_PATH ? null : (this.docs[key] ?? null));
   }
 
   /** Like the backend's `read_parsed`: the spec or plan as the format program reads it; null when the change has no such document. */
   readParsed(changeName: string, docName: string): ReadResult | null {
     if (docName !== 'spec' && docName !== 'plan') throw new Error(`read_parsed takes spec or plan, not "${docName}"`);
-    if (this.docs[`${changeName}/${docName}`] === undefined) return null;
+    if (this.docText(changeName, docName) === null) return null;
     const demo = changeName === MOCK_BUILD_CHANGE || changeName === MOCK_DONE_CHANGE;
     if (docName === 'spec') return { kind: 'spec', layout: 2, document: { requirements: changeName === MOCK_BUILD_CHANGE ? BUILD_SPEC : [] }, problems: [] };
     return { kind: 'plan', layout: 2, document: { tasks: demo ? this.planTasks : [], shared_decisions: [] }, problems: [] };
   }
 
-  snapshot(): Snapshot { return { head: '0000000000000000000000000000000000000000', dirty: {} }; }
+  snapshot(): Snapshot { return { head: '0000000000000000000000000000000000000000', folder: MOCK_CHECKOUT, dirty: {} }; }
   /** Only a cancelled AI-SDLC run leaves anything behind; discarded paths drop out of the list. */
   leftovers(): Leftovers {
     if (!this.cancelledRun) return { new_commits: [], discardable: [], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
@@ -906,6 +943,7 @@ export class SdlcMock {
   // ---- the build ----
 
   buildStatus(changeName: string): BuildStatus {
+    this.homeOf(changeName);
     if (changeName !== MOCK_BUILD_CHANGE && changeName !== MOCK_DONE_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] };
     // The finished change has every task built; the demo build commits its rows one run at a time.
     const rowOf = (t: PlanTask): BuildRow | null =>
@@ -984,6 +1022,7 @@ export class SdlcMock {
   }
 
   changeRepos(folder: string, changeName: string): ChangeRepo[] {
+    this.homeOf(changeName);
     const base = this.diffBase();
     return [MOCK_MASTER, ...this.repos].map((repo) => ({ repo, path: `${folder}/${repo}`, branch: `change/${changeName}`, base }));
   }

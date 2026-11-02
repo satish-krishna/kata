@@ -17,6 +17,9 @@ import type { ChangeView } from '@bindings/ChangeView';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
+import type { SnapshotTarget } from '@bindings/SnapshotTarget';
+import type { OpenedChange } from '@bindings/OpenedChange';
+import type { ParsedRead } from '@bindings/ParsedRead';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { ChangeStart } from '@bindings/ChangeStart';
 import type { AcceptOutcome } from '@bindings/AcceptOutcome';
@@ -27,8 +30,6 @@ import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
-import type { ReadResult } from '@bindings/ReadResult';
-import type { ReadError } from '../../lib/doc-notice';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { Part } from '@bindings/Part';
@@ -163,11 +164,15 @@ export abstract class KataTransport {
   /** Which of the folders no longer exist. A folder existence check only. */
   abstract sdlcMissingFolders(folders: string[]): Promise<string[]>;
   abstract sdlcBranches(master: string): Promise<BranchInfo>;
-  abstract sdlcReadDoc(master: string, system: string, change: string, doc: string): Promise<string | null>;
-  abstract sdlcSnapshot(master: string): Promise<Snapshot>;
+  /** A change opened from one resolution of where it lives: its view, the document asked for, and the build and review when it has a plan. Rejects with the reason when the change cannot be placed. */
+  abstract sdlcOpenChange(ref: ChangeRef, doc: string): Promise<OpenedChange>;
+  /** The text of a change's document (`intent`, `spec` or `plan`) wherever the change lives; null when the file is not there. */
+  abstract sdlcReadDoc(ref: ChangeRef, doc: string): Promise<string | null>;
+  /** A run's folder is taken from a folder the caller names, or from a change, wherever the plugin says the change lives. */
+  abstract sdlcSnapshot(target: SnapshotTarget): Promise<Snapshot>;
   /** `build` scopes the run to a build: only that change's build log rows are build log data. A run outside a build passes none. */
-  abstract sdlcLeftovers(master: string, before: Snapshot, productRepos: string[], build?: BuildScope): Promise<Leftovers>;
-  abstract sdlcDiscard(master: string, before: Snapshot, paths: string[], build?: BuildScope): Promise<void>;
+  abstract sdlcLeftovers(target: SnapshotTarget, before: Snapshot, build?: BuildScope): Promise<Leftovers>;
+  abstract sdlcDiscard(target: SnapshotTarget, before: Snapshot, paths: string[], build?: BuildScope): Promise<void>;
   /** The name the plugin will give a change described by `title`, so the preview shows it. */
   abstract sdlcChangeName(title: string): Promise<string>;
   /** The change a triage run started, named by the run's own record (the plugin's `change start` answer); null when it started none of `system`. */
@@ -201,21 +206,21 @@ export abstract class KataTransport {
   /** Append the links for the tasks a run recorded, in one write. */
   /** Wait until the engine process of run `runId` has exited. False when it is still alive after `timeoutMs`. */
   abstract sdlcWaitRunExit(runId: string, timeoutMs: number): Promise<boolean>;
-  abstract sdlcBuildStatus(master: string, system: string, change: string): Promise<BuildStatus>;
+  abstract sdlcBuildStatus(ref: ChangeRef): Promise<BuildStatus>;
   /** The tasks area for `repos`: where each stands and what each task's row shows, decided from the build log's status and the host's live runs and stops. */
   abstract sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }): Promise<RepoBoard[]>;
   /** Whether the change's latest review covers its current work, decided from what the page read. */
   abstract sdlcReviewStanding(input: ReviewStandingInput): Promise<ReviewStanding>;
   /** A change's spec or plan as the format program reads it; null when the file is not there, and an error result with the program's own message when it cannot read it. */
-  abstract sdlcReadParsed(master: string, system: string, change: string, doc: string): Promise<ReadResult | ReadError | null>;
+  abstract sdlcReadParsed(ref: ChangeRef, doc: string): Promise<ParsedRead | null>;
   /** The change's review document as committed, or null when it has none. */
-  abstract sdlcReviewRecord(master: string, system: string, change: string): Promise<ReviewRecord | null>;
-  abstract sdlcBuildHeads(folder: string, masterRepo: string, system: string, repos: string[], change: string): Promise<Record<string, string>>;
+  abstract sdlcReviewRecord(ref: ChangeRef): Promise<ReviewRecord | null>;
+  abstract sdlcBuildHeads(ref: ChangeRef, repos: string[]): Promise<Record<string, string>>;
   /** Whether the ai-sdlc plugin is installed and new enough, as the backend decides it for the workspace folder. */
   abstract sdlcPluginReadiness(workdir: string | null): Promise<Readiness>;
-  abstract sdlcChangeRepos(folder: string, masterRepo: string, system: string, change: string): Promise<ChangeRepo[]>;
+  abstract sdlcChangeRepos(ref: ChangeRef): Promise<ChangeRepo[]>;
   /** The product repositories in the build that have no `change/<change>` branch, which the Changes view cannot list. */
-  abstract sdlcMissingChangeBranches(folder: string, masterRepo: string, system: string, change: string): Promise<string[]>;
+  abstract sdlcMissingChangeBranches(ref: ChangeRef): Promise<string[]>;
   abstract sdlcDiffFiles(repoPath: string, part: Part): Promise<DiffListing>;
   /** The commits on the change branch since the merge base, oldest first, each with the files it touched. */
   abstract sdlcCommitFiles(repoPath: string): Promise<CommitFiles[]>;
