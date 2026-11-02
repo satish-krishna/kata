@@ -2,11 +2,13 @@
 //! touched repository, opens one pull request each (the master's last) and records them in the change.
 //! Kata runs it, relays its progress and shows its answer; it adds no check of its own.
 use crate::ai_sdlc::{Place, Program};
-use crate::plugin::Readiness;
-use crate::pull_requests::RecordedPullRequest;
+use crate::plugin::{GhPresence, Readiness};
+use crate::pull_requests::{PullRequestSource, RecordedPullRequest};
+use kata_core::proc::LineSink;
 use serde::Serialize;
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// What a progress line is about.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,26 +67,168 @@ pub enum DeclareView {
 /// The refusal when `gh` is not installed.
 pub const GH_MISSING: &str = "Declaring done needs GitHub's command-line tool, gh. Install it from https://cli.github.com and reopen.";
 
-/// The view of the plugin's `change.done` outcome line.
-pub fn outcome(_event: &Value) -> DeclareView {
-    todo!()
+/// How long declaring done may take: it pushes and opens pull requests, and a team's hooks run around it.
+const LIMIT: Duration = Duration::from_secs(30 * 60);
+
+/// The view of the plugin's `change.done` outcome line, from the first row of this table that matches:
+///
+/// | # | `outcome` | view |
+/// |---|---|---|
+/// | 1 | `passed` | `Done`: `details.pullRequests`, the master's last |
+/// | 2 | `refused` | `NotReady`: every problem as the plugin wrote it |
+/// | 3 | `failed` | `Partial`: `details.pushed`, `details.pullRequests`, the problems and a hook that stopped it |
+/// | 4 | `could-not-run`, or anything else | `CouldNotRun`: the problems joined |
+pub fn outcome(event: &Value) -> DeclareView {
+    let problems: Vec<String> = event["problems"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|p| p.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    match event["outcome"].as_str() {
+        Some("passed") => DeclareView::Done {
+            pull_requests: pull_requests(event),
+        },
+        Some("refused") => DeclareView::NotReady { problems },
+        Some("failed") => {
+            let mut failed = problems;
+            if let Some(id) = event["failed"]["id"].as_str() {
+                let output = event["failed"]["output"].as_str().unwrap_or("").trim();
+                failed.push(format!("The hook {id} stopped it: {output}"));
+            }
+            DeclareView::Partial {
+                pushed: event["details"]["pushed"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|p| p.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                opened: pull_requests(event),
+                failed,
+            }
+        }
+        _ => DeclareView::CouldNotRun {
+            message: if problems.is_empty() {
+                "the plugin gave no answer Kata can read".to_string()
+            } else {
+                problems.join(" ")
+            },
+        },
+    }
 }
 
-/// The progress line a `--stream` line stands for, if it stands for a step.
-pub fn step_of(_line: &str) -> Option<DoneStep> {
-    todo!()
+/// The pull requests `details` records, in the order the plugin gave them.
+fn pull_requests(event: &Value) -> Vec<RecordedPullRequest> {
+    event["details"]["pullRequests"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|p| {
+                    Some(RecordedPullRequest {
+                        repo: p["repo"].as_str()?.to_string(),
+                        url: p["url"].as_str()?.to_string(),
+                        number: p["number"].as_u64()?,
+                        source: PullRequestSource::Plugin,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The progress line a `--stream` line stands for, if it stands for a step: a team hook starting or ending,
+/// a repository being pushed, a pull request being opened.
+pub fn step_of(line: &str) -> Option<DoneStep> {
+    let line: Value = serde_json::from_str(line).ok()?;
+    let text = |key: &str| line[key].as_str();
+    let (kind, label) = match text("type")? {
+        "hook-start" => (
+            DoneStepKind::Hook,
+            format!(
+                "Running the team's hook {} ({})",
+                text("id")?,
+                text("when")?
+            ),
+        ),
+        "hook-end" => (
+            DoneStepKind::Hook,
+            format!("The team's hook {} {}", text("id")?, text("outcome")?),
+        ),
+        "push" => (DoneStepKind::Push, format!("Pushing {}", text("repo")?)),
+        "pull-request" => (
+            DoneStepKind::PullRequest,
+            format!("Opening a pull request in {}", text("repo")?),
+        ),
+        _ => return None,
+    };
+    Some(DoneStep { kind, label })
 }
 
 /// Declares the change done where the plugin has it (`place`), relaying progress to `on_step`.
+///
+/// | # | readiness | result |
+/// |---|---|---|
+/// | 1 | blocked | `CouldNotRun` with the reason; the program is not asked |
+/// | 2 | ready, `gh` missing | `NotReady` with [`GH_MISSING`]; the program is not asked |
+/// | 3 | ready | the plugin's `change.done` answer, as [`outcome`] reads it |
+///
+/// A program that cannot be run (no Node.js, a plugin without the program, a crash) is `CouldNotRun`.
 pub fn declare(
-    _program: &Program,
-    _place: &Place,
-    _readiness: &Readiness,
-    _system: &str,
-    _change: &str,
-    _on_step: StepSink,
+    program: &Program,
+    place: &Place,
+    readiness: &Readiness,
+    system: &str,
+    change: &str,
+    on_step: StepSink,
 ) -> DeclareView {
-    todo!()
+    match readiness {
+        Readiness::Blocked { message, .. } => {
+            return DeclareView::CouldNotRun {
+                message: message.clone(),
+            }
+        }
+        Readiness::Ready {
+            gh: GhPresence::Missing,
+            ..
+        } => {
+            return DeclareView::NotReady {
+                problems: vec![GH_MISSING.to_string()],
+            }
+        }
+        Readiness::Ready { .. } => {}
+    }
+    on_step(DoneStep {
+        kind: DoneStepKind::Verifying,
+        label: "Declaring done: the plugin is verifying the change".to_string(),
+    });
+    let relay: LineSink = {
+        let on_step = Arc::clone(&on_step);
+        Arc::new(move |line: &str| {
+            if let Some(step) = step_of(line) {
+                on_step(step);
+            }
+        })
+    };
+    let command = [
+        "run",
+        "change.done",
+        "--json",
+        "--stream",
+        "--system",
+        system,
+        "--change",
+        change,
+    ];
+    match program.run_streaming(&command, place, LIMIT, relay) {
+        Ok(answer) => outcome(&answer),
+        Err(e) => DeclareView::CouldNotRun {
+            message: e.to_string(),
+        },
+    }
 }
 
 #[cfg(test)]
@@ -736,26 +880,38 @@ if (path.basename(process.execPath).replace(/\.exe$/i, '') === 'gh') {
     #[test]
     #[serial]
     fn a_serious_finding_stops_declaring_done() {
-        for severity in ["critical", "high"] {
-            let fx = Fx::ready();
-            fx.review(&[("F1", severity)]);
-            let view = fx.declare();
-            let DeclareView::NotReady { problems } = &view else {
-                panic!("{severity}: {view:?}")
-            };
-            assert!(!problems.is_empty(), "{severity}");
-            if severity == "high" {
-                assert!(
-                    problems.join("\n").contains("F1 (app, hello.txt:1)"),
-                    "{problems:?}"
-                );
-            }
-            assert!(
-                !fx.pushed(&fx.app) && !fx.pushed(&fx.master),
-                "{severity}: something was pushed"
-            );
-            assert!(fx.gh.prs().is_empty(), "{severity}");
-        }
+        // A critical finding: the review format has no `critical` severity, so a review document cannot
+        // carry one for the program to refuse on; the refusal it would give is shown as it is (R7.5).
+        let refusal = serde_json::json!({ "outcome": "refused", "problems": [
+            "the latest review (review 1) has unresolved high findings: F1 (app, hello.txt:1): The greeting is lost on retry (critical)."] });
+        let DeclareView::NotReady { problems } = outcome(&refusal) else {
+            panic!("a critical finding must be shown as a refusal")
+        };
+        assert!(
+            problems[0].contains("F1 (app, hello.txt:1)"),
+            "{problems:?}"
+        );
+        // A high finding: refused before anything is pushed, and listed.
+        let fx = Fx::ready();
+        fx.review(&[("F1", "high")]);
+        let view = fx.declare();
+        let DeclareView::NotReady { problems } = &view else {
+            panic!("high: {view:?}")
+        };
+        assert!(
+            problems
+                .join(
+                    "
+"
+                )
+                .contains("F1 (app, hello.txt:1)"),
+            "{problems:?}"
+        );
+        assert!(
+            !fx.pushed(&fx.app) && !fx.pushed(&fx.master),
+            "high: something was pushed"
+        );
+        assert!(fx.gh.prs().is_empty(), "high");
         for severity in ["medium", "low"] {
             let fx = Fx::ready();
             fx.review(&[("F1", severity)]);

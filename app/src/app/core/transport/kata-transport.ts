@@ -33,14 +33,11 @@ import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { PublishRepo } from '@bindings/PublishRepo';
-import type { Offender } from '@bindings/Offender';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { OldChecks } from '@bindings/OldChecks';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { DoneStep } from '@bindings/DoneStep';
-import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
-import type { PublishSummary } from '@bindings/PublishSummary';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { DoneView } from '@bindings/DoneView';
 import type { Resolved } from '@bindings/Resolved';
@@ -204,8 +201,6 @@ export abstract class KataTransport {
   abstract sdlcCommitFiles(repoPath: string): Promise<CommitFiles[]>;
   abstract sdlcDiffPair(repoPath: string, part: Part, path: string): Promise<FilePair>;
   abstract sdlcDiffBase(repoPath: string): Promise<BaseInfo>;
-  abstract sdlcTouchedRepos(folder: string, masterRepo: string, system: string, change: string): Promise<PublishRepo[]>;
-  abstract sdlcCommitOffenders(folder: string, masterRepo: string, system: string, change: string): Promise<Offender[]>;
   /** What each repository of the change's checks came to, as the plugin recorded it. */
   abstract sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]>;
   /** The old per-machine checks file of a system when the engineer has not been told about it yet, else null. */
@@ -214,9 +209,6 @@ export abstract class KataTransport {
   abstract sdlcOldChecksSeen(system: string): Promise<void>;
   /** Declare the change done through the plugin: it verifies, pushes every touched repository and opens the pull requests. Resolves to what it came to; progress arrives through `onDoneStep`. */
   abstract sdlcDeclareDone(change: ChangeRef): Promise<DeclareView>;
-  abstract sdlcGhSignedIn(repos: PublishRepo[]): Promise<string>;
-  abstract sdlcGhOrigins(repos: PublishRepo[]): Promise<void>;
-  abstract sdlcPublish(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]): Promise<PublishSummary>;
   /** Whether the change shows as done and with which pull request links, from what was saved. GitHub is asked only when nothing is saved and the build is finished. */
   abstract sdlcDoneView(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView>;
   /** Ask GitHub for the state of every saved pull request, save the answers, and return the new view. */
@@ -231,8 +223,6 @@ export abstract class KataTransport {
   abstract zoom(step: ZoomStep): Promise<number>;
   /** Register for the step the plugin is on while a change is declared done. Resolves to the unlisten function. */
   abstract onDoneStep(cb: (step: DoneStep) => void): Promise<() => void>;
-  /** Register for what publishing is doing (pushing or opening a pull request, per repository). Resolves to the unlisten function. */
-  abstract onPublishStep(cb: (step: PublishStep) => void): Promise<() => void>;
   /** Register for a change's build state each time it changes. Resolves to the unlisten function. */
   abstract onBuildState(cb: (event: BuildEvent) => void): Promise<() => void>;
   /** Register for the running changes each time they may have changed. Resolves to the unlisten function. */

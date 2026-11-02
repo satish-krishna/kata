@@ -37,7 +37,8 @@ import type { ParsedSection } from '@bindings/ParsedSection';
 import type { ParsedTask } from '@bindings/ParsedTask';
 import type { Part } from '@bindings/Part';
 import type { PlanTask } from '@bindings/PlanTask';
-import type { PrResult } from '@bindings/PrResult';
+import type { DeclareView } from '@bindings/DeclareView';
+import type { DoneStep } from '@bindings/DoneStep';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { NamingState } from '../core/transport/kata-transport';
 import type { PrState } from '@bindings/PrState';
@@ -604,7 +605,7 @@ export class SdlcMock {
   /** The long demo's change whose plan the format program cannot read, so the reading rows show a reason. */
   private readonly unreadable: string | null;
 
-  /** `?demo=naming` puts the build demo change on a pending branch that waits for a name; `?demo=clash-push` leaves the finished change undeclared and finds its branch taken on GitHub only at the push. */
+  /** `?demo=naming` puts the build demo change on a pending branch that waits for a name; `?demo=done-refused`, `done-partial`, `done-cannot` and `done-gh` leave the finished change undeclared and give each answer of the plugin to declaring it done. */
   private readonly demo: string | null;
 
   constructor(long = false, demo: string | null = null) {
@@ -745,9 +746,9 @@ export class SdlcMock {
   private copyOf(changeName: string): string | null {
     return this.copies.has(changeName) ? `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${changeName}` : null;
   }
-  /** Removal is offered for the finished change with its pull requests merged; the clash-push demo leaves it undeclared, so nothing is offered. */
+  /** Removal is offered for the finished change with its pull requests merged; the done demos leave it undeclared, so nothing is offered. */
   copyRemoval(changeName: string): CopyRemoval {
-    return this.copies.has(changeName) && !this.demo?.startsWith('clash') ? { outcome: 'offer' } : { outcome: 'notOffered' };
+    return this.copies.has(changeName) && !this.demo?.startsWith('done-') ? { outcome: 'offer' } : { outcome: 'notOffered' };
   }
   copyBranch(changeName: string): string {
     return `change/${changeName}`;
@@ -976,8 +977,8 @@ export class SdlcMock {
 
   diffFiles(part: Part): DiffListing {
     // Once the scripted build has logged every task, its agents have committed what they left.
-    // The clash-push demo declares a finished change done, so its work is all committed too.
-    const built = this.rows.size >= this.plan.length || (this.demo?.startsWith('clash') ?? false);
+    // The done demos declare a finished change done, so its work is all committed too.
+    const built = this.rows.size >= this.plan.length || (this.demo?.startsWith('done-') ?? false);
     const files = this.diff.map((f) => (built ? { ...f, uncommitted: false } : f)).filter((f) => part === 'whole' || (part === 'uncommitted') === f.uncommitted);
     const byType = new Map<string, { extension: string; files: number; added: number; removed: number }>();
     for (const f of files.filter((x) => !x.binary)) {
@@ -1056,13 +1057,55 @@ export class SdlcMock {
     });
   }
 
-  /** Only `?demo=clash-push` finds the branch taken at the push: the first repository refuses it, the others open their pull request. */
-  publish(repos: PublishRepo[], changeName: string): PrResult[] {
-    const taken = this.demo === 'clash-push' ? repos[0]?.repo : undefined;
-    repos.filter((r) => r.repo !== taken).forEach((r) => this.published.add(r.repo));
-    return repos.map((r): PrResult => (r.repo === taken
-      ? { repo: r.repo, outcome: { kind: 'clash', branch: `change/${changeName}` } }
-      : { repo: r.repo, outcome: { kind: 'opened', url: prUrl(r.repo) } }));
+  /** Whether `?demo=done-partial` has stopped part way already: the second time it carries on. */
+  private stoppedPartWay = false;
+
+  /**
+   * The plugin's answer to declaring `changeName` done, with the steps it reports on the way. It opens a pull request in each product
+   * repository and the master last; the demos give a refusal, a part-way stop (once), a machine that cannot run it and a missing gh.
+   */
+  declareDone(_changeName: string): { view: DeclareView; steps: DoneStep[] } {
+    const verifying: DoneStep = { kind: 'verifying', label: 'Declaring done: the plugin is verifying the change' };
+    const stepsFor = (repos: string[]): DoneStep[] => [
+      verifying,
+      ...repos.flatMap((repo): DoneStep[] => [{ kind: 'push', label: `Pushing ${repo}` }, { kind: 'pullRequest', label: `Opening a pull request in ${repo}` }]),
+    ];
+    const link = (repo: string, number: number) => ({ repo, url: prUrl(repo), number, source: 'plugin' as const });
+    switch (this.demo) {
+      case 'done-gh':
+        return { view: { kind: 'notReady', problems: ["Declaring done needs GitHub's command-line tool, gh. Install it from https://cli.github.com and reopen."] }, steps: [] };
+      case 'done-cannot':
+        return { view: { kind: 'couldNotRun', message: 'ai-sdlc needs Node.js 22.18 or later; this machine has 20.11.0.' }, steps: [] };
+      case 'done-refused':
+        return {
+          view: {
+            kind: 'notReady',
+            problems: [
+              'customer-portal has uncommitted files: src/limits.rs',
+              'the latest review (review 1) has unresolved high findings: F1 (commerce-core, src/upload.ts:10): The upload limit is checked after the file is stored.',
+            ],
+          },
+          steps: [verifying],
+        };
+      case 'done-partial':
+        if (!this.stoppedPartWay) {
+          this.stoppedPartWay = true;
+          const first = this.repos[0];
+          this.published.add(first);
+          return {
+            view: {
+              kind: 'partial',
+              pushed: [first],
+              opened: [link(first, 7)],
+              failed: [`opening the pull request in ${this.repos[1]} failed: GraphQL: something went wrong`, `pushed so far: ${first}; running done again carries on from there`],
+            },
+            steps: stepsFor([first]),
+          };
+        }
+    }
+    const all = [...this.repos, MOCK_MASTER];
+    all.forEach((repo) => this.published.add(repo));
+    return { view: { kind: 'done', pullRequests: all.map((repo, i) => link(repo, 7 + i)) }, steps: stepsFor(all) };
   }
 
   /** The done view as the Workbench shows it with nothing saved: done while every touched repository has an open pull request. */
@@ -1076,8 +1119,8 @@ export class SdlcMock {
   }
 
   pullRequests(repos: PublishRepo[], changeName: string): PrState[] {
-    // The clash-push demo leaves the finished change without pull requests, so Declare done is offered.
-    const open = (repo: string) => (changeName === MOCK_DONE_CHANGE && !this.demo?.startsWith('clash')) || this.published.has(repo);
+    // The done demos leave the finished change without pull requests, so Declare done is offered.
+    const open = (repo: string) => (changeName === MOCK_DONE_CHANGE && !this.demo?.startsWith('done-')) || this.published.has(repo);
     return repos.map((r) => ({ repo: r.repo, url: open(r.repo) ? prUrl(r.repo) : null }));
   }
 }

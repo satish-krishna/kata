@@ -1,7 +1,6 @@
 import { TauriTransport, type TauriIpc } from './tauri-transport';
 import { seedSpec } from '../../lib/mock';
 import type { DoneStep } from '@bindings/DoneStep';
-import type { PublishStep } from '@bindings/PublishStep';
 import type { KataEvent } from '../../lib/events';
 import type { Settings } from '@bindings/Settings';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
@@ -129,15 +128,10 @@ const rows: Row[] = [
   ['sdlcDiffFiles', (t) => t.sdlcDiffFiles('/r', 'whole'), 'sdlc_diff_files', { repoPath: '/r', part: 'whole' }],
   ['sdlcDiffPair', (t) => t.sdlcDiffPair('/r', 'committed', 'a.ts'), 'sdlc_diff_pair', { repoPath: '/r', part: 'committed', path: 'a.ts' }],
   ['sdlcDiffBase', (t) => t.sdlcDiffBase('/r'), 'sdlc_diff_base', { repoPath: '/r' }],
-  ['sdlcTouchedRepos', (t) => t.sdlcTouchedRepos('/w', 'm', 's', 'c'), 'sdlc_touched_repos', { folder: '/w', masterRepo: 'm', system: 's', change: 'c' }],
-  ['sdlcCommitOffenders', (t) => t.sdlcCommitOffenders('/w', 'm', 's', 'c'), 'sdlc_commit_offenders', { folder: '/w', masterRepo: 'm', system: 's', change: 'c' }],
   ['sdlcChecksView', (t) => t.sdlcChecksView(change), 'sdlc_checks_view', { change }],
   ['sdlcOldChecks', (t) => t.sdlcOldChecks('/w', 's'), 'sdlc_old_checks', { folder: '/w', system: 's' }],
   ['sdlcOldChecksSeen', (t) => t.sdlcOldChecksSeen('s'), 'sdlc_old_checks_seen', { system: 's' }],
-  ['sdlcGhSignedIn', (t) => t.sdlcGhSignedIn([publishRepo]), 'sdlc_gh_signed_in', { repos: [publishRepo] }],
-  ['sdlcGhOrigins', (t) => t.sdlcGhOrigins([publishRepo]), 'sdlc_gh_origins', { repos: [publishRepo] }],
   ['sdlcDeclareDone', (t) => t.sdlcDeclareDone({ workspace: '/w', system: 's', change: 'c' }), 'sdlc_declare_done', { change: { workspace: '/w', system: 's', change: 'c' } }],
-  ['sdlcPublish', (t) => t.sdlcPublish('/w', 'w1', 'm', 's', 'c', [publishRepo]), 'sdlc_publish', { folder: '/w', workspaceId: 'w1', masterRepo: 'm', system: 's', change: 'c', repos: [publishRepo] }],
   ['sdlcDoneView', (t) => t.sdlcDoneView('/w', 'm', 'w1', 's', 'c', true), 'sdlc_done_view', { folder: '/w', masterRepo: 'm', workspaceId: 'w1', system: 's', change: 'c', buildFinished: true }],
   ['sdlcRefreshPrStates', (t) => t.sdlcRefreshPrStates('/w', 'm', 'w1', 's', 'c', false), 'sdlc_refresh_pr_states', { folder: '/w', masterRepo: 'm', workspaceId: 'w1', system: 's', change: 'c', buildFinished: false }],
   ['sdlcPullRequests', (t) => t.sdlcPullRequests('m', 's', [publishRepo], 'c'), 'sdlc_pull_requests', { masterRepo: 'm', system: 's', repos: [publishRepo], change: 'c' }],
@@ -205,17 +199,6 @@ describe('TauriTransport', () => {
     expect(event).toBe('sdlc://done-step');
     handler({ payload: { kind: 'push', label: 'Pushing commerce-core' } });
     expect(seen).toEqual([{ kind: 'push', label: 'Pushing commerce-core' }]);
-  });
-
-  it('hands the payload of sdlc://publish-step over as the step', async () => {
-    const ipc = fakeIpc();
-    const t = new TauriTransport(asIpc(ipc));
-    const seen: PublishStep[] = [];
-    await t.onPublishStep((step) => seen.push(step));
-    const [event, handler] = ipc.listen.mock.calls[0] as unknown as [string, (e: { payload: PublishStep }) => void];
-    expect(event).toBe('sdlc://publish-step');
-    handler({ payload: { kind: 'pushing', repo: 'commerce-core' } });
-    expect(seen).toEqual([{ kind: 'pushing', repo: 'commerce-core' }]);
   });
 
   it.each([

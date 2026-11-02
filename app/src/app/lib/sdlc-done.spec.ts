@@ -1,7 +1,6 @@
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
-import type { Finding } from './sdlc';
-import { canConfirm, highFindings, reviewState, type DoneReport } from './sdlc-done';
+import { reviewState } from './sdlc-done';
 
 const SCOPE = { workspaceId: 'w1', system: 'commerce', change: 'c1' };
 const link = (over: Partial<RunLink> = {}): RunLink => ({
@@ -9,12 +8,6 @@ const link = (over: Partial<RunLink> = {}): RunLink => ({
 });
 const record = (id: string, exit: number | null | undefined): RunRecord => ({ id, kata: 'k', started_at: 100, isolation: 'none', steered: false, exit });
 const HEADS = { a: '1111111' };
-
-const report = (over: Partial<DoneReport> = {}): DoneReport => ({
-  account: 'demo-user', notReady: null,
-  repos: [{ repo: 'a', base: 'main', view: null }],
-  branch: 'feat/PROJ-123-reset', offenders: [], departures: [], review: { at: 1, findings: [] }, ...over,
-});
 
 describe('reviewState', () => {
   it('is none when the change has no review link', () => {
@@ -60,49 +53,6 @@ describe('reviewState with a review document', () => {
     const document = { layout: 2, reviews: [section], problems: [problem], master_moved: [] };
     expect(reviewState([], [], HEADS, SCOPE, document, 'm')).toEqual({ kind: 'invalid' });
     expect(reviewState([link()], [record('r1', 0)], HEADS, SCOPE, document, 'm')).toEqual({ kind: 'invalid' });
-  });
-});
-
-describe('highFindings', () => {
-  it('counts a high-severity convention finding like any high finding (R8.5)', () => {
-    const convention: Finding = { severity: 'high', concern: 'convention', rule: 'CONTRIBUTING.md:18', text: 'Breaks the rule.' };
-    const minor: Finding = { severity: 'low', concern: 'convention', text: 'Minor.' };
-    expect(highFindings(report({ review: { at: 1, findings: [convention, minor] } }))).toEqual([convention]);
-  });
-});
-
-describe('canConfirm', () => {
-  it('holds when everything passed, open medium, low and unrated findings included', () => {
-    expect(canConfirm(report())).toBe(true);
-    const findings = [{ severity: 'medium' as const, text: 'x' }, { severity: 'low' as const, text: 'y' }, { severity: null, text: 'z' }];
-    expect(canConfirm(report({ review: { at: 1, findings } }))).toBe(true);
-  });
-
-  it('is blocked by a high-severity finding until the engineer acknowledges it (R20.4)', () => {
-    const high = report({ review: { at: 1, findings: [{ severity: 'high', text: 'x' }, { severity: 'low', text: 'y' }] } });
-    expect(canConfirm(high)).toBe(false);
-    expect(canConfirm(high, true)).toBe(true);
-  });
-
-  it('an acknowledgement never lifts any other block', () => {
-    const findings = [{ severity: 'high' as const, text: 'x' }];
-    expect(canConfirm(report({ notReady: 'Not signed in', review: { at: 1, findings } }), true)).toBe(false);
-    expect(canConfirm(report({ review: { missing: 'none' } }), true)).toBe(false);
-  });
-
-  it("does not judge the checks: the plugin's change.done runs the stale ones and refuses with the failing check", () => {
-    const failed = { repo: 'a', view: { kind: 'failedStop' as const, id: 'unit', output: 'x' }, summary: 'unit failed. The build stopped here.' };
-    expect(canConfirm(report({ repos: [{ repo: 'a', base: 'main', view: failed }] }))).toBe(true);
-  });
-
-  it.each([
-    ['not ready', { notReady: 'Not signed in' }],
-    ['an offender', { offenders: [{ repo: 'a', hash: 'abc1234', subject: 's' }] }],
-    ['no review', { review: { missing: 'none' } }],
-    ['an unfinished review', { review: { missing: 'unfinished' } }],
-    ['a stale review', { review: { missing: 'stale' } }],
-  ] as [string, Partial<DoneReport>][])('is blocked by %s', (_name, over) => {
-    expect(canConfirm(report(over))).toBe(false);
   });
 });
 

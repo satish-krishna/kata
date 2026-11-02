@@ -8,7 +8,7 @@ pub mod state;
 pub mod status;
 
 use crate::process::CapturedExit;
-use kata_core::proc::{run_limited, Limited, Outcome, StartError};
+use kata_core::proc::{run_limited, run_limited_streaming, Limited, LineSink, Outcome, StartError};
 use serde_json::Value;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -73,10 +73,11 @@ pub(crate) fn execute(
     cwd: &Path,
     args: &[&str],
     limit: Duration,
+    on_line: Option<LineSink>,
 ) -> Result<CapturedExit, Failure> {
     let mut argv: Vec<OsString> = vec![entry.into()];
     argv.extend(args.iter().map(OsString::from));
-    let outcome = run_limited(&Limited {
+    let spec = Limited {
         program: node,
         args: argv,
         cwd,
@@ -85,7 +86,11 @@ pub(crate) fn execute(
         limit,
         keep_stdout: true,
         engineers_program: false,
-    });
+    };
+    let outcome = match on_line {
+        Some(on_line) => run_limited_streaming(&spec, on_line),
+        None => run_limited(&spec),
+    };
     match outcome {
         Outcome::Exited { code, tail, stdout } => Ok(CapturedExit {
             code,
@@ -134,15 +139,24 @@ impl Program {
         self.call(&args, &place.workspace)
     }
 
-    /// [`Program::run`] that hands each whole stdout line to `on_line` while the command runs, within `limit`.
+    /// [`Program::run`] that hands each whole stdout line to `on_line` while the command runs, and waits
+    /// up to `limit` instead of [`TIMEOUT`], for a command that reports its progress (`run ... --stream`).
     pub fn run_streaming(
         &self,
-        _command: &[&str],
-        _place: &Place,
-        _limit: Duration,
-        _on_line: kata_core::proc::LineSink,
+        command: &[&str],
+        place: &Place,
+        limit: Duration,
+        on_line: LineSink,
     ) -> Result<Value, ProgramError> {
-        todo!()
+        if !self.entry.is_file() {
+            return Err(ProgramError::TooOld {
+                found: format!("{} does not exist", self.entry.display()),
+            });
+        }
+        let master = place.master.display().to_string();
+        let workspace = place.workspace.display().to_string();
+        let args = with_place(command, &master, &workspace);
+        self.call_with(&args, &place.workspace, limit, Some(on_line))
     }
 
     /// Finds the master repository of `workspace` as the program's `resolve` does, with no master given.
@@ -174,7 +188,17 @@ impl Program {
 
     /// Runs the program with `args` as given, in `cwd`, and reads the answer as `run` does.
     fn call(&self, args: &[&str], cwd: &Path) -> Result<Value, ProgramError> {
-        let exit = match execute(&self.node, &self.entry, cwd, args, TIMEOUT) {
+        self.call_with(args, cwd, TIMEOUT, None)
+    }
+
+    fn call_with(
+        &self,
+        args: &[&str],
+        cwd: &Path,
+        limit: Duration,
+        on_line: Option<LineSink>,
+    ) -> Result<Value, ProgramError> {
+        let exit = match execute(&self.node, &self.entry, cwd, args, limit, on_line) {
             Ok(exit) => exit,
             Err(Failure::NodeMissing) => return Err(could_not_run(NEEDS_NODE)),
             Err(Failure::Other(message)) => return Err(could_not_run(message)),

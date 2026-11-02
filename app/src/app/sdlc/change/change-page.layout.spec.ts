@@ -207,8 +207,15 @@ describe('ChangePage layout', () => {
           tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: ['c0ffee1'], departure: null } })),
         };
       });
-      const repos = await transport.sdlcTouchedRepos('f', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE);
-      await transport.sdlcPublish('f', 'w1', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE, only === undefined ? repos : repos.slice(0, only));
+      await transport.sdlcDeclareDone({ workspace: 'f', system: 'commerce', change: MOCK_BUILD_CHANGE });
+      if (only !== undefined) {
+        // Only the first pull requests are known: the plugin stopped part way.
+        const real = transport.sdlcDoneView.bind(transport);
+        vi.spyOn(transport, 'sdlcDoneView').mockImplementation(async (...args) => {
+          const view = await real(...args);
+          return { ...view, done: false, links: view.links.slice(0, only) };
+        });
+      }
       return transport;
     };
 

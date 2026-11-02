@@ -989,7 +989,7 @@ fn start(
     timeout: Duration,
 ) -> Result<process::CapturedExit, FormatError> {
     RUNS.fetch_add(1, Ordering::SeqCst);
-    match crate::ai_sdlc::execute(Path::new("node"), program, cwd, args, timeout) {
+    match crate::ai_sdlc::execute(Path::new("node"), program, cwd, args, timeout, None) {
         Ok(out) if matches!(out.code, Some(0 | 1)) => Ok(out),
         Ok(out) => Err(FormatError::CouldNotRun(match out.stderr.trim() {
             "" => format!(

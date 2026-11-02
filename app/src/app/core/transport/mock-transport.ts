@@ -34,14 +34,11 @@ import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { PublishRepo } from '@bindings/PublishRepo';
-import type { Offender } from '@bindings/Offender';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { OldChecks } from '@bindings/OldChecks';
-import type { PublishSummary } from '@bindings/PublishSummary';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { DoneStep } from '@bindings/DoneStep';
-import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
 import type { DoneView } from '@bindings/DoneView';
 import type { Resolved } from '@bindings/Resolved';
@@ -108,7 +105,7 @@ export class MockTransport extends KataTransport {
   /** Every run store listening for events: a build starts several runs, each with its own listener. */
   private readonly listeners = new Set<(runId: string, ev: KataEvent, seq?: number) => void>();
   /** Everything listening for what publishing is doing. */
-  private readonly publishListeners = new Set<(step: PublishStep) => void>();
+  private readonly doneListeners = new Set<(step: DoneStep) => void>();
   private readonly runs = new Map<string, ScriptedRun>();
   private nextRun = 0;
   /** `?demo=build-long` (browser only) widens the build demo to three repositories, seventeen tasks, many files and findings, so every area of the build page overflows at 1280 by 800. */
@@ -332,28 +329,21 @@ export class MockTransport extends KataTransport {
   sdlcCommitFiles(repoPath: string): Promise<CommitFiles[]> { return Promise.resolve(this.sdlc.commitFiles(repoPath)); }
   sdlcDiffPair(_repoPath: string, _part: Part, path: string): Promise<FilePair> { return Promise.resolve(this.sdlc.diffPair(path)); }
   sdlcDiffBase(_repoPath: string): Promise<BaseInfo> { return Promise.resolve(this.sdlc.diffBase()); }
-  sdlcTouchedRepos(folder: string, _masterRepo: string, _system: string, _change: string): Promise<PublishRepo[]> { return Promise.resolve(this.sdlc.touchedRepos(folder)); }
-  sdlcCommitOffenders(_folder: string, _masterRepo: string, _system: string, _change: string): Promise<Offender[]> { return Promise.resolve([]); }
   sdlcOldChecks(_folder: string, system: string): Promise<OldChecks | null> { return Promise.resolve(this.sdlc.oldChecks(system)); }
   sdlcOldChecksSeen(system: string): Promise<void> { this.sdlc.oldChecksSeen(system); return Promise.resolve(); }
   sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]> { return Promise.resolve(this.sdlc.checksView(change.change)); }
-  sdlcDeclareDone(_change: ChangeRef): Promise<DeclareView> { return Promise.reject(new Error('declaring done is not scripted yet')); }
-  sdlcGhSignedIn(_repos: PublishRepo[]): Promise<string> { return Promise.resolve('demo-user'); }
-  sdlcGhOrigins(_repos: PublishRepo[]): Promise<void> { return Promise.resolve(); }
-  sdlcPublish(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, change: string, repos: PublishRepo[]): Promise<PublishSummary> {
-    for (const r of repos) {
-      for (const step of [{ kind: 'pushing', repo: r.repo }, { kind: 'opening', repo: r.repo }] as PublishStep[]) {
-        for (const listen of [...this.publishListeners]) listen(step);
-      }
-    }
-    return Promise.resolve({ results: this.sdlc.publish(repos, change), leftBehind: [] });
+  /** The plugin's answer to declaring the change done, with the steps it reports on the way; `?demo=done-refused`, `done-partial`, `done-cannot` and `done-gh` give each of the other answers. */
+  async sdlcDeclareDone(change: ChangeRef): Promise<DeclareView> {
+    const { view, steps } = this.sdlc.declareDone(change.change);
+    for (const step of steps) for (const listen of [...this.doneListeners]) listen(step);
+    return view;
   }
   /** `?demo=pr-fail` makes the read fail, so the browser checks can see the "Could not check pull requests" note; `?demo=one-pr` keeps only the
    *  first pull request, so they can see the single inline link. Browser only; this class never runs under Tauri. */
   async sdlcDoneView(folder: string, masterRepo: string, _workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView> {
     const demo = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('demo');
     if (demo === 'pr-fail' && buildFinished) return { done: false, links: [], linksFrom: 'none', offerDeclare: true, prCheckFailed: true };
-    const repos = await this.sdlcTouchedRepos(folder, masterRepo, system, change);
+    const repos = this.sdlc.touchedRepos(folder);
     const view = this.sdlc.doneView(repos, change, buildFinished);
     return demo === 'one-pr' ? { ...view, links: view.links.slice(0, 1) } : view;
   }
@@ -372,11 +362,9 @@ export class MockTransport extends KataTransport {
   pickOpenSpec(): Promise<string | null> { return Promise.resolve(null); }
   pickSaveSpec(): Promise<string | null> { return Promise.resolve(null); }
 
-  async onDoneStep(_cb: (step: DoneStep) => void): Promise<() => void> { return () => undefined; }
-
-  async onPublishStep(cb: (step: PublishStep) => void): Promise<() => void> {
-    this.publishListeners.add(cb);
-    return () => { this.publishListeners.delete(cb); };
+  async onDoneStep(cb: (step: DoneStep) => void): Promise<() => void> {
+    this.doneListeners.add(cb);
+    return () => { this.doneListeners.delete(cb); };
   }
 
   async onRunEvent(cb: (runId: string, ev: KataEvent, seq?: number) => void): Promise<() => void> {

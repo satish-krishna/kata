@@ -24,8 +24,8 @@ use tauri_plugin_shell::ShellExt;
 
 /// Channel the engine's normalized KataEvents are relayed on to the webview.
 const RUN_EVENT: &str = "kata://event";
-/// What publishing is doing, one `PublishStep` per event.
-const PUBLISH_STEP_EVENT: &str = "sdlc://publish-step";
+/// The step the plugin is on while a change is declared done, one `DoneStep` per event.
+const DONE_STEP_EVENT: &str = "sdlc://done-step";
 /// What a stage pass reports, one `StageEvent` per event.
 const STAGE_EVENT: &str = "sdlc://stage";
 
@@ -1273,28 +1273,6 @@ fn sdlc_diff_base(repo_path: String) -> Result<sdlc::base::BaseInfo, String> {
     sdlc::base::base_info(Path::new(&repo_path)).map_err(|e| e.to_string())
 }
 
-#[tauri::command(async)]
-fn sdlc_touched_repos(
-    folder: String,
-    master_repo: String,
-    system: String,
-    change: String,
-) -> Result<Vec<sdlc::publish::PublishRepo>, String> {
-    sdlc::publish::touched_repos(Path::new(&folder), &master_repo, &system, &change)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command(async)]
-fn sdlc_commit_offenders(
-    folder: String,
-    master_repo: String,
-    system: String,
-    change: String,
-) -> Result<Vec<sdlc::commits::Offender>, String> {
-    sdlc::publish::change_offenders(Path::new(&folder), &master_repo, &system, &change)
-        .map_err(|e| e.to_string())
-}
-
 /// What each repository of the change's checks came to, as the plugin recorded it on this machine against the
 /// hooks the team committed to the master's base branch. Kata runs no check and reads no checks file.
 #[tauri::command(async)]
@@ -1312,46 +1290,35 @@ fn sdlc_checks_view(
         .map_err(|e| e.to_string())
 }
 
+/// Declare a change done through the plugin: it verifies the change, pushes every touched repository and
+/// opens one pull request each, the master's last. Each step it reports goes out on `sdlc://done-step`. A
+/// step the machine cannot run is the answer, not an error.
 #[tauri::command(async)]
-fn sdlc_gh_signed_in(repos: Vec<sdlc::publish::PublishRepo>) -> Result<String, String> {
-    sdlc::publish::signed_in(
-        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
-        &repos,
-    )
-    .map_err(|e| e.to_string())
-}
-
-#[tauri::command(async)]
-fn sdlc_gh_origins(repos: Vec<sdlc::publish::PublishRepo>) -> Result<(), String> {
-    sdlc::publish::origins(
-        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
-        &repos,
-    )
-    .map_err(|e| e.to_string())
-}
-
-#[tauri::command(async)]
-fn sdlc_publish(
-    app: AppHandle,
-    folder: String,
-    workspace_id: String,
-    master_repo: String,
-    system: String,
-    change: String,
-    repos: Vec<sdlc::publish::PublishRepo>,
-) -> sdlc::publish::PublishSummary {
-    let plugin = ai_sdlc_readiness(Some(&folder));
-    sdlc::publish::publish(
-        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
-        &plugin,
-        &master_repo,
-        &system,
-        &change,
-        &repos,
-        &mut sdlc::publish::Recorder::stored(&workspace_id, &system, &change),
-        &mut |step| {
-            let _ = app.emit(PUBLISH_STEP_EVENT, step);
-        },
+fn sdlc_declare_done(app: AppHandle, change: build_host::ChangeRef) -> sdlc::done::DeclareView {
+    let could_not_run = |message: String| sdlc::done::DeclareView::CouldNotRun { message };
+    let program = match ai_sdlc_dir_in(&change.workspace) {
+        Ok(dir) => sdlc::ai_sdlc::Program::locate(&dir),
+        Err(message) => return could_not_run(message),
+    };
+    let (place, state) = match change_standing(&program, &change) {
+        Ok(found) => found,
+        Err(message) => return could_not_run(message),
+    };
+    // A change that lives in a copy is declared done from its copy.
+    let at = sdlc::ai_sdlc::Place {
+        master: std::path::PathBuf::from(&state.master),
+        workspace: place.workspace,
+    };
+    let readiness = ai_sdlc_readiness(Some(&change.workspace));
+    sdlc::done::declare(
+        &program,
+        &at,
+        &readiness,
+        &change.system,
+        &change.change,
+        Arc::new(move |step| {
+            let _ = app.emit(DONE_STEP_EVENT, step);
+        }),
     )
 }
 
@@ -1916,12 +1883,8 @@ pub fn run() {
             sdlc_commit_files,
             sdlc_diff_pair,
             sdlc_diff_base,
-            sdlc_touched_repos,
-            sdlc_commit_offenders,
             sdlc_checks_view,
-            sdlc_gh_signed_in,
-            sdlc_gh_origins,
-            sdlc_publish,
+            sdlc_declare_done,
             sdlc_done_view,
             sdlc_refresh_pr_states,
             sdlc_pull_requests,

@@ -19,13 +19,11 @@ import type { ChangeDocument } from '@bindings/ChangeDocument';
 import type { RejectOutcome } from '@bindings/RejectOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
-import type { Offender } from '@bindings/Offender';
-import type { PrResult } from '@bindings/PrResult';
+import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { DoneView } from '@bindings/DoneView';
 import type { PrLink } from '@bindings/PrLink';
 import type { LeftBehind } from '../../ui/pr-list-dialog';
-import type { PublishRepo } from '@bindings/PublishRepo';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
@@ -55,7 +53,6 @@ import {
   actionLabelAt,
   restrictedFor,
   primaryAction,
-  reviewFindings,
   parseFrontMatter,
   specFor,
   outOfDateCause,
@@ -69,12 +66,11 @@ import {
 import { shownBuild, shownDocument, type DocNotice, type ReadError, type Shown } from '../../lib/doc-notice';
 import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy } from '../../lib/doc-rail';
 import { prNumber } from '../../lib/pull-request';
-import { REVIEW_MISSING_TEXT, canConfirm, reviewState, type DoneReport, type DoneReview } from '../../lib/sdlc-done';
+import { DONE_STEP_LINE, type DoneReport } from '../../lib/sdlc-done';
 import { section } from '../../lib/doc';
 import { fullPipelineIdea } from '../../lib/sdlc-fix';
 import { inTauri } from '../../lib/mock';
 import { taskRecord, withRows, type TaskView } from '../../lib/task-view';
-import { shownSection } from '../../lib/sdlc-review';
 import { masterPath, masterRepo, productRepos } from '../../lib/sdlc-workspace';
 import { namingRefusal } from '../../lib/sdlc-naming';
 
@@ -694,84 +690,57 @@ export class ChangePageViewModel {
     // The pull requests opened from the old name stay open on GitHub: list them to close by hand.
     if (named.oldPullRequests.length > 0) {
       this.prLeftBehind.set(named.oldPullRequests.map((p) => ({ repo: p.repo, url: p.url, branch: named.from })));
-      this.prList.set([]);
     }
     return named.branch;
   }
 
-  // --- declaring done: Kata's own checks first, then the confirmation
+  // --- declaring done: the confirmation, then the plugin's step
   /** What the done dialog shows; the dialog is open exactly while this is set. */
   readonly doneReport = signal<DoneReport | null>(null);
-  /** The engineer's word, in the done dialog, that the pull requests open with the high-severity findings unresolved. */
-  readonly doneAcknowledged = signal(false);
-  private doneRepos: PublishRepo[] = [];
-  /** The branch declaring done found for the change, named in the push progress lines. */
-  private doneBranch: string | null = null;
-  /** The results of opening the pull requests, shown in a dialog that is open exactly while this is set. */
-  readonly prList = signal<PrResult[] | null>(null);
   /** What the plugin answered to declaring done; the result dialog is open while this is set. */
   readonly declareView = signal<DeclareView | null>(null);
-  closeDeclareView(): void {
-    this.declareView.set(null);
-  }
-  async declareAgain(): Promise<void> {
-    // Not built yet.
-  }
-  /** The pull requests an earlier branch name left open on GitHub, shown with the list. */
+  /** The pull requests an earlier branch name left open on GitHub, shown with the result. */
   readonly prLeftBehind = signal<LeftBehind[]>([]);
 
-  /** The operator confirmed: open the pull requests. */
+  /** The engineer confirmed: the plugin verifies the change, pushes and opens the pull requests. */
   async confirmDone(): Promise<void> {
-    const report = this.doneReport();
-    if (report === null || !canConfirm(report, this.doneAcknowledged())) return;
+    if (this.doneReport() === null) return;
     this.doneReport.set(null);
-    await this.publish();
+    await this.declare();
   }
 
-  /** Open the pull requests again after some failed; the ones already open are reused. */
-  async retryPublish(): Promise<void> {
-    this.prList.set(null);
-    await this.publish();
+  /** Ask the plugin again after it stopped part way; it carries on from there. */
+  async declareAgain(): Promise<void> {
+    this.declareView.set(null);
+    await this.declare();
   }
 
-  closePrList(): void {
-    this.prList.set(null);
+  closeDeclareView(): void {
+    this.declareView.set(null);
     this.prLeftBehind.set([]);
   }
 
-  /** Pick a new name from the pull request list after a clash; the engineer declares done again afterward. */
-  async renameFromPrList(branch: string): Promise<void> {
-    this.closePrList();
-    await this.renameBranch(branch);
-  }
-
-  private async publish(): Promise<void> {
+  /** Run the plugin's `change.done`, showing the step it reports as the lock's progress line. */
+  private async declare(): Promise<void> {
     const w = this.current();
-    const master = this.scanMaster();
-    if (!w || master === null) return;
-    let results: PrResult[] = [];
-    let leftBehind: LeftBehind[] = [];
-    // Each push and each pull request the backend reports becomes the lock's progress line, named by its repository.
-    const unlisten = await this.transport.onPublishStep((step) => {
-      if (step.kind === 'pushing') this.progress.begin('pushing', progressLabels.pushing(this.changeName(), step.repo, this.doneBranch), 'lock');
-      else this.progress.begin('opening-prs', progressLabels.openingPr(step.repo), 'lock');
-    });
+    if (!w) return;
+    const ref = { workspace: w.folder, system: this.system(), change: this.changeName() };
+    let view: DeclareView | null = null;
+    const unlisten = await this.transport.onDoneStep((step) => this.progress.begin(DONE_STEP_LINE[step.kind], step.label, 'lock'));
     let out: Awaited<ReturnType<LockStore['runSteps']>>;
     try {
       out = await this.lock.runSteps('Opening pull requests', [
         {
-          label: 'Open pull requests',
+          label: 'Declare done',
           run: async () => {
             try {
-              const summary = await this.transport.sdlcPublish(w.folder, w.id, master, this.system(), this.changeName(), this.doneRepos);
-              results = summary.results;
-              leftBehind = summary.leftBehind;
+              view = await this.transport.sdlcDeclareDone(ref);
             } catch (e) {
               this.progress.fail('lock');
               throw e;
             }
             this.progress.end('lock');
-            return plural(results.length, 'repository', 'repositories');
+            return null;
           },
         },
       ]);
@@ -779,22 +748,21 @@ export class ChangePageViewModel {
       unlisten();
       this.progress.end('lock');
     }
-    if (out === 'done') {
-      this.prLeftBehind.set(leftBehind);
-      this.prList.set(results);
-    }
+    if (out === 'done') this.declareView.set(view);
     await this.load();
   }
 
   /** Ask for another round instead of opening the pull requests. */
   doneRound(): void {
     this.doneReport.set(null);
+    this.closeDeclareView();
     void this.startBuild(this.build.openRound());
   }
 
   /** Open the review's preview; Start run hands the build view a review only: every task has a row, so nothing else runs. */
   async doneRunReview(): Promise<void> {
     this.doneReport.set(null);
+    this.closeDeclareView();
     void this.startBuild(this.build.openPreview('review'));
   }
 
@@ -1248,8 +1216,8 @@ export class ChangePageViewModel {
   });
 
   /**
-   * Check that GitHub, the commits and the review are in order and read what the plugin recorded for each repository's checks, then show the dialog.
-   * A step that refuses is recorded and the steps after it do not run. Nothing throws.
+   * Read the repositories, their branch and what the plugin recorded for their checks, then show the confirmation. Nothing is checked here:
+   * the plugin verifies the change when it is asked. Nothing throws.
    */
   private async declareDone(): Promise<void> {
     const w = this.current();
@@ -1258,116 +1226,30 @@ export class ChangePageViewModel {
     const folder = w.folder;
     const system = this.system();
     const change = this.changeName();
-    let touched: PublishRepo[];
-    let branch: string | null;
-    try {
-      touched = await this.transport.sdlcTouchedRepos(folder, master, system, change);
-      // The branch the change really has: it may carry a team name, not change/<change>.
-      branch = (await this.transport.sdlcChangeRepos(folder, master, system, change)).find((r) => r.repo === master)?.branch ?? null;
-      for (const r of touched) {
-        if ((await this.transport.sdlcDiffFiles(r.path, 'uncommitted')).files.length > 0) {
-          this.toasts.error(`Commit or discard the uncommitted edits in ${r.repo} before declaring done.`);
-          return;
-        }
-      }
-    } catch (e) {
-      this.toasts.error(`Could not read the repositories: ${message(e)}`);
-      return;
-    }
-
-    const productRepos = (this.status()?.repos ?? []).map((r) => r.repo).filter((r) => r !== master);
-    const got = {
-      account: null as string | null,
-      notReady: null as string | null,
-      offenders: [] as Offender[],
-      review: { missing: 'none' } as DoneReview,
-      views: [] as RepoCheckView[],
-    };
-    const refuse = (e: unknown): never => {
-      got.notReady = message(e);
-      throw new Error(got.notReady);
-    };
+    let repos: ChangeRepo[] = [];
+    let views: RepoCheckView[] = [];
     const out = await this.lock.runSteps('Declaring done', [
       {
-        label: 'Signed in to GitHub',
+        label: 'Repositories of the change',
         run: async () => {
-          try {
-            got.account = await this.transport.sdlcGhSignedIn(touched);
-          } catch (e) {
-            refuse(e);
-          }
-          return got.account;
-        },
-      },
-      {
-        label: 'Origins are GitHub repositories',
-        run: async () => {
-          try {
-            await this.transport.sdlcGhOrigins(touched);
-          } catch (e) {
-            refuse(e);
-          }
-          return plural(touched.length, 'repository', 'repositories');
-        },
-      },
-      {
-        label: 'Commit rules',
-        run: async () => {
-          got.offenders = await this.transport.sdlcCommitOffenders(folder, master, system, change);
-          return got.offenders.length === 0 ? 'all follow the rules' : plural(got.offenders.length, 'commit breaks', 'commits break') + ' them';
-        },
-      },
-      {
-        label: 'Review covers the current work',
-        run: async () => {
-          const [links, records, heads] = await Promise.all([
-            this.transport.sdlcRunLinks(),
-            this.transport.listRuns(),
-            this.transport.sdlcBuildHeads(folder, master, system, [master, ...productRepos], change),
-          ]);
-          // The review document decides when the change has one; the review run's exit code and words only when it has not.
-          const document = await this.transport.sdlcReviewRecord(masterPath(folder, master), system, change);
-          const state = reviewState(links, records, heads, { workspaceId: w.id, system, change }, document, master);
-          if (state.kind === 'current-document') {
-            const latest = shownSection(state.review);
-            got.review = { at: latest.reviewedAt, findings: latest.findings };
-            return latest.findings.length === 0 ? 'reviewed, nothing found' : plural(latest.findings.length, 'finding', 'findings');
-          }
-          if (state.kind !== 'current') {
-            got.review = { missing: state.kind };
-            return REVIEW_MISSING_TEXT[state.kind];
-          }
-          const findings = reviewFindings(await this.transport.loadRun(state.link.run_id));
-          got.review = { at: state.link.started_at * 1000, findings, older: true };
-          return plural(findings.length, 'finding', 'findings');
+          repos = await this.transport.sdlcChangeRepos(folder, master, system, change);
+          return plural(repos.length, 'repository', 'repositories');
         },
       },
       {
         label: 'Checks the plugin recorded',
         run: async () => {
-          got.views = await this.transport.sdlcChecksView({ workspace: folder, system, change });
-          return plural(got.views.length, 'repository', 'repositories');
+          views = await this.transport.sdlcChecksView({ workspace: folder, system, change });
+          return plural(views.length, 'repository', 'repositories');
         },
       },
     ]);
-    if (out === 'cancelled' || (out === 'failed' && got.notReady === null)) return;
-
-    this.doneRepos = touched;
-    this.doneBranch = branch;
-    // Each report asks afresh: an acknowledgement covers the findings it was given for, not the next review's.
-    this.doneAcknowledged.set(false);
+    if (out !== 'done') return;
     this.doneReport.set({
-      account: got.account,
-      notReady: got.notReady,
-      branch,
-      repos: touched.map((r) => ({
-        repo: r.repo,
-        base: r.base,
-        view: got.views.find((v) => v.repo === r.repo) ?? null,
-      })),
-      offenders: got.offenders,
+      // The branch the change really has: it may carry a team name, not change/<change>.
+      branch: repos.find((r) => r.repo === master)?.branch ?? null,
+      repos: repos.map((r) => ({ repo: r.repo, base: r.base.base, view: views.find((v) => v.repo === r.repo) ?? null })),
       departures: this.status()?.departures ?? [],
-      review: got.review,
     });
   }
 

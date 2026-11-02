@@ -98,6 +98,10 @@ pub enum Outcome {
 /// timeout kills the whole process tree (a Windows job object, a process group elsewhere).
 /// Output is kept as a tail of the last 50 lines (64 KiB), with ANSI sequences stripped.
 pub fn run_limited(spec: &Limited) -> Outcome {
+    run_inner(spec, None)
+}
+
+fn run_inner(spec: &Limited, on_line: Option<LineSink>) -> Outcome {
     let mut command = if spec.engineers_program {
         new_hidden(spec.program.as_os_str())
     } else {
@@ -135,8 +139,8 @@ pub fn run_limited(spec: &Limited) -> Outcome {
     let kept = Arc::new(Mutex::new(Vec::new()));
     let mut readers = Vec::new();
     if let Some(stdout) = tree.stdout().take() {
-        readers.push(if spec.keep_stdout {
-            spawn_collector(stdout, Arc::clone(&kept))
+        readers.push(if spec.keep_stdout || on_line.is_some() {
+            spawn_collector(stdout, Arc::clone(&kept), on_line)
         } else {
             spawn_reader(stdout, Arc::clone(&tail))
         });
@@ -176,9 +180,10 @@ pub fn run_limited(spec: &Limited) -> Outcome {
 /// Where [`run_limited_streaming`] sends each whole stdout line as it is read.
 pub type LineSink = Arc<dyn Fn(&str) + Send + Sync>;
 
-/// [`run_limited`] that also hands each whole stdout line to `on_line` while the child runs.
-pub fn run_limited_streaming(_spec: &Limited, _on_line: LineSink) -> Outcome {
-    todo!()
+/// [`run_limited`] that also hands each whole stdout line to `on_line` while the child runs, for a command
+/// that reports its progress as it goes. All of stdout is kept apart in `Outcome::Exited::stdout` too.
+pub fn run_limited_streaming(spec: &Limited, on_line: LineSink) -> Outcome {
+    run_inner(spec, Some(on_line))
 }
 
 const MAX_LINES: usize = 50;
@@ -327,10 +332,12 @@ fn drain(readers: Vec<Receiver<()>>) {
 fn spawn_collector(
     mut source: impl Read + Send + 'static,
     sink: Arc<Mutex<Vec<u8>>>,
+    on_line: Option<LineSink>,
 ) -> Receiver<()> {
     let (finished, done) = mpsc::channel();
     thread::spawn(move || {
         let mut chunk = [0u8; 8192];
+        let mut line: Vec<u8> = Vec::new();
         while let Ok(n) = source.read(&mut chunk) {
             if n == 0 {
                 break;
@@ -338,6 +345,22 @@ fn spawn_collector(
             sink.lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .extend_from_slice(&chunk[..n]);
+            if let Some(on_line) = &on_line {
+                for &byte in &chunk[..n] {
+                    if byte == b'\n' {
+                        let raw = line.strip_suffix(b"\r").unwrap_or(&line);
+                        on_line(&String::from_utf8_lossy(raw));
+                        line.clear();
+                    } else {
+                        line.push(byte);
+                    }
+                }
+            }
+        }
+        if let Some(on_line) = &on_line {
+            if !line.is_empty() {
+                on_line(&String::from_utf8_lossy(&line));
+            }
         }
         let _ = finished.send(());
     });

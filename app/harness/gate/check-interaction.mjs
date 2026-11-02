@@ -212,18 +212,10 @@ for (const [path, selectors] of Object.entries(EXPECTED_TRIGGERS)) {
 
 // A dialog the page opens from a button of its own, not from a dialog trigger, is never clicked by the loop above. A route listed
 // here is visited with the demo it names, each step leads to a dialog that must show the text, and Escape must close that dialog.
-const reviewed = async (page) => {
-  await page.getByRole('button', { name: 'Run review' }).first().click();
-  await page.getByRole('button', { name: 'Start run' }).click();
-  // The scripted review takes a few seconds; declaring done again offers the pull requests once it has been recorded.
-  for (let i = 0; i < 20; i++) {
-    await page.waitForTimeout(1000);
-    await page.getByRole('button', { name: 'Declare done' }).click();
-    await page.locator('hlm-dialog-content:visible').first().waitFor();
-    if (await page.getByRole('button', { name: 'Open pull requests' }).isEnabled()) return;
-    await page.keyboard.press('Escape');
-  }
-  throw new Error('the scripted review never made declaring done offer the pull requests');
+const declare = async (page) => {
+  await page.getByRole('button', { name: 'Declare done' }).click();
+  await page.locator('hlm-dialog-content:visible').first().waitFor();
+  await page.getByRole('button', { name: 'Open pull requests' }).click();
 };
 const DONE = 'sdlc/commerce/2026-10-18-photo-limits-shipped';
 const DIALOG_STEPS = {
@@ -236,22 +228,39 @@ const DIALOG_STEPS = {
       },
     },
   ],
-  [`${DONE}?demo=clash-push`]: [
+  [`${DONE}?demo=done-refused`]: [
     {
-      label: 'pull request list, clash row',
-      text: 'branch taken',
-      run: async (page) => {
-        await reviewed(page);
-        await page.getByRole('button', { name: 'Open pull requests' }).click();
-      },
+      label: "the plugin's refusal, every problem as it wrote it",
+      text: 'Declaring done was refused',
+      run: declare,
+    },
+  ],
+  [`${DONE}?demo=done-gh`]: [
+    {
+      label: 'gh missing, refused with how to install it',
+      text: "needs GitHub's command-line tool",
+      run: declare,
+    },
+  ],
+  [`${DONE}?demo=done-cannot`]: [
+    {
+      label: 'a machine that cannot run the step',
+      text: 'Nothing is claimed as pushed.',
+      run: declare,
+    },
+  ],
+  [`${DONE}?demo=done-partial`]: [
+    {
+      label: 'a part-way failure, with what was pushed',
+      text: 'Declaring done stopped part way',
+      run: declare,
     },
     {
-      label: 'branch name dialog, rename mode, from the pull request list',
-      text: 'The change moves to this branch',
+      label: 'declaring done again carries on to the pull requests',
+      text: 'Pull requests',
       run: async (page) => {
-        await reviewed(page);
-        await page.getByRole('button', { name: 'Open pull requests' }).click();
-        await page.getByRole('button', { name: 'Pick a new branch name' }).click();
+        await declare(page);
+        await page.getByRole('button', { name: 'Declare done again' }).click();
       },
     },
   ],

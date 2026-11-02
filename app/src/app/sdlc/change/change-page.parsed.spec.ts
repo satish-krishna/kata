@@ -75,9 +75,5 @@ describe('ChangePage parsed documents', () => {
     expect(tasks.length).toBe(NUMBERS.tasks);
     expect(tasks.filter((b) => b.querySelector('[role="img"]')!.getAttribute('aria-label') === 'built').length).toBe(NUMBERS.buildRecords);
     expect(text(container.querySelector('[data-testid="task"] .k-docview__label')!)).toBe('Change');
-
-    await vm.act('declare-done');
-    const review = vm.doneReport()!.review;
-    expect('findings' in review && review.findings.length).toBe(NUMBERS.findings);
   });
 });

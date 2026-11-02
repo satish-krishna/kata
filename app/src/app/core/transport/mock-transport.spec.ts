@@ -6,7 +6,6 @@ import type { KataEvent } from '../../lib/events';
 import { stageName, transcriptRunId } from '../../lib/sdlc';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { DoneStep } from '@bindings/DoneStep';
-import type { PublishStep } from '@bindings/PublishStep';
 import type { Resolved } from '@bindings/Resolved';
 import type { BuildEvent } from '@bindings/BuildEvent';
 import type { ChangeRef } from '@bindings/ChangeRef';
@@ -189,22 +188,11 @@ describe('MockTransport', () => {
     const args = [MOCK_WORKSPACE_FOLDER, 'commerce-docs', 'w1', 'commerce', MOCK_BUILD_CHANGE] as const;
     const before = await t.sdlcDoneView(...args, true);
     expect(before).toMatchObject({ done: false, links: [], offerDeclare: true, prCheckFailed: false });
-    const repos = await t.sdlcTouchedRepos(MOCK_WORKSPACE_FOLDER, 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE);
-    await t.sdlcPublish(MOCK_WORKSPACE_FOLDER, 'w1', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE, repos);
+    const declared = await t.sdlcDeclareDone({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE });
     const after = await t.sdlcDoneView(...args, true);
     expect(after.done).toBe(true);
-    expect(after.links.map((l) => l.repo)).toEqual(repos.map((r) => r.repo));
+    expect(after.links.map((l) => l.repo).sort()).toEqual((declared.kind === 'done' ? declared.pullRequests.map((p) => p.repo) : []).sort());
     expect(await t.sdlcRefreshPrStates(...args, true)).toEqual(after);
-  });
-
-  it('says what publishing is doing, repository by repository, then returns the results', async () => {
-    const t = new MockTransport();
-    const steps: PublishStep[] = [];
-    await t.onPublishStep((step) => steps.push(step));
-    const repos = await t.sdlcTouchedRepos(MOCK_WORKSPACE_FOLDER, 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE);
-    const summary = await t.sdlcPublish(MOCK_WORKSPACE_FOLDER, 'w1', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE, repos);
-    expect(summary.results).toHaveLength(repos.length);
-    expect(steps).toEqual(repos.flatMap((r) => [{ kind: 'pushing', repo: r.repo }, { kind: 'opening', repo: r.repo }]));
   });
 
   describe('the scripted build host', () => {
@@ -507,15 +495,13 @@ describe('MockTransport branch naming demos', () => {
       window.history.replaceState({}, '', '/');
     }
   };
-  const publish = (t: MockTransport) => t.sdlcPublish('/w', 'acme-commerce', 'commerce-docs', 'commerce', MOCK_DONE_CHANGE, REPOS);
 
-  it('keeps the default fixtures: no pending change, no clash, the finished change has its pull requests', async () => {
+  it('keeps the default fixtures: no pending change, the finished change has its pull requests', async () => {
     await withDemo(null, async (t) => {
       const b = await t.sdlcBranches('/m');
       expect(b.current).toBe('main');
       expect(b.pending_change).toBeNull();
       expect((await t.sdlcPullRequests('commerce-docs', 'commerce', REPOS, MOCK_DONE_CHANGE))[0].url).not.toBeNull();
-      expect((await publish(t)).results[0].outcome.kind).toBe('opened');
     });
   });
 
@@ -527,20 +513,6 @@ describe('MockTransport branch naming demos', () => {
     });
   });
 
-  it('the clash-push demo has nothing uncommitted, so declaring done gets past its first check', async () => {
-    for (const demo of [null, 'clash-push']) {
-      await withDemo(demo, async (t) => {
-        const left = (await t.sdlcDiffFiles('/w', 'uncommitted')).files.length;
-        expect(left > 0).toBe(demo === null);
-      });
-    }
-  });
-
-  it('?demo=clash-push finds the branch free, then the push meets another change on it', async () => {
-    await withDemo('clash-push', async (t) => {
-      expect((await publish(t)).results).toEqual([{ repo: 'commerce-core', outcome: { kind: 'clash', branch: `change/${MOCK_DONE_CHANGE}` } }]);
-    });
-  });
 });
 
 describe('MockTransport declaring-done demos', () => {

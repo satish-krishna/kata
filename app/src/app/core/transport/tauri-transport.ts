@@ -36,18 +36,15 @@ import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { PublishRepo } from '@bindings/PublishRepo';
-import type { Offender } from '@bindings/Offender';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { OldChecks } from '@bindings/OldChecks';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { DoneStep } from '@bindings/DoneStep';
-import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
 import type { DoneView } from '@bindings/DoneView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import type { ZoomStep } from '../../lib/zoom-keys';
-import type { PublishSummary } from '@bindings/PublishSummary';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { BuildState } from '@bindings/BuildState';
 import type { RoundOffer } from '@bindings/RoundOffer';
@@ -167,15 +164,10 @@ export class TauriTransport extends KataTransport {
   sdlcCommitFiles(repoPath: string) { return this.ipc.invoke<CommitFiles[]>('sdlc_commit_files', { repoPath }); }
   sdlcDiffPair(repoPath: string, part: Part, path: string) { return this.ipc.invoke<FilePair>('sdlc_diff_pair', { repoPath, part, path }); }
   sdlcDiffBase(repoPath: string) { return this.ipc.invoke<BaseInfo>('sdlc_diff_base', { repoPath }); }
-  sdlcTouchedRepos(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<PublishRepo[]>('sdlc_touched_repos', { folder, masterRepo, system, change }); }
-  sdlcCommitOffenders(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<Offender[]>('sdlc_commit_offenders', { folder, masterRepo, system, change }); }
   sdlcOldChecks(folder: string, system: string) { return this.ipc.invoke<OldChecks | null>('sdlc_old_checks', { folder, system }); }
   sdlcOldChecksSeen(system: string) { return this.ipc.invoke<void>('sdlc_old_checks_seen', { system }); }
   sdlcChecksView(change: ChangeRef) { return this.ipc.invoke<RepoCheckView[]>('sdlc_checks_view', { change }); }
   sdlcDeclareDone(change: ChangeRef) { return this.ipc.invoke<DeclareView>('sdlc_declare_done', { change }); }
-  sdlcGhSignedIn(repos: PublishRepo[]) { return this.ipc.invoke<string>('sdlc_gh_signed_in', { repos }); }
-  sdlcGhOrigins(repos: PublishRepo[]) { return this.ipc.invoke<void>('sdlc_gh_origins', { repos }); }
-  sdlcPublish(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]) { return this.ipc.invoke<PublishSummary>('sdlc_publish', { folder, workspaceId, masterRepo, system, change, repos }); }
   sdlcDoneView(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean) { return this.ipc.invoke<DoneView>('sdlc_done_view', { folder, masterRepo, workspaceId, system, change, buildFinished }); }
   sdlcRefreshPrStates(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean) { return this.ipc.invoke<DoneView>('sdlc_refresh_pr_states', { folder, masterRepo, workspaceId, system, change, buildFinished }); }
   sdlcPullRequests(masterRepo: string, system: string, repos: PublishRepo[], change: string) { return this.ipc.invoke<PrState[]>('sdlc_pull_requests', { masterRepo, system, repos, change }); }
@@ -188,9 +180,6 @@ export class TauriTransport extends KataTransport {
   pickSaveSpec() { return this.ipc.save({ filters: SPEC_FILTERS }) as Promise<string | null>; }
   onDoneStep(cb: (step: DoneStep) => void) {
     return this.ipc.listen<DoneStep>('sdlc://done-step', (e) => cb(e.payload));
-  }
-  onPublishStep(cb: (step: PublishStep) => void) {
-    return this.ipc.listen<PublishStep>('sdlc://publish-step', (e) => cb(e.payload));
   }
   onBuildState(cb: (event: BuildEvent) => void) {
     return this.ipc.listen<BuildEvent>('sdlc://build', (e) => cb(e.payload));

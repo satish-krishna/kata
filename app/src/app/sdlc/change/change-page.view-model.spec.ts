@@ -691,7 +691,7 @@ describe('ChangePageViewModel', () => {
     const finished = async () => {
       const transport = new MockTransport();
       withStage(transport, BUILD, 'build-finished');
-      await transport.sdlcPublish('f', 'w1', 'commerce-docs', 'commerce', BUILD, await transport.sdlcTouchedRepos('f', 'commerce-docs', 'commerce', BUILD));
+      await transport.sdlcDeclareDone({ workspace: 'f', system: 'commerce', change: BUILD });
       return transport;
     };
 
