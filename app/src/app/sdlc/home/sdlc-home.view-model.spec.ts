@@ -12,6 +12,8 @@ import { toastState } from '@spartan-ng/brain/sonner';
 import { ProgressStore } from '../../core/progress/progress.store';
 import { PROGRESS_STEPS } from '../../lib/progress-steps';
 import { LockStore } from '../../core/lock/lock.store';
+import { ChangeRunStore, changeRunKey } from '../../core/run/change-run.store';
+import { RunStore } from '../../core/run/run.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
@@ -1238,4 +1240,54 @@ describe('SdlcHomeViewModel old per-machine checks', () => {
     expect(vm.oldChecks()).toEqual([]);
     expect(seen).not.toHaveBeenCalled();
   });
+});
+
+describe("SdlcHomeViewModel: Close waits on the settling of the run on show, tracked per run (F32)", () => {
+  const LIVE = ['running', 'awaiting'];
+  /** Hold the engine's exit of the next run that waits on it, so its after-run work stays going. */
+  const holdExit = (transport: MockTransport) => {
+    let exit!: (v: boolean) => void;
+    const wait = vi.spyOn(transport, 'sdlcWaitRunExit').mockImplementationOnce(() => new Promise<boolean>((r) => (exit = r)));
+    return { wait, release: () => exit(true) };
+  };
+  /** A new change's intent run, started from the home and cancelled: a change run, which the home never shows, held in its after-run work. */
+  const intentSettling = async (transport: MockTransport, runner: SdlcRunner) => {
+    const workspace = (await transport.sdlcWorkspaces())[0];
+    const held = holdExit(transport);
+    void runner.newChange({ workspace, master: MOCK_MASTER, productRepos: [] }, 'commerce', 'flag prices', 'full');
+    const key = changeRunKey({ workspace: workspace.folder, system: 'commerce', change: await transport.sdlcChangeName('flag prices') });
+    const runs = TestBed.inject(ChangeRunStore);
+    await vi.waitFor(() => expect(runs.session(key)?.runId).toBeTruthy());
+    runs.cancel(key);
+    await vi.waitFor(() => expect(held.wait).toHaveBeenCalled());
+  };
+  /** A run of no change that takes the screen, cancelled; it has no master, so it leaves nothing to decide. */
+  const lockRun = async (transport: MockTransport, runner: SdlcRunner, settling: boolean) => {
+    const lock = TestBed.inject(LockStore);
+    void runner.run('Context', { ...seedSpec(), name: 'sdlc-context' }, { workspaceId: 'w', master: null, productRepos: [], link: null });
+    await vi.waitFor(() => expect(LIVE).toContain(TestBed.inject(RunStore).state()));
+    const held = settling ? holdExit(transport) : null;
+    lock.cancel();
+    await vi.waitFor(() => expect(lock.active()).toMatchObject({ kind: 'run', finished: expect.anything() }));
+    if (held) await vi.waitFor(() => expect(held.wait).toHaveBeenCalled());
+    else await flush();
+  };
+
+  const cases: { name: string; shown: 'lock' | 'none'; settling: boolean; other: boolean; blocked: boolean }[] = [
+    { name: 'a lock run on show settling', shown: 'lock', settling: true, other: false, blocked: true },
+    { name: "a lock run on show settled, a new change's intent run settling", shown: 'lock', settling: false, other: true, blocked: false },
+    { name: "no run on show, a new change's intent run settling", shown: 'none', settling: false, other: true, blocked: false },
+  ];
+
+  for (const c of cases) {
+    it(`${c.name}: Close ${c.blocked ? 'is' : 'is not'} blocked`, async () => {
+      const { vm, transport, runAgent, runner } = setup();
+      runAgent.mockRestore();
+      // The intent run comes first: a new change cannot start while a run holds the screen.
+      if (c.other) await intentSettling(transport, runner);
+      if (c.shown === 'lock') await lockRun(transport, runner, c.settling);
+      expect(vm.session() === null).toBe(c.shown === 'none');
+      expect(vm.closeBlocked()).toBe(c.blocked);
+    });
+  }
 });

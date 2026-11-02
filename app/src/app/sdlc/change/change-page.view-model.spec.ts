@@ -10,6 +10,7 @@ import type { RunSpec } from '@bindings/RunSpec';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
+import { ChangeRunStore, changeRunKey } from '../../core/run/change-run.store';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
@@ -1487,6 +1488,104 @@ describe("ChangePageViewModel: the session view's Close waits on the run it show
     runner.closeLeftovers();
     await home;
   });
+});
+
+describe("ChangePageViewModel: Close waits on the settling of the run on show, tracked per run (F32)", () => {
+  const OTHER = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE };
+  const LIVE = ['running', 'awaiting'];
+  /** Let a run's after-run work finish: it ends in the task after its last transport answer. */
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  /** Hold the engine's exit of the next run that waits on it, so its after-run work stays going. */
+  const holdExit = (transport: MockTransport) => {
+    let exit!: (v: boolean) => void;
+    const wait = vi.spyOn(transport, 'sdlcWaitRunExit').mockImplementationOnce(() => new Promise<boolean>((r) => (exit = r)));
+    return { wait, release: () => exit(true) };
+  };
+  type Ctx = { vm: ChangePageViewModel; transport: MockTransport };
+  type Shown = 'own' | 'lock' | 'intent' | 'none';
+  type Other = 'none' | 'home' | 'other-change';
+
+  /** This change's own spec run, cancelled; `settling` keeps its after-run work going, otherwise its leftovers are decided. */
+  const ownRun = async ({ vm, transport }: Ctx, settling: boolean) => {
+    void vm.act('start-spec');
+    await vi.waitFor(() => expect(LIVE).toContain(vm.runState()));
+    const held = settling ? holdExit(transport) : null;
+    vm.cancelLock();
+    await vi.waitFor(() => expect(vm.session()?.finished).not.toBeNull());
+    if (held) return void (await vi.waitFor(() => expect(held.wait).toHaveBeenCalled()));
+    await vi.waitFor(() => expect(vm.leftovers()).not.toBeNull());
+    vm.closeLeftovers();
+    await flush();
+  };
+  /** A run of no change (a triage) that takes the screen, cancelled; it has no master, so it leaves nothing to decide. */
+  const lockRun = async ({ transport }: Ctx, settling: boolean) => {
+    const lock = TestBed.inject(LockStore);
+    void TestBed.inject(SdlcRunner).run('Triage', { ...seedSpec(), name: 'sdlc-triage' }, { workspaceId: 'w', master: null, productRepos: [], link: null });
+    await vi.waitFor(() => expect(lock.active()?.kind).toBe('run'));
+    const held = settling ? holdExit(transport) : null;
+    lock.cancel();
+    await vi.waitFor(() => expect(lock.active()).toMatchObject({ kind: 'run', finished: expect.anything() }));
+    if (held) await vi.waitFor(() => expect(held.wait).toHaveBeenCalled());
+    else await flush();
+  };
+  /** The full-track start of a new change that the plugin names this page's change: its intent run lives in this change's session. */
+  const intentRun = async ({ vm, transport }: Ctx, settling: boolean) => {
+    vi.spyOn(transport, 'sdlcStartChange').mockResolvedValue({ outcome: 'started', change: PHOTOS_CHANGE, branch: `change/${PHOTOS_CHANGE}`, copy: '/copy' });
+    void TestBed.inject(SdlcRunner).newChange({ workspace: vm.current()!, master: '/ws/commerce-docs', productRepos: [] }, 'commerce', 'flag prices', 'full');
+    await vi.waitFor(() => expect(LIVE).toContain(vm.runState()));
+    expect(vm.session()?.title).toBe('Starting a change');
+    const held = settling ? holdExit(transport) : null;
+    vm.cancelLock();
+    await vi.waitFor(() => expect(vm.session()?.finished).not.toBeNull());
+    if (held) return void (await vi.waitFor(() => expect(held.wait).toHaveBeenCalled()));
+    // Its leftovers are offered where the change was started, never on this page.
+    await vi.waitFor(() => expect(TestBed.inject(SdlcRunner).leftovers()).not.toBeNull());
+    await flush();
+  };
+  /** A run this page does not show, cancelled and held in its after-run work. */
+  const otherRun = async ({ transport }: Ctx, other: Other) => {
+    if (other === 'none') return;
+    const held = holdExit(transport);
+    const runner = TestBed.inject(SdlcRunner);
+    if (other === 'home') {
+      const lock = TestBed.inject(LockStore);
+      void runner.run('Context', { ...seedSpec(), name: 'sdlc-context' }, { workspaceId: 'w', master: null, productRepos: [], link: null });
+      await vi.waitFor(() => expect(lock.active()?.kind).toBe('run'));
+      lock.cancel();
+    } else {
+      const runs = TestBed.inject(ChangeRunStore);
+      void runner.run('Starting spec of B', { ...seedSpec(), name: 'sdlc-commerce-b-spec' }, { workspaceId: 'w', master: null, productRepos: [], link: null }, { ref: OTHER, kind: 'spec' });
+      await vi.waitFor(() => expect(runs.session(changeRunKey(OTHER))?.runId).toBeTruthy());
+      runs.cancel(changeRunKey(OTHER));
+    }
+    await vi.waitFor(() => expect(held.wait).toHaveBeenCalled());
+  };
+
+  const cases: { name: string; shown: Shown; settling: boolean; other: Other; blocked: boolean }[] = [
+    { name: "the page's own change run settling", shown: 'own', settling: true, other: 'none', blocked: true },
+    { name: "the page's own change run settled, a home run settling", shown: 'own', settling: false, other: 'home', blocked: false },
+    { name: 'a lock run (triage) on show settling', shown: 'lock', settling: true, other: 'none', blocked: true },
+    { name: "a lock run on show settled, another change's run settling", shown: 'lock', settling: false, other: 'other-change', blocked: false },
+    { name: "a new change's intent run on show settling", shown: 'intent', settling: true, other: 'none', blocked: true },
+    { name: "a new change's intent run on show settled, another change's run settling", shown: 'intent', settling: false, other: 'other-change', blocked: false },
+    { name: "no run on show, another change's run settling", shown: 'none', settling: false, other: 'other-change', blocked: false },
+  ];
+
+  for (const c of cases) {
+    it(`${c.name}: Close ${c.blocked ? 'is' : 'is not'} blocked`, async () => {
+      const transport = new MockTransport();
+      const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+      runAgent.mockRestore();
+      await ready(vm);
+      const ctx = { vm, transport };
+      if (c.shown === 'own') await ownRun(ctx, c.settling);
+      if (c.shown === 'lock') await lockRun(ctx, c.settling);
+      if (c.shown === 'intent') await intentRun(ctx, c.settling);
+      await otherRun(ctx, c.other);
+      expect(vm.session() === null).toBe(c.shown === 'none');
+      expect(vm.closeBlocked()).toBe(c.blocked);
+    });
+  }
 });
 
 describe('ChangePageViewModel: the change copy', () => {

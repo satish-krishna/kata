@@ -780,3 +780,26 @@ describe("SdlcRunner shows a run's leftovers and settling only where it was star
     await p;
   });
 });
+
+describe('SdlcRunner settles per run (F32)', () => {
+  const target = { workspace: WORKSPACE, master: '/ws/commerce-docs', productRepos: ['commerce-core'] };
+  // The change the plugin starts for the idea; its intent run belongs to it although the home started it.
+  const refC = { workspace: '/ws', system: 'commerce', change: '2026-10-18-flag-prices' };
+
+  it("a second run of change C cannot start while C's intent run settles, and starts once it has", async () => {
+    const ctx = setup(() => 'warning');
+    let exit!: (v: boolean) => void;
+    ctx.fake.sdlcWaitRunExit.mockImplementationOnce(() => new Promise<boolean>((r) => (exit = r)));
+    const started = ctx.runner.newChange(target, 'commerce', 'flag prices', 'full');
+    await vi.waitFor(() => expect(ctx.fake.sdlcWaitRunExit).toHaveBeenCalled());
+    // C's session view was closed (the stand-in lock keeps none), so only the intent run's settling can refuse the second run.
+    const out = await ctx.runner.run('Starting spec', seedSpec(), TARGET, { ref: refC, kind: 'spec' });
+    expect(out.state).toBe('error');
+    expect(ctx.toasts.error).toHaveBeenCalledWith('Another task is already running.');
+    expect(ctx.lock.runAgent).toHaveBeenCalledTimes(1);
+    exit(true);
+    await started;
+    await ctx.runner.run('Starting spec', seedSpec(), TARGET, { ref: refC, kind: 'spec' });
+    expect(ctx.lock.runAgent).toHaveBeenCalledTimes(2);
+  });
+});
