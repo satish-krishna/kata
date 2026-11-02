@@ -10,6 +10,9 @@ import type { LayoutStage } from '../../lib/build-layout-stage';
 import { BuildLayoutViewModel } from './build-layout.view-model';
 import { BuildPageViewModel } from './build-page.view-model';
 
+/** Hold the lock the way Kata's own checks do, and never finish: the screen stays locked for the rest of the test. */
+const holdLock = (lock: LockStore): void => void lock.runSteps('Checking', [{ label: 'Check', run: () => new Promise<string | null>(() => undefined) }]);
+
 const BIG = { width: 1600, height: 900 };
 const UNREADABLE_WATCH = 'The Watch layout could not be read; it is back to its default.';
 
@@ -278,7 +281,8 @@ describe('BuildLayoutViewModel', () => {
   it('R12.1: rearranging takes effect at once while the screen is locked', async () => {
     setup();
     const lock = TestBed.inject(LockStore);
-    expect(lock.beginBuild('Build')).toBe(true);
+    holdLock(lock);
+    expect(lock.active()).not.toBeNull();
     const { vm } = await make(TestBed.inject(KataTransport) as MockTransport);
     vm.open('A');
     vm.pickMode('changes');
@@ -296,7 +300,8 @@ describe('BuildLayoutViewModel', () => {
   it('R12.2: the lock still blocks other work after rearranging', async () => {
     const transport = setup();
     const lock = TestBed.inject(LockStore);
-    expect(lock.beginBuild('Build')).toBe(true);
+    holdLock(lock);
+    expect(lock.active()).not.toBeNull();
     const { vm } = await make(transport);
     vm.open('A');
     vm.pickMode('review');
@@ -306,7 +311,7 @@ describe('BuildLayoutViewModel', () => {
     vm.focusOn('files');
     expect(vm.focus()).toBe('files');
     vm.arrange({ kind: 'reset' });
-    expect(lock.beginBuild('Other')).toBe(false);
+    expect(await lock.runSteps('Other', [])).toBe('failed');
   });
 
   it('R12.3: rearranging only ever calls saveBuildLayout', async () => {

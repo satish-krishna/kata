@@ -813,7 +813,7 @@ describe('ChangePage way back', () => {
     expect(send).toHaveBeenCalledWith(runId, expect.any(String), 'the flag is set in import');
     TestBed.inject(LockStore).cancel();
   });
-  it('the way back is shown but disabled while a run is in progress', async () => {
+  it('the way back stays enabled while a run is in progress (R11.6)', async () => {
     const { container } = await mount(PHOTOS_CHANGE, new MockTransport(), routes);
     expect(back(container)!.disabled).toBe(false);
     Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === 'Continue spec')!.click();
@@ -822,7 +822,7 @@ describe('ChangePage way back', () => {
     await confirmPreview();
     await vi.waitFor(() => expect(container.querySelector('app-sdlc-session')).not.toBeNull());
     expect(back(container)).not.toBeNull();
-    expect(back(container)!.disabled).toBe(true);
+    expect(back(container)!.disabled).toBe(false);
     const session = container.querySelector('app-sdlc-session')!;
     const find = (label: string) => Array.from(session.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === label);
     find('Cancel')!.click();
@@ -830,7 +830,7 @@ describe('ChangePage way back', () => {
       TestBed.tick();
       expect(find('Close')).toBeDefined();
     });
-    expect(back(container)!.disabled).toBe(true);
+    expect(back(container)!.disabled).toBe(false);
     // Cancelling leaves the scripted run's files behind: settle the leftovers dialog so the session can close.
     await vi.waitFor(() => expect(document.body.querySelector('[role="dialog"]')).not.toBeNull());
     Array.from(document.body.querySelector('[role="dialog"]')!.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === 'Close')!.click();

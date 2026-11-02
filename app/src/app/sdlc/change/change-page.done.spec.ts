@@ -19,6 +19,9 @@ import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
+/** Hold the lock the way Kata's own checks do, and never finish: the screen stays locked for the rest of the test. */
+const holdLock = (lock: LockStore): void => void lock.runSteps('Checking', [{ label: 'Check', run: () => new Promise<string | null>(() => undefined) }]);
+
 const BUILD = MOCK_BUILD_CHANGE;
 const RUN = `sdlc-commerce-${BUILD}-review-1`;
 const REPOS = ['commerce-core', 'customer-portal'];
@@ -99,10 +102,13 @@ describe('declaring done', () => {
 
   it('declare done is refused while a run is going or edits are uncommitted (R11.4)', async () => {
     const running = await finished();
-    expect(running.lock.beginBuild('Build')).toBe(true);
+    holdLock(running.lock);
+    expect(running.lock.active()).not.toBeNull();
     await running.vm.act('declare-done');
     expect(toastText()).toContain('Another task is already running.');
-    expect(running.steps).not.toHaveBeenCalled();
+    // The only steps run is the one holding the lock; declaring done started none.
+    expect(running.steps).toHaveBeenCalledTimes(1);
+    expect(running.steps).not.toHaveBeenCalledWith('Declaring done', expect.any(Array));
     expect(running.vm.doneReport()).toBeNull();
   });
 

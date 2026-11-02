@@ -12,6 +12,9 @@ import type { StageAction } from '../../lib/sdlc';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
+/** Hold the lock the way Kata's own checks do, and never finish: the screen stays locked for the rest of the test. */
+const holdLock = (lock: LockStore): void => void lock.runSteps('Checking', [{ label: 'Check', run: () => new Promise<string | null>(() => undefined) }]);
+
 const FIX = '2026-10-12-product-photo-upload';
 const NEEDS = 'Needs ai-sdlc 1.1.0 or later.';
 const BUSY = 'Another task is already running.';
@@ -207,7 +210,7 @@ describe('ChangePage: the fix runs', () => {
     await settle();
     expect(button(container, 'Reopen the fix')).toBeDefined();
     expect(button(container, 'Reopen the fix').disabled).toBe(false);
-    expect(TestBed.inject(LockStore).beginBuild('Building')).toBe(true);
+    holdLock(TestBed.inject(LockStore));
     await settle();
     expect(button(container, 'Reopen the fix').disabled).toBe(true);
     toastState.reset();
@@ -238,7 +241,7 @@ describe('ChangePage: the fix runs', () => {
     it('is disabled while the lock is held', async () => {
       const { container } = await mountFix('build-finished');
       expect(button(bar(container), 'Reopen the fix').disabled).toBe(false);
-      expect(TestBed.inject(LockStore).beginBuild('Building')).toBe(true);
+      holdLock(TestBed.inject(LockStore));
       await settle();
       expect(button(bar(container), 'Reopen the fix').disabled).toBe(true);
     });
@@ -269,7 +272,7 @@ describe('ChangePage: the fix runs', () => {
 
   it('every fix run is refused while another task runs, with no run started (R11.2)', async () => {
     const { vm, run } = await mountFix('fix-awaiting');
-    expect(TestBed.inject(LockStore).beginBuild('Building')).toBe(true);
+    holdLock(TestBed.inject(LockStore));
     for (const action of FIX_ACTIONS) {
       toastState.reset();
       await vm.act(action);

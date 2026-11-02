@@ -816,7 +816,7 @@ export class ChangePageViewModel {
   // --- actions
 
   async act(action: StageAction): Promise<void> {
-    // The build holds the lock it runs under; cancelling it is the one action that is always allowed.
+    // The build is hosted by the backend and holds no lock here; stopping it is allowed whatever else is going.
     if (action !== 'cancel-build' && this.refuseWhileLocked()) return;
     if (this.needsLightTrack(action)) {
       this.toasts.error(NEEDS_LIGHT_TRACK);

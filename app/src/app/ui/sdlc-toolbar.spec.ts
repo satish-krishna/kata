@@ -7,7 +7,7 @@ import { SdlcToolbar } from './sdlc-toolbar';
 
 const WS: WorkspaceEntry = { id: 'acme', name: 'acme-commerce', folder: '/a', last_opened: 1 };
 const inputs = (over: Record<string, unknown> = {}) => ({
-  workspaces: [WS], current: WS, missing: [], branch: 'main', locked: false, ...over,
+  workspaces: [WS], current: WS, missing: [], branch: 'main', ...over,
 });
 const byLabel = (c: HTMLElement, label: string) => c.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
 const switcher = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('button[aria-label^="Switch workspace"]')!;
@@ -65,18 +65,7 @@ describe('SdlcToolbar', () => {
     expect(got).toEqual(['mode', 'settings']);
   });
 
-  it('disables the mode badge and settings while locked', async () => {
-    const { container } = await render(SdlcToolbar, inputs({ locked: true }));
-    expect(byLabel(container, 'Switch mode (ai-sdlc)').disabled).toBe(true);
-    expect(byLabel(container, 'AI-SDLC settings').disabled).toBe(true);
-  });
-
-  it('disables the workspace switcher while locked', async () => {
-    const { container } = await render(SdlcToolbar, inputs({ locked: true }));
-    expect(switcher(container).disabled).toBe(true);
-  });
-
-  it('the back link is shown, named and disabled while locked', async () => {
+  it('the back link is shown, named and emits goBack', async () => {
     const back = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('button[aria-label="Back to the changes list"]');
     const none = await render(SdlcToolbar, inputs({ crumbs: ['c1'] }));
     expect(back(none.container)).toBeNull();
@@ -90,10 +79,6 @@ describe('SdlcToolbar', () => {
     fixture.componentInstance.goBack.subscribe(() => went++);
     link.click();
     expect(went).toBe(1);
-    TestBed.resetTestingModule();
-    const locked = await render(SdlcToolbar, inputs({ crumbs: ['c1'], back: 'Changes', locked: true }));
-    expect(back(locked.container)!.disabled).toBe(true);
-    expect(locked.container.querySelector('nav')!.textContent).toContain('c1');
   });
 
   it('withholds the workspace switcher and branch while blocked', async () => {

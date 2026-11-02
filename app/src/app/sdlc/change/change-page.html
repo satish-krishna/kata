@@ -7,7 +7,6 @@
     [crumbs]="vm.crumbs()"
     [tag]="vm.change()?.state.track === 'fix' ? 'fix' : null"
     back="Changes"
-    [locked]="vm.locked()"
     (switchMode)="vm.switchMode()"
     (select)="vm.selectWorkspace($event)"
     (add)="vm.toHome()"

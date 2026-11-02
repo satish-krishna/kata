@@ -19,6 +19,9 @@ import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_REFUSED_CHANGE, MOCK_WORKSPAC
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePageViewModel } from './change-page.view-model';
 
+/** Hold the lock the way Kata's own checks do, and never finish: the screen stays locked for the rest of the test. */
+const holdLock = (lock: LockStore): void => void lock.runSteps('Checking', [{ label: 'Check', run: () => new Promise<string | null>(() => undefined) }]);
+
 const PHOTOS_CHANGE = '2026-10-12-product-photo-upload';
 const FRAUD = '2026-10-16-price-flag';
 const REASSIGN = '2026-10-09-merchant-reassign';
@@ -855,13 +858,13 @@ describe('ChangePageViewModel', () => {
       expect(vm.barExtras().map((e) => e.action)).toEqual(['reopen-spec', 'reopen-intent']);
     });
 
-    it('turns both reopen actions off at build-ready while a live build run holds the lock (R1.3)', async () => {
+    it('turns both reopen actions off at build-ready while a check of Kata holds the lock (R1.3)', async () => {
       const { vm } = setup(BUILD);
       await ready(vm);
       expect(vm.change()!.offer.stage).toBe('build-ready');
       expect(vm.disabledFor('reopen-intent')).toBe(false);
       expect(vm.disabledFor('reopen-spec')).toBe(false);
-      expect(TestBed.inject(LockStore).beginBuild('Building')).toBe(true);
+      holdLock(TestBed.inject(LockStore));
       expect(vm.actions()).toContain('reopen-intent');
       expect(vm.actions()).toContain('reopen-spec');
       expect(vm.disabledFor('reopen-intent')).toBe(true);
@@ -877,7 +880,7 @@ describe('ChangePageViewModel', () => {
       expect(vm.actions()).toContain('reopen-intent');
       expect(vm.actions()).toContain('reopen-spec');
       expect(vm.disabledFor('reopen-intent')).toBe(false);
-      expect(TestBed.inject(LockStore).beginBuild('Building')).toBe(true);
+      holdLock(TestBed.inject(LockStore));
       expect(vm.actions()).toContain('reopen-intent');
       expect(vm.actions()).toContain('reopen-spec');
       expect(vm.disabledFor('reopen-intent')).toBe(true);

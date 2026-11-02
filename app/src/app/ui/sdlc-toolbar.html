@@ -10,7 +10,6 @@
     type="button"
     title="Switch mode"
     aria-label="Switch mode (ai-sdlc)"
-    [disabled]="locked()"
     (click)="switchMode.emit()"
   >ai-sdlc</button>
   <div class="wb-sep"></div>
@@ -19,7 +18,6 @@
       [workspaces]="workspaces()"
       [current]="current()"
       [missing]="missing()"
-      [locked]="locked()"
       (select)="select.emit($event)"
       (add)="add.emit()"
       (remove)="remove.emit()"
@@ -34,7 +32,6 @@
         class="k-crumbs__back"
         type="button"
         aria-label="Back to the changes list"
-        [disabled]="locked()"
         (click)="goBack.emit()"
       >{{ label }}</button>
     }
@@ -63,7 +60,6 @@
     type="button"
     title="Settings"
     aria-label="AI-SDLC settings"
-    [disabled]="locked()"
     (click)="openSettings.emit()"
   >
     <ng-icon name="lucideSettings" size="16" />

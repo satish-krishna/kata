@@ -4,7 +4,6 @@
     [current]="vm.current()"
     [missing]="vm.missing()"
     [branch]="vm.masterBranch()"
-    [locked]="vm.locked()"
     [blocked]="vm.state() === 'plugin-missing'"
     (switchMode)="vm.switchMode()"
     (select)="vm.selectWorkspace($event)"
