@@ -1775,7 +1775,6 @@ export class BuildPageViewModel {
   }
 
   private async readStatus(): Promise<BuildStatus> {
-    const master = this.masterRef()!;
     const ctx = this.ctx!;
     return this.transport.sdlcBuildStatus({ workspace: ctx.folder, system: ctx.system, change: ctx.change });
   }

@@ -116,11 +116,6 @@ const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], 
 const repoName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path;
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
-/** Product repos are named by folder; they sit next to the master repo in the workspace folder. */
-const siblingsOf = (master: string, repos: string[]): string[] => {
-  const root = master.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '');
-  return repos.map((r) => masterPath(root, r));
-};
 const STILL_STOPPING = 'The engine is still stopping. Nothing was cleaned up.';
 
 function summarize(result: string | null | undefined): string {
@@ -688,7 +683,7 @@ export class SdlcRunner {
     }
   }
 
-  private async readLeftovers(master: string, snapshot: Snapshot, productRepos: string[]): Promise<Leftovers> {
+  private async readLeftovers(master: string, snapshot: Snapshot, _productRepos: string[]): Promise<Leftovers> {
     try {
       return await this.transport.sdlcLeftovers({ kind: 'workspace', master }, snapshot);
     } catch (e) {
