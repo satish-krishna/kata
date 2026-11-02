@@ -21,8 +21,8 @@ import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { DeclareView } from '@bindings/DeclareView';
-import type { DoneView } from '@bindings/DoneView';
-import type { PrLink } from '@bindings/PrLink';
+import type { PullRequestLink } from '@bindings/PullRequestLink';
+import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { LeftBehind } from '../../ui/pr-list-dialog';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
@@ -227,9 +227,9 @@ export class ChangePageViewModel {
   private readonly links = signal<RunLink[]>([]);
   private readonly records = signal<RunRecord[]>([]);
   readonly change = signal<ChangeView | null>(null);
-  /** The pull request links the backend gave, saved or opened or from GitHub; the page never decides what they mean. */
-  readonly pullRequests = signal<PrLink[]>([]);
-  /** GitHub could not be asked about the pull requests, so the finished label stays. */
+  /** The pull request links the backend gave, from the plugin's record or an earlier declaration; the page never decides what they mean. */
+  readonly pullRequests = signal<PullRequestLink[]>([]);
+  /** The recorded pull requests could not be read, so the finished label stays. */
   readonly prCheckFailed = signal(false);
   /** The backend says the change is done: it has no actions left. */
   readonly done = signal(false);
@@ -335,9 +335,7 @@ export class ChangePageViewModel {
   }
   /** The key of the change the backend was last told is open; the page tells it once per change, however often it reads the change. */
   private openedKey = '';
-  private readonly linksFrom = signal<DoneView['linksFrom']>('none');
-  /** When the last background refresh of the link states began, in seconds; null until one has ended. A link last seen before it could not be asked about. */
-  private readonly refreshedAt = signal<number | null>(null);
+  private readonly linksFrom = signal<PullRequestsView['source']>(null);
   /** The shown document, raw as it is on disk, or null when the file is missing. */
   readonly doc = signal<string | null>(null);
   /** The shown spec or plan as the format program read it; null for the other documents, or when the program could not run. */
@@ -431,16 +429,19 @@ export class ChangePageViewModel {
       : this.pullRequests().flatMap((p) => {
           if (p.url === null) return [];
           const number = prNumber(p.url);
-          return [{ repo: p.repo, url: p.url, number, label: number === null ? p.repo : `${p.repo} #${number}`, state: p.state, seen: this.seenLabel(p) }];
+          return [{ repo: p.repo, url: p.url, number, label: number === null ? p.repo : `${p.repo} #${number}`, state: this.stateLabel(p), seen: this.seenLabel(p) }];
         }),
   );
   /** Where the links come from when that is not this page's own declaration: "from the earlier declaration", else null. */
-  readonly linksNote = computed<string | null>(() => (this.linksFrom() === 'earlierDeclaration' && this.pullRequests().length > 0 ? 'from the earlier declaration' : null));
-  /** "last seen <time>" for a state GitHub did not confirm in the last refresh; null before a refresh ended and for a state it just gave. */
-  private seenLabel(p: PrLink): string | null {
-    const refreshed = this.refreshedAt();
-    if (refreshed === null || p.seenAt === null || p.seenAt >= refreshed) return null;
-    return `last seen ${new Date(p.seenAt * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
+  readonly linksNote = computed<string | null>(() => (this.linksFrom() === 'legacy' && this.pullRequests().length > 0 ? 'from the earlier declaration' : null));
+  /** The state a link shows: what GitHub said, else "checking" until the plugin has read it, else that it could not. */
+  private stateLabel(p: PullRequestLink): string {
+    return p.state ?? (p.lastSeen ? 'not read' : 'checking');
+  }
+  /** "last seen <time>" for a state that is not from the last read; null for a state the plugin just read and while it is still reading. */
+  private seenLabel(p: PullRequestLink): string | null {
+    if (!p.lastSeen) return null;
+    return p.seenAt === null ? 'last seen' : `last seen ${new Date(p.seenAt * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
   }
   /** The master repository's branch the change records, as the backend resolves it; null until read or when it cannot be. */
   private readonly recordedBranch = signal<string | null>(null);
@@ -1409,34 +1410,38 @@ export class ChangePageViewModel {
     }
   }
 
-  /** Whether the change is done and with which links, from what the backend saved; GitHub is asked only when nothing is saved. A failed read is not an error, it just leaves the change unfinished. */
-  private async readDoneView(folder: string, master: string, workspaceId: string, system: string, name: string, buildFinished: boolean): Promise<DoneView> {
+  /** Whether the change is done and with which links, from the plugin's record at once, without asking GitHub. A failed read is not an error, it just leaves the change unfinished. */
+  private async readPullRequests(folder: string, workspaceId: string, system: string, name: string, buildFinished: boolean): Promise<{ view: PullRequestsView; failed: boolean }> {
     try {
-      return await this.transport.sdlcDoneView(folder, master, workspaceId, system, name, buildFinished);
+      return { view: await this.transport.sdlcPullRequestsView(folder, workspaceId, system, name, false), failed: false };
     } catch {
-      return { done: false, links: [], linksFrom: 'none', offerDeclare: buildFinished, prCheckFailed: buildFinished };
+      return { view: { done: false, source: null, links: [], declareOffered: buildFinished }, failed: buildFinished };
     }
   }
 
-  private applyDoneView(view: DoneView): void {
+  private applyPullRequests(view: PullRequestsView, failed: boolean): void {
     this.done.set(view.done);
     this.pullRequests.set(view.links);
-    this.prCheckFailed.set(view.prCheckFailed);
-    this.linksFrom.set(view.linksFrom);
+    this.prCheckFailed.set(failed);
+    this.linksFrom.set(view.source);
   }
 
-  /** Ask GitHub for the saved links' states without holding the page: the links stay as saved until it answers, and stay when it cannot. */
-  private async refreshLinks(seq: number, folder: string, master: string, workspaceId: string, system: string, name: string, buildFinished: boolean): Promise<void> {
-    const started = Math.floor(Date.now() / 1000);
-    let view: DoneView | null;
+  /** Ask the plugin for the links' states without holding the page: the links stay as they are until it answers. A link it could not read keeps the state last seen, and all of them do when it cannot answer. */
+  private async refreshLinks(seq: number, folder: string, workspaceId: string, system: string, name: string): Promise<void> {
+    let view: PullRequestsView | null;
     try {
-      view = await this.transport.sdlcRefreshPrStates(folder, master, workspaceId, system, name, buildFinished);
+      view = await this.transport.sdlcPullRequestsView(folder, workspaceId, system, name, true);
     } catch {
       view = null;
     }
     if (seq !== this.loadSeq) return;
-    if (view !== null) this.applyDoneView(view);
-    this.refreshedAt.set(started);
+    const before = this.pullRequests();
+    const kept = (l: PullRequestLink): PullRequestLink => {
+      const earlier = before.find((b) => b.url === l.url);
+      return { ...l, state: earlier?.state ?? null, lastSeen: true, seenAt: earlier?.seenAt ?? null };
+    };
+    const links = view === null ? before.map((l) => (l.state === null ? kept(l) : l)) : view.links.map((l) => (l.state === null ? kept(l) : l));
+    this.pullRequests.set(links);
   }
 
   /** Read this one change; a change the workspace does not have is none, any other failure is raised. */
@@ -1584,12 +1589,11 @@ export class ChangePageViewModel {
       const readiness = await this.readReadiness(w.folder);
       const review = found?.state.documents.plan.exists ? await this.readReviewRecord(master, system, name) : null;
       const buildFinished = stageNameOf(found ?? null) === 'build-finished';
-      const doneView: DoneView = found?.state.documents.plan.exists
-        ? await this.readDoneView(w.folder, repo, w.id, system, name, buildFinished)
-        : { done: false, links: [], linksFrom: 'none', offerDeclare: false, prCheckFailed: false };
+      const pulls = found?.state.documents.plan.exists
+        ? await this.readPullRequests(w.folder, w.id, system, name, buildFinished)
+        : { view: { done: false, source: null, links: [], declareOffered: false } satisfies PullRequestsView, failed: false };
       if (seq !== this.loadSeq) return;
-      this.refreshedAt.set(null);
-      this.applyDoneView(doneView);
+      this.applyPullRequests(pulls.view, pulls.failed);
       this.status.set(status);
       this.readiness.set(readiness);
       this.reviewRecord.set(review);
@@ -1611,8 +1615,8 @@ export class ChangePageViewModel {
       // The build page shows the change's tasks, sessions and findings whether or not a build ran on this page.
       const context = this.buildContext();
       if (found && context !== null) this.build.loaded.set({ ctx: context, master: { repo, path: master }, change: found, status, done: this.done(), review });
-      // Saved links show first; their states are asked for in the background.
-      if (found && doneView.links.length > 0 && doneView.linksFrom !== 'github') void this.refreshLinks(seq, w.folder, repo, w.id, system, name, buildFinished);
+      // The recorded links show first; the plugin reads their states from GitHub in the background. Pull requests an earlier version of Kata saved are not read: the plugin does not know them.
+      if (found && pulls.view.source === 'plugin' && pulls.view.links.length > 0) void this.refreshLinks(seq, w.folder, w.id, system, name);
     } catch (e) {
       failRead();
       this.toasts.error(`Could not read the change: ${message(e)}`);

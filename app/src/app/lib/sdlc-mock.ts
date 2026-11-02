@@ -41,9 +41,8 @@ import type { DeclareView } from '@bindings/DeclareView';
 import type { DoneStep } from '@bindings/DoneStep';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { NamingState } from '../core/transport/kata-transport';
-import type { PrState } from '@bindings/PrState';
-import type { DoneView } from '@bindings/DoneView';
-import type { PublishRepo } from '@bindings/PublishRepo';
+import type { PullRequestLink } from '@bindings/PullRequestLink';
+import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { ReadResult } from '@bindings/ReadResult';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { RepoState } from '@bindings/RepoState';
@@ -1004,10 +1003,6 @@ export class SdlcMock {
 
   diffBase(): BaseInfo { return { base: 'main', reference: 'origin/main', mergeBase: '3f9a1c27d0b8e45a6c1f2e9b7d3a508c4e6f1b29' }; }
 
-  touchedRepos(folder: string): PublishRepo[] {
-    return [MOCK_MASTER, ...this.repos].map((repo) => ({ repo, path: `${folder}/${repo}`, base: 'main' }));
-  }
-
   /**
    * What each repository's checks came to, as the plugin's answer would read. The team's checks cover commerce-core (unit) and, in
    * the long variant, billing-api (integration); customer-portal has none. Before the build has recorded every task nothing has run.
@@ -1108,20 +1103,27 @@ export class SdlcMock {
     return { view: { kind: 'done', pullRequests: all.map((repo, i) => link(repo, 7 + i)) }, steps: stepsFor(all) };
   }
 
-  /** The done view as the Workbench shows it with nothing saved: done while every touched repository has an open pull request. */
-  doneView(repos: PublishRepo[], changeName: string, buildFinished: boolean): DoneView {
-    const prs = this.pullRequests(repos, changeName);
-    const links = prs.flatMap((p) => (p.url === null ? [] : [{ repo: p.repo, url: p.url, state: 'open' as const, seenAt: null }]));
-    const done = buildFinished && prs.length > 0 && links.length === prs.length;
-    // Like a saved record: the links a partial publish opened stay, labeled as opened.
-    const linksFrom = links.length === 0 ? 'none' as const : done ? 'github' as const : 'opened' as const;
-    return { done, links, linksFrom, offerDeclare: buildFinished && !done, prCheckFailed: false };
-  }
-
-  pullRequests(repos: PublishRepo[], changeName: string): PrState[] {
-    // The done demos leave the finished change without pull requests, so Declare done is offered.
-    const open = (repo: string) => (changeName === MOCK_DONE_CHANGE && !this.demo?.startsWith('done-')) || this.published.has(repo);
-    return repos.map((r) => ({ repo: r.repo, url: open(r.repo) ? prUrl(r.repo) : null }));
+  /**
+   * The change's pull requests as the page shows them: those the plugin recorded (a finished change with a pull request in each repository, the
+   * master's last, or whatever a declaration in this session opened), with their states once `refresh` is asked for. The done demos leave the
+   * finished change without pull requests, so declaring done is offered. `?demo=pr-states` answers OPEN, MERGED and CLOSED and cannot read one;
+   * `?demo=earlier-declaration` shows the finished change as an earlier version of Kata recorded it.
+   */
+  pullRequestsView(changeName: string, refresh: boolean): PullRequestsView {
+    const repos = [...this.repos, MOCK_MASTER];
+    const recorded = repos.filter((repo) => (changeName === MOCK_DONE_CHANGE && !this.demo?.startsWith('done-')) || this.published.has(repo));
+    if (this.demo === 'earlier-declaration' && changeName === MOCK_DONE_CHANGE) {
+      const seenAt = Math.floor(Date.UTC(2026, 9, 21, 14, 30) / 1000);
+      const links = recorded.map((repo, i): PullRequestLink => ({ repo, url: prUrl(repo), number: 7 + i, source: 'legacy', state: 'merged', lastSeen: true, seenAt }));
+      return { done: true, source: 'legacy', links, declareOffered: false };
+    }
+    const asked = ['open', 'merged', 'closed', null] as const;
+    const links = recorded.map((repo, i): PullRequestLink => {
+      const state = !refresh ? null : this.demo === 'pr-states' ? asked[i % asked.length] : 'open';
+      return { repo, url: prUrl(repo), number: 7 + i, source: 'plugin', state, lastSeen: refresh && state === null, seenAt: null };
+    });
+    // The plugin records the master's pull request last: until it is there the declaration stopped part way.
+    return { done: recorded.includes(MOCK_MASTER), source: links.length === 0 ? null : 'plugin', links, declareOffered: true };
   }
 }
 

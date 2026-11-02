@@ -210,8 +210,8 @@ describe('ChangePage layout', () => {
       await transport.sdlcDeclareDone({ workspace: 'f', system: 'commerce', change: MOCK_BUILD_CHANGE });
       if (only !== undefined) {
         // Only the first pull requests are known: the plugin stopped part way.
-        const real = transport.sdlcDoneView.bind(transport);
-        vi.spyOn(transport, 'sdlcDoneView').mockImplementation(async (...args) => {
+        const real = transport.sdlcPullRequestsView.bind(transport);
+        vi.spyOn(transport, 'sdlcPullRequestsView').mockImplementation(async (...args) => {
           const view = await real(...args);
           return { ...view, done: false, links: view.links.slice(0, only) };
         });

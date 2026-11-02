@@ -4,7 +4,7 @@ import { render } from '../../../testing/render';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
-import type { PrLink } from '@bindings/PrLink';
+import type { PullRequestLink } from '@bindings/PullRequestLink';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject, of } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
@@ -261,10 +261,10 @@ describe('declaring done from the build page', () => {
     expect(Array.from(p.querySelectorAll('[data-bar] button')).filter((b) => b.closest('app-segmented') === null).map(text).filter((t) => t !== 'Reset layout')).toEqual([]);
   });
 
-  const PRS = [
-    { repo: 'commerce-docs', url: 'https://github.com/acme/commerce-docs/pull/11', state: 'open' as const, seenAt: null },
-    { repo: 'commerce-core', url: 'https://github.com/acme/commerce-core/pull/12', state: 'open' as const, seenAt: null },
-    { repo: 'customer-portal', url: 'https://github.com/acme/customer-portal/pull/13', state: 'open' as const, seenAt: null },
+  const PRS: PullRequestLink[] = [
+    { repo: 'commerce-docs', url: 'https://github.com/acme/commerce-docs/pull/11', number: 11, source: 'plugin', state: 'open', lastSeen: false, seenAt: null },
+    { repo: 'commerce-core', url: 'https://github.com/acme/commerce-core/pull/12', number: 12, source: 'plugin', state: 'open', lastSeen: false, seenAt: null },
+    { repo: 'customer-portal', url: 'https://github.com/acme/customer-portal/pull/13', number: 13, source: 'plugin', state: 'open', lastSeen: false, seenAt: null },
   ];
   const click = (a: Element) => {
     const ev = new MouseEvent('click', { bubbles: true, cancelable: true });
@@ -321,14 +321,14 @@ describe('declaring done from the build page', () => {
 });
 
 describe('lasting links after a publish or a round', () => {
-  const saved = (repo: string, over: Partial<PrLink> = {}): PrLink => ({ repo, url: `https://github.com/acme/${repo}/pull/7`, state: 'open', seenAt: 1790000000, ...over });
+  const saved = (repo: string, over: Partial<PullRequestLink> = {}): PullRequestLink => ({ repo, url: `https://github.com/acme/${repo}/pull/7`, number: 7, source: 'plugin', state: 'open', lastSeen: false, seenAt: null, ...over });
 
   it('keeps the opened link and offers declare done after a part-way failure (R8.3)', async () => {
     const { vm, transport } = await finished();
-    const real = transport.sdlcDoneView.bind(transport);
+    const real = transport.sdlcPullRequestsView.bind(transport);
     let published = false;
-    const doneView = vi.spyOn(transport, 'sdlcDoneView').mockImplementation(async (...args) =>
-      published ? { done: false, links: [saved('commerce-core')], linksFrom: 'opened', offerDeclare: true, prCheckFailed: false } : real(...args),
+    const doneView = vi.spyOn(transport, 'sdlcPullRequestsView').mockImplementation(async (...args) =>
+      published ? { done: false, source: 'plugin', links: [saved('commerce-core')], declareOffered: true } : real(...args),
     );
     const publish = vi.spyOn(transport, 'sdlcDeclareDone').mockImplementation(async () => {
       published = true;
@@ -344,24 +344,25 @@ describe('lasting links after a publish or a round', () => {
     expect(vm.actions()).toContain('declare-done');
   });
 
-  it('a round after done shows build finished with the earlier links (T10 row 2)', async () => {
+  it('a change an earlier version declared done shows as done with its links and is not offered declaring done again (R8.1)', async () => {
     const transport = new MockTransport();
     withStage(transport, BUILD, 'build-finished');
-    vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue({
-      done: false,
-      links: [saved('commerce-core'), saved('customer-portal')],
-      linksFrom: 'earlierDeclaration',
-      offerDeclare: true,
-      prCheckFailed: false,
+    const earlier = (repo: string) => saved(repo, { source: 'legacy', lastSeen: true, seenAt: 1790000000, state: 'merged' });
+    const asked = vi.spyOn(transport, 'sdlcPullRequestsView').mockResolvedValue({
+      done: true,
+      source: 'legacy',
+      links: [earlier('commerce-core'), earlier('customer-portal')],
+      declareOffered: false,
     });
-    vi.spyOn(transport, 'sdlcRefreshPrStates').mockImplementation(() => new Promise<never>(() => undefined));
     const { vm } = setup(transport);
     await ready(vm);
-    expect(vm.done()).toBe(false);
-    expect(vm.change()!.offer.stage).toBe('build-finished');
-    expect(vm.pullLinks().map((l) => l.repo)).toEqual(['commerce-core', 'customer-portal']);
+    expect(vm.done()).toBe(true);
+    expect(vm.pullLinks().map((l) => [l.repo, l.state])).toEqual([['commerce-core', 'merged'], ['customer-portal', 'merged']]);
+    expect(vm.pullLinks().every((l) => l.seen?.startsWith('last seen '))).toBe(true);
     expect(vm.linksNote()).toBe('from the earlier declaration');
-    expect(vm.actions()).toContain('declare-done');
+    expect(vm.actions()).not.toContain('declare-done');
+    // The plugin does not know these pull requests: GitHub is never asked about them.
+    expect(asked.mock.calls.every((c) => c[4] === false)).toBe(true);
   });
 });
 

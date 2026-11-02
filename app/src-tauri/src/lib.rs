@@ -1167,14 +1167,51 @@ fn sdlc_change_state(
 ) -> Result<sdlc_state::ChangeView, String> {
     let (program, readiness) = state_inputs(&folder);
     let source = program.as_ref().map(|p| p as &dyn sdlc_state::StateSource);
-    sdlc_state::change_view(
+    let mut view = sdlc_state::change_view(
         source,
         &readiness,
         &|s, c| live_facts(&control, s, c),
         Path::new(&folder),
         &system,
         &change,
-    )
+    )?;
+    if let Some(program) = &program {
+        drop_declare_done_after_earlier_declaration(program, &folder, &system, &change, &mut view);
+    }
+    Ok(view)
+}
+
+/// A change an earlier version of Kata declared done is not offered declaring done again. Only a change whose
+/// offer lists it and that Kata saved pull requests for needs the plugin asked, so a page costs nothing more
+/// for any other change.
+fn drop_declare_done_after_earlier_declaration(
+    program: &sdlc::ai_sdlc::Program,
+    folder: &str,
+    system: &str,
+    change: &str,
+    view: &mut sdlc_state::ChangeView,
+) {
+    use sdlc::offer::StageAction::DeclareDone;
+    if !view.offer.actions.iter().any(|a| a.action == DeclareDone) {
+        return;
+    }
+    let Some(workspace) = sdlc::store::load_workspaces()
+        .into_iter()
+        .find(|w| Path::new(&w.folder) == Path::new(folder))
+    else {
+        return;
+    };
+    let legacy = sdlc::pull_requests::legacy_entries(&workspace.id, system, change);
+    if legacy.is_empty() {
+        return;
+    }
+    let Ok(place) = program.resolve(Path::new(folder)) else {
+        return;
+    };
+    if let Ok(shown) = program.change_show(&place, change, false) {
+        let pull_requests = sdlc::pull_requests::view(&shown, &legacy);
+        view.offer = sdlc::offer::after_pull_requests(view.offer.clone(), &pull_requests);
+    }
 }
 
 #[tauri::command(async)]
@@ -1322,63 +1359,27 @@ fn sdlc_declare_done(app: AppHandle, change: build_host::ChangeRef) -> sdlc::don
     )
 }
 
-/// Whether the change shows as done and with which links, from what is saved. GitHub is asked
-/// only when nothing is saved and the build is finished.
+/// The change's pull requests as the page shows them: the plugin's record in `change.yml` first, else what an
+/// earlier version of Kata saved. With `refresh` the plugin also asks GitHub for each state, which starts `gh`
+/// and is slow, so the page asks without it first and with it in the background. Pull requests an earlier
+/// version of Kata saved are not asked about: the plugin does not know them.
 #[tauri::command(async)]
-fn sdlc_done_view(
+fn sdlc_pull_requests_view(
     folder: String,
-    master_repo: String,
     workspace_id: String,
     system: String,
     change: String,
-    build_finished: bool,
-) -> Result<sdlc::prs::DoneView, String> {
-    sdlc::prs::done_view_for(
-        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
-        Path::new(&folder),
-        &master_repo,
-        &workspace_id,
-        &system,
-        &change,
-        build_finished,
-    )
-}
-
-/// Ask GitHub for the state of every saved pull request, save the answers and return the new view.
-#[tauri::command(async)]
-fn sdlc_refresh_pr_states(
-    folder: String,
-    master_repo: String,
-    workspace_id: String,
-    system: String,
-    change: String,
-    build_finished: bool,
-) -> Result<sdlc::prs::DoneView, String> {
-    sdlc::prs::refresh_states(
-        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
-        Path::new(&folder),
-        &master_repo,
-        &workspace_id,
-        &system,
-        &change,
-        build_finished,
-    )
-}
-
-#[tauri::command(async)]
-fn sdlc_pull_requests(
-    master_repo: String,
-    system: String,
-    repos: Vec<sdlc::publish::PublishRepo>,
-    change: String,
-) -> Result<Vec<sdlc::publish::PrState>, String> {
-    sdlc::publish::open_pull_requests(
-        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
-        &master_repo,
-        &system,
-        &repos,
-        &change,
-    )
+    refresh: bool,
+) -> Result<sdlc::pull_requests::PullRequestsView, String> {
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&folder)?);
+    let place = program
+        .resolve(Path::new(&folder))
+        .map_err(|e| e.to_string())?;
+    let legacy = sdlc::pull_requests::legacy_entries(&workspace_id, &system, &change);
+    let shown = program
+        .change_show(&place, &change, refresh && legacy.is_empty())
+        .map_err(|e| e.to_string())?;
+    Ok(sdlc::pull_requests::view(&shown, &legacy))
 }
 
 /// The stage pass each window is running, so a new start can cancel the one before it.
@@ -1885,9 +1886,7 @@ pub fn run() {
             sdlc_diff_base,
             sdlc_checks_view,
             sdlc_declare_done,
-            sdlc_done_view,
-            sdlc_refresh_pr_states,
-            sdlc_pull_requests,
+            sdlc_pull_requests_view,
             sdlc_copy_removal,
             sdlc_copy_branch,
             sdlc_remove_copy,

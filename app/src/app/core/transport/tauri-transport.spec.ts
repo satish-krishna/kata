@@ -6,7 +6,6 @@ import type { Settings } from '@bindings/Settings';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { RunLink } from '@bindings/RunLink';
-import type { PublishRepo } from '@bindings/PublishRepo';
 import type { RoundPicks } from '@bindings/RoundPicks';
 import type { BuildEvent } from '@bindings/BuildEvent';
 import type { ChangeRef } from '@bindings/ChangeRef';
@@ -19,7 +18,6 @@ const settings: Settings = { mode: 'sdlc', remember: true, permission_mode: 'byp
 const entry: WorkspaceEntry = { id: 'w', name: 'w', folder: '/w', last_opened: 1 };
 const snap: Snapshot = { head: 'abc', dirty: {} };
 const link: RunLink = { workspace_id: 'w', system: 's', change: 'c', stage: 'intent', run_id: 'r', started_at: 1 };
-const publishRepo: PublishRepo = { repo: 'r', path: '/w/r', base: 'main' };
 const change: ChangeRef = { workspace: '/w', system: 's', change: 'c' };
 const runForm: RunForm = { name: 'n', task: 't', permissionMode: 'auto', timeoutSecs: 600 };
 const picks: RoundPicks = { picked: ['F1'], assigned: {}, notes: {} };
@@ -132,9 +130,7 @@ const rows: Row[] = [
   ['sdlcOldChecks', (t) => t.sdlcOldChecks('/w', 's'), 'sdlc_old_checks', { folder: '/w', system: 's' }],
   ['sdlcOldChecksSeen', (t) => t.sdlcOldChecksSeen('s'), 'sdlc_old_checks_seen', { system: 's' }],
   ['sdlcDeclareDone', (t) => t.sdlcDeclareDone({ workspace: '/w', system: 's', change: 'c' }), 'sdlc_declare_done', { change: { workspace: '/w', system: 's', change: 'c' } }],
-  ['sdlcDoneView', (t) => t.sdlcDoneView('/w', 'm', 'w1', 's', 'c', true), 'sdlc_done_view', { folder: '/w', masterRepo: 'm', workspaceId: 'w1', system: 's', change: 'c', buildFinished: true }],
-  ['sdlcRefreshPrStates', (t) => t.sdlcRefreshPrStates('/w', 'm', 'w1', 's', 'c', false), 'sdlc_refresh_pr_states', { folder: '/w', masterRepo: 'm', workspaceId: 'w1', system: 's', change: 'c', buildFinished: false }],
-  ['sdlcPullRequests', (t) => t.sdlcPullRequests('m', 's', [publishRepo], 'c'), 'sdlc_pull_requests', { masterRepo: 'm', system: 's', repos: [publishRepo], change: 'c' }],
+  ['sdlcPullRequestsView', (t) => t.sdlcPullRequestsView('/w', 'w1', 's', 'c', true), 'sdlc_pull_requests_view', { folder: '/w', workspaceId: 'w1', system: 's', change: 'c', refresh: true }],
 ];
 
 describe('TauriTransport', () => {

@@ -1533,12 +1533,6 @@ body
             offenders.iter().any(|o| o.subject == "work"),
             "{offenders:?}"
         );
-        let facts = crate::prs::branch_facts("m", "s", &touched, CHANGE);
-        let app_tip = git::run(&fx.path("app"), &["rev-parse", RECORDED]).unwrap();
-        assert!(
-            facts.heads.contains(&("app".to_string(), app_tip)),
-            "{facts:?}"
-        );
         let gh = FakeGitHub::default();
         on_github(&fx);
         open_pull_requests(&gh, "m", "s", &touched, CHANGE).unwrap();

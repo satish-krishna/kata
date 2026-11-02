@@ -32,14 +32,12 @@ import type { CommitFiles } from '@bindings/CommitFiles';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
-import type { PublishRepo } from '@bindings/PublishRepo';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { OldChecks } from '@bindings/OldChecks';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { DoneStep } from '@bindings/DoneStep';
-import type { PrState } from '@bindings/PrState';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
-import type { DoneView } from '@bindings/DoneView';
+import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import type { ZoomStep } from '../../lib/zoom-keys';
@@ -209,11 +207,8 @@ export abstract class KataTransport {
   abstract sdlcOldChecksSeen(system: string): Promise<void>;
   /** Declare the change done through the plugin: it verifies, pushes every touched repository and opens the pull requests. Resolves to what it came to; progress arrives through `onDoneStep`. */
   abstract sdlcDeclareDone(change: ChangeRef): Promise<DeclareView>;
-  /** Whether the change shows as done and with which pull request links, from what was saved. GitHub is asked only when nothing is saved and the build is finished. */
-  abstract sdlcDoneView(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView>;
-  /** Ask GitHub for the state of every saved pull request, save the answers, and return the new view. */
-  abstract sdlcRefreshPrStates(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView>;
-  abstract sdlcPullRequests(masterRepo: string, system: string, repos: PublishRepo[], change: string): Promise<PrState[]>;
+  /** The change's pull requests as the page shows them: the plugin's record, else what an earlier version of Kata saved. With `refresh` the plugin also asks GitHub for each state, which is slow; the page reads without it first. */
+  abstract sdlcPullRequestsView(folder: string, workspaceId: string, system: string, change: string, refresh: boolean): Promise<PullRequestsView>;
   /** The build page's arrangement, one per mode and shared by every change. `{}` until one is saved. */
   abstract loadBuildLayout(): Promise<unknown>;
   abstract saveBuildLayout(layout: Record<string, unknown>): Promise<void>;

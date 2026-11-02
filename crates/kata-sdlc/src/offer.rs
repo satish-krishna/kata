@@ -374,7 +374,12 @@ pub fn after_pull_requests(
     offer: ChangeOffer,
     pull_requests: &crate::pull_requests::PullRequestsView,
 ) -> ChangeOffer {
-    let _ = pull_requests;
+    let mut offer = offer;
+    if !pull_requests.declare_offered {
+        offer
+            .actions
+            .retain(|a| a.action != StageAction::DeclareDone);
+    }
     offer
 }
 

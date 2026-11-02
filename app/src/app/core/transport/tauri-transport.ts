@@ -35,13 +35,11 @@ import type { CommitFiles } from '@bindings/CommitFiles';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
-import type { PublishRepo } from '@bindings/PublishRepo';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { OldChecks } from '@bindings/OldChecks';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { DoneStep } from '@bindings/DoneStep';
-import type { PrState } from '@bindings/PrState';
-import type { DoneView } from '@bindings/DoneView';
+import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import type { ZoomStep } from '../../lib/zoom-keys';
@@ -168,9 +166,7 @@ export class TauriTransport extends KataTransport {
   sdlcOldChecksSeen(system: string) { return this.ipc.invoke<void>('sdlc_old_checks_seen', { system }); }
   sdlcChecksView(change: ChangeRef) { return this.ipc.invoke<RepoCheckView[]>('sdlc_checks_view', { change }); }
   sdlcDeclareDone(change: ChangeRef) { return this.ipc.invoke<DeclareView>('sdlc_declare_done', { change }); }
-  sdlcDoneView(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean) { return this.ipc.invoke<DoneView>('sdlc_done_view', { folder, masterRepo, workspaceId, system, change, buildFinished }); }
-  sdlcRefreshPrStates(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean) { return this.ipc.invoke<DoneView>('sdlc_refresh_pr_states', { folder, masterRepo, workspaceId, system, change, buildFinished }); }
-  sdlcPullRequests(masterRepo: string, system: string, repos: PublishRepo[], change: string) { return this.ipc.invoke<PrState[]>('sdlc_pull_requests', { masterRepo, system, repos, change }); }
+  sdlcPullRequestsView(folder: string, workspaceId: string, system: string, change: string, refresh: boolean) { return this.ipc.invoke<PullRequestsView>('sdlc_pull_requests_view', { folder, workspaceId, system, change, refresh }); }
   loadBuildLayout() { return this.ipc.invoke<unknown>('load_build_layout'); }
   saveBuildLayout(layout: Record<string, unknown>) { return this.ipc.invoke<void>('save_build_layout', { layout }); }
   openUrl(url: string) { return this.ipc.invoke<void>('open_url', { url }); }

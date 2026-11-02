@@ -95,12 +95,62 @@ pub struct PullRequestsView {
 /// The pull requests as the page shows them, from `show` (read with or without `--refresh`) and the
 /// `legacy` entries.
 pub fn view(show: &ChangeShow, legacy: &[PrEntry]) -> PullRequestsView {
-    let _ = (show, legacy);
+    let recorded = recorded(show, legacy);
+    let source = recorded.first().map(|p| p.source);
+    let links = recorded
+        .into_iter()
+        .enumerate()
+        .map(|(i, p)| match p.source {
+            // An earlier declaration: the state Kata saved, last seen when it was saved. Only `gh` could ask
+            // GitHub, and the plugin does not know these pull requests.
+            PullRequestSource::Legacy => PullRequestLink {
+                state: Some(legacy[i].state),
+                last_seen: true,
+                seen_at: Some(legacy[i].seen_at),
+                repo: p.repo,
+                url: p.url,
+                number: p.number,
+                source: p.source,
+            },
+            PullRequestSource::Plugin => {
+                let asked = show.states.as_ref().map(|s| s.get(&p.url));
+                let state = asked
+                    .flatten()
+                    .and_then(|s| s.as_deref())
+                    .and_then(state_of);
+                PullRequestLink {
+                    state,
+                    // The plugin was asked and gave no state for this one.
+                    last_seen: asked.is_some() && state.is_none(),
+                    seen_at: None,
+                    repo: p.repo,
+                    url: p.url,
+                    number: p.number,
+                    source: p.source,
+                }
+            }
+        })
+        .collect::<Vec<_>>();
     PullRequestsView {
-        done: false,
-        source: None,
-        links: Vec::new(),
-        declare_offered: true,
+        // The plugin records the master's pull request last: until it is there, the declaration stopped part way.
+        done: match source {
+            Some(PullRequestSource::Plugin) => links.iter().any(|l| l.repo == "master"),
+            Some(PullRequestSource::Legacy) => true,
+            None => false,
+        },
+        declare_offered: source != Some(PullRequestSource::Legacy),
+        source,
+        links,
+    }
+}
+
+/// `OPEN`, `MERGED` or `CLOSED`, as `change show --refresh` prints them.
+fn state_of(state: &str) -> Option<PrStateKind> {
+    match state {
+        "OPEN" => Some(PrStateKind::Open),
+        "MERGED" => Some(PrStateKind::Merged),
+        "CLOSED" => Some(PrStateKind::Closed),
+        _ => None,
     }
 }
 

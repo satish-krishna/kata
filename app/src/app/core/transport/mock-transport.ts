@@ -33,14 +33,12 @@ import type { CommitFiles } from '@bindings/CommitFiles';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
-import type { PublishRepo } from '@bindings/PublishRepo';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { OldChecks } from '@bindings/OldChecks';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { DoneStep } from '@bindings/DoneStep';
-import type { PrState } from '@bindings/PrState';
-import type { DoneView } from '@bindings/DoneView';
+import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import { seedCatalog, seedSpec, validateLocal, previewFixture, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, type ScriptStep } from '../../lib/mock';
@@ -339,19 +337,13 @@ export class MockTransport extends KataTransport {
     return view;
   }
   /** `?demo=pr-fail` makes the read fail, so the browser checks can see the "Could not check pull requests" note; `?demo=one-pr` keeps only the
-   *  first pull request, so they can see the single inline link. Browser only; this class never runs under Tauri. */
-  async sdlcDoneView(folder: string, masterRepo: string, _workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView> {
+   *  first pull request, so they can see the single inline link; `?demo=pr-states` gives each state GitHub can answer with and one it cannot;
+   *  `?demo=earlier-declaration` records the pull requests the way an earlier version of Kata did. Browser only; this class never runs under Tauri. */
+  async sdlcPullRequestsView(_folder: string, _workspaceId: string, _system: string, change: string, refresh: boolean): Promise<PullRequestsView> {
     const demo = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('demo');
-    if (demo === 'pr-fail' && buildFinished) return { done: false, links: [], linksFrom: 'none', offerDeclare: true, prCheckFailed: true };
-    const repos = this.sdlc.touchedRepos(folder);
-    const view = this.sdlc.doneView(repos, change, buildFinished);
+    if (demo === 'pr-fail') throw new Error('the recorded pull requests could not be read');
+    const view = this.sdlc.pullRequestsView(change, refresh);
     return demo === 'one-pr' ? { ...view, links: view.links.slice(0, 1) } : view;
-  }
-  sdlcRefreshPrStates(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView> {
-    return this.sdlcDoneView(folder, masterRepo, workspaceId, system, change, buildFinished);
-  }
-  sdlcPullRequests(_masterRepo: string, _system: string, repos: PublishRepo[], change: string): Promise<PrState[]> {
-    return Promise.resolve(this.sdlc.pullRequests(repos, change));
   }
   loadBuildLayout(): Promise<unknown> { return Promise.resolve(this.buildLayout); }
   saveBuildLayout(layout: Record<string, unknown>): Promise<void> { this.buildLayout = layout; return Promise.resolve(); }

@@ -306,7 +306,7 @@ describe('ChangePage after the pull requests', () => {
   it('unreachable GitHub keeps the finished label with a note', async () => {
     const transport = finishedTransport();
     await openAll(transport);
-    vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue({ done: false, links: [], linksFrom: 'none', offerDeclare: true, prCheckFailed: true });
+    vi.spyOn(transport, 'sdlcPullRequestsView').mockRejectedValue(new Error('the recorded pull requests could not be read'));
     const { container } = await mount(MOCK_BUILD_CHANGE, transport);
     expect(container.textContent).toContain('Build · finished, not yet done');
     expect(container.querySelector('[data-testid="pr-note"]')!.textContent).toContain('Could not check pull requests');

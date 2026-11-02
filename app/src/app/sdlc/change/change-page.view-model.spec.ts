@@ -3,8 +3,8 @@ import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { CopyRemoval } from '@bindings/CopyRemoval';
-import type { DoneView } from '@bindings/DoneView';
-import type { PrLink } from '@bindings/PrLink';
+import type { PullRequestLink } from '@bindings/PullRequestLink';
+import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { RunSpec } from '@bindings/RunSpec';
 import { toastState } from '@spartan-ng/brain/sonner';
@@ -724,7 +724,7 @@ describe('ChangePageViewModel', () => {
       const { vm } = setup(BUILD, await finished());
       await ready(vm);
       const links = vm.pullLinks();
-      expect(links.map((l) => l.repo)).toEqual(['commerce-docs', 'commerce-core', 'customer-portal']);
+      expect(links.map((l) => l.repo)).toEqual(['commerce-core', 'customer-portal', 'commerce-docs']);
       expect(links.every((l) => l.url.startsWith('https://') && /^\d+$/.test(l.number ?? ''))).toBe(true);
     });
 
@@ -1179,8 +1179,8 @@ describe('the build\'s preview', () => {
   });
 });
 
-const link = (repo: string, over: Partial<PrLink> = {}): PrLink => ({ repo, url: `https://github.com/acme/${repo}/pull/7`, state: 'open', seenAt: 1790000000, ...over });
-const view = (over: Partial<DoneView> = {}): DoneView => ({ done: true, links: [], linksFrom: 'saved', offerDeclare: false, prCheckFailed: false, ...over });
+const link = (repo: string, over: Partial<PullRequestLink> = {}): PullRequestLink => ({ repo, url: `https://github.com/acme/${repo}/pull/7`, number: 7, source: 'plugin', state: null, lastSeen: false, seenAt: null, ...over });
+const view = (over: Partial<PullRequestsView> = {}): PullRequestsView => ({ done: true, source: 'plugin', links: [], declareOffered: true, ...over });
 const forever = () => new Promise<never>(() => undefined);
 
 describe('ChangePageViewModel reads one change', () => {
@@ -1204,53 +1204,57 @@ describe('ChangePageViewModel reads one change', () => {
 describe('ChangePageViewModel shows lasting links', () => {
   const finishedBuild = (transport: MockTransport) => withStage(transport, MOCK_BUILD_CHANGE, 'build-finished');
 
-  it('a done change shows its saved links after a restart (R8.1)', async () => {
+  it('a done change shows its recorded links at once, without waiting for GitHub (R7.4)', async () => {
     const transport = new MockTransport();
     finishedBuild(transport);
-    const done = vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue(view({ links: [link('commerce-core'), link('customer-portal')] }));
-    vi.spyOn(transport, 'sdlcRefreshPrStates').mockImplementation(forever);
+    const asked = vi.spyOn(transport, 'sdlcPullRequestsView').mockImplementation((_f, _w, _s, _c, refresh) => (refresh ? forever() : Promise.resolve(view({ links: [link('commerce-core'), link('master')] }))));
     const { vm } = setup(MOCK_BUILD_CHANGE, transport);
     await ready(vm);
-    expect(done.mock.calls[0][5]).toBe(true);
+    expect(asked.mock.calls[0][4]).toBe(false);
     expect(vm.done()).toBe(true);
-    expect(vm.pullLinks().map((l) => l.repo)).toEqual(['commerce-core', 'customer-portal']);
+    expect(vm.pullLinks().map((l) => l.repo)).toEqual(['commerce-core', 'master']);
+    expect(vm.pullLinks().map((l) => l.state)).toEqual(['checking', 'checking']);
     expect(vm.actions()).toEqual([]);
+    await vi.waitFor(() => expect(asked.mock.calls.some((c) => c[4] === true)).toBe(true));
   });
 
   it.each([
-    ['every pull request still open', ['open', 'open'], false],
-    ['one merged and the rest open', ['merged', 'open'], false],
-    ['every pull request merged', ['merged', 'merged'], false],
-    ['one closed without merging', ['closed', 'open'], false],
-    ['GitHub cannot be asked', ['open', 'merged'], true],
-  ] as const)('updates link states in the background (R8.2): %s', async (_row, states, stale) => {
+    ['open', ['open', 'open'], [false, false]],
+    ['merged', ['merged', 'open'], [false, false]],
+    ['closed', ['closed', 'open'], [false, false]],
+    ['GitHub could not be read for one', ['open', null], [false, true]],
+  ] as const)('fills the link states in from the background read (R7.4): %s', async (_row, states, lastSeen) => {
     const transport = new MockTransport();
     finishedBuild(transport);
-    const saved = [link('commerce-core'), link('customer-portal')];
-    vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue(view({ links: saved }));
-    const fresh = saved.map((l, i) => ({ ...l, state: states[i], seenAt: stale ? 1790000000 : Math.floor(Date.now() / 1000) + 60 }));
-    let answer!: (v: DoneView) => void;
-    vi.spyOn(transport, 'sdlcRefreshPrStates').mockReturnValue(new Promise<DoneView>((r) => (answer = r)));
+    const recorded = [link('commerce-core'), link('master')];
+    let answer!: (v: PullRequestsView) => void;
+    vi.spyOn(transport, 'sdlcPullRequestsView').mockImplementation((_f, _w, _s, _c, refresh) =>
+      refresh ? new Promise<PullRequestsView>((r) => (answer = r)) : Promise.resolve(view({ links: recorded })),
+    );
     const { vm } = setup(MOCK_BUILD_CHANGE, transport);
     await ready(vm);
-    expect(vm.done()).toBe(true);
     expect(vm.pullLinks().every((l) => l.seen === null)).toBe(true);
-    answer(view({ links: fresh }));
-    await vi.waitFor(() => expect(vm.pullLinks().map((l) => l.state)).toEqual(states));
+    await vi.waitFor(() => expect(answer).toBeDefined());
+    answer(view({ links: recorded.map((l, i) => ({ ...l, state: states[i], lastSeen: lastSeen[i] })) }));
+    await vi.waitFor(() => expect(vm.pullLinks().map((l) => l.state)).toEqual(states.map((s) => s ?? 'not read')));
     expect(vm.done()).toBe(true);
-    expect(vm.pullLinks().map((l) => l.seen !== null)).toEqual([stale, stale]);
+    expect(vm.pullLinks().map((l) => l.seen === 'last seen')).toEqual([...lastSeen]);
   });
 
-  it('keeps the saved links and says when they were last seen when the refresh fails (R8.2)', async () => {
+  it('says the links were last seen, with no state, when the plugin cannot be asked now (R7.4)', async () => {
     const transport = new MockTransport();
     finishedBuild(transport);
-    vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue(view({ links: [link('commerce-core')] }));
-    vi.spyOn(transport, 'sdlcRefreshPrStates').mockRejectedValue(new Error('offline'));
+    const calls: boolean[] = [];
+    vi.spyOn(transport, 'sdlcPullRequestsView').mockImplementation((_f, _w, _s, _c, refresh) => {
+      calls.push(refresh);
+      return refresh ? Promise.reject(new Error('offline')) : Promise.resolve(view({ links: [link('commerce-core')] }));
+    });
     const { vm } = setup(MOCK_BUILD_CHANGE, transport);
     await ready(vm);
-    await vi.waitFor(() => expect(vm.pullLinks()[0].seen).not.toBeNull());
+    await vi.waitFor(() => expect(vm.pullLinks()[0].seen).toBe('last seen'));
     expect(vm.done()).toBe(true);
-    expect(vm.pullLinks()[0].state).toBe('open');
+    expect(vm.pullLinks()[0].state).toBe('not read');
+    expect(calls).toEqual([false, true]);
   });
 });
 

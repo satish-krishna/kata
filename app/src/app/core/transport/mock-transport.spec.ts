@@ -183,16 +183,19 @@ describe('MockTransport', () => {
     expect(after && stageName(after.offer.stage)).toBe('plan-ready');
   });
 
-  it('shows a change done once every touched repository has a pull request, and refreshing gives the same view', async () => {
+  it('shows a change done once the plugin has recorded the pull request of the master, links at once and states after a refresh', async () => {
     const t = new MockTransport();
-    const args = [MOCK_WORKSPACE_FOLDER, 'commerce-docs', 'w1', 'commerce', MOCK_BUILD_CHANGE] as const;
-    const before = await t.sdlcDoneView(...args, true);
-    expect(before).toMatchObject({ done: false, links: [], offerDeclare: true, prCheckFailed: false });
+    const args = [MOCK_WORKSPACE_FOLDER, 'w1', 'commerce', MOCK_BUILD_CHANGE] as const;
+    const before = await t.sdlcPullRequestsView(...args, false);
+    expect(before).toMatchObject({ done: false, links: [], source: null, declareOffered: true });
     const declared = await t.sdlcDeclareDone({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE });
-    const after = await t.sdlcDoneView(...args, true);
+    const after = await t.sdlcPullRequestsView(...args, false);
     expect(after.done).toBe(true);
     expect(after.links.map((l) => l.repo).sort()).toEqual((declared.kind === 'done' ? declared.pullRequests.map((p) => p.repo) : []).sort());
-    expect(await t.sdlcRefreshPrStates(...args, true)).toEqual(after);
+    expect(after.links.every((l) => l.state === null && !l.lastSeen)).toBe(true);
+    const refreshed = await t.sdlcPullRequestsView(...args, true);
+    expect(refreshed.links.map((l) => l.url)).toEqual(after.links.map((l) => l.url));
+    expect(refreshed.links.every((l) => l.state === 'open')).toBe(true);
   });
 
   describe('the scripted build host', () => {
@@ -485,7 +488,6 @@ describe('MockTransport previewRun', () => {
 });
 
 describe('MockTransport branch naming demos', () => {
-  const REPOS = [{ repo: 'commerce-core', path: 'D:/Work/acme-commerce/commerce-core', base: 'main' }];
   /** Run `body` with `?demo=<demo>` in the address, the way the browser checks reach a demo. */
   const withDemo = async (demo: string | null, body: (t: MockTransport) => Promise<void>) => {
     window.history.replaceState({}, '', demo === null ? '/' : `/?demo=${demo}`);
@@ -501,7 +503,7 @@ describe('MockTransport branch naming demos', () => {
       const b = await t.sdlcBranches('/m');
       expect(b.current).toBe('main');
       expect(b.pending_change).toBeNull();
-      expect((await t.sdlcPullRequests('commerce-docs', 'commerce', REPOS, MOCK_DONE_CHANGE))[0].url).not.toBeNull();
+      expect((await t.sdlcPullRequestsView(MOCK_WORKSPACE_FOLDER, 'w1', 'commerce', MOCK_DONE_CHANGE, false)).links[0].url).toContain('github.com');
     });
   });
 

@@ -10,7 +10,7 @@ use kata_sdlc::plugin::Readiness;
 use kata_sdlc::publish::{self, PrOutcome, Recorder};
 use kata_sdlc::snapshot::{self, BuildScope};
 use kata_sdlc::start::{self, PrepareOutcome};
-use kata_sdlc::{base, build, changes, prs, review};
+use kata_sdlc::{base, build, changes, review};
 use serial_test::serial;
 use std::ffi::OsString;
 use std::fs;
@@ -498,10 +498,6 @@ fn every_flow(branch: &str, record: bool) {
             &["rev-parse", "--verify", &format!("refs/heads/{branch}")],
         );
     }
-
-    // Reopen the done change: the pull request states are looked up.
-    let view = prs::refresh_states(&hosts, &fx.folder, "m", WS, SYS, CHG, true).unwrap();
-    assert_eq!(view.links.len(), 2, "{view:?}");
 
     // Run mode: an isolated copy for a run-spec and the summary of what a run changed.
     let root = fx.folder.join("worktrees");
