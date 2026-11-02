@@ -1,9 +1,13 @@
 //! What changed in one repository, read with libgit2 and never written. A port of mekiki's
 //! diff behavior: the three parts of a change, their files with line counts, the two sides of a
-//! file for the diff editor, and line counts grouped by file type.
+//! file for the diff editor, and line counts grouped by file type. Also the branch a repository's change is
+//! compared with and where the change forked from it (never fetched: only refs already present), and the
+//! repositories the Changes view lists.
 
-use crate::base::{self, BaseError};
+use crate::branch::{branch_exists, change_branch};
+use crate::changes::{is_change_name, is_safe_system};
 use crate::git::{GitError, Repo};
+use crate::workspace::{self, system_repos};
 use git2::{Delta, DiffFindOptions, DiffOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -285,7 +289,7 @@ fn show(repo: &Path, rev: &str, rel: &str) -> Result<String, GitError> {
 fn left_side(repo: &Path, part: Part) -> Result<String, DiffError> {
     Ok(match part {
         Part::Uncommitted => "HEAD".to_string(),
-        Part::Whole | Part::Committed => base::base_info(repo)?.merge_base,
+        Part::Whole | Part::Committed => base_info(repo)?.merge_base,
     })
 }
 
@@ -355,6 +359,147 @@ fn list(repo: &Path, part: Part) -> Result<Vec<ChangedFile>, DiffError> {
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
+}
+
+/// The base a change is compared with.
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct BaseInfo {
+    /// The base branch name, such as `main`.
+    pub base: String,
+    /// The ref the comparison uses: `origin/<base>` when it exists, else `<base>`.
+    pub reference: String,
+    /// The commit where HEAD forked from `reference`.
+    pub merge_base: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BaseError {
+    #[error("{0} has no base branch: no origin/HEAD, main or master")]
+    Unresolved(String),
+    #[error(transparent)]
+    Git(#[from] GitError),
+}
+
+/// `origin/HEAD`'s target, else `main`, else `master`, each accepted when it exists locally or
+/// on `origin`.
+pub fn base_branch(repo: &Path) -> Option<String> {
+    base_branch_in(&Repo::open(repo).ok()?)
+}
+
+fn base_branch_in(repo: &Repo) -> Option<String> {
+    let from_origin = repo
+        .symbolic_target("refs/remotes/origin/HEAD")
+        .and_then(|t| t.strip_prefix("refs/remotes/origin/").map(String::from));
+    from_origin
+        .into_iter()
+        .chain(["main", "master"].map(String::from))
+        .find(|b| on_local_or_origin(repo, b))
+}
+
+/// The ref that stands for `base` where only a revision is read (a diff, a listing, a count): the
+/// local branch when there is one, else `origin/<base>` for a base that exists only on `origin`.
+pub fn compare_ref(repo: &Path, base: &str) -> Option<String> {
+    let opened = Repo::open(repo).ok()?;
+    if opened.rev_exists(&format!("refs/heads/{base}")) {
+        return Some(base.to_string());
+    }
+    let remote = format!("origin/{base}");
+    opened
+        .rev_exists(&format!("refs/remotes/{remote}"))
+        .then_some(remote)
+}
+
+fn on_local_or_origin(repo: &Repo, b: &str) -> bool {
+    repo.rev_exists(&format!("refs/heads/{b}"))
+        || repo.rev_exists(&format!("refs/remotes/origin/{b}"))
+}
+
+/// The base branch, the ref to compare with (`origin/<base>` when it exists, else `<base>`), and
+/// the merge base of HEAD and that ref.
+pub fn base_info(repo: &Path) -> Result<BaseInfo, BaseError> {
+    base_info_for(repo, "HEAD")
+}
+
+/// Like `base_info`, with the merge base taken for `rev` instead of HEAD.
+pub fn base_info_for(repo: &Path, rev: &str) -> Result<BaseInfo, BaseError> {
+    let unresolved = || {
+        BaseError::Unresolved(
+            repo.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| repo.display().to_string()),
+        )
+    };
+    let opened = Repo::open(repo).map_err(|_| unresolved())?;
+    let base = base_branch_in(&opened).ok_or_else(unresolved)?;
+    let remote = format!("origin/{base}");
+    let reference = if opened.rev_exists(&format!("refs/remotes/{remote}")) {
+        remote
+    } else {
+        base.clone()
+    };
+    let merge_base = opened.merge_base(rev, &reference)?;
+    Ok(BaseInfo {
+        base,
+        reference,
+        merge_base,
+    })
+}
+
+/// A repository the Changes view lists: the master, or a product repository with a change branch
+/// and something changed.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct ChangeRepo {
+    pub repo: String,
+    pub path: String,
+    pub branch: String,
+    pub base: BaseInfo,
+}
+
+/// The master first, then every system repository that has `change/<change>` and any change in
+/// the whole-change part of its diff.
+pub fn change_repos(
+    folder: &Path,
+    master_repo: &str,
+    system: &str,
+    change: &str,
+) -> Result<Vec<ChangeRepo>, String> {
+    if !is_safe_system(master_repo) || !is_safe_system(system) || !is_change_name(change) {
+        return Err(format!(
+            "invalid master repository, system or change name: {master_repo}, {system}, {change}"
+        ));
+    }
+    let branch = change_branch(&folder.join(master_repo), system, change)?;
+    let scan = workspace::scan(folder).map_err(|e| e.to_string())?;
+    let entry = |name: &str, path: &Path| -> Result<ChangeRepo, String> {
+        Ok(ChangeRepo {
+            repo: name.to_string(),
+            path: path.to_string_lossy().into_owned(),
+            branch: branch.clone(),
+            base: base_info(path).map_err(|e| e.to_string())?,
+        })
+    };
+    let master = folder.join(master_repo);
+    let mut out = vec![entry(master_repo, &master)?];
+    for name in system_repos(&scan, system) {
+        if name == master_repo || !is_safe_system(&name) || !scan.repos.contains(&name) {
+            continue;
+        }
+        let path = folder.join(&name);
+        if !branch_exists(&path, &branch) {
+            continue;
+        }
+        let changed = changed_files(&path, Part::Whole).map_err(|e| e.to_string())?;
+        if !changed.is_empty() {
+            out.push(entry(&name, &path)?);
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -883,5 +1028,78 @@ mod tests {
             let pair = file_pair(&r, Part::Whole, &f.path).unwrap();
             assert!(!pair.modified.is_empty(), "{}", f.path);
         }
+    }
+}
+
+#[cfg(test)]
+mod base_tests {
+    use super::*;
+    use crate::git;
+    use crate::testutil::{bare_origin, checkout, commit_file, repo};
+
+    fn tmp() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
+    }
+
+    #[test]
+    fn origin_head_wins_over_everything_else() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        bare_origin(&r, Some("trunk"));
+        checkout(&r, "develop", true);
+        git::run(&r, &["update-ref", "refs/remotes/origin/develop", "HEAD"]).unwrap();
+        git::run(
+            &r,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/develop",
+            ],
+        )
+        .unwrap();
+        assert_eq!(base_branch(&r).as_deref(), Some("develop"));
+    }
+
+    #[test]
+    fn a_local_bare_origin_without_origin_head_falls_through_to_local_main() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        bare_origin(&r, None);
+        assert_eq!(base_branch(&r).as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn without_a_remote_local_main_is_the_default() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        assert_eq!(base_branch(&r).as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn without_main_local_master_is_the_default() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        git::run(&r, &["branch", "-m", "main", "master"]).unwrap();
+        assert_eq!(base_branch(&r).as_deref(), Some("master"));
+    }
+
+    #[test]
+    fn with_no_candidate_the_base_is_unresolved() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        git::run(&r, &["branch", "-m", "main", "trunk"]).unwrap();
+        assert_eq!(base_branch(&r), None);
+    }
+
+    #[test]
+    fn local_base_commits_not_on_origin_are_in_the_change_r7_7() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        bare_origin(&r, None);
+        commit_file(&r, "unpushed.txt", "u\n", "never pushed");
+        checkout(&r, "change/x", true);
+        commit_file(&r, "c.txt", "c\n", "the change");
+        let info = base_info(&r).unwrap();
+        assert_eq!(info.reference, "origin/main");
     }
 }

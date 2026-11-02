@@ -26,8 +26,6 @@ use tauri_plugin_shell::ShellExt;
 const RUN_EVENT: &str = "kata://event";
 /// The step the plugin is on while a change is declared done, one `DoneStep` per event.
 const DONE_STEP_EVENT: &str = "sdlc://done-step";
-/// What a stage pass reports, one `StageEvent` per event.
-const STAGE_EVENT: &str = "sdlc://stage";
 
 /// Shared run control: every live run plus a monotonic id source. A stale
 /// reader task (a finished run still tearing down) removes only its own id, so
@@ -483,6 +481,12 @@ fn sdlc_build_continue(
 }
 
 /// Where a change's build stands, or none when this session hosts no build of it.
+/// The key the backend gives a change, which every build announcement carries: the page compares the two.
+#[tauri::command]
+fn sdlc_change_key(change: build_host::ChangeRef) -> sdlc::holds::ChangeKey {
+    build_host::key_of(&change)
+}
+
 #[tauri::command]
 fn sdlc_build_state(
     host: State<Arc<build_host::BuildHost>>,
@@ -544,16 +548,6 @@ fn sdlc_round_plan(
     picks: sdlc::round::RoundPicks,
 ) -> Result<sdlc::round::RoundPlan, String> {
     host.round_plan(&change, &picks)
-}
-
-/// Start the round the picks describe.
-#[tauri::command(async)]
-fn sdlc_round_start(
-    host: State<Arc<build_host::BuildHost>>,
-    change: build_host::ChangeRef,
-    picks: sdlc::round::RoundPicks,
-) -> build_host::StartOutcome {
-    host.round_start(&change, picks)
 }
 
 /// Stop the run of one repository (or `review`) of a change's build, or, with none named, every run of it.
@@ -703,62 +697,6 @@ fn sdlc_instructions(folder: String, master_repo: String) -> sdlc::workspace::In
     sdlc::workspace::instructions(folder, &folder.join(master_repo))
 }
 
-/// The changes of a system and the title of each intent, from the folder alone.
-#[tauri::command(async)]
-fn sdlc_change_names(master: String, system: String) -> Vec<sdlc::changes::ChangeName> {
-    sdlc::changes::names(Path::new(&master), &system)
-}
-
-/// Starts reading the stage of every change of the system on a background thread and returns the pass
-/// id at once; each result goes out on `sdlc://stage`. `first` is read before the others. A pass already
-/// running for the window is superseded and reports nothing more.
-#[tauri::command]
-fn sdlc_read_stages(
-    window: tauri::Window,
-    passes: State<Arc<StagePasses>>,
-    master: String,
-    system: String,
-    first: Option<String>,
-) -> u64 {
-    let sink: StageSink = {
-        let window = window.clone();
-        Arc::new(move |ev| {
-            let _ = window.emit(STAGE_EVENT, ev);
-        })
-    };
-    start_pass(
-        &passes,
-        window.label(),
-        sink,
-        move |pass, cancelled, emit| {
-            let master = Path::new(&master);
-            let mut order: Vec<String> = sdlc::changes::names(master, &system)
-                .into_iter()
-                .map(|n| n.change)
-                .collect();
-            if let Some(at) = first.and_then(|f| order.iter().position(|c| *c == f)) {
-                let moved = order.remove(at);
-                order.insert(0, moved);
-            }
-            let plugin = ai_sdlc_dir(&master.to_string_lossy()).ok();
-            let ctx = sdlc::changes::ReadContext::new(plugin.as_deref(), master);
-            sdlc::changes::read_stages(&ctx, &system, &order, pass, cancelled, emit);
-        },
-    )
-}
-
-/// One change read in full, for the list row and the change page.
-#[tauri::command(async)]
-fn sdlc_read_change(
-    master: String,
-    system: String,
-    change: String,
-) -> Result<sdlc::changes::ChangeInfo, String> {
-    let plugin = ai_sdlc_dir(&master).ok();
-    let ctx = sdlc::changes::ReadContext::new(plugin.as_deref(), Path::new(&master));
-    sdlc::changes::read_change(&ctx, &system, &change)
-}
-
 /// Which of the folders no longer exist. Nothing else is looked at.
 #[tauri::command(async)]
 fn sdlc_missing_folders(folders: Vec<String>) -> Vec<String> {
@@ -769,8 +707,8 @@ fn sdlc_missing_folders(folders: Vec<String>) -> Vec<String> {
 }
 
 #[tauri::command(async)]
-fn sdlc_branches(master: String) -> sdlc::changes::BranchInfo {
-    sdlc::changes::branch_info(Path::new(&master))
+fn sdlc_branches(master: String) -> sdlc::branch::BranchInfo {
+    sdlc::branch::branch_info(Path::new(&master))
 }
 
 #[tauri::command(async)]
@@ -1107,7 +1045,7 @@ fn sdlc_build_heads(
     repos: Vec<String>,
     change: String,
 ) -> Result<std::collections::BTreeMap<String, String>, String> {
-    sdlc::start::heads(Path::new(&folder), &master_repo, &system, &repos, &change)
+    sdlc::branch::heads(Path::new(&folder), &master_repo, &system, &repos, &change)
         .map_err(|e| e.to_string())
 }
 
@@ -1258,8 +1196,8 @@ fn sdlc_change_repos(
     master_repo: String,
     system: String,
     change: String,
-) -> Result<Vec<sdlc::publish::ChangeRepo>, String> {
-    sdlc::publish::change_repos(Path::new(&folder), &master_repo, &system, &change)
+) -> Result<Vec<sdlc::diff::ChangeRepo>, String> {
+    sdlc::diff::change_repos(Path::new(&folder), &master_repo, &system, &change)
 }
 
 #[tauri::command(async)]
@@ -1270,7 +1208,7 @@ fn sdlc_missing_change_branches(
     change: String,
 ) -> Result<Vec<String>, String> {
     let plugin = ai_sdlc_dir_in(&folder)?;
-    sdlc::participants::missing_change_branches(
+    sdlc::branch::missing_change_branches(
         &plugin,
         Path::new(&folder),
         &master_repo,
@@ -1306,8 +1244,8 @@ fn sdlc_diff_pair(
 }
 
 #[tauri::command(async)]
-fn sdlc_diff_base(repo_path: String) -> Result<sdlc::base::BaseInfo, String> {
-    sdlc::base::base_info(Path::new(&repo_path)).map_err(|e| e.to_string())
+fn sdlc_diff_base(repo_path: String) -> Result<sdlc::diff::BaseInfo, String> {
+    sdlc::diff::base_info(Path::new(&repo_path)).map_err(|e| e.to_string())
 }
 
 /// What each repository of the change's checks came to, as the plugin recorded it on this machine against the
@@ -1380,53 +1318,6 @@ fn sdlc_pull_requests_view(
         .change_show(&place, &change, refresh && legacy.is_empty())
         .map_err(|e| e.to_string())?;
     Ok(sdlc::pull_requests::view(&shown, &legacy))
-}
-
-/// The stage pass each window is running, so a new start can cancel the one before it.
-#[derive(Default)]
-struct StagePasses {
-    next: AtomicU64,
-    live: Mutex<std::collections::HashMap<String, (u64, Arc<std::sync::atomic::AtomicBool>)>>,
-}
-
-/// Where a pass sends its events.
-type StageSink = Arc<dyn Fn(sdlc::changes::StageEvent) + Send + Sync>;
-
-/// Starts `work` on a background thread as the window's only pass and returns its id at once.
-///
-/// A pass already running for the window is cancelled first: `work` is asked through its `cancelled`
-/// function, and whatever it still emits is dropped before it reaches `sink`. The page also filters by
-/// pass id, so the one event that can slip between the check and the send does no harm.
-fn start_pass<F>(passes: &Arc<StagePasses>, window: &str, sink: StageSink, work: F) -> u64
-where
-    F: FnOnce(u64, &dyn Fn() -> bool, &mut dyn FnMut(sdlc::changes::StageEvent)) + Send + 'static,
-{
-    let id = passes.next.fetch_add(1, Ordering::SeqCst) + 1;
-    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let before = passes
-        .live
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(window.to_string(), (id, flag.clone()));
-    if let Some((_, old)) = before {
-        old.store(true, Ordering::SeqCst);
-    }
-    let passes = passes.clone();
-    let window = window.to_string();
-    std::thread::spawn(move || {
-        let cancelled = || flag.load(Ordering::SeqCst);
-        let mut emit = |ev: sdlc::changes::StageEvent| {
-            if !flag.load(Ordering::SeqCst) {
-                sink(ev);
-            }
-        };
-        work(id, &cancelled, &mut emit);
-        let mut live = passes.live.lock().unwrap_or_else(|e| e.into_inner());
-        if live.get(&window).is_some_and(|(current, _)| *current == id) {
-            live.remove(&window);
-        }
-    });
-    id
 }
 
 /// Relay a non-JSON stdout/stderr line as a warn-level log event.
@@ -1778,7 +1669,6 @@ pub fn run() {
             }
         })
         .manage(RunControl::default())
-        .manage(Arc::new(StagePasses::default()))
         .manage(Arc::new(history::RunHistory::default()))
         .manage(Arc::new(running::OpenedMarks::default()))
         .setup(|app| {
@@ -1812,6 +1702,7 @@ pub fn run() {
             sdlc_build_start,
             sdlc_build_continue,
             sdlc_build_state,
+            sdlc_change_key,
             sdlc_build_cancel,
             sdlc_build_runs,
             sdlc_preview_change_run,
@@ -1825,7 +1716,6 @@ pub fn run() {
             sdlc_mark_opened,
             sdlc_round_offer,
             sdlc_round_plan,
-            sdlc_round_start,
             cancel_run,
             submit_answer,
             send_message,
@@ -1850,9 +1740,6 @@ pub fn run() {
             sdlc_context_health,
             sdlc_read_context,
             sdlc_instructions,
-            sdlc_change_names,
-            sdlc_read_stages,
-            sdlc_read_change,
             sdlc_missing_folders,
             sdlc_branches,
             sdlc_read_doc,
@@ -1943,63 +1830,6 @@ mod tests {
         );
         assert_eq!(web_url("http://example.com"), Ok("http://example.com"));
         assert!(web_url("HTTPS://example.com").is_ok());
-    }
-
-    #[test]
-    fn read_stages_command_supersedes_the_running_pass() {
-        use sdlc::changes::StageEvent;
-        use std::sync::mpsc;
-        let passes = Arc::new(StagePasses::default());
-        let seen: Arc<Mutex<Vec<StageEvent>>> = Arc::default();
-        let sink: StageSink = {
-            let seen = seen.clone();
-            Arc::new(move |ev| seen.lock().unwrap().push(ev))
-        };
-        let (started_tx, started_rx) = mpsc::channel::<()>();
-        let (go_tx, go_rx) = mpsc::channel::<()>();
-        let (ended_tx, ended_rx) = mpsc::channel::<()>();
-        let first = start_pass(
-            &passes,
-            "main",
-            sink.clone(),
-            move |pass, _cancelled, emit| {
-                emit(StageEvent::Progress {
-                    pass,
-                    read: 1,
-                    total: 2,
-                });
-                started_tx.send(()).unwrap();
-                go_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-                // The pass was superseded while it waited, so this one must not reach the page.
-                emit(StageEvent::Progress {
-                    pass,
-                    read: 2,
-                    total: 2,
-                });
-                ended_tx.send(()).unwrap();
-            },
-        );
-        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        let (second_tx, second_rx) = mpsc::channel::<()>();
-        let second = start_pass(&passes, "main", sink, move |pass, _cancelled, emit| {
-            emit(StageEvent::Done { pass });
-            second_tx.send(()).unwrap();
-        });
-        assert_ne!(first, second);
-        go_tx.send(()).unwrap();
-        ended_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        second_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(
-            *seen.lock().unwrap(),
-            vec![
-                StageEvent::Progress {
-                    pass: first,
-                    read: 1,
-                    total: 2
-                },
-                StageEvent::Done { pass: second },
-            ]
-        );
     }
 
     #[derive(Default)]

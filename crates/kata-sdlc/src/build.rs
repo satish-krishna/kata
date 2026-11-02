@@ -3,24 +3,11 @@
 //! format program reads them, in either layout, and this module folds its answer into a status.
 use crate::format::{self, FormatError, ParsedBuildLog, ParsedTask, Problem, ReadResult};
 use crate::git::{self, GitError};
-use crate::plugin::Readiness;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-
-/// One task of the plan.
-#[derive(Serialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
-pub struct PlanTask {
-    pub id: String,
-    pub name: String,
-    pub repo: String,
-    pub depends_on: Vec<String>,
-}
 
 /// One row of a build log: a task recorded as finished.
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -118,26 +105,11 @@ pub struct LogLayout {
     pub layout: u32,
 }
 
-/// Rows a build log holds in the working tree and not yet in `HEAD`.
-#[derive(Serialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
-pub struct UnsavedRows {
-    pub repo: String,
-    pub tasks: Vec<String>,
-}
-
 pub(crate) fn change_dir(system: &str, change: &str) -> String {
     format!("intent/{system}/{change}")
 }
 
 const FORMAT_PROGRAM: &str = "ai-sdlc format program";
-
-/// True when `error` came from the format program (it could not run or could not read), not from git.
-pub(crate) fn is_unreadable(error: &GitError) -> bool {
-    error.args == FORMAT_PROGRAM
-}
 
 /// A format-program failure reported the way a git failure is, so one error type serves both.
 pub(crate) fn unreadable(error: FormatError) -> GitError {
@@ -194,7 +166,6 @@ fn log_repo(path: &str) -> &str {
 struct Committed {
     tasks: Vec<ParsedTask>,
     logs: Vec<ParsedBuildLog>,
-    plan_layout: u32,
     plan_problems: Vec<Problem>,
     /// The layout of each build log, in the order of `logs`.
     log_layouts: Vec<u32>,
@@ -356,7 +327,6 @@ fn read_committed(
     Ok(Committed {
         tasks: document.tasks,
         logs,
-        plan_layout,
         plan_problems,
         log_layouts,
         log_problems,
@@ -374,18 +344,6 @@ fn rows_of(logs: &[ParsedBuildLog]) -> Vec<BuildRow> {
             })
         })
         .collect()
-}
-
-/// Every build log row as committed at `HEAD` (never the working tree).
-pub fn committed_rows(
-    plugin: &Path,
-    master: &Path,
-    system: &str,
-    change: &str,
-) -> Result<Vec<BuildRow>, GitError> {
-    Ok(rows_of(
-        &read_committed(plugin, master, system, change, format::Reads::Gate)?.logs,
-    ))
 }
 
 /// The build's state from the plan and build logs committed at `HEAD`, read by the format program
@@ -492,165 +450,9 @@ pub fn status_with(
     })
 }
 
-/// What the engineer asked the build to do. Every action meets the same gate.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
-pub enum BuildAction {
-    Start,
-    Continue,
-    Round,
-}
-
-/// Whether a build may start, continue or run another round.
-#[derive(Serialize, Clone, Debug, PartialEq)]
-#[serde(
-    tag = "kind",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
-pub enum Gate {
-    Admit,
-    /// The build does not go on: `message` says why and `problems` lists what the format program
-    /// found, when that is the reason.
-    Refuse {
-        message: String,
-        problems: Vec<Problem>,
-    },
-}
-
-fn refuse(message: impl Into<String>, problems: Vec<Problem>) -> Gate {
-    Gate::Refuse {
-        message: message.into(),
-        problems,
-    }
-}
-
-/// Decides whether a build may start, continue or run another round, from the plugin and from the
-/// plan and build logs committed at `HEAD`. The first reason that applies is the one given: the
-/// plugin, then the plan's layout, the plan's problems, the build logs' layout, their problems. A
-/// change with no build log yet passes that part.
-pub fn gate(
-    plugin: &Readiness,
-    master: &Path,
-    system: &str,
-    change: &str,
-    _action: BuildAction,
-) -> Result<Gate, GitError> {
-    let dir = match plugin {
-        Readiness::Blocked { message, .. } => return Ok(refuse(message.clone(), Vec::new())),
-        Readiness::Ready { plugin, .. } => &plugin.dir,
-    };
-    let committed = read_committed(dir, master, system, change, format::Reads::Gate)?;
-    let newer = |layout: &u32| !format::ACCEPTED_LAYOUTS.contains(layout);
-    Ok(if newer(&committed.plan_layout) {
-        refuse("This plan needs a newer Workbench", Vec::new())
-    } else if !committed.plan_problems.is_empty() {
-        refuse("The plan does not pass the check", committed.plan_problems)
-    } else if committed.log_layouts.iter().any(newer) {
-        refuse("A build log needs a newer Workbench", Vec::new())
-    } else if !committed.log_problems.is_empty() {
-        refuse(
-            "A build log does not pass the check",
-            committed.log_problems,
-        )
-    } else {
-        Gate::Admit
-    })
-}
-
-/// A build log read by the format program: the entries it holds, whatever layout each is in.
-fn read_log(program: &Path, file: &Path, shown: &str) -> Result<ParsedBuildLog, GitError> {
-    match format::read(program, file).map_err(unreadable)? {
-        ReadResult::BuildLog { document, .. } => Ok(document),
-        _ => Err(unreadable(FormatError::BadOutput(format!(
-            "{shown} was not read as a build log"
-        )))),
-    }
-}
-
-/// Entries compare by what they record; the line they sit on moves when a row is added above them.
-fn same_entry(a: &format::ParsedBuildEntry, b: &format::ParsedBuildEntry) -> bool {
-    (&a.task, &a.commits, &a.departure) == (&b.task, &b.commits, &b.departure)
-}
-
-/// Build log entries written to the working tree and not committed. A log is unsaved when it is
-/// untracked, or when the format program reads its working copy as the committed entries followed
-/// by added entries, in either layout or both. Any other change to a log is an error naming the
-/// file, since the build skill would refuse it.
-pub fn unsaved_rows(
-    plugin: &Path,
-    master: &Path,
-    system: &str,
-    change: &str,
-) -> Result<Vec<UnsavedRows>, GitError> {
-    let rel_dir = format!("{}/build", change_dir(system, change));
-    let Ok(entries) = std::fs::read_dir(master.join(&rel_dir)) else {
-        return Ok(Vec::new());
-    };
-    let mut names: Vec<String> = entries
-        .filter_map(Result::ok)
-        .filter(|e| e.path().is_file())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| n.ends_with(".md") && log_repo(n) != "review")
-        .collect();
-    names.sort_unstable();
-    let git_repo = git::Repo::open(master)?;
-    let program = program(plugin);
-    let mut out = Vec::new();
-    for name in names {
-        let rel = format!("{rel_dir}/{name}");
-        let repo = log_repo(&rel);
-        let working = read_log(&program, &master.join(&rel), &rel)?;
-        let committed_text = committed_file(&git_repo, &rel)?;
-        let added = if let Some(text) = &committed_text {
-            let committed = {
-                let stage = staging_dir(master, system, change);
-                let lock = reading(&stage);
-                let _one_reader = lock.lock().unwrap_or_else(|e| e.into_inner());
-                let file = stage
-                    .join("unsaved")
-                    .join("build")
-                    .join(format!("{repo}.md"));
-                put(&file, text)?;
-                read_log(&program, &file, &rel)?
-            };
-            let n = committed.entries.len();
-            let kept = working.entries.len() >= n
-                && committed
-                    .entries
-                    .iter()
-                    .zip(&working.entries)
-                    .all(|(a, b)| same_entry(a, b));
-            if !kept {
-                return Err(GitError {
-                    args: rel,
-                    rejected_by_remote: false,
-                    stderr: "an uncommitted change to a build log other than added entries".into(),
-                });
-            }
-            &working.entries[n..]
-        } else {
-            &working.entries[..]
-        };
-        if committed_text.is_some() && added.is_empty() {
-            continue;
-        }
-        out.push(UnsavedRows {
-            repo: repo.to_string(),
-            tasks: added.iter().map(|e| e.task.clone()).collect(),
-        });
-    }
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin::Readiness;
     use crate::testutil;
 
     const SYS: &str = "claims";
@@ -845,23 +647,6 @@ mod tests {
     }
 
     #[test]
-    fn status_reads_one_row_per_task_from_each_repository_log_r5_2() {
-        let tmp = tempfile::tempdir().unwrap();
-        // The fixture plan without its legacy section, so only the committed logs speak.
-        let plan = FIXTURE_PLAN.split("## Build log").next().unwrap();
-        let master = master_with(tmp.path(), plan);
-        commit_log(&master, "app", &["| T1 | `a1a1a1a` | none |"]);
-        commit_log(&master, "api", &["| T2 | `b2b2b2b` | none |"]);
-        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
-        assert_eq!(st.tasks[0].row.as_ref().unwrap().commits, vec!["a1a1a1a"]);
-        assert_eq!(st.tasks[1].row.as_ref().unwrap().commits, vec!["b2b2b2b"]);
-        assert_eq!(st.tasks.iter().filter(|t| t.row.is_some()).count(), 2);
-        let rows = committed_rows(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
-        assert!(rows.iter().any(|r| r.repo == "app" && r.task == "T1"));
-        assert!(rows.iter().any(|r| r.repo == "api" && r.task == "T2"));
-    }
-
-    #[test]
     fn status_first_unfinished_is_the_first_task_without_a_row_r6_2() {
         let tmp = tempfile::tempdir().unwrap();
         let master = master_with(tmp.path(), &app_tasks());
@@ -976,152 +761,6 @@ mod tests {
     }
 
     #[test]
-    fn unsaved_rows_finds_untracked_and_added_only_logs_r6_6() {
-        let tmp = tempfile::tempdir().unwrap();
-        let master = master_with(tmp.path(), &app_tasks());
-        commit_log(&master, "api", &["| T1 | `a111111` | none |"]);
-        let build = master.join(format!("{DIR}/build"));
-        std::fs::write(
-            build.join("app.md"),
-            log_text("app", &["| T1 | `a111111` | none |"]),
-        )
-        .unwrap();
-        let api = build.join("api.md");
-        let mut text = std::fs::read_to_string(&api).unwrap();
-        text.push_str("| T3 | `c333333` | none |\n");
-        // CRLF-insensitive: an editor on Windows may have rewritten the line endings.
-        std::fs::write(&api, text.replace('\n', "\r\n")).unwrap();
-        let found = unsaved_rows(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
-        assert_eq!(
-            found,
-            vec![
-                UnsavedRows {
-                    repo: "api".into(),
-                    tasks: vec!["T3".into()]
-                },
-                UnsavedRows {
-                    repo: "app".into(),
-                    tasks: vec!["T1".into()]
-                },
-            ]
-        );
-        std::fs::write(
-            &api,
-            log_text(
-                "api",
-                &["| T1 | `edited!` | none |", "| T3 | `c333333` | none |"],
-            ),
-        )
-        .unwrap();
-        let err = unsaved_rows(testutil::plugin_dir(), &master, SYS, CHG).unwrap_err();
-        assert!(err.to_string().contains("api.md"), "got: {err}");
-    }
-
-    #[test]
-    fn an_added_layout_2_entry_is_an_unsaved_row() {
-        let tmp = tempfile::tempdir().unwrap();
-        let master = master_with(tmp.path(), &app_tasks());
-        let committed = layout_2_log(
-            &["| T1 | `a111111` | none |"],
-            "### T2\n\n```yaml\ntask: T2\ncommits: [b222222]\n```\n",
-        );
-        testutil::commit_file(
-            &master,
-            &format!("{DIR}/build/app.md"),
-            &committed,
-            "log app",
-        );
-        let working =
-            format!("{committed}\n### T3\n\n```yaml\ntask: T3\ncommits: [c333333]\n```\n");
-        std::fs::write(master.join(format!("{DIR}/build/app.md")), working).unwrap();
-        let found = unsaved_rows(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
-        assert_eq!(
-            found,
-            vec![UnsavedRows {
-                repo: "app".into(),
-                tasks: vec!["T3".into()]
-            }]
-        );
-    }
-
-    #[test]
-    fn an_added_layout_1_row_is_still_an_unsaved_row() {
-        let tmp = tempfile::tempdir().unwrap();
-        let master = master_with(tmp.path(), &app_tasks());
-        commit_log(
-            &master,
-            "app",
-            &["| T1 | `a111111` | none |", "| T2 | `b222222` | none |"],
-        );
-        let path = master.join(format!("{DIR}/build/app.md"));
-        let mut working = std::fs::read_to_string(&path).unwrap();
-        working.push_str(
-            "| T3 | `c333333` | none |
-",
-        );
-        std::fs::write(&path, working).unwrap();
-        let found = unsaved_rows(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
-        assert_eq!(
-            found,
-            vec![UnsavedRows {
-                repo: "app".into(),
-                tasks: vec!["T3".into()]
-            }]
-        );
-    }
-
-    #[test]
-    fn an_edited_entry_is_an_error_naming_the_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let master = master_with(tmp.path(), &app_tasks());
-        let committed = layout_2_log(
-            &[],
-            "### T2\n\n```yaml\ntask: T2\ncommits: [b222222]\n```\n",
-        );
-        testutil::commit_file(
-            &master,
-            &format!("{DIR}/build/app.md"),
-            &committed,
-            "log app",
-        );
-        let working = committed.replace("b222222", "edited1");
-        std::fs::write(master.join(format!("{DIR}/build/app.md")), working).unwrap();
-        let err = unsaved_rows(testutil::plugin_dir(), &master, SYS, CHG).unwrap_err();
-        assert!(err.to_string().contains("app.md"), "got: {err}");
-    }
-
-    #[test]
-    fn a_new_layout_2_log_is_unsaved() {
-        let tmp = tempfile::tempdir().unwrap();
-        let master = master_with(tmp.path(), &app_tasks());
-        let log = layout_2_log(
-            &[],
-            "### T1\n\n```yaml\ntask: T1\ncommits: [a111111]\n```\n\n### T2\n\n```yaml\ntask: T2\ncommits: [b222222]\n```\n",
-        );
-        let build = master.join(format!("{DIR}/build"));
-        std::fs::create_dir_all(&build).unwrap();
-        std::fs::write(build.join("app.md"), log).unwrap();
-        let found = unsaved_rows(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
-        assert_eq!(
-            found,
-            vec![UnsavedRows {
-                repo: "app".into(),
-                tasks: vec!["T1".into(), "T2".into()]
-            }]
-        );
-    }
-
-    #[test]
-    fn unsaved_rows_is_empty_when_nothing_changed() {
-        let tmp = tempfile::tempdir().unwrap();
-        let master = master_with(tmp.path(), &app_tasks());
-        commit_log(&master, "app", &["| T1 | `a111111` | none |"]);
-        assert!(unsaved_rows(testutil::plugin_dir(), &master, SYS, CHG)
-            .unwrap()
-            .is_empty());
-    }
-
-    #[test]
     fn waiting_names_the_first_dependency_without_a_row() {
         let tmp = tempfile::tempdir().unwrap();
         // The fixture plan without its legacy section, so only the committed log speaks.
@@ -1171,21 +810,6 @@ mod tests {
     }
 
     #[test]
-    fn a_committed_log_fixture_gives_its_rows() {
-        let tmp = tempfile::tempdir().unwrap();
-        let master = master_with(tmp.path(), &app_tasks());
-        testutil::commit_file(&master, &format!("{DIR}/build/app.md"), BUILD_LOG, "log");
-        let rows = committed_rows(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0].commits, vec!["a1b2c3d", "e4f5a6b"]);
-        assert_eq!(rows[0].departure, None);
-        assert_eq!(rows[1].commits, vec!["1111111", "2222222"]);
-        assert!(rows[1].departure.is_some());
-        assert_eq!(rows[2].departure, None);
-        assert!(rows.iter().all(|r| r.repo == "app"));
-    }
-
-    #[test]
     fn status_reads_a_plan_with_crlf_line_endings() {
         let tmp = tempfile::tempdir().unwrap();
         let master = master_with(tmp.path(), &app_tasks().replace('\n', "\r\n"));
@@ -1232,342 +856,34 @@ mod tests {
     }
 
     #[test]
-    fn status_reads_logs_committed_by_two_writers_together() {
+    fn status_reads_one_row_per_task_from_each_repository_log_r5_2() {
         let tmp = tempfile::tempdir().unwrap();
-        let plan = plan_with(&[("T1", "app", Some("none")), ("T2", "api", Some("none"))]);
-        let master = master_with(tmp.path(), &plan);
-        let build = master.join(format!("{DIR}/build"));
-        std::fs::create_dir_all(&build).unwrap();
-        for (repo, row) in [
-            ("app", "| T1 | `a111111` | none |"),
-            ("api", "| T2 | `b222222` | none |"),
-        ] {
-            std::fs::write(build.join(format!("{repo}.md")), log_text(repo, &[row])).unwrap();
-        }
-        std::thread::scope(|s| {
-            for repo in ["app", "api"] {
-                let master = &master;
-                s.spawn(move || {
-                    let rel = format!("{DIR}/build/{repo}.md");
-                    let msg = format!("docs(sdlc): log {repo}");
-                    for _ in 0..200 {
-                        let done =
-                            git::Repo::open(master).and_then(|repo| repo.commit_only(&rel, &msg));
-                        match done {
-                            Ok(_) => return,
-                            Err(e) if e.stderr.contains("index.lock") => {
-                                std::thread::sleep(std::time::Duration::from_millis(50))
-                            }
-                            Err(e) => panic!("{e}"),
-                        }
-                    }
-                    panic!("index.lock never cleared");
-                });
-            }
-        });
+        // The fixture plan without its legacy section, so only the committed logs speak.
+        let plan = FIXTURE_PLAN.split("## Build log").next().unwrap();
+        let master = master_with(tmp.path(), plan);
+        commit_log(&master, "app", &["| T1 | `a1a1a1a` | none |"]);
+        commit_log(&master, "api", &["| T2 | `b2b2b2b` | none |"]);
         let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
-        assert!(st.tasks.iter().all(|t| t.row.is_some()), "{st:?}");
-    }
-
-    // ---- the build gate (R8, R10.1) ----
-
-    const VALID_PLAN: &str = include_str!("../tests/ai-sdlc-tools/examples/plan/2/valid.md");
-    const PLAN_WITHOUT_TESTS: &str =
-        include_str!("../tests/ai-sdlc-tools/examples/plan/2/task-without-tests-section.md");
-    const VALID_LOG: &str = include_str!("../tests/ai-sdlc-tools/examples/build-log/2/valid.md");
-    const LOG_WITH_TWICE: &str =
-        include_str!("../tests/ai-sdlc-tools/examples/build-log/2/entry-recorded-twice.md");
-
-    /// A stand-in plugin folder whose format program answers every read with an empty document: a
-    /// plan in `plan_layout` and a build log in `log_layout`.
-    fn plugin_reading(plan_layout: u32, log_layout: u32) -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        let format = dir.path().join("tools");
-        std::fs::create_dir_all(&format).unwrap();
-        std::fs::write(
-            format.join("ai-sdlc.ts"),
-            format!(
-                "const file = process.argv[4] ?? '';\n\
-                 const plan = file.endsWith('plan.md');\n\
-                 const document = plan ? {{ tasks: [], shared_decisions: [] }} : {{ repo: 'app', entries: [] }};\n\
-                 console.log(JSON.stringify({{ kind: plan ? 'plan' : 'build-log', layout: plan ? {plan_layout} : {log_layout}, document, problems: [] }}));\n"
-            ),
-        )
-        .unwrap();
-        dir
-    }
-
-    fn ready(dir: &Path) -> Readiness {
-        Readiness::Ready {
-            plugin: crate::plugin::Plugin {
-                dir: dir.to_path_buf(),
-                version: "1.1.0".into(),
-                layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
-            },
-            gh: crate::plugin::GhPresence::Present,
-        }
-    }
-
-    fn refuse(message: &str, problems: Vec<Problem>) -> Gate {
-        Gate::Refuse {
-            message: message.into(),
-            problems,
-        }
-    }
-
-    fn problem(file: &str, line: u32, message: &str) -> Problem {
-        Problem {
-            file: file.into(),
-            line,
-            message: message.into(),
-        }
-    }
-
-    /// (name, plugin, plan, build logs as (repository, text), expected outcome)
-    type GateRow<'a> = (&'a str, Readiness, &'a str, Vec<(&'a str, &'a str)>, Gate);
-
-    #[test]
-    fn build_gate_refuses_each_action_with_the_problems_listed() {
-        let real = testutil::plugin_dir();
-        let newer_plan = plugin_reading(3, 1);
-        let newer_both = plugin_reading(3, 3);
-        let newer_log = plugin_reading(1, 3);
-        let plan_problem = problem("plan.md", 18, "task T1 has no Tests section");
-        let log_problem = problem(
-            "build/app.md",
-            14,
-            "entry T1 is recorded twice, first on line 7",
-        );
-        // (name, plugin, plan, logs, expected): the outline's rows, then the precedence between them.
-        let rows: Vec<GateRow> = vec![
-            (
-                "plugin missing",
-                Readiness::missing(),
-                VALID_PLAN,
-                vec![],
-                refuse("Install the ai-sdlc plugin", vec![]),
-            ),
-            (
-                "plugin too old",
-                Readiness::Blocked {
-                    reason: crate::plugin::BlockReason::PluginTooOld,
-                    message:
-                        "The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9."
-                            .into(),
-                },
-                VALID_PLAN,
-                vec![],
-                refuse(
-                    "The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.",
-                    vec![],
-                ),
-            ),
-            (
-                "plugin missing wins over a failing plan and log",
-                Readiness::missing(),
-                PLAN_WITHOUT_TESTS,
-                vec![("app", LOG_WITH_TWICE)],
-                refuse("Install the ai-sdlc plugin", vec![]),
-            ),
-            (
-                "plan in a newer layout",
-                ready(newer_plan.path()),
-                VALID_PLAN,
-                vec![],
-                refuse("This plan needs a newer Workbench", vec![]),
-            ),
-            (
-                "plan in a newer layout wins over a log in a newer layout",
-                ready(newer_both.path()),
-                VALID_PLAN,
-                vec![("app", VALID_LOG)],
-                refuse("This plan needs a newer Workbench", vec![]),
-            ),
-            (
-                "plan with problems",
-                ready(real),
-                PLAN_WITHOUT_TESTS,
-                vec![],
-                refuse(
-                    "The plan does not pass the check",
-                    vec![plan_problem.clone()],
-                ),
-            ),
-            (
-                "plan with problems wins over a log with problems",
-                ready(real),
-                PLAN_WITHOUT_TESTS,
-                vec![("app", LOG_WITH_TWICE)],
-                refuse("The plan does not pass the check", vec![plan_problem]),
-            ),
-            (
-                "build log in a newer layout",
-                ready(newer_log.path()),
-                VALID_PLAN,
-                vec![("app", VALID_LOG)],
-                refuse("A build log needs a newer Workbench", vec![]),
-            ),
-            (
-                "build log with problems",
-                ready(real),
-                VALID_PLAN,
-                vec![("app", LOG_WITH_TWICE)],
-                refuse("A build log does not pass the check", vec![log_problem]),
-            ),
-            (
-                "plan and build log pass",
-                ready(real),
-                VALID_PLAN,
-                vec![("app", VALID_LOG)],
-                Gate::Admit,
-            ),
-            (
-                "plan passes and there is no build log yet",
-                ready(real),
-                VALID_PLAN,
-                vec![],
-                Gate::Admit,
-            ),
-        ];
-        for (name, plugin, plan, logs, expected) in rows {
-            let tmp = tempfile::tempdir().unwrap();
-            let master = master_with(tmp.path(), plan);
-            for (repo, text) in logs {
-                testutil::commit_file(
-                    &master,
-                    &format!("{DIR}/build/{repo}.md"),
-                    text,
-                    &format!("log {repo}"),
-                );
-            }
-            for action in [
-                BuildAction::Start,
-                BuildAction::Continue,
-                BuildAction::Round,
-            ] {
-                assert_eq!(
-                    gate(&plugin, &master, SYS, CHG, action).unwrap(),
-                    expected,
-                    "{name}, {action:?}"
-                );
-            }
-        }
+        assert_eq!(st.tasks[0].row.as_ref().unwrap().commits, vec!["a1a1a1a"]);
+        assert_eq!(st.tasks[1].row.as_ref().unwrap().commits, vec!["b2b2b2b"]);
+        assert_eq!(st.tasks.iter().filter(|t| t.row.is_some()).count(), 2);
     }
 
     #[test]
-    fn build_gate_admits_once_the_plan_passes_again() {
+    fn a_committed_log_fixture_gives_its_rows() {
         let tmp = tempfile::tempdir().unwrap();
-        let master = master_with(tmp.path(), PLAN_WITHOUT_TESTS);
-        let plugin = ready(testutil::plugin_dir());
-        let plan = format!("{DIR}/plan.md");
-        let log = format!("{DIR}/build/app.md");
-        for action in [BuildAction::Start, BuildAction::Continue] {
-            assert!(matches!(
-                gate(&plugin, &master, SYS, CHG, action).unwrap(),
-                Gate::Refuse { .. }
-            ));
-        }
-        testutil::commit_file(&master, &plan, VALID_PLAN, "fix the plan");
-        testutil::commit_file(&master, &log, LOG_WITH_TWICE, "log with a repeat");
-        assert!(matches!(
-            gate(&plugin, &master, SYS, CHG, BuildAction::Continue).unwrap(),
-            Gate::Refuse { .. }
-        ));
-        testutil::commit_file(&master, &log, VALID_LOG, "fix the log");
-        for action in [
-            BuildAction::Start,
-            BuildAction::Continue,
-            BuildAction::Round,
-        ] {
-            assert_eq!(
-                gate(&plugin, &master, SYS, CHG, action).unwrap(),
-                Gate::Admit
-            );
-        }
-    }
-
-    /// Commits the master's marker listing `repos` under the system `demo`, which the plans in this test name.
-    fn commit_marker(master: &Path, repos: &[&str]) {
-        let listed: Vec<String> = repos.iter().map(|r| format!("\"{r}\"")).collect();
-        testutil::commit_file(
-            master,
-            ".ai-sdlc.json",
-            &format!(
-                "{{\"version\":1,\"systems\":{{\"demo\":{{\"repos\":[{}]}}}}}}",
-                listed.join(",")
-            ),
-            "marker",
-        );
-    }
-
-    #[test]
-    fn build_gate_refuses_what_only_the_checks_across_documents_find() {
-        let two_repos = VALID_PLAN.replace(
-            "id: T2
-repo: app",
-            "id: T2
-repo: api",
-        );
-        assert_ne!(two_repos, VALID_PLAN);
-        let log_on_other_repo = VALID_LOG.replace("app", "api");
-        // (name, plan, marker repos, build logs as (repository, text), message, a word in a problem)
-        type Case<'a> = (
-            &'a str,
-            String,
-            &'a [&'a str],
-            Vec<(&'a str, String)>,
-            &'a str,
-            &'a str,
-        );
-        let cases: Vec<Case> = vec![
-            (
-                "a log entry on another repository's task",
-                two_repos.clone(),
-                &["app", "api"],
-                vec![("api", log_on_other_repo)],
-                "A build log does not pass the check",
-                "belongs to repository app",
-            ),
-            (
-                "a task naming a repository the system does not list",
-                two_repos,
-                &["app"],
-                vec![],
-                "The plan does not pass the check",
-                "api",
-            ),
-            (
-                "a dependency on a task the plan does not hold",
-                VALID_PLAN.replace("depends_on: [T1]", "depends_on: [T99]"),
-                &["app"],
-                vec![],
-                "The plan does not pass the check",
-                "T99",
-            ),
-        ];
-        let plugin = ready(testutil::plugin_dir());
-        let mut wrong = Vec::new();
-        for (name, plan, repos, logs, message, word) in cases {
-            let tmp = tempfile::tempdir().unwrap();
-            let master = master_with(tmp.path(), &plan);
-            commit_marker(&master, repos);
-            for (repo, text) in logs {
-                testutil::commit_file(
-                    &master,
-                    &format!("{DIR}/build/{repo}.md"),
-                    &text,
-                    &format!("log {repo}"),
-                );
-            }
-            match gate(&plugin, &master, SYS, CHG, BuildAction::Start).unwrap() {
-                Gate::Refuse {
-                    message: got,
-                    problems,
-                } if got == message && problems.iter().any(|p| p.message.contains(word)) => {}
-                other => wrong.push(format!("{name}: {other:?}")),
-            }
-        }
-        assert!(wrong.is_empty(), "{wrong:#?}");
+        let tasks = ["T1", "T2", "T3", "T4"].map(|id| (id, "app", Some("none")));
+        let master = master_with(tmp.path(), &plan_with(&tasks));
+        testutil::commit_file(&master, &format!("{DIR}/build/app.md"), BUILD_LOG, "log");
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
+        let rows: Vec<_> = st.tasks.iter().filter_map(|t| t.row.as_ref()).collect();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].commits, vec!["a1b2c3d", "e4f5a6b"]);
+        assert_eq!(rows[0].departure, None);
+        assert_eq!(rows[1].commits, vec!["1111111", "2222222"]);
+        assert!(rows[1].departure.is_some());
+        assert_eq!(rows[2].departure, None);
+        assert!(st.tasks.iter().all(|t| t.repo == "app"));
     }
 
     #[test]

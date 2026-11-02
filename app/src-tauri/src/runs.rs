@@ -1,9 +1,6 @@
 //! The table of live runs behind the Workbench's `run_spec`. Pure and generic over
 //! the child handle so tests can use a fake; the app uses `CommandChild`.
 
-// The lane-aware commands construct the other lanes and kinds; the strip (T18) reads `live`.
-#![allow(dead_code)]
-
 use kata_sdlc::holds::{ChangeKey, RepoKey};
 use serde::Serialize;
 use serde_json::Value;
@@ -17,8 +14,6 @@ use tauri_plugin_shell::process::CommandChild;
 pub enum Lane {
     /// A run outside any workspace (the Workbench, the library).
     Solo,
-    /// A run of a workspace that belongs to no change (setup, context).
-    Workspace,
     /// A run of one change; `build` is true for a build run.
     #[serde(rename_all = "camelCase")]
     Change { key: ChangeKey, build: bool },
@@ -193,7 +188,6 @@ mod tests {
             Lane::Solo => RunKind::Solo,
             Lane::Change { build: true, .. } => RunKind::Build,
             Lane::Change { .. } => RunKind::Spec,
-            Lane::Workspace => RunKind::Context,
         };
         let group = match &lane {
             Lane::Change {
@@ -292,7 +286,7 @@ mod tests {
         let elsewhere = |t: &RunTable<()>, lane: &Lane| t.claim(Path::new("D:/ws/other"), lane);
         // Row 1: the same folder refuses every request.
         let t = table(vec![live(1, "D:/ws/app", Lane::Solo)]);
-        for lane in [Lane::Solo, Lane::Workspace, change("c", false)] {
+        for lane in [Lane::Solo, change("c", false)] {
             assert_eq!(
                 same(&t, &lane).unwrap_err(),
                 "Another run is already working in D:/ws/app."
@@ -306,8 +300,7 @@ mod tests {
         // Row 3: solo with no solo run live, even while a change builds.
         let b = table(vec![live(1, "D:/ws/app", change("c", true))]);
         assert!(elsewhere(&b, &Lane::Solo).is_ok());
-        // Row 4: workspace or change behind a solo run elsewhere.
-        assert!(elsewhere(&t, &Lane::Workspace).is_ok());
+        // Row 4: a change behind a solo run elsewhere.
         assert!(elsewhere(&t, &change("c", true)).is_ok());
     }
 

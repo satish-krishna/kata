@@ -1,13 +1,13 @@
-use crate::base;
-use crate::changes::is_change_name;
+use crate::build::{self, RepoState};
+use crate::changes::{is_change_name, is_safe_system};
+use crate::diff;
+use crate::frontmatter;
 use crate::git::{self, GitError};
 use crate::snapshot::status_entries;
-use std::collections::BTreeSet;
+use crate::workspace::{self, system_repos};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::Path;
-
-/// The prefix of the temporary branch an older Kata gave a change before it was named. The plugin makes a
-/// change's branch now, so no new one is made, but a master repository may still stand on one.
-pub(crate) const PENDING_PREFIX: &str = "change/pending-";
 
 /// The change's record in its master repository, as the program writes it (`change.yml`) or an older
 /// Kata wrote it (`branch.md`): the file and the text of its `key` field.
@@ -41,7 +41,6 @@ pub fn change_branch(master: &Path, system: &str, change: &str) -> Result<String
     };
     if branch.starts_with('-')
         || branch == "HEAD"
-        || branch.starts_with(PENDING_PREFIX)
         || !git2::Reference::is_valid_name(&format!("refs/heads/{branch}"))
     {
         return Err(format!(
@@ -51,9 +50,97 @@ pub fn change_branch(master: &Path, system: &str, change: &str) -> Result<String
     Ok(branch)
 }
 
-/// The work type the change's record names; `None` when it has no record or the record names none.
-pub fn recorded_type(master: &Path, system: &str, change: &str) -> Option<String> {
-    recorded_field(master, system, change, "type").map(|(_, t)| t)
+/// A local branch other than the current one that holds a change.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct OtherBranch {
+    /// The full branch name.
+    pub branch: String,
+    /// The change folder name the branch holds.
+    pub change: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct BranchInfo {
+    pub current: Option<String>,
+    pub others: Vec<OtherBranch>,
+    pub default_base: Option<String>,
+}
+
+/// The master's branch, the other local branches that hold a change, and the base branch.
+pub fn branch_info(master: &Path) -> BranchInfo {
+    BranchInfo {
+        current: current_branch(master),
+        others: other_change_branches(master),
+        default_base: diff::base_branch(master),
+    }
+}
+
+/// The first change folder (system, then change name, in sorted order) that `tip` holds and `base` does
+/// not, with its committed `branch.md`. A branch holding several new folders is listed for the first only.
+fn new_folder_at(repo: &git::Repo, base: &str, tip: &str) -> Option<(String, Option<Vec<u8>>)> {
+    for system in repo.folder_names_at(tip, "intent") {
+        for change in repo.folder_names_at(tip, &format!("intent/{system}")) {
+            let folder = format!("intent/{system}/{change}");
+            if !is_change_name(&change) || repo.entry_at(base, &folder).ok().flatten().is_some() {
+                continue;
+            }
+            let record = repo
+                .bytes_at(tip, &format!("{folder}/branch.md"))
+                .ok()
+                .flatten();
+            return Some((change, record));
+        }
+    }
+    None
+}
+
+/// The local branches other than the current one that hold a change, read from their tips without
+/// checking anything out. `change/<folder>` names list as that folder; any other name lists when a new
+/// change's committed `branch.md` names exactly that branch.
+pub fn other_change_branches(master: &Path) -> Vec<OtherBranch> {
+    let Ok(repo) = git::Repo::open(master) else {
+        return Vec::new();
+    };
+    let current = repo.current_branch();
+    let base = diff::base_branch(master).and_then(|b| diff::compare_ref(master, &b));
+    let mut found = Vec::new();
+    for name in repo.local_branches() {
+        if Some(name.as_str()) == current.as_deref() {
+            continue;
+        }
+        // A `change/pending-*` branch is one an older Kata made before a change was named; it is not a change.
+        if let Some(folder) = name
+            .strip_prefix("change/")
+            .filter(|f| !f.starts_with("pending-"))
+        {
+            found.push(OtherBranch {
+                branch: name.clone(),
+                change: folder.to_string(),
+            });
+            continue;
+        }
+        let Some(base) = base.as_deref() else {
+            continue;
+        };
+        let Some((change, record)) = new_folder_at(&repo, base, &name) else {
+            continue;
+        };
+        if record
+            .and_then(|bytes| frontmatter::field(&String::from_utf8_lossy(&bytes), "branch"))
+            .as_deref()
+            == Some(name.as_str())
+        {
+            found.push(OtherBranch {
+                branch: name,
+                change,
+            });
+        }
+    }
+    found
 }
 
 pub fn branch_exists(repo: &Path, name: &str) -> bool {
@@ -95,58 +182,6 @@ pub(crate) fn ensure_clean(master: &Path) -> Result<(), BranchError> {
     }
 }
 
-/// Change folder names (`intent/<system>/<change>/...`) in a list of repo-relative paths.
-fn change_folders<'a>(paths: impl Iterator<Item = &'a str>) -> BTreeSet<String> {
-    paths
-        .filter_map(|p| {
-            let mut parts = p.split('/');
-            (parts.next()? == "intent").then_some(())?;
-            let system = parts.next()?;
-            let change = parts.next()?;
-            parts.next()?;
-            (!system.is_empty() && is_change_name(change)).then(|| format!("{system}/{change}"))
-        })
-        .collect()
-}
-
-fn existing_on(repo: &git::Repo, rev: &str, system_change: &str) -> bool {
-    repo.entry_at(rev, &format!("intent/{system_change}"))
-        .ok()
-        .flatten()
-        .is_some()
-}
-
-/// The `<system>/<change>` folder the checked-out pending branch created: one changed from `base`
-/// (committed or not) that `base` does not hold.
-fn created_folder(
-    master: &Path,
-    repo: &git::Repo,
-    base: &str,
-) -> Result<Option<String>, BranchError> {
-    let mut paths: Vec<String> = status_entries(master)?
-        .into_iter()
-        .map(|e| e.path)
-        .collect();
-    if let Ok(changed) = repo.files_changed_from_merge_base(base) {
-        paths.extend(changed);
-    }
-    Ok(change_folders(paths.iter().map(String::as_str))
-        .into_iter()
-        .find(|sc| !existing_on(repo, base, sc)))
-}
-
-/// The `<system>/<change>` folder the pending branch checked out in `master` created, if any.
-pub fn pending_created(master: &Path) -> Option<String> {
-    let current = current_branch(master)?;
-    if !current.starts_with(PENDING_PREFIX) {
-        return None;
-    }
-    let base = base::base_branch(master)?;
-    let reference = base::compare_ref(master, &base)?;
-    let repo = git::Repo::open(master).ok()?;
-    created_folder(master, &repo, &reference).ok().flatten()
-}
-
 /// Switch branches. Refuses a dirty working tree.
 pub fn checkout(master: &Path, branch: &str) -> Result<(), BranchError> {
     require_local_branch(master, branch)?;
@@ -155,46 +190,289 @@ pub fn checkout(master: &Path, branch: &str) -> Result<(), BranchError> {
     Ok(())
 }
 
+/// The commit each repository's recorded change branch points at. A repository without that
+/// branch (one the build never changed) is left out.
+pub fn heads(
+    folder: &Path,
+    master_repo: &str,
+    system: &str,
+    repos: &[String],
+    change: &str,
+) -> Result<BTreeMap<String, String>, String> {
+    if !is_change_name(change) {
+        return Err(format!("invalid change name: {change}"));
+    }
+    // An empty master or system (a caller that has neither yet) reads no record.
+    if (!master_repo.is_empty() && !is_safe_system(master_repo))
+        || (!system.is_empty() && !is_safe_system(system))
+    {
+        return Err(format!(
+            "invalid master repository or system name: {master_repo}, {system}"
+        ));
+    }
+    let branch = change_branch(&folder.join(master_repo), system, change)?;
+    let mut out = BTreeMap::new();
+    for repo in repos {
+        if !is_safe_system(repo) {
+            return Err(format!("invalid repository name: {repo}"));
+        }
+        let path = folder.join(repo);
+        if !branch_exists(&path, &branch) {
+            continue;
+        }
+        let head = git::Repo::open(&path)
+            .and_then(|r| r.resolve(&format!("refs/heads/{branch}")))
+            .map_err(|e| e.to_string())?;
+        out.insert(repo.clone(), head);
+    }
+    Ok(out)
+}
+
+/// The product repositories the plan names that lack the change's recorded branch (`change/<change>`
+/// when it has no record). No other name is searched for. The Changes view lists only repositories with
+/// that branch, so it names these rather than leaving them out without a word. A repository the plan
+/// names that is not a valid name, not in the system or not checked out is refused, unless all its tasks
+/// are done: then it needs nothing from this workspace and is left out.
+pub fn missing_change_branches(
+    plugin: &Path,
+    folder: &Path,
+    master_repo: &str,
+    system: &str,
+    change: &str,
+) -> Result<Vec<String>, String> {
+    if !is_safe_system(master_repo) || !is_safe_system(system) || !is_change_name(change) {
+        return Err(format!(
+            "invalid master repository, system or change name: {master_repo}, {system}, {change}"
+        ));
+    }
+    let master = folder.join(master_repo);
+    let branch = change_branch(&master, system, change)?;
+    let status = build::status(plugin, &master, system, change).map_err(|e| e.to_string())?;
+    let scan = workspace::scan(folder).map_err(|e| e.to_string())?;
+    let in_system = system_repos(&scan, system);
+    let mut out = Vec::new();
+    for planned in status.repos.iter().filter(|r| r.repo != master_repo) {
+        let name = planned.repo.as_str();
+        let problem = if !is_safe_system(name) {
+            Some("which is not a valid repository name".to_string())
+        } else if !in_system.iter().any(|r| r == name) {
+            Some(format!("which is not in system {system}"))
+        } else if !scan.repos.iter().any(|r| r == name) {
+            Some("which is not checked out in this workspace".to_string())
+        } else {
+            None
+        };
+        match problem {
+            Some(_) if planned.state == RepoState::Done => {}
+            Some(why) => return Err(format!("the plan names {name}, {why}")),
+            None if !branch_exists(&folder.join(name), &branch) => out.push(name.to_string()),
+            None => {}
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{base, testutil};
+    use crate::testutil;
 
-    const MARKER: &str = r#"{"version":1,"systems":{"kata":{"repos":["kata"]}}}"#;
-    const CHANGE: &str = "2026-11-02-password-reset";
+    const S: &str = "s";
+    const C: &str = "2026-10-19-c";
+    const OWN: &str = "feat(s): own work\n\nGenerated-By: ai-sdlc";
+    const RECORDED: &str = "feat/PROJ-123-password-reset";
 
-    /// A workspace folder with the master `ai-sdlc` (marker committed).
-    fn workspace(tmp: &Path) -> std::path::PathBuf {
-        let master = testutil::repo(tmp, "ai-sdlc");
-        testutil::commit_file(&master, ".ai-sdlc.json", MARKER, "marker");
-        master
+    struct Fx {
+        _dir: tempfile::TempDir,
+        folder: std::path::PathBuf,
+        master: std::path::PathBuf,
     }
 
-    fn intent(master: &Path) {
-        let rel = format!("intent/kata/{CHANGE}/intent.md");
+    impl Fx {
+        fn repo(&self, name: &str) -> std::path::PathBuf {
+            self.folder.join(name)
+        }
+    }
+
+    fn plan(tasks: &[(&str, &str)]) -> String {
+        let mut out = String::from("---\nstatus: accepted\n---\n\n# Plan: c\n\n## Tasks\n\n");
+        for (id, repo) in tasks {
+            out.push_str(&format!(
+                "### {id}: Do {id} (`{repo}`)\n\n- **Depends on:** none\n- **Change:** x\n\n"
+            ));
+        }
+        out
+    }
+
+    /// Master `m` on `change/<C>` holding the marker and an accepted plan; the repos in
+    /// `checked_out` exist beside it.
+    fn fixture_with(tasks: &[(&str, &str)], marker: &[&str], checked_out: &[&str]) -> Fx {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().to_path_buf();
+        let master = testutil::repo(&folder, "m");
+        let repos = marker
+            .iter()
+            .map(|r| format!("\"{r}\""))
+            .collect::<Vec<_>>()
+            .join(",");
         testutil::commit_file(
-            master,
-            &rel,
-            "---
-status: draft
----
-x
-",
-            "intent",
+            &master,
+            ".ai-sdlc.json",
+            &format!("{{\"version\":1,\"systems\":{{\"{S}\":{{\"repos\":[{repos}]}}}}}}"),
+            "marker",
         );
+        testutil::checkout(&master, &format!("change/{C}"), true);
+        testutil::commit_file(
+            &master,
+            &format!("intent/{S}/{C}/plan.md"),
+            &plan(tasks),
+            "plan",
+        );
+        for r in checked_out {
+            testutil::repo(&folder, r);
+        }
+        Fx {
+            _dir: dir,
+            folder,
+            master,
+        }
+    }
+
+    fn fixture() -> Fx {
+        fixture_with(
+            &[("T1", "app"), ("T2", "api"), ("T3", "m")],
+            &["app", "api"],
+            &["app", "api"],
+        )
+    }
+
+    fn missing(fx: &Fx) -> Result<Vec<String>, String> {
+        missing_change_branches(testutil::plugin_dir(), &fx.folder, "m", S, C)
+    }
+
+    /// Commit a `branch.md` naming `branch` on the master and put the master on that branch.
+    fn record_on_master(fx: &Fx, branch: &str) {
+        testutil::commit_file(
+            &fx.master,
+            &format!("intent/{S}/{C}/branch.md"),
+            &format!("---\nbranch: {branch}\ntype: feat\n---\n\nKata writes this file.\n"),
+            "name branch",
+        );
+        testutil::checkout(&fx.master, branch, true);
+    }
+
+    #[test]
+    fn missing_change_branches_names_each_product_repo_without_the_change_branch() {
+        let fx = fixture();
+        testutil::checkout(&fx.repo("app"), &format!("change/{C}"), true);
+        // The master is never named: it holds the change's documents whatever branch it is on.
+        assert_eq!(missing(&fx).unwrap(), ["api"]);
+        testutil::checkout(&fx.repo("api"), &format!("change/{C}"), true);
+        assert!(missing(&fx).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_finished_repo_that_is_not_checked_out_is_skipped_and_an_unfinished_one_refused_r2_4() {
+        let fx = fixture_with(&[("T1", "app"), ("T2", "api")], &["app", "api"], &["app"]);
+        let refused = missing(&fx).unwrap_err();
+        assert_eq!(
+            refused,
+            "the plan names api, which is not checked out in this workspace"
+        );
+        testutil::commit_file(
+            &fx.master,
+            &format!("intent/{S}/{C}/build/api.md"),
+            "# Build log: api\n\n| Task | Commits | Departure |\n|---|---|---|\n| T2 | `abc1234` | none |\n",
+            "log",
+        );
+        assert_eq!(missing(&fx).unwrap(), ["app"]);
+    }
+
+    #[test]
+    fn heads_reads_each_change_branch() {
+        let fx = fixture();
+        for r in ["app", "api"] {
+            testutil::checkout(&fx.repo(r), &format!("change/{C}"), true);
+        }
+        testutil::commit_msg(&fx.repo("app"), "a.txt", "a\n", OWN);
+        let got = heads(&fx.folder, "m", S, &["app".into(), "api".into()], C).unwrap();
+        for r in ["app", "api"] {
+            let want = git::run(&fx.repo(r), &["rev-parse", &format!("change/{C}")]).unwrap();
+            assert_eq!(got[r], want);
+        }
+        assert_ne!(got["app"], got["api"]);
+        assert!(heads(&fx.folder, "m", S, &["../x".into()], C).is_err());
+    }
+
+    #[test]
+    fn heads_skips_repos_without_the_branch() {
+        let fx = fixture();
+        testutil::checkout(&fx.repo("app"), &format!("change/{C}"), true);
+        let got = heads(&fx.folder, "m", S, &["app".into(), "api".into()], C).unwrap();
+        assert_eq!(got.keys().collect::<Vec<_>>(), ["app"]);
+    }
+
+    #[test]
+    fn resolver_reads_record_else_change_folder_r8_1() {
+        let fx = fixture();
+        let want = |c: &str| change_branch(&fx.master, S, c).unwrap();
+        assert_eq!(
+            want("2026-10-19-photo-upload"),
+            "change/2026-10-19-photo-upload"
+        );
+        testutil::commit_file(
+            &fx.master,
+            &format!("intent/{S}/2026-11-02-password-reset/branch.md"),
+            &format!("---\nbranch: {RECORDED}\n---\n\nKata writes this file.\n"),
+            "name branch",
+        );
+        assert_eq!(want("2026-11-02-password-reset"), RECORDED);
+    }
+
+    #[test]
+    fn every_consumer_uses_the_recorded_branch_r7_1() {
+        let fx = fixture();
+        record_on_master(&fx, RECORDED);
+        for r in ["app", "api"] {
+            // A `change/<C>` branch at the base, the name a wrong consumer would look for.
+            git::run(&fx.repo(r), &["branch", &format!("change/{C}"), "main"]).unwrap();
+            testutil::checkout(&fx.repo(r), RECORDED, true);
+        }
+        testutil::commit_msg(&fx.repo("app"), "a.txt", "a\n", OWN);
+        let decoy = git::run(&fx.repo("app"), &["rev-parse", &format!("change/{C}")]).unwrap();
+        let got = heads(&fx.folder, "m", S, &["app".into(), "api".into()], C).unwrap();
+        let want = git::run(&fx.repo("app"), &["rev-parse", RECORDED]).unwrap();
+        assert_eq!(got["app"], want);
+        assert_ne!(got["app"], decoy);
+        assert!(missing(&fx).unwrap().is_empty());
+    }
+
+    #[test]
+    fn renamed_by_hand_is_reported_missing_not_searched_r8_3() {
+        let fx = fixture();
+        record_on_master(&fx, RECORDED);
+        for r in ["app", "api"] {
+            testutil::checkout(&fx.repo(r), RECORDED, true);
+        }
+        git::run(
+            &fx.repo("app"),
+            &["branch", "-m", RECORDED, "feat/PROJ-123-other"],
+        )
+        .unwrap();
+        assert_eq!(missing(&fx).unwrap(), ["app"]);
     }
 
     #[test]
     fn base_branch_is_never_the_current_branch() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
-        assert_eq!(base::base_branch(&repo).as_deref(), Some("main"));
+        assert_eq!(diff::base_branch(&repo).as_deref(), Some("main"));
 
         git::run(&repo, &["branch", "-m", "main", "master"]).unwrap();
-        assert_eq!(base::base_branch(&repo).as_deref(), Some("master"));
+        assert_eq!(diff::base_branch(&repo).as_deref(), Some("master"));
 
         git::run(&repo, &["branch", "-m", "master", "trunk"]).unwrap();
-        assert_eq!(base::base_branch(&repo), None);
+        assert_eq!(diff::base_branch(&repo), None);
     }
 
     #[test]
@@ -235,28 +513,165 @@ exit 1
     }
 
     #[test]
-    fn a_pending_branch_made_by_hand_on_a_master_with_no_base_is_not_read() {
+    fn checkout_refuses_dirty() {
         let tmp = tempfile::tempdir().unwrap();
-        let master = workspace(tmp.path());
-        git::run(&master, &["branch", "-m", "main", "trunk"]).unwrap();
-        testutil::checkout(&master, "change/pending-20261018T000000Z", true);
-        intent(&master);
-        assert_eq!(pending_created(&master), None);
-        assert_eq!(crate::changes::branch_info(&master).default_base, None);
+        let repo = testutil::repo(tmp.path(), "m");
+        git::run(&repo, &["branch", "other"]).unwrap();
+        checkout(&repo, "other").unwrap();
+        assert_eq!(current_branch(&repo).as_deref(), Some("other"));
+        std::fs::write(repo.join("scratch.txt"), "x").unwrap();
+        let err = checkout(&repo, "main").unwrap_err();
+        assert!(matches!(&err, BranchError::Dirty(p) if p == &["scratch.txt"]));
+        assert_eq!(current_branch(&repo).as_deref(), Some("other"));
+    }
+    #[test]
+    fn branches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        for b in ["change/a", "change/b", "change/pending-20261018T000000Z"] {
+            git::run(&repo, &["branch", b]).unwrap();
+        }
+        git::run(&repo, &["checkout", "-q", "change/a"]).unwrap();
+        assert_eq!(current_branch(&repo).as_deref(), Some("change/a"));
+        assert_eq!(
+            other_change_branches(&repo),
+            [OtherBranch {
+                branch: "change/b".into(),
+                change: "b".into(),
+            }]
+        );
+        let info = branch_info(&repo);
+        assert_eq!(info.default_base.as_deref(), Some("main"));
+    }
+
+    const NAMED_S: &str = r#"{"version":1,"systems":{"s":{"repos":["m"],"naming":{"branch":"{type}/{slug}","pullRequestTitle":"{title}"}},"u":{"repos":["m"]}}}"#;
+
+    /// Create `name` from `main` holding `files`, then return to `main`.
+    fn branch_holding(repo: &Path, name: &str, files: &[(&str, &str)]) {
+        git::run(repo, &["checkout", "-q", "-b", name, "main"]).unwrap();
+        for (rel, text) in files {
+            testutil::commit_file(repo, rel, text, "tip");
+        }
+        git::run(repo, &["checkout", "-q", "main"]).unwrap();
+    }
+
+    fn other(branch: &str, change: &str) -> OtherBranch {
+        OtherBranch {
+            branch: branch.into(),
+            change: change.into(),
+        }
     }
 
     #[test]
-    fn branch_info_names_the_change_a_pending_branch_created() {
+    fn listing_includes_named_branch_whose_record_names_it_r7_3() {
         let tmp = tempfile::tempdir().unwrap();
-        let master = workspace(tmp.path());
-        assert_eq!(crate::changes::branch_info(&master).pending_change, None);
-        testutil::checkout(&master, "change/pending-20261018T000000Z", true);
-        assert_eq!(crate::changes::branch_info(&master).pending_change, None);
-        intent(&master);
-        assert_eq!(
-            crate::changes::branch_info(&master).pending_change,
-            Some(format!("kata/{CHANGE}"))
+        let repo = testutil::repo(tmp.path(), "m");
+        testutil::commit_file(&repo, ".ai-sdlc.json", NAMED_S, "marker");
+        branch_holding(
+            &repo,
+            "feat/PROJ-123-password-reset",
+            &[
+                ("intent/s/2026-11-02-password-reset/intent.md", "x\n"),
+                (
+                    "intent/s/2026-11-02-password-reset/branch.md",
+                    "---\nbranch: feat/PROJ-123-password-reset\n---\n",
+                ),
+            ],
         );
+        assert_eq!(current_branch(&repo).as_deref(), Some("main"));
+        assert_eq!(
+            other_change_branches(&repo),
+            [other(
+                "feat/PROJ-123-password-reset",
+                "2026-11-02-password-reset"
+            )]
+        );
+    }
+
+    #[test]
+    fn listing_follows_the_table() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        testutil::commit_file(&repo, ".ai-sdlc.json", NAMED_S, "marker");
+        // Row 1: a plain change branch, whatever its tip holds.
+        branch_holding(&repo, "change/2026-11-01-a", &[]);
+        // Row 2: a pending branch an older Kata made, holding a new change without a record, is not listed.
+        branch_holding(
+            &repo,
+            "change/pending-20261102T000000Z",
+            &[("intent/s/2026-11-02-b/intent.md", "x\n")],
+        );
+        // Row 3: the system declares no naming.
+        branch_holding(
+            &repo,
+            "change/pending-20261102T000001Z",
+            &[("intent/u/2026-11-02-u/intent.md", "x\n")],
+        );
+        // Row 3: the change already has a record.
+        branch_holding(
+            &repo,
+            "change/pending-20261102T000002Z",
+            &[
+                ("intent/s/2026-11-02-r/intent.md", "x\n"),
+                (
+                    "intent/s/2026-11-02-r/branch.md",
+                    "---\nbranch: feat/r\n---\n",
+                ),
+            ],
+        );
+        // Row 3: a pending branch holding nothing.
+        branch_holding(&repo, "change/pending-20261102T000003Z", &[]);
+        // Row 4: another name whose record names exactly it.
+        branch_holding(
+            &repo,
+            "feat/c",
+            &[
+                ("intent/s/2026-11-03-c/intent.md", "x\n"),
+                (
+                    "intent/s/2026-11-03-c/branch.md",
+                    "---\nbranch: feat/c\n---\n",
+                ),
+            ],
+        );
+        // Row 5: another name whose record names a different branch, and one with no change.
+        branch_holding(
+            &repo,
+            "wip/d",
+            &[
+                ("intent/s/2026-11-04-d/intent.md", "x\n"),
+                (
+                    "intent/s/2026-11-04-d/branch.md",
+                    "---\nbranch: feat/other\n---\n",
+                ),
+            ],
+        );
+        branch_holding(&repo, "wip/e", &[]);
+        assert_eq!(
+            other_change_branches(&repo),
+            [
+                other("change/2026-11-01-a", "2026-11-01-a"),
+                other("feat/c", "2026-11-03-c"),
+            ]
+        );
+    }
+
+    #[test]
+    fn detached_head_has_no_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        git::run(&repo, &["checkout", "-q", "--detach"]).unwrap();
+        assert_eq!(current_branch(&repo), None);
+    }
+
+    #[test]
+    fn unborn_head_has_no_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("u");
+        std::fs::create_dir_all(&repo).unwrap();
+        git::run(&repo, &["init", "-q", "-b", "main"]).unwrap();
+        assert_eq!(current_branch(&repo), None);
+        assert_eq!(diff::base_branch(&repo), None);
+        assert!(other_change_branches(&repo).is_empty());
     }
 
     #[test]
@@ -287,10 +702,6 @@ base: \"main\"
         )
         .unwrap();
         assert_eq!(branch().unwrap(), "feat/X-1-new");
-        assert_eq!(
-            recorded_type(tmp.path(), "kata", "2026-11-01-c").as_deref(),
-            Some("feat")
-        );
         std::fs::write(
             dir.join("change.yml"),
             "branch: \"--bad\"
@@ -298,18 +709,5 @@ base: \"main\"
         )
         .unwrap();
         assert!(branch().unwrap_err().contains("not a usable branch name"));
-    }
-
-    #[test]
-    fn checkout_refuses_dirty() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = testutil::repo(tmp.path(), "m");
-        git::run(&repo, &["branch", "other"]).unwrap();
-        checkout(&repo, "other").unwrap();
-        assert_eq!(current_branch(&repo).as_deref(), Some("other"));
-        std::fs::write(repo.join("scratch.txt"), "x").unwrap();
-        let err = checkout(&repo, "main").unwrap_err();
-        assert!(matches!(&err, BranchError::Dirty(p) if p == &["scratch.txt"]));
-        assert_eq!(current_branch(&repo).as_deref(), Some("other"));
     }
 }

@@ -454,17 +454,6 @@ pub fn rows_of(findings: &[ReviewFinding], repos: &[String]) -> ReviewRows {
     }
 }
 
-/// The rows of the Review group for the latest review of `record`, repositories in the order of
-/// the record's commit map (by name). A record with no review has no rows.
-pub fn review_rows(record: &ReviewRecord) -> ReviewRows {
-    let repos: Vec<String> = record
-        .reviews
-        .last()
-        .map(|s| s.commits.keys().cloned().collect())
-        .unwrap_or_default();
-    review_rows_in(record, &repos)
-}
-
 /// The same rows with the repositories in the order of `repos` (the build's order).
 pub fn review_rows_in(record: &ReviewRecord, repos: &[String]) -> ReviewRows {
     let findings = latest(record).map(|(_, f)| f).unwrap_or_default();
@@ -1100,16 +1089,6 @@ mod tests {
             problems: vec![],
             master_moved: vec![],
         }
-    }
-
-    #[test]
-    fn review_rows_are_the_same_for_the_same_review() {
-        let (a, b) = (review_rows(&record()), review_rows(&record()));
-        assert_eq!(a, b);
-        assert_eq!(a.total, 4);
-        assert_eq!(a.counts, [count(High, 1), count(Medium, 1), count(Low, 2)]);
-        assert_eq!(keys(&a.groups[0].low), ["F1"]);
-        assert_eq!(keys(&a.groups[1].low), ["F4"]);
     }
 
     #[test]

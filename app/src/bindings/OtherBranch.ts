@@ -11,8 +11,4 @@ branch: string,
 /**
  * The change folder name the branch holds.
  */
-change: string, 
-/**
- * The change was created on a pending branch whose system declares naming and is waiting for a name.
- */
-needs_name: boolean, };
+change: string, };

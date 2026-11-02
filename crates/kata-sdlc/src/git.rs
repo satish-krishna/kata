@@ -1,7 +1,7 @@
 //! Repository reads, done with libgit2 so that reading works on a machine without git installed.
 //! A failed operation is a `GitError`: `args` names the git command the operation replaces and
 //! `stderr` carries libgit2's message.
-use git2::{ErrorCode, Index, ObjectType, Oid, StatusOptions, Tree};
+use git2::{ErrorCode, ObjectType, Oid, StatusOptions, Tree};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -64,13 +64,6 @@ impl LogEntry {
     }
 }
 
-/// What `Repo::commit_only` made.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommitOutcome {
-    /// The id of the new commit.
-    pub sha: String,
-}
-
 /// A repository opened for reading.
 pub struct Repo {
     inner: git2::Repository,
@@ -101,122 +94,6 @@ impl Repo {
             .and_then(|h| h.peel_to_commit())
             .map(|c| c.id().to_string())
             .map_err(|e| GitError::from_git2("rev-parse HEAD", e))
-    }
-
-    /// What `git add -- <rel>` followed by `git commit -m <message> --only -- <rel>` does, with the
-    /// repository's commit hooks: commits the working file `rel` (or its removal) on top of `HEAD`
-    /// and leaves every other staged entry alone.
-    ///
-    /// Nothing is written when the repository needs a program Kata cannot start, when a hook
-    /// refuses, or when the real index is locked; the hook's output is the error. A failing
-    /// `post-commit` hook is ignored, as git ignores it.
-    pub fn commit_only(&self, rel: &str, message: &str) -> Result<CommitOutcome, GitError> {
-        use kata_core::hooks::{needs_external, run_hook, Hook};
-        const ACTION: &str = "commit --only";
-        let repo = &self.inner;
-        let fail = |stderr: String| GitError {
-            args: ACTION.to_string(),
-            rejected_by_remote: false,
-            stderr,
-        };
-        let git_fail = |e: git2::Error| GitError::from_git2(ACTION, e);
-
-        if let Some(reason) = needs_external(repo, &[rel]) {
-            return Err(fail(reason));
-        }
-        // Held from here to the end, as git holds it, so two writers take turns.
-        let lock = IndexLock::acquire(&repo.path().join("index")).map_err(fail)?;
-        let stamp = kata_core::git::index_stamp(repo);
-        let workdir = repo
-            .workdir()
-            .ok_or_else(|| fail("this repository has no working folder".to_string()))?;
-        let head = repo.head().map_err(git_fail)?;
-        let head_name = head.name().unwrap_or("HEAD").to_string();
-        let parent = head.peel_to_commit().map_err(git_fail)?;
-        let head_tree = parent.tree().map_err(git_fail)?;
-        let in_head = match head_tree.get_path(Path::new(rel)) {
-            Ok(entry) => Some(entry.filemode() as u32),
-            Err(e) if e.code() == ErrorCode::NotFound => None,
-            Err(e) => return Err(git_fail(e)),
-        };
-
-        // The entry the commit holds for `rel`: the working file after the clean filters, or none
-        // when the file is gone.
-        let file = workdir.join(rel);
-        let new_entry = if file.is_file() {
-            let blob = hash_into_odb(repo, rel).map_err(git_fail)?;
-            Some((blob, in_head.unwrap_or_else(|| new_file_mode(&file))))
-        } else if in_head.is_some() {
-            None
-        } else {
-            return Err(fail(format!(
-                "pathspec '{rel}' did not match any file(s) known to git"
-            )));
-        };
-
-        // The index the hooks see and the commit is made from: `HEAD`'s tree with only `rel` replaced.
-        let temp_path = repo
-            .path()
-            .join(format!("kata-next-index-{}", std::process::id()));
-        let temp = TempIndex(temp_path);
-        let mut next = Index::open(&temp.0).map_err(git_fail)?;
-        next.read_tree(&head_tree).map_err(git_fail)?;
-        set_entry(&mut next, rel, new_entry).map_err(git_fail)?;
-        next.write().map_err(git_fail)?;
-        let env = [("GIT_INDEX_FILE", temp.0.as_os_str())];
-
-        let hook_fail = |f: kata_core::hooks::HookFailure| fail(f.message);
-        run_hook(repo, Hook::PreCommit, &[], None, &env).map_err(hook_fail)?;
-        // Git re-reads the index file after `pre-commit`, which may have restaged files in it
-        // (a formatter), and commits what it holds then.
-        next.read(true).map_err(git_fail)?;
-        let tree_id = next.write_tree_to(repo).map_err(git_fail)?;
-        let message_file = repo.path().join("COMMIT_EDITMSG");
-        let mut text = message.to_string();
-        if !text.is_empty() && !text.ends_with('\n') {
-            text.push('\n');
-        }
-        std::fs::write(&message_file, text).map_err(|e| fail(e.to_string()))?;
-        let arg = message_file.to_string_lossy().replace('\\', "/");
-        run_hook(repo, Hook::PrepareCommitMsg, &[&arg, "message"], None, &env)
-            .map_err(hook_fail)?;
-        run_hook(repo, Hook::CommitMsg, &[&arg], None, &env).map_err(hook_fail)?;
-        let edited = std::fs::read(&message_file).map_err(|e| fail(e.to_string()))?;
-        let message = stripspace(&String::from_utf8_lossy(&edited));
-        if message.is_empty() {
-            return Err(fail(
-                "Aborting commit due to empty commit message.".to_string(),
-            ));
-        }
-
-        let signature = repo.signature().map_err(|_| fail(unknown_identity()))?;
-        let tree = repo.find_tree(tree_id).map_err(git_fail)?;
-        let commit_id = repo
-            .commit(None, &signature, &signature, &message, &tree, &[&parent])
-            .map_err(git_fail)?;
-
-        // The new real index is written into the lock file first, then the branch moves, and only
-        // then does the index replace the old one: a failure before that leaves both as they were.
-        let mut real = Index::open(lock.path()).map_err(git_fail)?;
-        set_entry(&mut real, rel, new_entry).map_err(git_fail)?;
-        real.write().map_err(git_fail)?;
-        let subject = message.lines().next().unwrap_or("");
-        repo.reference_matching(
-            &head_name,
-            commit_id,
-            true,
-            parent.id(),
-            &format!("commit: {subject}"),
-        )
-        .map_err(git_fail)?;
-        lock.commit(&repo.path().join("index")).map_err(fail)?;
-        kata_core::git::smudge_racy_entries(repo, stamp);
-
-        // Git ignores a failing post-commit hook.
-        let _ = run_hook(repo, Hook::PostCommit, &[], None, &[]);
-        Ok(CommitOutcome {
-            sha: commit_id.to_string(),
-        })
     }
 
     /// The blob at `HEAD:<rel>` byte for byte; `None` when `HEAD` holds no file there.
@@ -375,11 +252,6 @@ impl Repo {
         Ok(tracked)
     }
 
-    /// The id (a blob or a tree) of `<rev>:<rel>`; `None` when `rev` holds nothing there.
-    pub fn blob_id_at(&self, rev: &str, rel: &str) -> Result<Option<String>, GitError> {
-        Ok(self.entry_at(rev, rel)?.map(|(id, _)| id.to_string()))
-    }
-
     /// The id and file mode of `<rev>:<rel>`.
     pub(crate) fn entry_at(&self, rev: &str, rel: &str) -> Result<Option<(Oid, i32)>, GitError> {
         let fail = |e| GitError::from_git2(&format!("rev-parse {rev}:{rel}"), e);
@@ -393,21 +265,6 @@ impl Repo {
             Err(e) if e.code() == ErrorCode::NotFound => Ok(None),
             Err(e) => Err(fail(e)),
         }
-    }
-
-    /// Whether `rev` names a commit.
-    pub(crate) fn resolves_to_commit(&self, rev: &str) -> bool {
-        self.inner
-            .revparse_single(rev)
-            .and_then(|o| o.peel_to_commit())
-            .is_ok()
-    }
-
-    /// The commits reachable from `HEAD` but not from `rev` that change `pathspec`, newest first,
-    /// with git's default history simplification.
-    pub fn commits_since(&self, rev: &str, pathspec: &str) -> Result<Vec<String>, GitError> {
-        self.simplified_since(rev, &[pathspec], &[])
-            .map(|ids| ids.iter().map(Oid::to_string).collect())
     }
 
     /// How many commits `rev-list --count <rev>..HEAD -- <include> <:(exclude) each of exclude>` counts.
@@ -666,11 +523,6 @@ impl Repo {
             .map_err(fail)
     }
 
-    /// What `git rev-list <base>..<head>` prints, newest first as git prints it.
-    pub fn revs_between(&self, base: &str, head: &str) -> Result<Vec<String>, GitError> {
-        self.rev_list(&[format!("{base}..{head}")])
-    }
-
     /// The commits `git rev-list <revs>` lists, newest first, for revision arguments such as
     /// `tip`, `^x` and `a..b`.
     fn walk(&self, revs: &[String]) -> Result<Vec<Oid>, GitError> {
@@ -732,11 +584,6 @@ impl Repo {
         Ok(ordered)
     }
 
-    /// What `git rev-list <revs>` prints for revision arguments such as `tip`, `^x` and `a..b`.
-    pub fn rev_list(&self, revs: &[String]) -> Result<Vec<String>, GitError> {
-        Ok(self.walk(revs)?.iter().map(Oid::to_string).collect())
-    }
-
     /// What `git log --format=%h%x1f%B <revs>` prints, one entry per commit, newest first.
     pub fn log_messages(&self, revs: &[String]) -> Result<Vec<LogEntry>, GitError> {
         let fail = |e| GitError::from_git2(&format!("log {}", revs.join(" ")), e);
@@ -752,15 +599,6 @@ impl Repo {
             })
             .collect::<Result<Vec<_>, git2::Error>>()
             .map_err(fail)
-    }
-
-    /// What `git remote get-url <name>` prints (the url with the `url.<base>.insteadOf` rewrites
-    /// applied); `None` when the remote does not exist.
-    pub fn remote_url(&self, name: &str) -> Option<String> {
-        let remote = self.inner.find_remote(name).ok()?;
-        let url = remote.url().ok()?.to_string();
-        let config = self.inner.config().ok()?;
-        Some(rewritten(&config, &url, "insteadof").unwrap_or(url))
     }
 
     /// What `git hash-object -- <rel>` prints: the blob id of the working tree file after the
@@ -849,79 +687,6 @@ impl Repo {
             .map_err(|e| GitError::from_git2(&action, e))?;
         let refname = format!("refs/heads/{name}");
         self.switch_to(&action, &target, &refname)
-    }
-
-    /// What `git checkout -q -b <name> <at>` does: creates the branch at `at`, switches to it, and
-    /// runs `post-checkout`. A start point that is a remote-tracking branch becomes the new
-    /// branch's upstream, as git sets it up.
-    pub fn create_branch(&self, name: &str, at: &str) -> Result<(), GitError> {
-        let action = format!("checkout -q -b {name} {at}");
-        let repo = &self.inner;
-        let git_fail = |e: git2::Error| GitError::from_git2(&action, e);
-        let start = repo
-            .revparse_single(at)
-            .and_then(|o| o.peel_to_commit())
-            .map_err(git_fail)?;
-        let mut branch = repo.branch(name, &start, false).map_err(git_fail)?;
-        let refname = format!("refs/heads/{name}");
-        if let Err(e) = self.switch_to(&action, &start, &refname) {
-            // The switch was refused, so the branch made for it must not stay behind.
-            let _ = branch.delete();
-            return Err(e);
-        }
-        if repo.find_branch(at, git2::BranchType::Remote).is_ok() {
-            branch.set_upstream(Some(at)).map_err(git_fail)?;
-        }
-        Ok(())
-    }
-
-    /// What `git branch -m <old> <new>` does. Runs no hook.
-    pub fn rename_branch(&self, old: &str, new: &str) -> Result<(), GitError> {
-        let action = format!("branch -m {old} {new}");
-        let fail = |e| GitError::from_git2(&action, e);
-        let mut branch = self
-            .inner
-            .find_branch(old, git2::BranchType::Local)
-            .map_err(fail)?;
-        let was_current = branch.is_head();
-        branch.rename(new, false).map_err(fail)?;
-        if was_current {
-            self.fix_head_reflog_after_rename(old, new);
-        }
-        Ok(())
-    }
-
-    /// libgit2 logs the move of `HEAD` in a rename with an empty message; git's says what happened.
-    fn fix_head_reflog_after_rename(&self, old: &str, new: &str) {
-        let repo = &self.inner;
-        let (Ok(mut log), Ok(signature), Ok(head)) = (
-            repo.reflog("HEAD"),
-            repo.signature(),
-            repo.head().and_then(|h| h.peel_to_commit()),
-        ) else {
-            return;
-        };
-        let newest_is_blank = log
-            .get(0)
-            .is_some_and(|e| e.message().ok().flatten().is_none_or(str::is_empty));
-        if !newest_is_blank || log.remove(0, true).is_err() {
-            return;
-        }
-        let message = format!("Branch: renamed refs/heads/{old} to refs/heads/{new}");
-        if log.append(head.id(), &signature, Some(&message)).is_ok() {
-            let _ = log.write();
-        }
-    }
-
-    /// What `git branch -D <name>` does. Runs no hook.
-    pub fn delete_branch(&self, name: &str) -> Result<(), GitError> {
-        let action = format!("branch -D {name}");
-        let fail = |e| GitError::from_git2(&action, e);
-        let mut branch = self
-            .inner
-            .find_branch(name, git2::BranchType::Local)
-            .map_err(fail)?;
-        branch.delete().map_err(fail)
     }
 
     /// What `git restore --staged --worktree -- <paths>` does: each file goes back to its content
@@ -1186,45 +951,6 @@ impl Repo {
         names
     }
 
-    /// What `git diff --name-only <base>...HEAD` prints: the files that differ between the merge
-    /// base of `base` and `HEAD` and `HEAD` itself, without rename detection.
-    pub(crate) fn files_changed_from_merge_base(
-        &self,
-        base: &str,
-    ) -> Result<Vec<String>, GitError> {
-        let fail = |e| GitError::from_git2(&format!("diff --name-only {base}...HEAD"), e);
-        let base_id = self
-            .inner
-            .revparse_single(base)
-            .and_then(|o| o.peel_to_commit())
-            .map_err(fail)?;
-        let head = self
-            .inner
-            .head()
-            .and_then(|h| h.peel_to_commit())
-            .map_err(fail)?;
-        let fork = self
-            .inner
-            .merge_base(base_id.id(), head.id())
-            .map_err(fail)?;
-        let from = self
-            .inner
-            .find_commit(fork)
-            .and_then(|c| c.tree())
-            .map_err(fail)?;
-        let diff = self
-            .inner
-            .diff_tree_to_tree(Some(&from), Some(&head.tree().map_err(fail)?), None)
-            .map_err(fail)?;
-        let mut files: Vec<String> = diff
-            .deltas()
-            .filter_map(|d| d.new_file().path().or(d.old_file().path()).map(utf8))
-            .collect();
-        files.sort();
-        files.dedup();
-        Ok(files)
-    }
-
     /// The files the commits in `since..HEAD` changed, without renames, merges left out as
     /// `git log --name-only` leaves them out.
     pub(crate) fn files_changed_since(&self, since: &str) -> Result<Vec<String>, GitError> {
@@ -1300,104 +1026,6 @@ pub(crate) fn trimmed_text(bytes: &[u8]) -> String {
     text.strip_suffix('\r').unwrap_or(text).to_string()
 }
 
-/// The `index.lock` file git takes before it changes the index. It starts as a copy of the index, is
-/// removed when dropped, and `commit` makes it the index.
-struct IndexLock {
-    path: std::path::PathBuf,
-    live: bool,
-}
-
-impl IndexLock {
-    fn acquire(index: &Path) -> Result<IndexLock, String> {
-        use std::io::Write;
-        let mut name = index.as_os_str().to_owned();
-        name.push(".lock");
-        let path = std::path::PathBuf::from(name);
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::AlreadyExists {
-                    format!(
-                        "Unable to create '{}': File exists.
-
-Another git process seems to be running in this repository. Make sure all processes are terminated then try again. If it still fails, a git process may have crashed in this repository earlier: remove the file manually to continue.",
-                        path.display()
-                    )
-                } else {
-                    format!("Unable to create '{}': {e}", path.display())
-                }
-            })?;
-        let lock = IndexLock { path, live: true };
-        let current = std::fs::read(index).unwrap_or_default();
-        file.write_all(&current).map_err(|e| e.to_string())?;
-        Ok(lock)
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// Makes the lock file the index.
-    fn commit(mut self, index: &Path) -> Result<(), String> {
-        std::fs::rename(&self.path, index)
-            .map_err(|e| format!("the commit was made, but the index could not be updated: {e}"))?;
-        self.live = false;
-        Ok(())
-    }
-}
-
-impl Drop for IndexLock {
-    fn drop(&mut self) {
-        if self.live {
-            let _ = std::fs::remove_file(&self.path);
-        }
-    }
-}
-
-/// The temporary index a commit's hooks see; it is removed when dropped, whatever happened.
-struct TempIndex(std::path::PathBuf);
-
-impl Drop for TempIndex {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-        let mut lock = self.0.clone().into_os_string();
-        lock.push(".lock");
-        let _ = std::fs::remove_file(lock);
-    }
-}
-
-/// Writes the working file `rel` into the object database through the clean filters
-/// (`core.autocrlf`, `.gitattributes`), as `git add` does, and returns the blob id.
-fn hash_into_odb(repo: &git2::Repository, rel: &str) -> Result<Oid, git2::Error> {
-    use git2::Binding;
-    let path = std::ffi::CString::new(rel)
-        .map_err(|_| git2::Error::from_str("path contains a NUL byte"))?;
-    let mut oid: libgit2_sys::git_oid = unsafe { std::mem::zeroed() };
-    // SAFETY: the repository pointer lives as long as `repo`, the path is a NUL-terminated string
-    // that outlives the call, and `oid` is a valid output location.
-    let code =
-        unsafe { libgit2_sys::git_blob_create_fromworkdir(&mut oid, repo.raw(), path.as_ptr()) };
-    if code < 0 {
-        return Err(git2::Error::last_error(code));
-    }
-    Oid::from_bytes(&oid.id)
-}
-
-/// The mode of a file `HEAD` does not have yet: executable only where the file system says so.
-fn new_file_mode(file: &Path) -> u32 {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if std::fs::metadata(file).is_ok_and(|m| m.permissions().mode() & 0o111 != 0) {
-            return 0o100755;
-        }
-    }
-    let _ = file;
-    0o100644
-}
-
 /// Sets `rel`'s entry in `index` to the blob and mode given, or removes it. The stat fields stay
 /// zero, so git compares the file's content the next time it looks.
 fn set_entry(
@@ -1425,273 +1053,11 @@ fn set_entry(
     }
 }
 
-/// git's `whitespace` cleanup of a commit message: trailing whitespace removed from every line,
-/// leading and trailing blank lines removed, runs of blank lines collapsed to one, a final newline.
-/// Comment lines are kept, as they are for `git commit -m`.
-fn stripspace(message: &str) -> String {
-    let mut out = String::new();
-    let mut blank_pending = false;
-    for line in message.split('\n') {
-        let line = line.trim_end_matches([' ', '\t', '\r', '\n', '\x0b', '\x0c']);
-        if line.is_empty() {
-            blank_pending = !out.is_empty();
-            continue;
-        }
-        if blank_pending {
-            out.push('\n');
-            blank_pending = false;
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
-
-/// What git says when it has no name or email for the author.
-fn unknown_identity() -> String {
-    "Author identity unknown\n\n*** Please tell me who you are.\n\nRun\n\n  git config --global user.email \"you@example.com\"\n  git config --global user.name \"Your Name\"\n\nto set your account's default identity.\nOmit --global to set the identity only in this repository.\n\nfatal: unable to auto-detect email address".to_string()
-}
-
 /// Test fixtures build repositories with the command line.
 #[cfg(test)]
 pub use crate::testutil::{run, run_bytes};
 
-/// A request for a push credential, as the push saw it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CredentialAsk {
-    /// The URL the push went to.
-    pub url: String,
-    /// Whether a token was sent.
-    pub sent: bool,
-}
-
-/// The user name and token a push to `url` may carry: only an HTTPS URL whose host is the
-/// credential's own. Any other address gets nothing.
-pub fn push_login<'a>(
-    url: &str,
-    credential: Option<&'a crate::github::Credential>,
-) -> Option<(&'static str, &'a str)> {
-    let credential = credential?;
-    let (scheme, _) = url.trim().split_once("://")?;
-    if !scheme.eq_ignore_ascii_case("https") {
-        return None;
-    }
-    let host = crate::publish::origin_host(url)?;
-    (host == credential.host().to_ascii_lowercase()).then(|| ("x-access-token", credential.token()))
-}
-
-/// The URL `url` becomes under the `url.<base>.<kind>` rewrites, longest matching prefix first.
-fn rewritten(config: &git2::Config, url: &str, kind: &str) -> Option<String> {
-    let mut best: Option<(usize, String)> = None;
-    let mut entries = config.entries(Some(&format!(r"^url\..*\.{kind}$"))).ok()?;
-    while let Some(Ok(entry)) = entries.next() {
-        let (Ok(key), Ok(prefix)) = (entry.name(), entry.value()) else {
-            continue;
-        };
-        let Some(base) = key
-            .strip_prefix("url.")
-            .and_then(|k| k.strip_suffix(&format!(".{kind}")))
-        else {
-            continue;
-        };
-        if !prefix.is_empty()
-            && url.starts_with(prefix)
-            && best.as_ref().is_none_or(|(len, _)| prefix.len() > *len)
-        {
-            best = Some((prefix.len(), format!("{base}{}", &url[prefix.len()..])));
-        }
-    }
-    best.map(|(_, rewritten)| rewritten)
-}
-
-/// Whether a push refusal says the remote's branch holds work this one does not.
-fn is_remote_rejection(message: &str) -> bool {
-    let message = message.to_ascii_lowercase();
-    [
-        "fast-forward",
-        "fastforward",
-        "fetch first",
-        "not present locally",
-    ]
-    .iter()
-    .any(|m| message.contains(m))
-}
-
-impl Repo {
-    /// Whether `sha` is the tip of local `branch` or one of its ancestors. A commit this
-    /// repository does not have, or a branch it does not have, is not.
-    pub fn branch_contains(&self, branch: &str, sha: &str) -> bool {
-        let Ok(tip) = self.inner.refname_to_id(&format!("refs/heads/{branch}")) else {
-            return false;
-        };
-        let Ok(id) = Oid::from_str(sha) else {
-            return false;
-        };
-        if self.inner.find_commit(id).is_err() {
-            return false;
-        }
-        id == tip || self.inner.graph_descendant_of(tip, id).unwrap_or(false)
-    }
-
-    /// The address a push to `name` goes to: its push URL (or URL) under the `pushInsteadOf`
-    /// rewrites, then the `insteadOf` ones when no push rewrite applies, as git reads it.
-    fn push_url(&self, name: &str) -> Option<String> {
-        let remote = self.inner.find_remote(name).ok()?;
-        let config = self.inner.config().ok()?;
-        let explicit = remote
-            .pushurl()
-            .ok()
-            .flatten()
-            .filter(|u| !u.is_empty())
-            .map(String::from);
-        let url = explicit
-            .clone()
-            .or_else(|| remote.url().ok().map(String::from))?;
-        let push = rewritten(&config, &url, "pushinsteadof");
-        Some(match (push, explicit) {
-            (Some(push), _) => push,
-            (None, Some(url)) => url,
-            (None, None) => rewritten(&config, &url, "insteadof").unwrap_or(url),
-        })
-    }
-
-    /// What `git push -u <remote> <branch>` does, with the repository's `pre-push` hook: the
-    /// hook runs first and a failure stops the push with its output. A token is sent only to the
-    /// host it belongs to; an SSH remote uses the engineer's SSH agent and never asks for a
-    /// passphrase.
-    pub fn push_branch(
-        &self,
-        remote: &str,
-        branch: &str,
-        credential: Option<&crate::github::Credential>,
-    ) -> Result<(), GitError> {
-        self.push_branch_with(remote, branch, credential, &mut |_| {})
-    }
-
-    /// `push_branch`, reporting each request for a credential to `probe`.
-    pub(crate) fn push_branch_with(
-        &self,
-        remote: &str,
-        branch: &str,
-        credential: Option<&crate::github::Credential>,
-        probe: &mut dyn FnMut(CredentialAsk),
-    ) -> Result<(), GitError> {
-        use git2::{Cred, CredentialType, PushOptions, RemoteCallbacks};
-        use kata_core::hooks::{run_hook, Hook};
-        let action = format!("push -u {remote} {branch}");
-        let fail = |stderr: String| GitError {
-            args: action.clone(),
-            rejected_by_remote: false,
-            stderr,
-        };
-        let git_fail = |e: git2::Error| GitError::from_git2(&action, e);
-
-        let local_ref = format!("refs/heads/{branch}");
-        let local = self
-            .inner
-            .refname_to_id(&local_ref)
-            .map_err(|_| fail(format!("src refspec {branch} does not match any")))?;
-        let url = self
-            .push_url(remote)
-            .ok_or_else(|| fail(format!("'{remote}' does not appear to be a git repository")))?;
-        let tracking = format!("refs/remotes/{remote}/{branch}");
-        let known = self
-            .inner
-            .refname_to_id(&tracking)
-            .map_or_else(|_| "0".repeat(40), |id| id.to_string());
-
-        let line = format!("{local_ref} {local} {local_ref} {known}\n");
-        run_hook(
-            &self.inner,
-            Hook::PrePush,
-            &[remote, &url],
-            Some(line.as_bytes()),
-            &[],
-        )
-        .map_err(|f| fail(f.message))?;
-
-        let mut rejected: Option<String> = None;
-        let mut attempts = 0u32;
-        let ssh_host: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
-        {
-            let mut callbacks = RemoteCallbacks::new();
-            callbacks.credentials(|asked_url, user, allowed| {
-                attempts += 1;
-                if attempts > 2 {
-                    return Err(git2::Error::from_str("the sign-in was not accepted"));
-                }
-                if allowed.contains(CredentialType::USER_PASS_PLAINTEXT) {
-                    return match push_login(asked_url, credential) {
-                        Some((name, token)) => {
-                            probe(CredentialAsk {
-                                url: asked_url.to_string(),
-                                sent: true,
-                            });
-                            Cred::userpass_plaintext(name, token)
-                        }
-                        None => {
-                            probe(CredentialAsk {
-                                url: asked_url.to_string(),
-                                sent: false,
-                            });
-                            Err(git2::Error::from_str(
-                                "Kata has no GitHub sign-in for this host",
-                            ))
-                        }
-                    };
-                }
-                if allowed.contains(CredentialType::SSH_KEY) {
-                    *ssh_host.borrow_mut() = crate::publish::origin_host(asked_url);
-                    return Cred::ssh_key_from_agent(user.unwrap_or("git"));
-                }
-                Err(git2::Error::from_str("no way to sign in to this host"))
-            });
-            callbacks.push_update_reference(|refname, status| {
-                if let Some(message) = status {
-                    rejected = Some(format!("{refname}: {message}"));
-                }
-                Ok(())
-            });
-            let mut options = PushOptions::new();
-            options.remote_callbacks(callbacks);
-            // libgit2 does not read `pushInsteadOf` for a plain URL, so push to the address worked out above.
-            let mut remote_handle = self.inner.remote_anonymous(&url).map_err(git_fail)?;
-            let refspec = format!("{local_ref}:{local_ref}");
-            if let Err(e) = remote_handle.push(&[refspec.as_str()], Some(&mut options)) {
-                if e.class() == git2::ErrorClass::Ssh || ssh_host.borrow().is_some() {
-                    let host = ssh_host
-                        .borrow()
-                        .clone()
-                        .unwrap_or_else(|| "this host".into());
-                    return Err(fail(format!(
-                        "Kata could not reach an SSH agent for {host}. Use an HTTPS remote or start the OpenSSH agent."
-                    )));
-                }
-                let mut err = git_fail(e);
-                err.rejected_by_remote = is_remote_rejection(&err.stderr);
-                return Err(err);
-            }
-        }
-        if let Some(message) = rejected {
-            let mut err = fail(message);
-            err.rejected_by_remote = is_remote_rejection(&err.stderr);
-            return Err(err);
-        }
-
-        // As `-u` does: the remote-tracking branch moves with the push, and the branch follows it.
-        self.inner
-            .reference(&tracking, local, true, "update by push")
-            .map_err(git_fail)?;
-        let mut config = self.inner.config().map_err(git_fail)?;
-        config
-            .set_str(&format!("branch.{branch}.remote"), remote)
-            .map_err(git_fail)?;
-        config
-            .set_str(&format!("branch.{branch}.merge"), &local_ref)
-            .map_err(git_fail)?;
-        Ok(())
-    }
-}
+impl Repo {}
 
 #[cfg(test)]
 mod tests {

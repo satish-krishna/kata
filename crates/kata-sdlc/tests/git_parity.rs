@@ -4,9 +4,8 @@
 //! repositories itself.
 #![allow(clippy::disallowed_methods)]
 use kata_sdlc::branch;
-use kata_sdlc::changes::{other_change_branches, OtherBranch};
+use kata_sdlc::branch::{other_change_branches, OtherBranch};
 use kata_sdlc::git::{Repo, StatusEntry};
-use kata_sdlc::pins;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -526,38 +525,6 @@ fn documents_status_leaves_the_index_alone() {
 }
 
 #[test]
-fn documents_pin_holds_equals_git_diff_quiet() {
-    for (name, fx) in all_fixtures() {
-        let repo = open(&fx);
-        let mut pins_to_try: Vec<String> = fx.all_commits();
-        pins_to_try.extend(
-            [
-                "",
-                "-x",
-                "--output=pinned.txt",
-                "deadbeef",
-                "HEAD",
-                "main",
-                "0000000",
-            ]
-            .iter()
-            .map(|s| s.to_string()),
-        );
-        for pin in &pins_to_try {
-            for rel in candidate_paths() {
-                let valid = !pin.is_empty() && !pin.starts_with('-');
-                let want =
-                    valid && cli(&fx.path, &["diff", "--quiet", pin, "HEAD", "--", &rel]).is_ok();
-                let got = pins::holds(&repo, Some(pin), &rel);
-                assert_eq!(want, got, "{name}: pin {pin:?} {rel}");
-            }
-        }
-        assert!(!pins::holds(&repo, None, "README.md"), "{name}");
-        assert!(!fx.path.join("pinned.txt").exists());
-    }
-}
-
-#[test]
 fn documents_count_since_equals_rev_list_count() {
     for (name, fx) in all_fixtures() {
         let repo = open(&fx);
@@ -584,47 +551,18 @@ fn documents_count_since_equals_rev_list_count() {
                 (Err(_), Err(_)) => {}
                 (want, got) => panic!("{name}: {sha}: git {want:?} / typed {got:?}"),
             }
-            // The listing and the count are the same walk.
-            if let (Ok(count), Ok(listed)) = (
-                repo.count_since(sha, &["src"], &[]),
-                repo.commits_since(sha, "src"),
-            ) {
-                assert_eq!(count as usize, listed.len(), "{name}: {sha}");
-                let want = cli(&fx.path, &["rev-list", &range, "--", "src"]).unwrap();
-                let want: Vec<String> = String::from_utf8_lossy(&want)
-                    .lines()
-                    .map(str::to_string)
-                    .collect();
-                let mut a = want.clone();
-                let mut b = listed.clone();
-                a.sort();
-                b.sort();
-                assert_eq!(a, b, "{name}: {sha} listing");
-            }
         }
     }
 }
 
 #[test]
-fn documents_blob_ids_and_head_equal_rev_parse() {
+fn documents_head_equals_rev_parse() {
     for (name, fx) in all_fixtures() {
         let repo = open(&fx);
         if name != "unborn" {
             assert_eq!(repo.head_sha().unwrap(), fx.head(), "{name}");
         } else {
             assert!(repo.head_sha().is_err());
-        }
-        for rev in ["HEAD", "main"] {
-            for rel in candidate_paths() {
-                let want = cli(&fx.path, &["rev-parse", &format!("{rev}:{rel}")])
-                    .ok()
-                    .map(|o| String::from_utf8_lossy(&o).trim().to_string());
-                let valid = cli(&fx.path, &["rev-parse", "--verify", "-q", rev]).is_ok();
-                match repo.blob_id_at(rev, &rel) {
-                    Ok(got) => assert_eq!(want, got, "{name}: {rev}:{rel}"),
-                    Err(_) => assert!(!valid, "{name}: {rev}:{rel}"),
-                }
-            }
         }
     }
 }
@@ -673,7 +611,7 @@ fn documents_branch_reads_equal_the_cli() {
                 .is_ok()
             })
             .map(str::to_string);
-        assert_eq!(base::base_branch(&fx.path), default, "{name}");
+        assert_eq!(diff::base_branch(&fx.path), default, "{name}");
         let listed = cli(
             &fx.path,
             &["branch", "--list", "change/*", "--format=%(refname:short)"],
@@ -689,7 +627,6 @@ fn documents_branch_reads_equal_the_cli() {
             .map(|c| OtherBranch {
                 branch: format!("change/{c}"),
                 change: c.to_string(),
-                needs_name: false,
             })
             .collect();
         assert_eq!(other_change_branches(&fx.path), others, "{name}");
@@ -702,10 +639,7 @@ fn documents_branch_reads_equal_the_cli() {
 // computed with the command line the way the Workbench did before it read repositories itself.
 // ---------------------------------------------------------------------------------------------
 
-use kata_sdlc::base::{self, BaseError};
-use kata_sdlc::commits;
-use kata_sdlc::diff::{self, ChangeStatus, ChangedFile, FilePair, Part};
-use kata_sdlc::publish;
+use kata_sdlc::diff::{self, BaseError, ChangeStatus, ChangedFile, FilePair, Part};
 use kata_sdlc::snapshot;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
@@ -782,25 +716,6 @@ fn cli_base(dir: &Path, rev: &str) -> Option<(String, String, String)> {
     };
     let merge_base = text(&cli(dir, &["merge-base", rev, &reference]).ok()?);
     Some((base, reference, merge_base))
-}
-
-/// Revision arguments naming the work on a change branch, the old way.
-fn cli_work_revs(dir: &Path, rev: &str) -> Option<Vec<String>> {
-    let (base, ..) = cli_base(dir, rev)?;
-    let mut revs = vec![rev.to_string()];
-    if cli_ok(dir, &format!("refs/heads/{base}")) {
-        revs.push(format!("^{base}"));
-    }
-    if cli_ok(dir, &format!("refs/remotes/origin/{base}")) {
-        revs.push(format!("^origin/{base}"));
-    }
-    Some(revs)
-}
-
-fn cli_count(dir: &Path, revs: &[String]) -> u32 {
-    let mut args = vec!["rev-list", "--count"];
-    args.extend(revs.iter().map(String::as_str));
-    text(&cli(dir, &args).unwrap()).parse().unwrap()
 }
 
 /// Fixtures with a remote added in each way, for the base branch.
@@ -893,18 +808,6 @@ fn comparisons_git_reads_equal_the_cli() {
                 want,
                 "{name}: merge-base HEAD {other}"
             );
-            if let Some(mb) = want {
-                let range = format!("{mb}..HEAD");
-                let listed: Vec<String> = text(&cli(dir, &["rev-list", &range]).unwrap())
-                    .lines()
-                    .map(str::to_string)
-                    .collect();
-                assert_eq!(
-                    repo.revs_between(&mb, "HEAD").unwrap(),
-                    listed,
-                    "{name}: {range}"
-                );
-            }
         }
         if cli_ok(dir, "HEAD") {
             for revs in [
@@ -915,12 +818,9 @@ fn comparisons_git_reads_equal_the_cli() {
             ] {
                 let mut args = vec!["rev-list"];
                 args.extend(revs.iter().map(String::as_str));
-                let Ok(out) = cli(dir, &args) else {
-                    assert!(repo.rev_list(&revs).is_err(), "{name}: {revs:?}");
+                if cli(dir, &args).is_err() {
                     continue;
-                };
-                let want: Vec<String> = text(&out).lines().map(str::to_string).collect();
-                assert_eq!(repo.rev_list(&revs).unwrap(), want, "{name}: {revs:?}");
+                }
                 // log_messages: the short id and the message, commit by commit.
                 let mut args = vec!["log", "--format=%h%x1f%B%x1e"];
                 args.extend(revs.iter().map(String::as_str));
@@ -980,37 +880,7 @@ fn comparisons_git_reads_equal_the_cli() {
                 );
             }
         }
-        let url = cli(dir, &["remote", "get-url", "origin"])
-            .ok()
-            .map(|o| text(&o));
-        assert_eq!(repo.remote_url("origin"), url, "{name}: remote_url");
     }
-}
-
-#[test]
-fn comparisons_remote_url_applies_url_rewrites() {
-    let fx = Fx::new();
-    fx.commit("README.md", "init\n");
-    git(&fx.path, &["remote", "add", "origin", "gh:acme/app.git"]);
-    git(
-        &fx.path,
-        &["config", "url.https://github.com/.insteadOf", "gh:"],
-    );
-    git(
-        &fx.path,
-        &[
-            "config",
-            "url.ssh://push/.pushInsteadOf",
-            "https://github.com/",
-        ],
-    );
-    let want = text(&cli(&fx.path, &["remote", "get-url", "origin"]).unwrap());
-    assert_eq!(want, "https://github.com/acme/app.git");
-    assert_eq!(
-        open(&fx).remote_url("origin").as_deref(),
-        Some(want.as_str())
-    );
-    assert_eq!(open(&fx).remote_url("nope"), None);
 }
 
 #[test]
@@ -1066,11 +936,11 @@ fn comparisons_hash_of_equals_hash_object() {
 }
 
 #[test]
-fn comparisons_base_branch_and_commits_ahead() {
+fn comparisons_base_branch_and_base_info() {
     for (name, fx) in base_fixtures() {
         let dir = &fx.path;
         let want = cli_base(dir, "HEAD");
-        match base::base_info(dir) {
+        match diff::base_info(dir) {
             Ok(info) => {
                 let (b, r, m) = want
                     .clone()
@@ -1084,31 +954,7 @@ fn comparisons_base_branch_and_commits_ahead() {
             Err(e) => assert!(want.is_none(), "{name}: typed {e}, cli {want:?}"),
         }
         if let Some((b, ..)) = &want {
-            assert_eq!(base::base_branch(dir).as_ref(), Some(b), "{name}");
-        }
-        match (&want, base::commits_ahead(dir)) {
-            (Some((_, _, mb)), Ok(n)) => {
-                assert_eq!(n, cli_count(dir, &[format!("{mb}..HEAD")]), "{name}: ahead");
-            }
-            (None, Err(_)) => {}
-            (w, g) => panic!("{name}: commits_ahead cli {w:?} typed {g:?}"),
-        }
-        if let Some(revs) = cli_work_revs(dir, "HEAD") {
-            assert_eq!(
-                base::build_work_revs(dir, "HEAD").unwrap(),
-                revs,
-                "{name}: work revs"
-            );
-            assert_eq!(
-                base::commits_ahead_of_local_base(dir, "HEAD").unwrap(),
-                cli_count(dir, &revs),
-                "{name}: ahead of local base"
-            );
-        } else {
-            assert!(
-                base::commits_ahead_of_local_base(dir, "HEAD").is_err(),
-                "{name}"
-            );
+            assert_eq!(diff::base_branch(dir).as_ref(), Some(b), "{name}");
         }
     }
     let _ = BaseError::Unresolved(String::new());
@@ -1448,262 +1294,7 @@ fn comparisons_commit_files_equal_git_log() {
     }
 }
 
-// ---- which commits break the commit rules, which repositories a change touched ----
-
-const CHANGE: &str = "2026-10-19-c";
-const GOOD: &str = "feat(s): good\n\nGenerated-By: ai-sdlc";
-
-struct Workspace {
-    _tmp: tempfile::TempDir,
-    folder: PathBuf,
-}
-
-impl Workspace {
-    fn repo(&self, name: &str) -> Fx {
-        let path = self.folder.join(name);
-        std::fs::create_dir_all(&path).unwrap();
-        git(&path, &["init", "-q", "-b", "main"]);
-        git(&path, &["config", "user.name", "Test"]);
-        git(&path, &["config", "user.email", "test@example.com"]);
-        git(&path, &["config", "commit.gpgsign", "false"]);
-        git(&path, &["config", "core.autocrlf", "false"]);
-        Fx {
-            _tmp: tempfile::tempdir().unwrap(),
-            path,
-        }
-    }
-}
-
-fn commit_with(fx: &Fx, rel: &str, message: &str) {
-    fx.write(rel, &format!("{message}\n"));
-    git(&fx.path, &["add", "--", rel]);
-    git(
-        &fx.path,
-        &["commit", "-q", "--cleanup=verbatim", "-m", message],
-    );
-}
-
-fn workspace() -> Workspace {
-    let tmp = tempfile::tempdir().unwrap();
-    let folder = tmp.path().to_path_buf();
-    let ws = Workspace { _tmp: tmp, folder };
-    let branch = format!("change/{CHANGE}");
-    let m = ws.repo("m");
-    m.commit(
-        ".ai-sdlc.json",
-        "{\"version\":1,\"systems\":{\"s\":{\"repos\":[\"app\",\"api\",\"lib\",\"solo\",\"rebased\"]}}}\n",
-    );
-    m.commit(
-        &format!("intent/s/{CHANGE}/intent.md"),
-        "---\ntitle: T\n---\nbody\n",
-    );
-    add_origin(&m, false);
-    git(&m.path, &["checkout", "-q", "-b", &branch]);
-    commit_with(&m, &format!("intent/s/{CHANGE}/plan.md"), GOOD);
-
-    // Commits, some breaking the rules, and origin/HEAD set.
-    let app = ws.repo("app");
-    app.commit("README.md", "init\n");
-    add_origin(&app, true);
-    git(&app.path, &["checkout", "-q", "-b", &branch]);
-    commit_with(&app, "a.txt", GOOD);
-    commit_with(&app, "b.txt", "fix: tweak");
-    commit_with(
-        &app,
-        "c.txt",
-        "feat(other): wrong scope\n\nGenerated-By: ai-sdlc",
-    );
-    commit_with(&app, "d.txt", "feat(s): no trailer\n\nbody");
-
-    // A branch without a commit of its own.
-    let api = ws.repo("api");
-    api.commit("README.md", "init\n");
-    add_origin(&api, false);
-    git(&api.path, &["checkout", "-q", "-b", &branch]);
-
-    // No change branch at all.
-    let lib = ws.repo("lib");
-    lib.commit("README.md", "init\n");
-
-    // No remote; local main moved on after branching.
-    let solo = ws.repo("solo");
-    solo.commit("README.md", "init\n");
-    git(&solo.path, &["checkout", "-q", "-b", &branch]);
-    commit_with(&solo, "s.txt", "chore(s): ok\n\nGenerated-By: ai-sdlc");
-    git(&solo.path, &["checkout", "-q", "main"]);
-    solo.commit("later.txt", "later\n");
-    git(&solo.path, &["checkout", "-q", &branch]);
-
-    // Rebased onto commits others pushed to origin/main.
-    let rebased = ws.repo("rebased");
-    rebased.commit("README.md", "init\n");
-    add_origin(&rebased, false);
-    git(&rebased.path, &["checkout", "-q", "-b", &branch]);
-    commit_with(&rebased, "r.txt", "docs: loose");
-    git(&rebased.path, &["checkout", "-q", "main"]);
-    rebased.commit("others.txt", "o\n");
-    git(&rebased.path, &["push", "-q", "origin", "main"]);
-    git(&rebased.path, &["reset", "-q", "--hard", "HEAD~1"]);
-    git(&rebased.path, &["checkout", "-q", &branch]);
-    git(&rebased.path, &["rebase", "-q", "origin/main"]);
-    ws
-}
-
-/// The touched repositories as the old code listed them: `(repo, base)`.
-fn oracle_touched(folder: &Path) -> Vec<(String, String)> {
-    let tip = format!("refs/heads/change/{CHANGE}");
-    let mut out = Vec::new();
-    for name in ["app", "api", "lib", "solo", "rebased"] {
-        let dir = folder.join(name);
-        if !cli_ok(&dir, &tip) {
-            continue;
-        }
-        let (base, ..) = cli_base(&dir, &tip).unwrap();
-        if cli_count(&dir, &cli_work_revs(&dir, &tip).unwrap()) > 0 {
-            out.push((name.to_string(), base));
-        }
-    }
-    let (base, ..) = cli_base(&folder.join("m"), "HEAD").unwrap();
-    out.push(("m".to_string(), base));
-    out
-}
-
-#[test]
-fn comparisons_touched_repos_and_offenders_equal_the_cli() {
-    let ws = workspace();
-    let want = oracle_touched(&ws.folder);
-    assert_eq!(
-        want.iter().map(|(r, _)| r.as_str()).collect::<Vec<_>>(),
-        ["app", "solo", "rebased", "m"]
-    );
-    let got = publish::touched_repos(&ws.folder, "m", "s", CHANGE).unwrap();
-    assert_eq!(
-        got.iter()
-            .map(|r| (r.repo.clone(), r.base.clone()))
-            .collect::<Vec<_>>(),
-        want
-    );
-    for r in &got {
-        assert_eq!(Path::new(&r.path), ws.folder.join(&r.repo));
-    }
-
-    let tip = format!("refs/heads/change/{CHANGE}");
-    let mut oracle = Vec::new();
-    for (repo, _) in &want {
-        let dir = ws.folder.join(repo);
-        let mut args = vec!["log".to_string(), "--format=%h%x1f%B%x1e".to_string()];
-        args.extend(cli_work_revs(&dir, &tip).unwrap());
-        let args: Vec<&str> = args.iter().map(String::as_str).collect();
-        let log = text(&cli(&dir, &args).unwrap());
-        for rec in log.split('\x1e') {
-            let Some((hash, message)) = rec.trim_start_matches('\n').split_once('\x1f') else {
-                continue;
-            };
-            if !commits::follows_rules(message, "s") {
-                oracle.push(commits::Offender {
-                    repo: repo.clone(),
-                    hash: hash.to_string(),
-                    subject: message.lines().next().unwrap_or("").trim_end().to_string(),
-                });
-            }
-        }
-    }
-    assert_eq!(oracle.len(), 4, "the fixture breaks the rules four times");
-    assert_eq!(
-        publish::change_offenders(&ws.folder, "m", "s", CHANGE).unwrap(),
-        oracle
-    );
-
-    // The commits of a merge base range, the way a caller with a base commit asks.
-    let app = ws.folder.join("app");
-    let (_, _, mb) = cli_base(&app, &tip).unwrap();
-    let range = format!("{mb}..{tip}");
-    let log = text(&cli(&app, &["log", "--format=%h", &range]).unwrap());
-    let got = commits::offenders_to(&app, "app", &[range], "s").unwrap();
-    assert_eq!(got.len(), 3);
-    assert!(got.iter().all(|o| log.lines().any(|h| h == o.hash)));
-}
-
-// ---- commits without git (T6) ----
-
-const DOC: &str = "intent/s/c/intent.md";
-
-/// Builds one twin of a commit fixture: the document `DOC` committed as a draft (unless the kind
-/// is a new or deleted document) and a working tree edit that accepts it.
-fn commit_fixture(kind: &str) -> Fx {
-    let fx = Fx::new();
-    let draft = "---\nstatus: draft\n---\nbody\n";
-    let accepted = "---\nstatus: accepted\n---\nbody\n";
-    fx.commit("README.md", "init\n");
-    match kind {
-        "plain" => {
-            fx.commit(DOC, draft);
-            fx.write(DOC, accepted);
-        }
-        "other staged" => {
-            fx.commit(DOC, draft);
-            fx.write(DOC, accepted);
-            fx.write("other.txt", "staged\n");
-            git(&fx.path, &["add", "other.txt"]);
-            fx.write("src/other.rs", "x\n");
-            git(&fx.path, &["add", "src/other.rs"]);
-        }
-        "doc staged differently" => {
-            fx.commit(DOC, draft);
-            fx.write(DOC, "---\nstatus: draft\n---\nstaged body\n");
-            git(&fx.path, &["add", "--", DOC]);
-            fx.write(DOC, accepted);
-        }
-        "crlf with autocrlf" => {
-            git(&fx.path, &["config", "core.autocrlf", "true"]);
-            fx.commit(DOC, "---\r\nstatus: draft\r\n---\r\nbody\r\n");
-            fx.write(DOC, "---\r\nstatus: accepted\r\n---\r\nbody\r\n");
-        }
-        "gitattributes eol lf" => {
-            fx.commit(".gitattributes", "*.md text eol=lf\n");
-            fx.commit(DOC, draft);
-            fx.write(DOC, "---\r\nstatus: accepted\r\n---\r\nbody\r\n");
-        }
-        "gitattributes binary" => {
-            fx.commit(".gitattributes", "*.md -text\n");
-            fx.commit(DOC, "---\r\nstatus: draft\r\n---\r\n");
-            fx.write(DOC, "---\r\nstatus: accepted\r\n---\r\n");
-        }
-        "new document" => {
-            fx.write(DOC, draft);
-        }
-        "new document already staged" => {
-            fx.write(DOC, draft);
-            git(&fx.path, &["add", "--", DOC]);
-            fx.write(DOC, accepted);
-        }
-        "deleted document" => {
-            fx.commit(DOC, draft);
-            std::fs::remove_file(fx.path.join(DOC)).unwrap();
-        }
-        "executable document" => {
-            fx.commit(DOC, draft);
-            git(&fx.path, &["update-index", "--chmod=+x", "--", DOC]);
-            git(&fx.path, &["commit", "-q", "-m", "mode"]);
-            fx.write(DOC, accepted);
-        }
-        other => panic!("unknown fixture {other}"),
-    }
-    fx
-}
-
-const COMMIT_KINDS: [&str; 10] = [
-    "plain",
-    "other staged",
-    "doc staged differently",
-    "crlf with autocrlf",
-    "gitattributes eol lf",
-    "gitattributes binary",
-    "new document",
-    "new document already staged",
-    "deleted document",
-    "executable document",
-];
+// ---- the work tree, file by file ----
 
 /// Every file under the work tree except `.git`, keyed by relative path.
 fn work_files(root: &Path) -> BTreeMap<String, Vec<u8>> {
@@ -1727,212 +1318,6 @@ fn work_files(root: &Path) -> BTreeMap<String, Vec<u8>> {
     let mut out = BTreeMap::new();
     walk(root, root, &mut out);
     out
-}
-
-/// Everything a commit leaves behind that two repositories must agree on.
-fn commit_state(fx: &Fx) -> Vec<String> {
-    let dir = &fx.path;
-    vec![
-        git(dir, &["rev-parse", "HEAD^{tree}"]),
-        git(dir, &["rev-list", "--count", "HEAD"]),
-        git(dir, &["log", "-1", "--format=%an <%ae>|%cn <%ce>|%s"]),
-        text(&cli(dir, &["log", "-1", "--format=%B"]).unwrap()),
-        git(dir, &["ls-files", "-s"]),
-        git(dir, &["status", "--porcelain"]),
-        git(dir, &["reflog", "-1", "--format=%gs"]),
-        format!("{:?}", work_files(dir)),
-    ]
-}
-
-fn cli_commit_only(fx: &Fx, rel: &str, message: &str) -> Result<(), String> {
-    cli(&fx.path, &["add", "--", rel])?;
-    cli(
-        &fx.path,
-        &["commit", "-q", "-m", message, "--only", "--", rel],
-    )
-    .map(|_| ())
-}
-
-#[test]
-fn commits_equal_git_add_and_commit_only() {
-    let message = "docs(s): accept intent c\n\nGenerated-By: ai-sdlc";
-    for kind in COMMIT_KINDS {
-        let (oracle, ours) = (commit_fixture(kind), commit_fixture(kind));
-        cli_commit_only(&oracle, DOC, message).unwrap_or_else(|e| panic!("{kind}: {e}"));
-        let outcome = Repo::open(&ours.path)
-            .unwrap()
-            .commit_only(DOC, message)
-            .unwrap_or_else(|e| panic!("{kind}: {e}"));
-        assert_eq!(outcome.sha, ours.head(), "{kind}");
-        assert_eq!(commit_state(&oracle), commit_state(&ours), "{kind}");
-    }
-}
-
-#[test]
-fn commits_clean_the_message_as_git_does_for_m() {
-    let messages = [
-        "plain subject",
-        "subject with trailing spaces   \n\nbody line  \t\n",
-        "\n\n  leading blank lines\n",
-        "subject\n\n\n\n\nthree blank lines collapse\n\n\n\n",
-        "# a comment line is kept\n\nbody\n",
-        "subject\r\n\r\nwindows line ends\r\n",
-        "no newline at the end",
-        "  indented subject\n    indented body\n",
-        "subject\n\n\ttab indented\n\n\n",
-    ];
-    for message in messages {
-        let (oracle, ours) = (commit_fixture("plain"), commit_fixture("plain"));
-        cli_commit_only(&oracle, DOC, message).unwrap();
-        Repo::open(&ours.path)
-            .unwrap()
-            .commit_only(DOC, message)
-            .unwrap();
-        let body = |fx: &Fx| {
-            let raw = cli(&fx.path, &["cat-file", "commit", "HEAD"]).unwrap();
-            let raw = String::from_utf8_lossy(&raw).into_owned();
-            raw.split_once("\n\n").map(|(_, m)| m.to_string())
-        };
-        assert_eq!(body(&oracle), body(&ours), "{message:?}");
-    }
-}
-
-#[test]
-fn commits_with_nothing_to_say_are_refused_as_git_refuses() {
-    for message in ["", "   \n\n", "\n"] {
-        let (oracle, ours) = (commit_fixture("plain"), commit_fixture("plain"));
-        assert!(cli_commit_only(&oracle, DOC, message).is_err());
-        let before = ours.head();
-        let err = Repo::open(&ours.path)
-            .unwrap()
-            .commit_only(DOC, message)
-            .unwrap_err();
-        assert!(err.to_string().contains("empty commit message"), "{err}");
-        assert_eq!(ours.head(), before);
-        assert_eq!(git(&ours.path, &["diff", "--cached", "--name-only"]), "");
-    }
-}
-
-#[test]
-fn commits_hook_rows_decide_as_the_cli_does() {
-    // (hook, script, whether the commit is made, text the failure shows)
-    let rows = [
-        ("commit-msg", "grep -q accept \"$1\"", true, ""),
-        (
-            "commit-msg",
-            "echo 'rule says no' >&2; exit 1",
-            false,
-            "rule says no",
-        ),
-        ("pre-commit", "exit 0", true, ""),
-        (
-            "pre-commit",
-            "echo 'check says no' >&2; exit 1",
-            false,
-            "check says no",
-        ),
-        (
-            "prepare-commit-msg",
-            "echo 'prepared by hook' > \"$1\"",
-            true,
-            "",
-        ),
-        ("commit-msg", "echo 'Edited-by: hook' >> \"$1\"", true, ""),
-        ("post-commit", "exit 1", true, ""),
-        ("pre-push", "exit 1", true, ""),
-    ];
-    for (name, script, made, shown) in rows {
-        let (oracle, ours) = (
-            commit_fixture("other staged"),
-            commit_fixture("other staged"),
-        );
-        for fx in [&oracle, &ours] {
-            let hook = fx.path.join(".git/hooks").join(name);
-            std::fs::write(&hook, format!("#!/bin/sh\n{script}\n")).unwrap();
-        }
-        // A tracked document needs no `git add`: `--only` commits the working file, and a refused
-        // commit then leaves the index as it was.
-        let expected = cli(
-            &oracle.path,
-            &[
-                "commit",
-                "-q",
-                "-m",
-                "docs(s): accept intent c",
-                "--only",
-                "--",
-                DOC,
-            ],
-        )
-        .map(|_| ());
-        let got = Repo::open(&ours.path)
-            .unwrap()
-            .commit_only(DOC, "docs(s): accept intent c");
-        assert_eq!(expected.is_ok(), made, "{name} {script}: {expected:?}");
-        assert_eq!(got.is_ok(), made, "{name} {script}: {got:?}");
-        if let Err(message) = got {
-            assert!(message.to_string().contains(shown), "{name}: {message}");
-        }
-        assert_eq!(
-            commit_state(&oracle),
-            commit_state(&ours),
-            "{name} {script}"
-        );
-    }
-}
-
-#[test]
-fn commits_take_the_tree_a_pre_commit_hook_restages() {
-    // A formatter hook: rewrites the document in the work tree and stages it, so the commit holds
-    // what the hook left in the index it was given.
-    let message = "docs(s): accept intent c\n\nGenerated-By: ai-sdlc";
-    for kind in ["plain", "other staged", "doc staged differently"] {
-        let (oracle, ours) = (commit_fixture(kind), commit_fixture(kind));
-        for fx in [&oracle, &ours] {
-            std::fs::write(
-                fx.path.join(".git/hooks/pre-commit"),
-                format!("#!/bin/sh\necho formatted >> {DOC}\ngit add -- {DOC}\n"),
-            )
-            .unwrap();
-        }
-        cli_commit_only(&oracle, DOC, message).unwrap_or_else(|e| panic!("{kind}: {e}"));
-        let outcome = Repo::open(&ours.path)
-            .unwrap()
-            .commit_only(DOC, message)
-            .unwrap_or_else(|e| panic!("{kind}: {e}"));
-        assert_eq!(outcome.sha, ours.head(), "{kind}");
-        assert_eq!(commit_state(&oracle), commit_state(&ours), "{kind}");
-    }
-}
-
-#[test]
-fn commits_leave_the_index_and_document_alone_on_a_hook_failure() {
-    let fx = commit_fixture("doc staged differently");
-    std::fs::write(
-        fx.path.join(".git/hooks/pre-commit"),
-        "#!/bin/sh\necho refused by hook >&2\nexit 1\n",
-    )
-    .unwrap();
-    let state = |fx: &Fx| {
-        (
-            git(&fx.path, &["ls-files", "-s"]),
-            work_files(&fx.path),
-            fx.head(),
-        )
-    };
-    let before = state(&fx);
-    let err = Repo::open(&fx.path)
-        .unwrap()
-        .commit_only(DOC, "docs(s): accept")
-        .unwrap_err();
-    assert!(err.to_string().contains("refused by hook"), "{err}");
-    assert_eq!(before, state(&fx));
-    let leftovers: Vec<_> = std::fs::read_dir(fx.path.join(".git"))
-        .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|n| n.contains("lock") || n.starts_with("next-index"))
-        .collect();
-    assert!(leftovers.is_empty(), "{leftovers:?}");
 }
 
 // ---- branch operations and putting back stray edits (R9.2) ----
@@ -2041,79 +1426,6 @@ fn branches_refused_switch_gives_gits_message_and_changes_nothing() {
         assert_eq!(err.args, "checkout -q other --", "{variant}");
         assert_eq!(branch_state(&oracle), branch_state(&ours), "{variant}");
         assert_eq!(before, branch_state(&ours), "{variant}");
-    }
-}
-
-#[test]
-fn branches_create_equals_checkout_b() {
-    for variant in ["clean", "staged elsewhere", "edit a differing file"] {
-        for at in ["main", "other", "origin/main", "HEAD"] {
-            let (oracle, ours) = (switching(variant), switching(variant));
-            for fx in [&oracle, &ours] {
-                add_origin(fx, true);
-            }
-            let expected = cli(&oracle.path, &["checkout", "-q", "-b", "change/new", at]);
-            let got = Repo::open(&ours.path)
-                .unwrap()
-                .create_branch("change/new", at);
-            assert_eq!(expected.is_ok(), got.is_ok(), "{variant} {at}: {got:?}");
-            assert_eq!(branch_state(&oracle), branch_state(&ours), "{variant} {at}");
-        }
-    }
-}
-
-#[test]
-fn branches_create_refuses_what_git_refuses() {
-    for (name, at) in [
-        ("main", "other"),
-        ("side/slashed", "main"),
-        ("change/new", "no-such-rev"),
-        ("bad..name", "main"),
-        ("side", "main"),
-    ] {
-        let (oracle, ours) = (switching("clean"), switching("clean"));
-        let expected = cli(&oracle.path, &["checkout", "-q", "-b", name, at]);
-        let got = Repo::open(&ours.path).unwrap().create_branch(name, at);
-        assert!(expected.is_err(), "{name} {at}");
-        assert!(got.is_err(), "{name} {at}");
-        assert_eq!(branch_state(&oracle), branch_state(&ours), "{name} {at}");
-    }
-}
-
-#[test]
-fn branches_rename_and_delete_equal_the_cli() {
-    // (the operation, its arguments)
-    let rows: [(&str, &str, &str); 9] = [
-        ("rename", "other", "change/renamed"),
-        ("rename", "main", "trunk"),
-        ("rename", "other", "main"),
-        ("rename", "no-such", "x"),
-        ("delete", "other", ""),
-        ("delete", "side/slashed", ""),
-        ("delete", "main", ""),
-        ("delete", "no-such", ""),
-        ("rename", "side/slashed", "side-flat"),
-    ];
-    for (op, one, two) in rows {
-        let (oracle, ours) = (switching("clean"), switching("clean"));
-        let repo = Repo::open(&ours.path).unwrap();
-        let (expected, got) = if op == "rename" {
-            (
-                cli(&oracle.path, &["branch", "-m", one, two]),
-                repo.rename_branch(one, two),
-            )
-        } else {
-            (
-                cli(&oracle.path, &["branch", "-D", one]),
-                repo.delete_branch(one),
-            )
-        };
-        assert_eq!(expected.is_ok(), got.is_ok(), "{op} {one} {two}: {got:?}");
-        assert_eq!(
-            branch_state(&oracle),
-            branch_state(&ours),
-            "{op} {one} {two}"
-        );
     }
 }
 
@@ -2271,60 +1583,4 @@ fn branches_discard_puts_back_a_runs_stray_edits() {
             b"was dirty before the run\r\n"
         );
     }
-}
-
-/// Sets the modification time of `path` to `when`.
-fn set_mtime(path: &Path, when: std::time::SystemTime) {
-    std::fs::OpenOptions::new()
-        .write(true)
-        .open(path)
-        .unwrap()
-        .set_modified(when)
-        .unwrap();
-}
-
-/// A file staged in the same second as the previous index write and then edited to the same size
-/// within that second is racily clean: its size and time alone cannot tell it from the staged
-/// file. Git settles that when it writes the index; the write of a commit must too, or the edit is
-/// never seen again once the new index is older than the file.
-#[test]
-fn commits_keep_a_same_size_edit_of_another_file_visible() {
-    let fx = Fx::new();
-    // The change time of a file is not what hides the edit here; its size and modification time
-    // are.
-    git(&fx.path, &["config", "core.trustctime", "false"]);
-    fx.commit("README.md", "init\n");
-    fx.commit(DOC, "---\nstatus: draft\n---\nbody\n");
-    fx.commit("other.txt", "aaaa\n");
-
-    // The previous index write and the staging of other.txt happened in the same past second.
-    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(30);
-    let since = past.duration_since(std::time::UNIX_EPOCH).unwrap();
-    let stamp = git2::IndexTime::new(since.as_secs() as i32, since.subsec_nanos());
-    {
-        let repo = git2::Repository::open(&fx.path).unwrap();
-        let mut index = repo.index().unwrap();
-        let mut entry = index.get_path(Path::new("other.txt"), 0).unwrap();
-        entry.mtime = stamp;
-        entry.ctime = stamp;
-        index.add(&entry).unwrap();
-        index.write().unwrap();
-    }
-    set_mtime(&fx.path.join(".git/index"), past);
-
-    // The run edits other.txt to the same size in that second, and the document is accepted.
-    fx.write("other.txt", "bbbb\n");
-    set_mtime(&fx.path.join("other.txt"), past);
-    fx.write(DOC, "---\nstatus: accepted\n---\nbody\n");
-
-    Repo::open(&fx.path)
-        .unwrap()
-        .commit_only(DOC, "docs(s): accept intent c")
-        .unwrap();
-
-    let status = git(&fx.path, &["status", "--porcelain"]);
-    assert!(
-        status.contains("other.txt"),
-        "the same-size edit of other.txt is lost, status:\n{status}"
-    );
 }

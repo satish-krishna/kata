@@ -607,14 +607,6 @@ pub struct FixState {
     pub facts: FixFacts,
 }
 
-/// Where the fix in `folder` stands, as the program says. Not cached: the answer depends on git's state
-/// (`HEAD`, the index, the working tree), not on the bytes of any one file.
-pub fn fix_state(program: &Path, folder: &Path) -> Result<FixState, FormatError> {
-    let output = run(program, folder, &["fix-state", "--json", "."])?;
-    serde_json::from_slice(&output.stdout)
-        .map_err(|e| FormatError::BadOutput(format!("{e}{}", stderr_note(&output.stderr))))
-}
-
 /// The patterns a marker holds for a system, as the program found them; either may be missing.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -697,119 +689,9 @@ fn problems_of(program: &Path, command: &str, value: &str) -> Result<Vec<String>
         .map_err(|e| FormatError::BadOutput(format!("{e}{}", stderr_note(&output.stderr))))
 }
 
-/// Why git, or Kata, would refuse `name` as a branch name; empty when it is usable.
-pub fn branch_name(program: &Path, name: &str) -> Result<Vec<String>, FormatError> {
-    problems_of(program, "branch-name", name)
-}
-
 /// Why `value` is not a usable scope; empty when it is accepted as typed.
 pub fn scope(program: &Path, value: &str) -> Result<Vec<String>, FormatError> {
     problems_of(program, "scope", value)
-}
-
-/// One entry of the program's answer for several folders: the folder as it was given, and either its
-/// result or the error that stopped the program for it.
-#[derive(Deserialize)]
-struct FixEntry {
-    folder: String,
-    result: Option<FixState>,
-    error: Option<String>,
-}
-
-/// Where each fix in `folders` stands, in the order given, from one process for all of them, or for
-/// each part when the argument list would pass [`COMMAND_LINE_BUDGET`] characters. A folder the program
-/// could not answer for gets its own error; a run that failed as a whole gives that error for every folder
-/// it was asked about. Not cached, for the reason [`fix_state`] is not.
-pub fn fix_states(program: &Path, folders: &[PathBuf]) -> Vec<Result<FixState, FormatError>> {
-    let parts = split_for_command_line(program, folders, COMMAND_LINE_BUDGET);
-    fix_states_in(program, &parts, TIMEOUT)
-}
-
-/// How long the argument list of one program process may be. The Windows command line stops at 32,767
-/// characters; this leaves room for the program's own path, the quoting and the other arguments.
-const COMMAND_LINE_BUDGET: usize = 30_000;
-
-/// `folders` cut into the fewest consecutive parts whose argument lists each stay within `budget`
-/// characters (a folder that is too long alone still gets a part of its own).
-fn split_for_command_line<'a>(
-    program: &Path,
-    folders: &'a [PathBuf],
-    budget: usize,
-) -> Vec<&'a [PathBuf]> {
-    let fixed = program.display().to_string().len() + "node fix-state --json".len() + 8;
-    let mut parts = Vec::new();
-    let (mut start, mut used) = (0, fixed);
-    for (i, folder) in folders.iter().enumerate() {
-        // The name, a space and a pair of quotes.
-        let cost = folder.display().to_string().len() + 3;
-        if i > start && used + cost > budget {
-            parts.push(&folders[start..i]);
-            (start, used) = (i, fixed);
-        }
-        used += cost;
-    }
-    if start < folders.len() {
-        parts.push(&folders[start..]);
-    }
-    parts
-}
-
-/// [`fix_states`] for parts already cut, with the timeout of one process given.
-fn fix_states_in(
-    program: &Path,
-    parts: &[&[PathBuf]],
-    timeout: Duration,
-) -> Vec<Result<FixState, FormatError>> {
-    parts
-        .iter()
-        .flat_map(|part| fix_states_chunk(program, part, timeout))
-        .collect()
-}
-
-fn fix_states_chunk(
-    program: &Path,
-    folders: &[PathBuf],
-    timeout: Duration,
-) -> Vec<Result<FixState, FormatError>> {
-    // Given one folder the program prints its object, not an array of one, so that case is the single form.
-    if let [folder] = folders {
-        return vec![fix_state(program, folder)];
-    }
-    let whole = |e: FormatError| vec![Err(e); folders.len()];
-    let names: Vec<String> = folders.iter().map(|f| f.display().to_string()).collect();
-    let mut args = vec!["fix-state", "--json"];
-    args.extend(names.iter().map(String::as_str));
-    // The program resolves each folder against the repository that holds it, so any directory will do.
-    let cwd = folders[0].parent().unwrap_or(&folders[0]);
-    let output = match run_within(program, cwd, &args, timeout) {
-        Ok(output) => output,
-        Err(e) => return whole(e),
-    };
-    let entries: Vec<FixEntry> = match serde_json::from_slice(&output.stdout) {
-        Ok(entries) => entries,
-        Err(e) => {
-            return whole(FormatError::BadOutput(format!(
-                "{e}{}",
-                stderr_note(&output.stderr)
-            )))
-        }
-    };
-    if entries.len() != names.len() || entries.iter().zip(&names).any(|(e, n)| e.folder != *n) {
-        return whole(FormatError::BadOutput(
-            "the answer does not match the folders asked about".to_string(),
-        ));
-    }
-    entries
-        .into_iter()
-        .map(|entry| match (entry.result, entry.error) {
-            (Some(state), _) => Ok(state),
-            (None, Some(message)) => Err(FormatError::CouldNotRun(message)),
-            (None, None) => Err(FormatError::BadOutput(format!(
-                "{}: neither a result nor an error",
-                entry.folder
-            ))),
-        })
-        .collect()
 }
 
 /// What a check depends on: the program, each checked document's name and bytes, and the marker above them.
@@ -846,92 +728,6 @@ fn run(program: &Path, cwd: &Path, args: &[&str]) -> Result<process::CapturedExi
     run_within(program, cwd, args, TIMEOUT)
 }
 
-/// What every format call made by the threads of one pass shares: whether Node.js is there, how long a
-/// call may take, and how many programs were started. A call made outside a pass shares nothing.
-pub struct Pass {
-    node: Mutex<NodeState>,
-    limit: Mutex<Option<Duration>>,
-    started: AtomicUsize,
-}
-
-/// What a pass knows about Node.js.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum NodeState {
-    /// `node` was found on `PATH`, or a program has started since.
-    Present,
-    /// `node` was not found on `PATH`: the first call tries it alone; the answer settles the rest.
-    Suspect,
-    /// A call found `node` missing: every later call is answered so without starting a program.
-    Missing,
-}
-
-thread_local! {
-    static CURRENT: std::cell::RefCell<Option<std::sync::Arc<Pass>>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// Puts a thread back in the pass it was in before [`Pass::enter`].
-pub struct PassGuard(Option<std::sync::Arc<Pass>>);
-
-impl Drop for PassGuard {
-    fn drop(&mut self) {
-        CURRENT.with(|c| *c.borrow_mut() = self.0.take());
-    }
-}
-
-impl Pass {
-    /// A pass for a machine whose `PATH` is read now.
-    pub fn new() -> std::sync::Arc<Pass> {
-        std::sync::Arc::new(Pass {
-            node: Mutex::new(if node_on_path() {
-                NodeState::Present
-            } else {
-                NodeState::Suspect
-            }),
-            limit: Mutex::new(None),
-            started: AtomicUsize::new(0),
-        })
-    }
-
-    /// Makes the calls of the current thread belong to this pass until the guard is dropped.
-    pub fn enter(self: &std::sync::Arc<Self>) -> PassGuard {
-        PassGuard(CURRENT.with(|c| c.borrow_mut().replace(self.clone())))
-    }
-
-    /// Replaces the 30-second limit of every call in this pass.
-    pub fn set_limit(&self, limit: Duration) {
-        *self.limit.lock().unwrap_or_else(|e| e.into_inner()) = Some(limit);
-    }
-
-    /// How many programs this pass started.
-    pub fn started(&self) -> usize {
-        self.started.load(Ordering::SeqCst)
-    }
-}
-
-/// Whether a `node` program sits in a folder of `PATH`, looked up without starting anything.
-fn node_on_path() -> bool {
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
-    let exts: Vec<String> = if cfg!(windows) {
-        std::env::var("PATHEXT")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".to_string())
-            .split(';')
-            .filter(|e| !e.is_empty())
-            .map(str::to_string)
-            .collect()
-    } else {
-        vec![String::new()]
-    };
-    std::env::split_paths(&path).any(|dir| {
-        exts.iter()
-            .any(|ext| dir.join(format!("node{ext}")).is_file())
-    })
-}
-
 impl FormatError {
     /// The program was killed because it passed its time limit.
     pub fn timed_out(&self) -> bool {
@@ -946,38 +742,7 @@ fn run_within(
     args: &[&str],
     timeout: Duration,
 ) -> Result<process::CapturedExit, FormatError> {
-    let Some(pass) = CURRENT.with(|c| c.borrow().clone()) else {
-        return start(program, cwd, args, timeout);
-    };
-    let timeout = pass
-        .limit
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .unwrap_or(timeout);
-    let mut node = pass.node.lock().unwrap_or_else(|e| e.into_inner());
-    match *node {
-        NodeState::Missing => Err(FormatError::NodeMissing),
-        NodeState::Present => {
-            drop(node);
-            pass.started.fetch_add(1, Ordering::SeqCst);
-            let answer = start(program, cwd, args, timeout);
-            if matches!(answer, Err(FormatError::NodeMissing)) {
-                *pass.node.lock().unwrap_or_else(|e| e.into_inner()) = NodeState::Missing;
-            }
-            answer
-        }
-        NodeState::Suspect => {
-            // Held through the attempt, so the other threads of the pass wait for the one answer.
-            pass.started.fetch_add(1, Ordering::SeqCst);
-            let answer = start(program, cwd, args, timeout);
-            *node = if matches!(answer, Err(FormatError::NodeMissing)) {
-                NodeState::Missing
-            } else {
-                NodeState::Present
-            };
-            answer
-        }
-    }
+    start(program, cwd, args, timeout)
 }
 
 /// Starts `node <program> <args>` in `cwd` through the one door ([`crate::ai_sdlc::execute`]) and reads
@@ -1059,81 +824,6 @@ mod tests {
             })
         );
         assert_eq!(parse_problem("nothing here"), None);
-    }
-
-    /// `n` fix folders that exist under `root`.
-    fn folders_of(root: &Path, n: usize) -> Vec<PathBuf> {
-        (0..n)
-            .map(|i| {
-                let folder = root.join(format!("2026-10-01-fix-{i:03}"));
-                std::fs::create_dir_all(&folder).unwrap();
-                folder
-            })
-            .collect()
-    }
-
-    #[test]
-    fn many_fixes_are_read_in_one_process_f1() {
-        let tmp = tempfile::tempdir().unwrap();
-        let plugin = crate::testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
-        let folders = folders_of(tmp.path(), 45);
-        let got = fix_states(&crate::build::program(&plugin), &folders);
-        let calls = std::fs::read_to_string(plugin.join("tools").join("calls.log")).unwrap();
-        assert_eq!(calls.lines().collect::<Vec<_>>(), vec!["fix-state 45"]);
-        assert_eq!(got.len(), 45);
-        assert!(got.iter().all(|r| r.as_ref().is_ok_and(|s| s.row == 6)));
-    }
-
-    #[test]
-    fn fixes_split_only_when_the_command_line_would_pass_30000_characters_f1() {
-        let tmp = tempfile::tempdir().unwrap();
-        let plugin = crate::testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
-        // 300 folders of about 150 characters each: the arguments alone come to about 45,000.
-        let long = tmp.path().join("x".repeat(100));
-        let folders: Vec<PathBuf> = (0..300)
-            .map(|i| {
-                let folder = long.join(format!("2026-10-01-fix-{i:03}"));
-                std::fs::create_dir_all(&folder).unwrap();
-                folder
-            })
-            .collect();
-        let program = crate::build::program(&plugin);
-        let got = fix_states(&program, &folders);
-        let calls = std::fs::read_to_string(plugin.join("tools").join("calls.log")).unwrap();
-        let sizes: Vec<usize> = calls
-            .lines()
-            .map(|l| l.trim_start_matches("fix-state ").parse().unwrap())
-            .collect();
-        assert_eq!(got.len(), 300);
-        assert!(got.iter().all(Result::is_ok));
-        assert!(sizes.len() >= 2 && sizes.len() <= 3, "{sizes:?}");
-        assert_eq!(sizes.iter().sum::<usize>(), 300);
-    }
-
-    #[test]
-    fn a_chunk_that_times_out_fails_only_its_own_folders_f1() {
-        let tmp = tempfile::tempdir().unwrap();
-        let plugin = crate::testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
-        let check = plugin.join("tools").join("ai-sdlc.ts");
-        let text = std::fs::read_to_string(&check).unwrap();
-        std::fs::write(
-            &check,
-            format!(
-                "if (process.argv.some((a) => a.includes('slow'))) await new Promise((r) => setTimeout(r, 60000));\n{text}"
-            ),
-        )
-        .unwrap();
-        let mut folders = folders_of(tmp.path(), 6);
-        folders[2] = tmp.path().join("2026-10-01-slow");
-        std::fs::create_dir_all(&folders[2]).unwrap();
-        let parts: Vec<&[PathBuf]> = folders.chunks(2).collect();
-        let got = fix_states_in(
-            &crate::build::program(&plugin),
-            &parts,
-            Duration::from_secs(2),
-        );
-        let failed: Vec<bool> = got.iter().map(Result::is_err).collect();
-        assert_eq!(failed, vec![false, false, true, true, false, false]);
     }
 
     #[test]

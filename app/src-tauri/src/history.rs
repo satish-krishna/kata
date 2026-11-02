@@ -1,8 +1,5 @@
 //! Every live run's events, kept by the backend so a session opened later shows the whole run.
 
-// `forget` is called when a run leaves the table, a later task (the close guard).
-#![allow(dead_code)]
-
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -117,11 +114,6 @@ impl RunHistory {
         }
         open.map(|(_, p)| p)
     }
-
-    /// Drop the run's history.
-    pub fn forget(&self, run_id: u64) {
-        self.runs.lock().unwrap().remove(&run_id);
-    }
 }
 
 #[cfg(test)]
@@ -198,15 +190,5 @@ mod tests {
         ));
         h.push(1, &decided("p1"));
         assert_eq!(h.pending(1), None);
-    }
-
-    #[test]
-    fn forget_drops_only_that_run() {
-        let h = RunHistory::default();
-        h.push(1, &json!({"type": "run.started"}));
-        h.push(2, &json!({"type": "run.started"}));
-        h.forget(1);
-        assert!(h.replay(1).is_empty());
-        assert_eq!(h.replay(2).len(), 1);
     }
 }

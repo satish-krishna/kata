@@ -7,7 +7,7 @@
 use crate::format::{self, NamingAnswer, NamingPatterns, NamingValues};
 use crate::plugin::{BlockReason, Readiness, MIN_VERSION};
 use crate::workspace::{Marker, MARKER};
-use crate::{base, build, frontmatter, git};
+use crate::{build, diff, frontmatter, git};
 use std::path::{Path, PathBuf};
 
 /// Lowercase kebab-case, the only scope shape a commitlint header accepts.
@@ -50,14 +50,6 @@ pub struct Naming {
     pub pull_request_title: String,
 }
 
-/// The names a change gets from the patterns.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Names {
-    pub branch: String,
-    /// `None` when the intent names no title.
-    pub pull_request_title: Option<String>,
-}
-
 /// Why a name or a setting cannot be used.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NamingError {
@@ -78,10 +70,10 @@ pub enum NamingError {
 /// The marker as committed at the master's base branch; `None` when there is no such commit or file.
 ///
 /// The base is the ai-sdlc skills' default branch: `origin/HEAD`'s target, else `main`, else `master`
-/// (`base::base_branch`). It is never the current branch, so an edit on a pending or change branch cannot
+/// (`diff::base_branch`). It is never the current branch, so an edit on a pending or change branch cannot
 /// change the setting. A local branch is read when it exists, else its `origin/` copy.
 fn committed_marker(master: &Path) -> Option<Vec<u8>> {
-    let base = base::base_branch(master)?;
+    let base = diff::base_branch(master)?;
     let repo = git::Repo::open(master).ok()?;
     let local = format!("refs/heads/{base}");
     let rev = if repo.rev_exists(&local) {
@@ -182,38 +174,6 @@ pub fn setting(
     }
 }
 
-/// The branch name and pull request title the setting gives `change`. `Ok(None)` when none is declared.
-pub fn names(
-    plugin: &Readiness,
-    master: &Path,
-    system: &str,
-    change: &str,
-    work_type: &str,
-) -> Result<Option<Names>, NamingError> {
-    let title = std::fs::read_to_string(master.join(format!("intent/{system}/{change}/intent.md")))
-        .ok()
-        .and_then(|t| frontmatter::field(&t, "title"))
-        .filter(|t| !t.is_empty());
-    let values = NamingValues {
-        work_type: work_type.to_string(),
-        scope: change_scope(master, system, change),
-        change: change.to_string(),
-        title,
-    };
-    let Some(answer) = read(plugin, master, system, Some(&values))? else {
-        return Ok(None);
-    };
-    answer
-        .names
-        .map(|n| {
-            Some(Names {
-                branch: n.branch,
-                pull_request_title: n.pull_request_title,
-            })
-        })
-        .ok_or_else(|| NamingError::Unreadable("the program rendered no names".into()))
-}
-
 /// The name of a new change: `date` (`YYYY-MM-DD`) and the title's first words, at most five, in lowercase
 /// kebab-case. Only ASCII letters and digits are kept; a title with no usable word gives `change`.
 pub fn change_name(date: &str, title: &str) -> String {
@@ -232,19 +192,6 @@ pub fn change_name(date: &str, title: &str) -> String {
         format!("{date}-change")
     } else {
         format!("{date}-{}", words.join("-"))
-    }
-}
-
-/// Refuses a branch name git or Kata would not accept. Called before any branch is created or renamed
-/// from a name Kata did not build itself.
-pub fn check_branch_name(plugin: &Readiness, name: &str) -> Result<(), NamingError> {
-    let program = naming_program(plugin)?;
-    let problems =
-        format::branch_name(&program, name).map_err(|e| NamingError::Unreadable(e.to_string()))?;
-    if problems.is_empty() {
-        Ok(())
-    } else {
-        Err(NamingError::Name(problems.join("; ")))
     }
 }
 
@@ -448,38 +395,6 @@ mod tests {
     }
 
     #[test]
-    fn names_fill_the_patterns_for_a_change() {
-        let (_tmp, repo) = master_with(SETTING);
-        testutil::commit_file(
-            &repo,
-            "intent/kata/2026-11-02-reset/intent.md",
-            "---\nstatus: draft\nscope: PROJ-123\ntitle: Customer can reset password\n---\n",
-            "intent",
-        );
-        assert_eq!(
-            names(&current(), &repo, "kata", "2026-11-02-reset", "feat"),
-            Ok(Some(Names {
-                branch: "feat/PROJ-123-reset".into(),
-                pull_request_title: Some("feat(PROJ-123): Customer can reset password".into()),
-            }))
-        );
-    }
-
-    #[test]
-    fn a_name_that_git_or_kata_would_refuse_is_refused_r12_1() {
-        for name in ["-D", "feat/../main", "feat/@{1}", "change/pending-x"] {
-            assert!(
-                matches!(
-                    check_branch_name(&current(), name),
-                    Err(NamingError::Name(_))
-                ),
-                "{name}"
-            );
-        }
-        assert_eq!(check_branch_name(&current(), "feat/PROJ-123-reset"), Ok(()));
-    }
-
-    #[test]
     fn a_scope_is_accepted_or_refused_with_the_reason_r5_2() {
         for scope in ["PROJ-123", "proj_123", "v2.1", "kata"] {
             assert_eq!(check_scope(&current(), scope), Ok(Vec::new()), "{scope}");
@@ -530,14 +445,6 @@ mod tests {
         for (label, title, want) in rows {
             assert_eq!(change_name("2026-11-01", title), want, "{label}");
         }
-    }
-
-    #[test]
-    fn head_is_refused_as_a_branch_name_r12_1() {
-        assert!(matches!(
-            check_branch_name(&current(), "HEAD"),
-            Err(NamingError::Name(_))
-        ));
     }
 
     #[test]

@@ -3,7 +3,6 @@
 //! The host executes the coordinator's commands; it decides nothing the coordinator or the plugin decides.
 //! Everything outside the process (the ai-sdlc program, the run table and sidecar, the event channel)
 //! sits behind [`Tools`] and [`Launcher`], so the tests need no Tauri app.
-#![allow(dead_code)]
 
 use crate::runs::{self, Lane};
 use kata_core::spec::PermissionMode;
@@ -220,7 +219,9 @@ pub struct LaunchRequest {
     pub kind: runs::RunKind,
     /// The product repository of a build run.
     pub repo: Option<String>,
-    /// The plan task the run is on; empty for a review or a round.
+    /// The plan task the run is on; empty for a review or a round. Only the tests read it, to see which
+    /// task the coordinator asked for.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub task: String,
     /// `build:<system>/<change>`, which the run table's group check reads.
     pub group: String,
@@ -538,13 +539,8 @@ impl BuildHost {
         self.begin(change, Some(form), None, None)
     }
 
-    /// Continue `change`'s build in `repo`; a build with no live run is rebuilt from where the change stands.
-    pub fn continue_repo(self: &Arc<Self>, change: &ChangeRef, repo: &str) -> StartOutcome {
-        self.continue_with(change, repo, None)
-    }
-
     /// Continue `change`'s build in `repo` with the given items the engineer switched off in the preview
-    /// (none: the build's own).
+    /// (none: the build's own); a build with no live run is rebuilt from where the change stands.
     pub fn continue_with(
         self: &Arc<Self>,
         change: &ChangeRef,
@@ -681,11 +677,7 @@ impl BuildHost {
 
     /// Start `change`'s review by hand. It starts only when every product repository the review reads is
     /// free; the coordinator's own launch takes the hold again and keeps it until the run ends.
-    pub fn review_start(self: &Arc<Self>, change: &ChangeRef) -> StartOutcome {
-        self.review_start_with(change, None)
-    }
-
-    /// [`Self::review_start`] with the given items the engineer switched off in the review's preview.
+    /// `off` is the given items the engineer switched off in the review's preview (none: the build's own).
     pub fn review_start_with(
         self: &Arc<Self>,
         change: &ChangeRef,
@@ -769,35 +761,6 @@ impl BuildHost {
     /// The requests a round with these picks would start.
     pub fn round_plan(&self, change: &ChangeRef, picks: &RoundPicks) -> Result<RoundPlan, String> {
         Ok(round::plan(&self.round_offer(change)?, picks))
-    }
-
-    /// Start the round the picks describe, through the same rows as a build's start.
-    pub fn round_start(self: &Arc<Self>, change: &ChangeRef, picks: RoundPicks) -> StartOutcome {
-        let plan = match self.round_plan(change, &picks) {
-            Ok(p) => p,
-            Err(output) => return StartOutcome::CouldNotRun { output },
-        };
-        if let Some(blocked) = plan.blocked {
-            return StartOutcome::Refused {
-                problems: vec![blocked],
-            };
-        }
-        let mut form = self
-            .inner
-            .lock()
-            .unwrap()
-            .builds
-            .get(&key_of(change))
-            .map(|b| b.form.clone())
-            .unwrap_or(StartForm {
-                timeout_secs: DEFAULT_TIMEOUT_SECS,
-                instructions: None,
-                continue_on_leftovers: false,
-                rounds: Vec::new(),
-                off: Vec::new(),
-            });
-        form.rounds = plan.requests;
-        self.begin(change, Some(form), None, None)
     }
 
     /// Take the review hold on every product repository the change's review reads. The lock is held for
@@ -2491,7 +2454,7 @@ mod tests {
         r.simple("A", &["kata"]);
         r.tools
             .start_answer("kata", passed_start("kata", &["src/a.rs", "src/b.rs"]));
-        let outcome = r.host.continue_repo(&cref("A"), "kata");
+        let outcome = r.host.continue_with(&cref("A"), "kata", None);
         assert_eq!(
             outcome,
             StartOutcome::Started {
@@ -2548,7 +2511,7 @@ mod tests {
             StartOutcome::AlreadyRunning
         );
         assert_eq!(
-            r.host.continue_repo(&cref("A"), "kata"),
+            r.host.continue_with(&cref("A"), "kata", None),
             StartOutcome::AlreadyRunning
         );
         assert_eq!(r.launcher.launched("kata").len(), 1);
@@ -2838,7 +2801,7 @@ mod tests {
         r.complete("A", &["kata"]);
         r.hold_as("B", "kata");
         assert_eq!(
-            r.host.review_start(&cref("A")),
+            r.host.review_start_with(&cref("A"), None),
             StartOutcome::Held {
                 held: held_kata("B")
             }
@@ -2886,7 +2849,7 @@ mod tests {
             let r = rig();
             r.complete("A", &["kata"]);
             assert!(matches!(
-                r.host.review_start(&cref("A")),
+                r.host.review_start_with(&cref("A"), None),
                 StartOutcome::Started { .. }
             ));
             let review = r.launcher.reviews();
@@ -2906,7 +2869,7 @@ mod tests {
             assert_eq!(r.host.review_waiting(&cref("A")), held_kata("B"));
             r.free("B");
             assert!(matches!(
-                r.host.review_start(&cref("A")),
+                r.host.review_start_with(&cref("A"), None),
                 StartOutcome::Started { .. }
             ));
             assert_eq!(r.launcher.reviews().len(), 1);
@@ -2919,7 +2882,7 @@ mod tests {
             r.complete("A", &["kata", "bob"]);
             r.hold_as("B", "bob");
             assert_eq!(
-                r.host.review_start(&cref("A")),
+                r.host.review_start_with(&cref("A"), None),
                 StartOutcome::Held {
                     held: vec![HeldRepo {
                         repo: "bob".into(),
@@ -2977,17 +2940,21 @@ mod tests {
         let shown = r.host.round_plan(&cref("A"), &picks).unwrap();
         assert_eq!(shown, round::plan(&offer, &picks));
         assert_eq!(shown.requests.len(), 1);
-        // A round with nothing picked is refused with the plan's reason; nothing starts.
+        // A round with nothing picked is blocked with the plan's reason, which the dialog shows; nothing starts.
         assert_eq!(
-            r.host.round_start(&cref("A"), RoundPicks::default()),
-            StartOutcome::Refused {
-                problems: vec!["Pick a finding or write a note.".into()]
-            }
+            r.host
+                .round_plan(&cref("A"), &RoundPicks::default())
+                .unwrap()
+                .blocked
+                .as_deref(),
+            Some("Pick a finding or write a note.")
         );
         assert_eq!(r.launcher.count(), 0);
-        // The start launches exactly the requests the plan showed.
+        // The page starts the round through a build start carrying the plan's requests; it launches exactly those.
+        let mut started = form();
+        started.rounds = shown.requests.clone();
         assert!(matches!(
-            r.host.round_start(&cref("A"), picks),
+            r.host.start(&cref("A"), started),
             StartOutcome::Started { .. }
         ));
         let launched = r.launcher.launched("kata");
@@ -3335,7 +3302,7 @@ mod tests {
                 ("T5", "kata", &[]),
             ],
         );
-        let outcome = r.host.continue_repo(&cref("Y"), "kata");
+        let outcome = r.host.continue_with(&cref("Y"), "kata", None);
         assert!(matches!(outcome, StartOutcome::Started { .. }));
         let run = r.launcher.launched("kata")[0];
         assert_eq!(r.launcher.task_of(run), "T3");

@@ -20,7 +20,6 @@ use std::process::Command;
 const SYS: &str = "s";
 const CHG: &str = "2026-10-19-c";
 const DRAFT: &str = "2026-10-20-d";
-const WS: &str = "w1";
 
 const SPEC: &str = "layout: 2\nsystem: s\nstatus: accepted\nsource_intent_commit: INTENT\n---\n\n# Spec\n\n```gherkin\nFeature: Demo\n  @R1 @from:outcome-1 @from:D2\n  Rule: The engineer sees what changed\n    @R1.1\n    Scenario: What changed after a build\n      Given a build\n      When it ends\n      Then the engineer sees the diff\n```\n";
 
@@ -321,20 +320,17 @@ fn kata_starts_no_git_or_gh_itself_with_a_recorded_branch() {
 }
 
 /// Every flow the AI-SDLC mode still runs itself, with `PATH` holding only `node`: each one works, and the
-/// only program any of them starts is `node` (the plugin's format program and its `state`).
+/// only program any of them starts is `node` (the plugin's format program). Then the plugin's own `state`,
+/// which starts git itself (D1), with git's folder added: Kata still starts only `node`.
 fn kata_flows(branch_name: &str, record: bool) {
     let fx = fixture_on(branch_name, record);
     let _home = KataHome::new(&fx.home);
     let master = fx.repo("m");
     let app = fx.repo("app");
-    let _path = PathOnly::new(&fx.only_node);
+    let path = PathOnly::new(&fx.only_node);
     let log = SpawnLog::open();
 
-    // The home page and the change page: the plugin's state, the branches, the documents.
-    let program = Program::locate(&fx.plugin);
-    let system = state::state(&program, &fx.folder, SYS, None).unwrap();
-    let names: Vec<&str> = system.changes.iter().map(|c| c.change.as_str()).collect();
-    assert!(names.contains(&CHG) && names.contains(&DRAFT), "{names:?}");
+    // The home page and the change page: the branches and the documents.
     let branches = branch::branch_info(&master);
     assert_eq!(branches.current.as_deref(), Some(branch_name));
     assert!(changes::read_doc(&master, SYS, CHG, "intent")
@@ -404,7 +400,10 @@ fn kata_flows(branch_name: &str, record: bool) {
 
     // The home page's switch to another change's branch.
     branch::checkout(&master, "main").unwrap();
-    assert_eq!(branch::branch_info(&master).current.as_deref(), Some("main"));
+    assert_eq!(
+        branch::branch_info(&master).current.as_deref(),
+        Some("main")
+    );
 
     // Run mode: an isolated copy for a run-spec and the summary of what a run changed.
     let root = fx.folder.join("worktrees");
@@ -412,7 +411,17 @@ fn kata_flows(branch_name: &str, record: bool) {
     fs::write(Path::new(&wt.path).join("new.txt"), "n\n").unwrap();
     let summary = kata_core::changeset::diff_at(Path::new(&wt.path)).unwrap();
     assert_eq!(summary.files.len(), 1);
+    assert_eq!(started(&log), ["node"]);
 
+    // The plugin's state, which the home page and the change page read: node, which starts git itself.
+    drop(path);
+    let git_dir = fx.git.parent().unwrap().to_path_buf();
+    let joined = std::env::join_paths([&fx.only_node, &git_dir]).unwrap();
+    let _path = PathOnly::new(Path::new(&joined));
+    let program = Program::locate(&fx.plugin);
+    let system = state::state(&program, &fx.folder, SYS, None).unwrap();
+    let names: Vec<&str> = system.changes.iter().map(|c| c.change.as_str()).collect();
+    assert!(names.contains(&CHG) && names.contains(&DRAFT), "{names:?}");
     assert_eq!(started(&log), ["node"]);
 }
 
@@ -422,15 +431,17 @@ fn home_and_change_page_read_without_git() {
     let fx = fixture();
     let master = fx.repo("m");
     let read = |fx: &Fx| {
-        let program = Program::locate(&fx.plugin);
         (
-            serde_json::to_value(state::state(&program, &fx.folder, SYS, None).unwrap()).unwrap(),
+            serde_json::to_value(
+                changes::read_parsed(&fx.plugin, &master, SYS, CHG, "spec").unwrap(),
+            )
+            .unwrap(),
             serde_json::to_value(branch::branch_info(&master)).unwrap(),
             changes::read_doc(&master, SYS, CHG, "spec"),
         )
     };
     let with_git = read(&fx);
-    assert_eq!(with_git.0["changes"].as_array().unwrap().len(), 2);
+    assert!(!with_git.0.is_null());
     let without_git = {
         let _path = PathOnly::new(&fx.only_node);
         read(&fx)
@@ -463,7 +474,11 @@ fn the_workbench_mode_runs_without_git_or_gh() {
     let bin = fx.folder.join("bin");
     fs::create_dir_all(&bin).unwrap();
     for (from, name) in [(&kata, "kata"), (&fake, "claude")] {
-        fs::copy(from, bin.join(format!("{name}{}", std::env::consts::EXE_SUFFIX))).unwrap();
+        fs::copy(
+            from,
+            bin.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)),
+        )
+        .unwrap();
     }
     let path = std::env::join_paths([&fx.only_node, &bin]).unwrap();
 
