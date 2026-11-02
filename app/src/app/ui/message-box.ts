@@ -1,4 +1,4 @@
-import { Component, computed, effect, input, output, signal, untracked } from '@angular/core';
+import { Component, computed, effect, input, linkedSignal, output, untracked } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmInput } from '@spartan-ng/helm/input';
 import type { MessageBoxView } from '../lib/events';
@@ -13,8 +13,11 @@ import type { MessageBoxView } from '../lib/events';
 export class MessageBox {
   readonly view = input.required<MessageBoxView>();
   readonly send = output<string>();
+  /** The text typed and not sent, kept by the page so it comes back when the page is opened again. */
+  readonly draft = input('');
+  readonly draftChange = output<string>();
 
-  protected readonly text = signal('');
+  protected readonly text = linkedSignal(() => this.draft());
   protected readonly canSend = computed(() => this.view().enabled && this.text().trim() !== '');
 
   constructor() {
@@ -26,17 +29,22 @@ export class MessageBox {
     });
     effect(() => {
       if (refusal() === null) return;
-      untracked(() => this.text.set(this.view().restore ?? ''));
+      untracked(() => this.setText(this.view().restore ?? ''));
     });
   }
 
   protected onInput(event: Event): void {
-    this.text.set((event.target as HTMLInputElement).value);
+    this.setText((event.target as HTMLInputElement).value);
+  }
+
+  private setText(text: string): void {
+    this.text.set(text);
+    this.draftChange.emit(text);
   }
 
   protected submit(): void {
     if (!this.canSend()) return;
     this.send.emit(this.text());
-    this.text.set('');
+    this.setText('');
   }
 }

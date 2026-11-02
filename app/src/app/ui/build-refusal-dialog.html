@@ -10,16 +10,13 @@
     @if (problems().length > 0) {
       <ul class="grid gap-1" aria-label="Problems">
         @for (p of problems(); track $index) {
-          <li class="k-mono">{{ p.file }}:{{ p.line }} {{ p.message }}</li>
+          <li class="k-mono">{{ p }}</li>
         }
       </ul>
     }
     <p hlmAlertDialogDescription>Nothing was created or switched in any repository.</p>
     <hlm-alert-dialog-footer>
       <button hlmAlertDialogCancel size="sm">Close</button>
-      @if (taken() !== null) {
-        <button hlmBtn variant="primary" size="sm" type="button" (click)="rename.emit()">Pick a new branch name</button>
-      }
     </hlm-alert-dialog-footer>
   </hlm-alert-dialog-content>
 </hlm-alert-dialog>

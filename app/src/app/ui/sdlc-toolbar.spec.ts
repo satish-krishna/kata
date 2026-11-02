@@ -3,14 +3,20 @@ import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import { render } from '../../testing/render';
+import { KataTransport } from '../core/transport/kata-transport';
+import { MockTransport } from '../core/transport/mock-transport';
 import { SdlcToolbar } from './sdlc-toolbar';
 
 const WS: WorkspaceEntry = { id: 'acme', name: 'acme-commerce', folder: '/a', last_opened: 1 };
 const inputs = (over: Record<string, unknown> = {}) => ({
-  workspaces: [WS], current: WS, missing: [], branch: 'main', locked: false, ...over,
+  workspaces: [WS], current: WS, missing: [], branch: 'main', ...over,
 });
 const byLabel = (c: HTMLElement, label: string) => c.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
 const switcher = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('button[aria-label^="Switch workspace"]')!;
+
+// The toolbar hosts the running-changes strip, which reads the running changes from the transport.
+const provideTransport = () => TestBed.configureTestingModule({ providers: [{ provide: KataTransport, useClass: MockTransport }] });
+beforeEach(provideTransport);
 
 describe('SdlcToolbar', () => {
   it('shows the ai-sdlc badge, the workspace, and the master branch in mono', async () => {
@@ -65,22 +71,12 @@ describe('SdlcToolbar', () => {
     expect(got).toEqual(['mode', 'settings']);
   });
 
-  it('disables the mode badge and settings while locked', async () => {
-    const { container } = await render(SdlcToolbar, inputs({ locked: true }));
-    expect(byLabel(container, 'Switch mode (ai-sdlc)').disabled).toBe(true);
-    expect(byLabel(container, 'AI-SDLC settings').disabled).toBe(true);
-  });
-
-  it('disables the workspace switcher while locked', async () => {
-    const { container } = await render(SdlcToolbar, inputs({ locked: true }));
-    expect(switcher(container).disabled).toBe(true);
-  });
-
-  it('the back link is shown, named and disabled while locked', async () => {
+  it('the back link is shown, named and emits goBack', async () => {
     const back = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('button[aria-label="Back to the changes list"]');
     const none = await render(SdlcToolbar, inputs({ crumbs: ['c1'] }));
     expect(back(none.container)).toBeNull();
     TestBed.resetTestingModule();
+    provideTransport();
     const { fixture, container } = await render(SdlcToolbar, inputs({ crumbs: ['c1'], back: 'Changes' }));
     const link = back(container)!;
     expect(link.textContent!.trim()).toBe('Changes');
@@ -90,10 +86,6 @@ describe('SdlcToolbar', () => {
     fixture.componentInstance.goBack.subscribe(() => went++);
     link.click();
     expect(went).toBe(1);
-    TestBed.resetTestingModule();
-    const locked = await render(SdlcToolbar, inputs({ crumbs: ['c1'], back: 'Changes', locked: true }));
-    expect(back(locked.container)!.disabled).toBe(true);
-    expect(locked.container.querySelector('nav')!.textContent).toContain('c1');
   });
 
   it('withholds the workspace switcher and branch while blocked', async () => {
@@ -140,5 +132,23 @@ describe('SdlcToolbar without counts (R3.1)', () => {
   it('has no counts input, since the switcher shows names only', async () => {
     const { fixture } = await render(SdlcToolbar, { workspaces: [WS], current: WS, missing: [], branch: 'main' });
     expect('counts' in fixture.componentInstance).toBe(false);
+  });
+});
+
+describe('SdlcToolbar while a change builds (R11.6)', () => {
+  it('the changes list opens while another change builds', async () => {
+    const { fixture, container } = await render(SdlcToolbar, inputs({ crumbs: ['c1'], back: 'Changes' }));
+    // A running build never reaches the toolbar: it has no lock input, and every control stays enabled.
+    expect('locked' in fixture.componentInstance).toBe(false);
+    const went: string[] = [];
+    fixture.componentInstance.goBack.subscribe(() => went.push('back'));
+    fixture.componentInstance.switchMode.subscribe(() => went.push('mode'));
+    fixture.componentInstance.openSettings.subscribe(() => went.push('settings'));
+    for (const label of ['Back to the changes list', 'Switch mode (ai-sdlc)', 'AI-SDLC settings']) {
+      expect(byLabel(container, label).disabled, label).toBe(false);
+      byLabel(container, label).click();
+    }
+    expect(went).toEqual(['back', 'mode', 'settings']);
+    expect(switcher(container).disabled).toBe(false);
   });
 });

@@ -1,4 +1,3 @@
-import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { ReadResult } from '@bindings/ReadResult';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
@@ -34,10 +33,7 @@ describe('ChangePage parsed documents', () => {
 
   it('change page shows every requirement, scenario, task, build record and finding', async () => {
     const transport = new MockTransport();
-    const real = transport.sdlcReadChange.bind(transport);
-    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-      [await real(m, s, n)].map((c): ChangeInfo => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage: 'build-finished' } : c))[0],
-    );
+    transport.patchChange(MOCK_BUILD_CHANGE, { stage: 'build-finished' });
     vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_m, _s, _c, stem) => PROSE(stem));
     const documents: Record<string, ReadResult> = { spec: parsedSpec(), plan: parsedPlan() };
     vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_m, _s, _c, stem) => documents[stem] ?? null);
@@ -79,9 +75,5 @@ describe('ChangePage parsed documents', () => {
     expect(tasks.length).toBe(NUMBERS.tasks);
     expect(tasks.filter((b) => b.querySelector('[role="img"]')!.getAttribute('aria-label') === 'built').length).toBe(NUMBERS.buildRecords);
     expect(text(container.querySelector('[data-testid="task"] .k-docview__label')!)).toBe('Change');
-
-    await vm.act('declare-done');
-    const review = vm.doneReport()!.review;
-    expect('findings' in review && review.findings.length).toBe(NUMBERS.findings);
   });
 });

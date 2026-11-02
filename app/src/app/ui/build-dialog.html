@@ -23,15 +23,17 @@
     }
     <app-field label="This round">
       <div class="k-round__summary" data-round-summary aria-live="polite">
-        @if (plan().blocked; as blocked) {
-          <p class="k-round__blocked k-status k-status--warning"><span class="k-status__dot" aria-hidden="true"></span>{{ blocked }}</p>
-        } @else {
-          <p>Starts {{ plan().requests.length }} {{ plan().requests.length === 1 ? 'agent' : 'agents' }}</p>
-          <ul class="k-left__list">
-            @for (r of plan().requests; track r.repo) {
-              <li class="k-mono">{{ r.summary }}</li>
-            }
-          </ul>
+        @if (plan(); as shown) {
+          @if (shown.blocked; as blocked) {
+            <p class="k-round__blocked k-status k-status--warning"><span class="k-status__dot" aria-hidden="true"></span>{{ blocked }}</p>
+          } @else {
+            <p>Starts {{ shown.requests.length }} {{ shown.requests.length === 1 ? 'agent' : 'agents' }}</p>
+            <ul class="k-left__list">
+              @for (r of shown.requests; track r.repo) {
+                <li class="k-mono">{{ r.summary }}</li>
+              }
+            </ul>
+          }
         }
       </div>
     </app-field>

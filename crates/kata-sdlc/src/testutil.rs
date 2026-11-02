@@ -139,7 +139,7 @@ pub fn advance_origin_only(repo: &Path, branch: &str, rel: &str, msg: &str) {
     checkout(repo, &back, false);
 }
 
-/// A stand-in for the ai-sdlc plugin folder: its `format/` is the vendored copy of the plugin's
+/// A stand-in for the ai-sdlc plugin folder: its `tools/` is the vendored copy of the plugin's
 /// format program, and its version is the first one that supports the light track. Made once per test process.
 pub fn plugin_dir() -> &'static Path {
     static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
@@ -156,15 +156,15 @@ pub fn plugin_dir() -> &'static Path {
             }
         }
         let dir = tempfile::tempdir().unwrap();
-        let vendored = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format");
-        copy(&vendored, &dir.path().join("format"));
+        let vendored = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools");
+        copy(&vendored, &dir.path().join("tools"));
         let meta = dir.path().join(".claude-plugin");
         std::fs::create_dir_all(&meta).unwrap();
         std::fs::write(
             meta.join("plugin.json"),
             format!(
                 r#"{{"name":"ai-sdlc","version":"{}"}}"#,
-                crate::plugin::LIGHT_TRACK_VERSION
+                crate::plugin::MIN_VERSION
             ),
         )
         .unwrap();
@@ -173,13 +173,13 @@ pub fn plugin_dir() -> &'static Path {
     .path()
 }
 
-/// A stand-in plugin at `dir` whose `format/check.mjs` answers `fix-state --json <folder>...` without
+/// A stand-in plugin at `dir` whose `tools/ai-sdlc.ts` answers `fix-state --json <folder>...` without
 /// git: a folder named with `row7` or `row9` stands at that row, one named with `broken` gets an `error`
-/// entry, any other stands at row 6. Every call appends a line to `format/calls.log`, so a test counts
+/// entry, any other stands at row 6. Every call appends a line to `tools/calls.log`, so a test counts
 /// the processes a scan started. Returns the plugin folder.
 #[allow(dead_code)]
 pub fn fake_fix_plugin(dir: &Path, version: &str) -> PathBuf {
-    let format = dir.join("format");
+    let format = dir.join("tools");
     std::fs::create_dir_all(&format).unwrap();
     std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
     std::fs::write(
@@ -188,7 +188,7 @@ pub fn fake_fix_plugin(dir: &Path, version: &str) -> PathBuf {
     )
     .unwrap();
     std::fs::write(
-        format.join("check.mjs"),
+        format.join("ai-sdlc.ts"),
         r#"import { appendFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const [, , command, , ...folders] = process.argv;

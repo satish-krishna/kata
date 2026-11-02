@@ -1,9 +1,10 @@
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import { render } from '../../../testing/render';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
-import type { PrEntry } from '@bindings/PrEntry';
-import type { PrLink } from '@bindings/PrLink';
+import type { ChangeInfo } from '../../lib/sdlc-mock-types';
+import type { DeclareView } from '@bindings/DeclareView';
+import type { RepoCheckView } from '@bindings/RepoCheckView';
+import type { PullRequestLink } from '@bindings/PullRequestLink';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject, of } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
@@ -13,11 +14,13 @@ import { ProgressStore } from '../../core/progress/progress.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import type { StageAction } from '../../lib/sdlc';
-import { canConfirm } from '../../lib/sdlc-done';
 import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
+
+/** Hold the lock the way Kata's own checks do, and never finish: the screen stays locked for the rest of the test. */
+const holdLock = (lock: LockStore): void => void lock.runSteps('Checking', [{ label: 'Check', run: () => new Promise<string | null>(() => undefined) }]);
 
 const BUILD = MOCK_BUILD_CHANGE;
 const RUN = `sdlc-commerce-${BUILD}-review-1`;
@@ -47,8 +50,7 @@ const ready = async (vm: ChangePageViewModel) => {
   });
 };
 const withStage = (transport: MockTransport, name: string, stage: ChangeInfo['stage']) => {
-  const real = transport.sdlcReadChange.bind(transport);
-  vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) => [await real(m, s, n)].map((c) => (c.change === name ? { ...c, stage } : c))[0]);
+  transport.patchChange(name, { stage });
 };
 
 /** A finished build whose review ran against the current heads and whose repositories have nothing uncommitted. */
@@ -71,52 +73,37 @@ async function finished(tweak: (t: MockTransport) => void = () => undefined) {
 afterEach(() => toastState.reset());
 
 describe('declaring done', () => {
-  it('declare done runs checks for every touched repository and the master (R11.1)', async () => {
+  it('declare done reads the checks the plugin recorded once, for the change, and the touched repositories and the master are listed (R11.1)', async () => {
     const { vm, transport, steps } = await finished();
-    const load = vi.spyOn(transport, 'sdlcChecksLoad');
-    const run = vi.spyOn(transport, 'sdlcRunChecks');
+    const read = vi.spyOn(transport, 'sdlcChecksView');
     await vm.act('declare-done');
     expect(steps).toHaveBeenCalledWith('Declaring done', expect.any(Array));
-    expect(load).toHaveBeenCalledTimes(1);
-    expect(run.mock.calls.map((c) => c[3].repo)).toEqual(['commerce-docs', ...REPOS]);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledWith({ workspace: expect.any(String), system: 'commerce', change: BUILD });
     const report = vm.doneReport()!;
     expect(report.repos.map((r) => r.repo)).toEqual(['commerce-docs', ...REPOS]);
-    expect(report.repos.every((r) => r.result !== null)).toBe(true);
-    expect(canConfirm(report)).toBe(true);
-    expect(report.account).toBe('demo-user');
   });
 
-  it('a failed check blocks confirm and publishes nothing (R11.2)', async () => {
-    const { vm, transport } = await finished();
-    const failed = { name: 'cargo test', argv: ['cargo', 'test'], outcome: { kind: 'Failed' as const, exit: 101 }, tail: 'assertion failed' };
-    vi.spyOn(transport, 'sdlcRunChecks').mockImplementation(async (_f, _m, _s, repo) => ({ repo: repo.repo, none: false, results: repo.repo === 'commerce-core' ? [failed] : [] }));
-    const publish = vi.spyOn(transport, 'sdlcPublish');
+  it("the done dialog shows each repository's checks as the plugin recorded them and Kata runs none (R5.1)", async () => {
+    const failed: RepoCheckView = { repo: 'commerce-core', view: { kind: 'failedStop', id: 'unit', output: 'assertion failed' }, summary: 'unit failed. The build stopped here.' };
+    const { vm, transport } = await finished((t) => vi.spyOn(t, 'sdlcChecksView').mockResolvedValue([failed]));
     await vm.act('declare-done');
     const report = vm.doneReport()!;
-    expect(canConfirm(report)).toBe(false);
-    expect(report.repos.find((r) => r.repo === 'commerce-core')!.result!.results[0].tail).toBe('assertion failed');
-    expect(publish).not.toHaveBeenCalled();
+    expect(report.repos.find((r) => r.repo === 'commerce-core')!.view).toEqual(failed);
+    expect(report.repos.find((r) => r.repo === 'customer-portal')!.view).toBeNull();
+    expect(transport).not.toHaveProperty('sdlcRunChecks');
   });
 
   it('declare done is refused while a run is going or edits are uncommitted (R11.4)', async () => {
     const running = await finished();
-    expect(running.lock.beginBuild('Build')).toBe(true);
+    holdLock(running.lock);
+    expect(running.lock.active()).not.toBeNull();
     await running.vm.act('declare-done');
     expect(toastText()).toContain('Another task is already running.');
-    expect(running.steps).not.toHaveBeenCalled();
+    // The only steps run is the one holding the lock; declaring done started none.
+    expect(running.steps).toHaveBeenCalledTimes(1);
+    expect(running.steps).not.toHaveBeenCalledWith('Declaring done', expect.any(Array));
     expect(running.vm.doneReport()).toBeNull();
-  });
-
-  it('refuses while a touched repository has uncommitted edits and names it (R11.4)', async () => {
-    const { vm, transport, steps } = await finished();
-    vi.spyOn(transport, 'sdlcDiffFiles').mockImplementation(async (path, part) => ({
-      files: path.endsWith('customer-portal') && part === 'uncommitted' ? [{ path: 'a.rs', oldPath: null, status: 'modified', binary: false, added: 1, removed: 0, uncommitted: true }] : [],
-      loc: [],
-    }));
-    await vm.act('declare-done');
-    expect(toastText()).toContain('Commit or discard the uncommitted edits in customer-portal before declaring done.');
-    expect(steps).not.toHaveBeenCalled();
-    expect(vm.doneReport()).toBeNull();
   });
 
   it('is not offered before the build has finished (R11.4)', async () => {
@@ -127,180 +114,15 @@ describe('declaring done', () => {
     expect(steps).not.toHaveBeenCalled();
   });
 
-  it('an offending commit blocks confirm (R11.5)', async () => {
-    const { vm } = await finished((t) => vi.spyOn(t, 'sdlcCommitOffenders').mockResolvedValue([{ repo: 'commerce-core', hash: 'abc1234def', subject: 'fix stuff' }]));
-    await vm.act('declare-done');
-    expect(vm.doneReport()!.offenders).toEqual([{ repo: 'commerce-core', hash: 'abc1234def', subject: 'fix stuff' }]);
-    expect(canConfirm(vm.doneReport()!)).toBe(false);
-  });
-
-  it.each([
-    ['sdlcGhSignedIn', 'Not signed in to github.com. Run gh auth login, then declare done again.'],
-    ['sdlcGhOrigins', 'customer-portal has no GitHub remote'],
-  ] as const)('a repository that is not ready blocks done with the reason, and nothing after it runs (R12.1): %s', async (method, reason) => {
-    const { vm, transport } = await finished((t) => vi.spyOn(t, method).mockRejectedValue(new Error(reason)));
-    const run = vi.spyOn(transport, 'sdlcRunChecks');
-    const offenders = vi.spyOn(transport, 'sdlcCommitOffenders');
-    const publish = vi.spyOn(transport, 'sdlcPublish');
-    await vm.act('declare-done');
-    const report = vm.doneReport()!;
-    expect(report.notReady).toBe(reason);
-    expect(canConfirm(report)).toBe(false);
-    expect(run).not.toHaveBeenCalled();
-    expect(offenders).not.toHaveBeenCalled();
-    expect(publish).not.toHaveBeenCalled();
-  });
-
   it("done dialog lists departures with the plan's text before confirm (R9.2)", async () => {
     const { vm } = await finished();
     await vm.act('declare-done');
     expect(vm.doneReport()!.departures).toEqual([DEPARTURE]);
   });
 
-  it('a bad checks file blocks done and says where (R16.2)', async () => {
-    const message = '/home/demo/.kata/checks/commerce.toml:4:1: a check has no time limit';
-    const { vm, transport } = await finished((t) => vi.spyOn(t, 'sdlcChecksLoad').mockRejectedValue(new Error(message)));
-    const run = vi.spyOn(transport, 'sdlcRunChecks');
-    await vm.act('declare-done');
-    const report = vm.doneReport()!;
-    expect(run).not.toHaveBeenCalled();
-    expect(report.checksError).toBe(message);
-    expect(report.checksPath).toContain('commerce.toml');
-    expect(canConfirm(report)).toBe(false);
-  });
-
-  it("done dialog lists each repository's checks and the file path (R16.3)", async () => {
-    const { vm } = await finished();
-    await vm.act('declare-done');
-    const report = vm.doneReport()!;
-    expect(report.repos.find((r) => r.repo === 'commerce-core')!.checks.map((c) => c.name)).toEqual(['cargo test']);
-    expect(report.repos.find((r) => r.repo === 'customer-portal')!.checks).toEqual([]);
-    expect(report.checksPath).toBe('C:/Users/demo/.kata/checks/commerce.toml');
-    expect(report.repos[0].base).toBe('main');
-  });
-
-  it('done dialog shows the findings most serious first before confirm (R20.1)', async () => {
-    const { vm } = await finished();
-    await vm.act('declare-done');
-    const review = vm.doneReport()!.review;
-    expect('findings' in review && review.findings.length).toBe(2);
-    expect('findings' in review && review.findings[0].text).toContain('upload limit is duplicated');
-  });
-
-  it('with a review document the done dialog reads its latest review against the heads, not the run exit code (R14.2)', async () => {
-    const { vm, transport } = await finished((t) => {
-      vi.spyOn(t, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 1 }]);
-    });
-    const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
-    const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
-    const finding = { id: 'F1', severity: 'high' as const, file: 'src/a.ts', line: 4, text: 'The limit is not enforced on retry.' };
-    vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({
-      layout: 2,
-      problems: [],
-      master_moved: [],
-      reviews: [{ number: 1, reviewed_at: '2026-10-22', commits, findings: [finding] }],
-    });
-    await vm.act('declare-done');
-    const review = vm.doneReport()!.review;
-    expect(review).toEqual({ at: '2026-10-22', findings: [finding] });
-    // The review is current, so the one thing that still holds the pull requests is its high-severity finding.
-    expect(canConfirm(vm.doneReport()!)).toBe(false);
-    expect(canConfirm(vm.doneReport()!, true)).toBe(true);
-  });
-
-  it('a review run that committed under plugin/ is not current when the change page is opened again (F17)', async () => {
+  it('Run review starts the review only, through the backend', async () => {
     const { vm, transport } = await finished();
-    const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
-    const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
-    const finding = { id: 'F1', severity: 'high' as const, file: 'src/a.ts', line: 4, text: 'The limit is not enforced on retry.' };
-    // The backend reports what the master committed since the head the review recorded; a fresh view model asks again and gets the same answer.
-    vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({
-      layout: 2,
-      problems: [],
-      reviews: [{ number: 1, reviewed_at: '2026-10-22', commits, findings: [finding] }],
-      master_moved: ['plugin/format/check.mjs'],
-    });
-    await vm.act('declare-done');
-    expect(vm.doneReport()!.review).toEqual({ missing: 'stale' });
-    expect(canConfirm(vm.doneReport()!)).toBe(false);
-  });
-
-  it('open findings do not block Open pull requests, and confirming publishes (R20.2)', async () => {
-    const { vm, transport } = await finished();
-    const publish = vi.spyOn(transport, 'sdlcPublish');
-    await vm.act('declare-done');
-    expect(canConfirm(vm.doneReport()!)).toBe(true);
-    await vm.confirmDone();
-    expect(publish).toHaveBeenCalledTimes(1);
-    expect(publish.mock.calls[0][5].map((r) => r.repo)).toEqual(['commerce-docs', ...REPOS]);
-    expect(vm.doneReport()).toBeNull();
-    expect(vm.prList()!.map((r) => r.outcome.kind)).toEqual(['opened', 'opened', 'opened']);
-  });
-
-  it('a high-severity finding holds the pull requests until it is acknowledged, and a new report asks again (R20.4)', async () => {
-    const { vm, transport } = await finished();
-    const publish = vi.spyOn(transport, 'sdlcPublish');
-    const withHigh = () => vm.doneReport.update((r) => ({ ...r!, review: { at: 1, findings: [{ severity: 'high' as const, text: 'x' }] } }));
-    await vm.act('declare-done');
-    withHigh();
-    await vm.confirmDone();
-    expect(publish).not.toHaveBeenCalled();
-    expect(vm.doneReport()).not.toBeNull();
-
-    vm.doneAcknowledged.set(true);
-    vm.cancelDone();
-    await vm.act('declare-done');
-    withHigh();
-    expect(vm.doneAcknowledged()).toBe(false);
-    await vm.confirmDone();
-    expect(publish).not.toHaveBeenCalled();
-
-    vm.doneAcknowledged.set(true);
-    await vm.confirmDone();
-    expect(publish).toHaveBeenCalledTimes(1);
-  });
-
-  it('a failed pull request lists why, and Retry publishes again (R13.2)', async () => {
-    const { vm, transport, steps } = await finished();
-    const real = transport.sdlcPublish.bind(transport);
-    const publish = vi.spyOn(transport, 'sdlcPublish').mockImplementationOnce(async (f, w, m, s, c, repos) => {
-      const out = await real(f, w, m, s, c, repos);
-      return { ...out, results: out.results.map((r) => (r.repo === 'customer-portal' ? { repo: r.repo, outcome: { kind: 'failed' as const, error: 'gh: HTTP 502' } } : r)) };
-    });
-    await vm.act('declare-done');
-    await vm.confirmDone();
-    expect(vm.prList()!.find((r) => r.repo === 'customer-portal')!.outcome).toEqual({ kind: 'failed', error: 'gh: HTTP 502' });
-    await vm.retryPublish();
-    expect(publish).toHaveBeenCalledTimes(2);
-    expect(steps.mock.calls.filter((c) => c[0] === 'Opening pull requests').length).toBe(2);
-    expect(vm.prList()!.every((r) => r.outcome.kind === 'opened')).toBe(true);
-    vm.closePrList();
-    expect(vm.prList()).toBeNull();
-  });
-
-  it.each([
-    ['none', (t: MockTransport) => vi.spyOn(t, 'sdlcRunLinks').mockResolvedValue([])],
-    ['unfinished', (t: MockTransport) => vi.spyOn(t, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 1 }])],
-    ['stale', (t: MockTransport) => vi.spyOn(t, 'sdlcBuildHeads').mockResolvedValue({ 'commerce-core': 'ffffffff', 'customer-portal': 'eeeeeee' })],
-  ] as const)('done needs a finished review of the current heads (R20.3): %s', async (missing, tweak) => {
-    const { vm, transport } = await finished();
-    tweak(transport);
-    await vm.act('declare-done');
-    expect(vm.doneReport()!.review).toEqual({ missing });
-    expect(canConfirm(vm.doneReport()!)).toBe(false);
-  });
-
-  it('done compares the master repository head as well as the product repositories (R20.3)', async () => {
-    const { vm, transport } = await finished();
-    const heads = vi.spyOn(transport, 'sdlcBuildHeads');
-    await vm.act('declare-done');
-    expect(heads).toHaveBeenCalledWith(expect.anything(), 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
-    expect(vm.doneReport()!.review).toMatchObject({ findings: expect.anything() });
-  });
-
-  it('Run review prepares a build with no round, which runs the review only', async () => {
-    const { vm, transport } = await finished();
-    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+    const prepare = vi.spyOn(transport, 'sdlcReviewStart');
     await vm.act('declare-done');
     await vm.doneRunReview();
     // The review goes through its preview first (R1.1); Start run hands the build over.
@@ -308,25 +130,20 @@ describe('declaring done', () => {
     await vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
     expect(prepare).not.toHaveBeenCalled();
     preview.start();
-    await vi.waitFor(() => expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull());
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalled());
     expect(vm.doneReport()).toBeNull();
-    expect(prepare).toHaveBeenCalled();
-    expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull();
-    expect(TestBed.inject(BuildPageViewModel).current()!.rounds).toEqual([]);
   });
 
-  it("the toolbar's Run review starts the review-only build, the same as the done dialog's", async () => {
+  it("the toolbar's Run review starts the review, the same as the done dialog's", async () => {
     const { vm, transport } = await finished();
-    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+    const prepare = vi.spyOn(transport, 'sdlcReviewStart');
     await vm.act('run-review');
     // The review goes through its preview first (R1.1); Start run hands the build over.
     const preview = TestBed.inject(RunPreviewViewModel);
     await vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
     expect(prepare).not.toHaveBeenCalled();
     preview.start();
-    await vi.waitFor(() => expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull());
-    expect(prepare).toHaveBeenCalled();
-    expect(TestBed.inject(BuildPageViewModel).current()!.rounds).toEqual([]);
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalled());
   });
 
   it('an action with nothing behind it says so instead of doing nothing', async () => {
@@ -341,12 +158,12 @@ describe('declaring done', () => {
     await vm.act('declare-done');
     vm.doneRound();
     expect(vm.doneReport()).toBeNull();
-    expect(vm.buildMode()).toBe('round');
+    await vi.waitFor(() => expect(TestBed.inject(BuildPageViewModel).dialogMode()).toBe('round'));
   });
 
-  it('Cancel closes the dialog and publishes nothing', async () => {
+  it('Cancel closes the dialog and asks the plugin nothing', async () => {
     const { vm, transport } = await finished();
-    const publish = vi.spyOn(transport, 'sdlcPublish');
+    const publish = vi.spyOn(transport, 'sdlcDeclareDone');
     await vm.act('declare-done');
     vm.cancelDone();
     expect(vm.doneReport()).toBeNull();
@@ -397,7 +214,7 @@ describe('declaring done from the build page', () => {
     vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 0 }]);
     const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
     await transport.sdlcLinkRun({ workspace_id: 'acme-commerce', system: 'commerce', change: BUILD, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
-    const publish = vi.spyOn(transport, 'sdlcPublish');
+    const publish = vi.spyOn(transport, 'sdlcDeclareDone');
     const { container, fixture } = await mountPage(BUILD, transport);
     const vm = fixture.debugElement.injector.get(ChangePageViewModel);
 
@@ -405,19 +222,16 @@ describe('declaring done from the build page', () => {
     await vi.waitFor(() => expect(vm.doneReport()).not.toBeNull(), { timeout: 10000 });
     const report = vm.doneReport()!;
     expect(report.departures).toEqual([DEPARTURE]);
-    expect(report.review).toMatchObject({ findings: [expect.objectContaining({ text: FINDING })] });
     expect(report.repos.map((r) => r.repo)).toEqual(['commerce-docs', ...REPOS]);
-    expect(report.repos.every((r) => r.result !== null)).toBe(true);
     await settle();
     const dialog = document.body.querySelector('app-done-dialog [role="dialog"], [role="dialog"]')!;
     expect(text(dialog.querySelector('[hlmDialogTitle]')!)).toBe('Declare the change done');
     expect(text(dialog)).toContain(DEPARTURE.departure);
-    expect(text(dialog)).toContain(FINDING);
     for (const repo of REPOS) expect(text(dialog)).toContain(repo);
 
     button(dialog, 'Open pull requests')!.click();
     await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(1), { timeout: 10000 });
-    await vi.waitFor(() => expect(vm.prList()).not.toBeNull(), { timeout: 10000 });
+    await vi.waitFor(() => expect(vm.declareView()).not.toBeNull(), { timeout: 10000 });
     await settle();
     expect(text(document.body.querySelector('[role="dialog"] [hlmDialogTitle]')!)).toBe('Pull requests');
     expect(page(container)).not.toBeNull();
@@ -447,10 +261,10 @@ describe('declaring done from the build page', () => {
     expect(Array.from(p.querySelectorAll('[data-bar] button')).filter((b) => b.closest('app-segmented') === null).map(text).filter((t) => t !== 'Reset layout')).toEqual([]);
   });
 
-  const PRS = [
-    { repo: 'commerce-docs', url: 'https://github.com/acme/commerce-docs/pull/11', state: 'open' as const, seenAt: null },
-    { repo: 'commerce-core', url: 'https://github.com/acme/commerce-core/pull/12', state: 'open' as const, seenAt: null },
-    { repo: 'customer-portal', url: 'https://github.com/acme/customer-portal/pull/13', state: 'open' as const, seenAt: null },
+  const PRS: PullRequestLink[] = [
+    { repo: 'commerce-docs', url: 'https://github.com/acme/commerce-docs/pull/11', number: 11, source: 'plugin', state: 'open', lastSeen: false, seenAt: null },
+    { repo: 'commerce-core', url: 'https://github.com/acme/commerce-core/pull/12', number: 12, source: 'plugin', state: 'open', lastSeen: false, seenAt: null },
+    { repo: 'customer-portal', url: 'https://github.com/acme/customer-portal/pull/13', number: 13, source: 'plugin', state: 'open', lastSeen: false, seenAt: null },
   ];
   const click = (a: Element) => {
     const ev = new MouseEvent('click', { bubbles: true, cancelable: true });
@@ -468,7 +282,7 @@ describe('declaring done from the build page', () => {
     const { container, fixture } = await mountPage(MOCK_DONE_CHANGE, transport);
     const vm = fixture.debugElement.injector.get(ChangePageViewModel);
     vm.pullRequests.set(PRS.slice(0, shown));
-    if (place === 'dialog') vm.prList.set(PRS.map(({ repo, url }) => ({ repo, outcome: { kind: 'opened' as const, url } })));
+    if (place === 'dialog') vm.declareView.set({ kind: 'done', pullRequests: PRS.map(({ repo, url }, i) => ({ repo, url, number: 11 + i, source: 'plugin' as const })), warnings: [] });
     await settle();
 
     let link: Element;
@@ -506,176 +320,162 @@ describe('declaring done from the build page', () => {
   });
 });
 
-describe('declaring done reports progress', () => {
-  it('names the repository whose checks run, the branch being pushed and the pull request being opened (R7.1)', async () => {
-    const { vm } = await finished();
-    const progress = TestBed.inject(ProgressStore);
-    const begin = vi.spyOn(progress, 'begin');
-    const end = vi.spyOn(progress, 'end');
-    await vm.act('declare-done');
-    const checks = begin.mock.calls.filter((c) => c[0] === 'running-checks');
-    expect(checks.map((c) => c[1])).toEqual(['commerce-docs', ...REPOS].map((r) => `Running the checks in ${r}`));
-    expect(checks.every((c) => c[2] === 'lock')).toBe(true);
-    await vm.confirmDone();
-    const pushes = begin.mock.calls.filter((c) => c[0] === 'pushing').map((c) => c[1]);
-    expect(pushes).toEqual(expect.arrayContaining(REPOS.map((r) => `Pushing change/${BUILD} in ${r}`)));
-    const opens = begin.mock.calls.filter((c) => c[0] === 'opening-prs').map((c) => c[1]);
-    expect(opens).toEqual(expect.arrayContaining(REPOS.map((r) => `Opening a pull request in ${r}`)));
-    expect(end).toHaveBeenCalledWith('lock');
-    expect(progress.view('lock')()).toBeNull();
-  });
-
-  it('names the recorded branch in the push line (R7.1)', async () => {
-    const RECORDED = 'feat/PROJ-123-password-reset';
-    const { vm } = await finished((t) => {
-      const real = t.sdlcChangeRepos.bind(t);
-      vi.spyOn(t, 'sdlcChangeRepos').mockImplementation(async (...args) => (await real(...args)).map((r) => ({ ...r, branch: RECORDED })));
-    });
-    const begin = vi.spyOn(TestBed.inject(ProgressStore), 'begin');
-    await vm.act('declare-done');
-    await vm.confirmDone();
-    const pushes = begin.mock.calls.filter((c) => c[0] === 'pushing').map((c) => c[1]);
-    expect(pushes).toEqual(expect.arrayContaining(REPOS.map((r) => `Pushing ${RECORDED} in ${r}`)));
-    expect(pushes.some((p) => p.includes('change/'))).toBe(false);
-  });
-
-  it('a failed publish clears the progress line before it raises its error (R7.3)', async () => {
-    const { vm, transport } = await finished();
-    const progress = TestBed.inject(ProgressStore);
-    await vm.act('declare-done');
-    vi.spyOn(transport, 'sdlcPublish').mockImplementation(async () => {
-      progress.begin('pushing', 'Pushing change/x in commerce-core', 'lock');
-      throw new Error('push refused');
-    });
-    const fail = vi.spyOn(progress, 'fail');
-    await vm.confirmDone();
-    expect(fail).toHaveBeenCalledWith('lock');
-    expect(progress.view('lock')()).toBeNull();
-    expect(toastText()).toContain('push refused');
-  });
-});
-
 describe('lasting links after a publish or a round', () => {
-  const saved = (repo: string, over: Partial<PrLink> = {}): PrLink => ({ repo, url: `https://github.com/acme/${repo}/pull/7`, state: 'open', seenAt: 1790000000, ...over });
+  const saved = (repo: string, over: Partial<PullRequestLink> = {}): PullRequestLink => ({ repo, url: `https://github.com/acme/${repo}/pull/7`, number: 7, source: 'plugin', state: 'open', lastSeen: false, seenAt: null, ...over });
 
-  it('keeps the opened link and offers declare done after a partial publish (R8.3)', async () => {
+  it('keeps the opened link and offers declare done after a part-way failure (R8.3)', async () => {
     const { vm, transport } = await finished();
-    const real = transport.sdlcDoneView.bind(transport);
+    const real = transport.sdlcPullRequestsView.bind(transport);
     let published = false;
-    const doneView = vi.spyOn(transport, 'sdlcDoneView').mockImplementation(async (...args) =>
-      published ? { done: false, links: [saved('commerce-core')], linksFrom: 'opened', offerDeclare: true, prCheckFailed: false } : real(...args),
+    const doneView = vi.spyOn(transport, 'sdlcPullRequestsView').mockImplementation(async (...args) =>
+      published ? { done: false, source: 'plugin', links: [saved('commerce-core')], declareOffered: true } : real(...args),
     );
-    const publish = vi.spyOn(transport, 'sdlcPublish').mockImplementation(async () => {
+    const publish = vi.spyOn(transport, 'sdlcDeclareDone').mockImplementation(async () => {
       published = true;
-      return { leftBehind: [], results: [
-        { repo: 'commerce-core', outcome: { kind: 'opened' as const, url: 'https://github.com/acme/commerce-core/pull/7' } },
-        { repo: 'customer-portal', outcome: { kind: 'failed' as const, error: 'push refused' } },
-      ] };
+      return { kind: 'partial', pushed: ['commerce-core', 'customer-portal'], opened: [{ repo: 'commerce-core', url: 'https://github.com/acme/commerce-core/pull/7', number: 7, source: 'plugin' }], failed: ['opening the pull request in customer-portal failed: push refused'] };
     });
     await vm.act('declare-done');
     await vm.confirmDone();
-    expect(publish.mock.calls[0][1]).toBe(vm.current()!.id);
+    expect(publish).toHaveBeenCalledTimes(1);
     expect(doneView.mock.calls.length).toBeGreaterThan(1);
     expect(vm.done()).toBe(false);
     expect(vm.pullLinks().map((l) => l.repo)).toEqual(['commerce-core']);
-    expect(vm.prList()?.length).toBe(2);
+    expect(vm.declareView()?.kind).toBe('partial');
     expect(vm.actions()).toContain('declare-done');
   });
 
-  it('a round after done shows build finished with the earlier links (T10 row 2)', async () => {
+  it('a change an earlier version declared done shows as done with its links and is not offered declaring done again (R8.1)', async () => {
     const transport = new MockTransport();
     withStage(transport, BUILD, 'build-finished');
-    vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue({
-      done: false,
-      links: [saved('commerce-core'), saved('customer-portal')],
-      linksFrom: 'earlierDeclaration',
-      offerDeclare: true,
-      prCheckFailed: false,
+    const earlier = (repo: string) => saved(repo, { source: 'legacy', lastSeen: true, seenAt: 1790000000, state: 'merged' });
+    const asked = vi.spyOn(transport, 'sdlcPullRequestsView').mockResolvedValue({
+      done: true,
+      source: 'legacy',
+      links: [earlier('commerce-core'), earlier('customer-portal')],
+      declareOffered: false,
     });
-    vi.spyOn(transport, 'sdlcRefreshPrStates').mockImplementation(() => new Promise<never>(() => undefined));
     const { vm } = setup(transport);
     await ready(vm);
-    expect(vm.done()).toBe(false);
-    expect(vm.change()!.stage).toBe('build-finished');
-    expect(vm.pullLinks().map((l) => l.repo)).toEqual(['commerce-core', 'customer-portal']);
+    expect(vm.done()).toBe(true);
+    expect(vm.pullLinks().map((l) => [l.repo, l.state])).toEqual([['commerce-core', 'merged'], ['customer-portal', 'merged']]);
+    expect(vm.pullLinks().every((l) => l.seen?.startsWith('last seen '))).toBe(true);
     expect(vm.linksNote()).toBe('from the earlier declaration');
-    expect(vm.actions()).toContain('declare-done');
+    expect(vm.actions()).not.toContain('declare-done');
+    // The plugin does not know these pull requests: GitHub is never asked about them.
+    expect(asked.mock.calls.every((c) => c[4] === false)).toBe(true);
   });
 });
 
-describe('a branch name that is taken on GitHub', () => {
-  const CLASH = { repo: 'commerce-core', branch: 'feat/PROJ-123-reset' };
+describe('a branch name, after a rename', () => {
   const NEW_NAME = 'feat/PROJ-123-password-reset';
-  const stepLabels = (steps: { mock: { calls: unknown[][] } }) =>
-    (steps.mock.calls.find((c) => c[0] === 'Declaring done')![1] as { label: string }[]).map((s) => s.label);
 
-  it('a GitHub clash holds confirming until renamed (R10.1)', async () => {
-    const { vm, transport, steps } = await finished();
-    const publish = vi.spyOn(transport, 'sdlcPublish');
-    const clashes = vi.spyOn(transport, 'sdlcRemoteClashes').mockResolvedValue([CLASH]);
-    await vm.act('declare-done');
-    const labels = stepLabels(steps);
-    expect(labels.indexOf('Branch is free on GitHub')).toBe(labels.indexOf('Origins are GitHub repositories') + 1);
-    expect(clashes).toHaveBeenCalledTimes(1);
-    expect(vm.doneReport()!.clashes).toEqual([CLASH]);
-    expect(canConfirm(vm.doneReport()!)).toBe(false);
-    await vm.confirmDone();
-    expect(publish).not.toHaveBeenCalled();
-    expect(vm.doneReport()).not.toBeNull();
-  });
-
-  it('with no clash the report lists none and the branch the repositories have (R10.1)', async () => {
+  it('the report names the branch the repositories have (R10.1)', async () => {
     const { vm } = await finished();
     await vm.act('declare-done');
-    expect(vm.doneReport()!.clashes).toEqual([]);
     expect(vm.doneReport()!.branch).toBe(`change/${BUILD}`);
   });
 
-  it('after a rename the readiness runs again and confirming is offered, the review still current (R10.3)', async () => {
+  it('a rename lists the pull requests opened from the old name, to close by hand (R2.3)', async () => {
     const { vm, transport } = await finished();
-    vi.spyOn(transport, 'sdlcRemoteClashes').mockResolvedValueOnce([CLASH]).mockResolvedValue([]);
-    const rename = vi.spyOn(transport, 'sdlcRenameBranch');
-    const runs = vi.spyOn(transport, 'sdlcRunChecks');
-    await vm.act('declare-done');
-    expect(canConfirm(vm.doneReport()!)).toBe(false);
-    const checksBefore = runs.mock.calls.length;
-    const renamed = vm.renameFromDone(CLASH.branch);
+    const old = { repo: 'customer-portal', url: 'https://github.com/acme/customer-portal/pull/3', number: 3, source: 'plugin' as const };
+    vi.spyOn(transport, 'sdlcRenameBranch').mockResolvedValue({ outcome: 'renamed', from: 'feat/PROJ-123-reset', to: NEW_NAME, repos: ['master'], oldPullRequests: [old] });
+    const renamed = vm.renameBranch('feat/PROJ-123-reset');
     await vi.waitFor(() => expect(TestBed.inject(SdlcRunner).nameRequest()).not.toBeNull());
-    expect(TestBed.inject(SdlcRunner).nameRequest()!.rename).toBe(true);
     await TestBed.inject(SdlcRunner).confirmName(NEW_NAME);
-    await renamed;
-    expect(rename).toHaveBeenCalledWith(vm.current()!.folder, vm.current()!.id, 'commerce-docs', 'commerce', BUILD, NEW_NAME);
-    expect(runs.mock.calls.length).toBeGreaterThan(checksBefore);
-    expect(vm.doneReport()!.clashes).toEqual([]);
-    expect(canConfirm(vm.doneReport()!)).toBe(true);
+    expect(await renamed).toBe(NEW_NAME);
+    expect(vm.prLeftBehind()).toEqual([{ repo: 'customer-portal', url: old.url, branch: 'feat/PROJ-123-reset' }]);
   });
+});
 
-  it('closing the rename dialog leaves the report as it was, held (R10.1)', async () => {
-    const { vm, transport } = await finished();
-    vi.spyOn(transport, 'sdlcRemoteClashes').mockResolvedValue([CLASH]);
-    await vm.act('declare-done');
-    const asked = vm.renameFromDone(CLASH.branch);
-    await vi.waitFor(() => expect(TestBed.inject(SdlcRunner).nameRequest()).not.toBeNull());
-    TestBed.inject(SdlcRunner).closeName();
-    await asked;
-    expect(vm.doneReport()!.clashes).toEqual([CLASH]);
-  });
+describe("declaring done is the plugin's step", () => {
+  const ASKED = { workspace: expect.any(String), system: 'commerce', change: BUILD };
 
-  it('a Clash publish result keeps what was pushed and lists what an earlier name left behind (R10.2, R10.4)', async () => {
+  it('confirming runs the plugin once for the change and shows its pull requests, the master last, and the change as done (R7.1 passes)', async () => {
     const { vm, transport } = await finished();
-    const old: PrEntry = { repo: 'customer-portal', url: 'https://github.com/acme/customer-portal/pull/3', number: 3, branch: 'feat/PROJ-123-reset', pushedHead: 'abc', state: 'open', seenAt: 1 };
-    vi.spyOn(transport, 'sdlcPublish').mockResolvedValue({
-      leftBehind: [old],
-      results: [
-        { repo: 'commerce-docs', outcome: { kind: 'opened', url: 'https://github.com/acme/commerce-docs/pull/9' } },
-        { repo: 'commerce-core', outcome: { kind: 'clash', branch: 'feat/PROJ-123-reset' } },
-      ],
-    });
+    const declare = vi.spyOn(transport, 'sdlcDeclareDone');
     await vm.act('declare-done');
     await vm.confirmDone();
-    expect(vm.prList()!.map((r) => r.outcome.kind)).toEqual(['opened', 'clash']);
-    expect(vm.prLeftBehind()).toEqual([old]);
-    vm.closePrList();
-    expect(vm.prLeftBehind()).toEqual([]);
+    expect(declare).toHaveBeenCalledTimes(1);
+    expect(declare).toHaveBeenCalledWith(ASKED);
+    const view = vm.declareView();
+    expect(view?.kind).toBe('done');
+    expect(view?.kind === 'done' && view.pullRequests.map((p) => p.repo)).toEqual([...REPOS, 'commerce-docs']);
+    expect(vm.done()).toBe(true);
+    vm.closeDeclareView();
+    expect(vm.declareView()).toBeNull();
+  });
+
+  it.each([
+    ['refuses, listing what is not ready', { kind: 'notReady', problems: ['customer-portal has uncommitted files: a.rs'] }],
+    ['fails part way', { kind: 'partial', pushed: ['commerce-core'], opened: [], failed: ['opening the pull request in commerce-core failed: boom'] }],
+    ['cannot run on this machine', { kind: 'couldNotRun', message: 'ai-sdlc needs Node.js 22.18 or later' }],
+  ] satisfies [string, DeclareView][])('the plugin %s: the engineer sees exactly that answer (R7.1)', async (_row, view) => {
+    const { vm, transport } = await finished((t) => vi.spyOn(t, 'sdlcDeclareDone').mockResolvedValue(view));
+    await vm.act('declare-done');
+    await vm.confirmDone();
+    expect(vm.declareView()).toEqual(view);
+    expect(vm.done()).toBe(false);
+    expect(transport.sdlcDeclareDone).toHaveBeenCalledTimes(1);
+  });
+
+  it('declaring done again after a part-way failure asks the plugin again, which carries on (R7.1 fails)', async () => {
+    const partial: DeclareView = { kind: 'partial', pushed: ['commerce-core'], opened: [], failed: ['opening the pull request in commerce-core failed: boom'] };
+    const { vm, transport } = await finished();
+    const declare = vi.spyOn(transport, 'sdlcDeclareDone').mockResolvedValueOnce(partial);
+    await vm.act('declare-done');
+    await vm.confirmDone();
+    expect(vm.declareView()).toEqual(partial);
+    await vm.declareAgain();
+    expect(declare).toHaveBeenCalledTimes(2);
+    expect(vm.declareView()?.kind).toBe('done');
+  });
+
+  it('a high finding asks for no tick box and does not hold the plugin: whether it is refused is its answer (R7.2)', async () => {
+    const { vm, transport } = await finished();
+    const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
+    const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
+    const finding = { id: 'F1', severity: 'high' as const, file: 'src/a.ts', line: 4, text: 'The limit is not enforced on retry.' };
+    vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({ layout: 2, problems: [], master_moved: [], reviews: [{ number: 1, reviewed_at: '2026-10-22', commits, findings: [finding] }] });
+    const declare = vi.spyOn(transport, 'sdlcDeclareDone');
+    await vm.act('declare-done');
+    expect(vm).not.toHaveProperty('doneAcknowledged');
+    await vm.confirmDone();
+    expect(declare).toHaveBeenCalledTimes(1);
+  });
+
+  it('each step the plugin reports becomes the lock\'s progress line, named by what it is (R7.3)', async () => {
+    const { vm } = await finished();
+    const progress = TestBed.inject(ProgressStore);
+    const begin = vi.spyOn(progress, 'begin');
+    await vm.act('declare-done');
+    await vm.confirmDone();
+    const lines = begin.mock.calls.filter((c) => c[2] === 'lock').map((c) => [c[0], c[1]]);
+    expect(lines).toEqual([
+      ['running-checks', 'Declaring done: the plugin is verifying the change'],
+      ...[...REPOS, 'commerce-docs'].flatMap((r) => [['pushing', `Pushing ${r}`], ['opening-prs', `Opening a pull request in ${r}`]]),
+    ]);
+    expect(progress.view('lock')()).toBeNull();
+  });
+
+  it('a call that fails outright clears the progress line before it raises its error (R7.1)', async () => {
+    const { vm, transport } = await finished();
+    const progress = TestBed.inject(ProgressStore);
+    vi.spyOn(transport, 'sdlcDeclareDone').mockImplementation(async () => {
+      progress.begin('pushing', 'Pushing commerce-core', 'lock');
+      throw new Error('the backend is gone');
+    });
+    const fail = vi.spyOn(progress, 'fail');
+    await vm.act('declare-done');
+    await vm.confirmDone();
+    expect(fail).toHaveBeenCalledWith('lock');
+    expect(progress.view('lock')()).toBeNull();
+    expect(toastText()).toContain('the backend is gone');
+  });
+
+  it('what Kata used to check itself is not asked any more (R7.1)', async () => {
+    const { vm, transport } = await finished();
+    for (const gone of ['sdlcTouchedRepos', 'sdlcGhSignedIn', 'sdlcGhOrigins', 'sdlcCommitOffenders', 'sdlcPublish']) expect(transport).not.toHaveProperty(gone);
+    await vm.act('declare-done');
+    expect(vm.doneReport()!.repos.map((r) => r.repo)).toEqual(['commerce-docs', ...REPOS]);
   });
 });

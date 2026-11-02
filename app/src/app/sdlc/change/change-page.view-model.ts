@@ -1,8 +1,8 @@
 import { Injectable, computed, effect, inject, linkedSignal, signal, untracked } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
+import type { OpenRun } from '@bindings/OpenRun';
 import type { BranchInfo } from '@bindings/BranchInfo';
-import type { BuildStart } from '@bindings/BuildStart';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { ParsedRequirement } from '@bindings/ParsedRequirement';
@@ -10,58 +10,55 @@ import type { ReadResult } from '@bindings/ReadResult';
 import type { Readiness } from '@bindings/Readiness';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
-import type { Decision } from '@bindings/Decision';
-import type { RepoFiles } from '@bindings/RepoFiles';
+import type { ChangeView } from '@bindings/ChangeView';
+import type { OfferedAction } from '@bindings/OfferedAction';
+import type { OutOfDateCause } from '@bindings/OutOfDateCause';
+import type { StateDocument } from '@bindings/StateDocument';
+import type { AcceptOutcome } from '@bindings/AcceptOutcome';
+import type { ChangeDocument } from '@bindings/ChangeDocument';
+import type { RejectOutcome } from '@bindings/RejectOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
-import type { ChecksPlan } from '@bindings/ChecksPlan';
-import type { Offender } from '@bindings/Offender';
-import type { PrResult } from '@bindings/PrResult';
-import type { DoneView } from '@bindings/DoneView';
-import type { PrLink } from '@bindings/PrLink';
-import type { PrEntry } from '@bindings/PrEntry';
-import type { RemoteClash } from '@bindings/RemoteClash';
-import type { PublishRepo } from '@bindings/PublishRepo';
-import type { RepoChecks } from '@bindings/RepoChecks';
-import type { BuildAction } from '@bindings/BuildAction';
-import type { Problem } from '@bindings/Problem';
+import type { ChangeRepo } from '@bindings/ChangeRepo';
+import type { DeclareView } from '@bindings/DeclareView';
+import type { PullRequestLink } from '@bindings/PullRequestLink';
+import type { PullRequestsView } from '@bindings/PullRequestsView';
+import type { LeftBehind } from '../../ui/pr-list-dialog';
+import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ChangesContext } from '../changes/changes-view.view-model';
 import { BuildPageViewModel, type BuildContext } from '../build/build-page.view-model';
-import { roundOffer, type RoundGroup, type RoundOffer, type RoundRequest } from '../../lib/build-round';
-import { roundGroups } from '../../lib/build-task-list';
-import type { BuildDialogMode, BuildStartRequest } from '../../ui/build-dialog';
 import type { RunSpec } from '@bindings/RunSpec';
-import { GivenStore, type BuildChoices } from '../../core/given/given.store';
+import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
+import type { CopyRemoval } from '@bindings/CopyRemoval';
+import type { RemoveOutcome } from '@bindings/RemoveOutcome';
+import type { ChangeRef as ChangeWithWorkspace } from '@bindings/ChangeRef';
+import { ChangeRunStore, changeRunKey } from '../../core/run/change-run.store';
+import { RunLandingStore } from '../../core/run/run-landing.store';
+import { BuildLayoutViewModel } from '../build/build-layout.view-model';
+import { ChangeDraftStore } from '../../core/sdlc/change-draft.store';
 import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
 import { ProgressStore } from '../../core/progress/progress.store';
-import { SdlcStagesStore } from '../../core/sdlc/sdlc-stages.store';
 import { ToastStore } from '../../core/toast/toast.store';
+import { documentForm } from '../../lib/build-host';
 import { progressLabels } from '../../lib/progress-steps';
 import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
 import {
-  DEFAULT_BUILD_SECS,
   actionLabel,
   actionLabelAt,
-  actionsForChange,
   restrictedFor,
   primaryAction,
-  reviewFindings,
   parseFrontMatter,
-  revisits,
-  feedbackRequired,
   specFor,
-  stageLabel,
-  fixProgramFailed,
+  outOfDateCause,
+  stageName,
   stagePills,
   stageRuns,
-  type BuildRun,
   type DocsPresent,
   type StageAction,
   type StagePill,
@@ -69,19 +66,21 @@ import {
 import { shownBuild, shownDocument, type DocNotice, type ReadError, type Shown } from '../../lib/doc-notice';
 import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy } from '../../lib/doc-rail';
 import { prNumber } from '../../lib/pull-request';
-import { REVIEW_MISSING_TEXT, canConfirm, checkLabel, reviewState, type DoneReport, type DoneReview } from '../../lib/sdlc-done';
+import { DONE_STEP_LINE, type DoneReport } from '../../lib/sdlc-done';
 import { section } from '../../lib/doc';
 import { fullPipelineIdea } from '../../lib/sdlc-fix';
 import { inTauri } from '../../lib/mock';
 import { taskRecord, withRows, type TaskView } from '../../lib/task-view';
-import { shownSection } from '../../lib/sdlc-review';
 import { masterPath, masterRepo, productRepos } from '../../lib/sdlc-workspace';
-import { namingRefusal, type WorkType } from '../../lib/sdlc-naming';
+import { namingRefusal } from '../../lib/sdlc-naming';
 
 export type ChangeState = 'loading' | 'ready' | 'not-found';
 
 /** The spec and plan tabs' views: the list (requirements, tasks), the one `##` section (Design, Approach), the whole text. */
 export type DocView = 'list' | 'section' | 'whole';
+
+/** The one run a change's page has a message box for: its own document session. */
+const SESSION_RUN = 'document';
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const nowSecs = (): number => Math.floor(Date.now() / 1000);
@@ -90,8 +89,10 @@ const BUSY = 'Another task is already running.';
 
 /** The actions `act` handles itself; every other action starts a stage run. */
 type HandledAction =
+  | 'rename'
   | 'accept-intent'
   | 'reject-intent'
+  | 'reject-fix'
   | 'accept-spec'
   | 'accept-plan'
   | 'commit-acceptance'
@@ -102,14 +103,14 @@ type HandledAction =
   | 'run-review'
   | 'cancel-build'
   | 'full-pipeline-instead';
-/** What recording a decision came to; the full-pipeline hand-over goes on only after 'committed'. */
-/** A change by system and folder name. */
-type ChangeRef = { system: string; change: string };
 /** The toast for a drafted fix that stays open after the new change that replaces it started. */
-/** A drafted fix being closed after its replacement opened: the branch its documents are on, and the new change's branch. */
-type FixClose = ChangeRef & { master: string; fixBranch: string; newBranch: string };
-const fixStays =(fix: ChangeRef, why: string): string => `The new change started, but the fix ${fix.change} could not be closed: ${why}. It stays open.`;
-type DecisionOutcome ='committed' | 'needsConfirm' | 'gitFailed' | 'error';
+const fixStays = (fix: ChangeRef, why: string): string => `The new change started, but the fix ${fix.change} could not be closed: ${why}. It stays open.`;
+/** What the engineer is told once a change is rejected: the record stays on the master's branch. */
+const rejectedSaid = (branch: string): string => `Rejected. Its record stays on branch \`${branch}\`.`;
+/** The last lines of a hook's output, which is what says why it failed. */
+const outputTail = (output: string): string => output.trim().split('\n').slice(-12).join('\n');
+/** A change by system and folder name, with the workspace it belongs to. */
+type ChangeRef = ChangeWithWorkspace;
 type StageRun = { kind: 'intent' | 'spec' | 'plan' | 'fix'; title: string; label: string };
 
 /** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result.
@@ -129,64 +130,40 @@ const RUNS: Record<Exclude<StageAction, HandledAction>, StageRun> = {
 };
 /** The fix runs, which need a plugin that has the light track. */
 const FIX_RUNS: readonly StageAction[] = ['finish-fix-draft', 'change-fix', 'reopen-fix', 'accept-fix'];
-const NEEDS_LIGHT_TRACK = 'Needs ai-sdlc 0.13.0 or later.';
-const NEEDS_NAME = 'Name the branch first.';
-/** The actions that start or continue build work: they wait for the branch's name. */
-const NEEDS_BRANCH: readonly StageAction[] = ['start-build', 'continue-build', 'another-round', 'run-review'];
-/** The branch a change is created on, until its name is confirmed. */
-const PENDING_PREFIX = 'change/pending-';
+const NEEDS_LIGHT_TRACK = 'Needs ai-sdlc 1.1.0 or later.';
 
-const FILE: Record<Decision, 'intent.md' | 'spec.md' | 'plan.md'> = {
-  'accept-intent': 'intent.md',
-  'reject-intent': 'intent.md',
-  'accept-spec': 'spec.md',
-  'accept-plan': 'plan.md',
-};
-const DONE: Record<Decision, string> = {
-  'accept-intent': 'Accepted intent',
-  'reject-intent': 'Rejected intent',
-  'accept-spec': 'Accepted spec',
-  'accept-plan': 'Accepted plan',
+/** The document each accepting action records. */
+const ACCEPTS: Partial<Record<StageAction, ChangeDocument>> = {
+  'accept-intent': 'intent',
+  'accept-spec': 'spec',
+  'accept-plan': 'plan',
 };
 
-/** The decision that commits a document already accepted in the working tree, by the stage that says so. */
-const ACCEPTED_UNCOMMITTED: Partial<Record<string, Decision>> = {
-  'intent-accepted-uncommitted': 'accept-intent',
-  'spec-accepted-uncommitted': 'accept-spec',
-  'plan-accepted-uncommitted': 'accept-plan',
+/** The document whose acceptance is in the working tree but not committed, by the stage that says so. */
+const ACCEPTED_UNCOMMITTED: Partial<Record<string, ChangeDocument>> = {
+  'intent-accepted-uncommitted': 'intent',
+  'spec-accepted-uncommitted': 'spec',
+  'plan-accepted-uncommitted': 'plan',
 };
 
 /** Why the plan cannot be built, in the words the plan tab shows. */
-const OUT_OF_DATE_BANNER: Record<NonNullable<ChangeInfo['out_of_date']>, string> = {
-  'intent-reopened': 'The intent was reopened.',
-  'spec-reopened': 'The spec was reopened.',
+const INTENT_REOPENED = 'The intent was reopened.';
+const SPEC_REOPENED = 'The spec was reopened.';
+const OUT_OF_DATE_BANNER: Record<OutOfDateCause, string> = {
   'spec-pin': 'This spec was not written from the intent accepted now. Rewrite the spec, then the plan.',
   'plan-pin': 'This plan was not written from the spec accepted now. Rewrite the plan before building.',
-  'no-tasks': 'This plan has no tasks. Rewrite the plan before building.',
 };
-/** The time limit of a review started from the done dialog: the build dialog's default. */
-const REVIEW_TIMEOUT_SECS = 2 * 60 * 60;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 /** A task is built once the build log has a row for it; the record is the one reader of that. */
 const isBuilt = (t: { row: BuildRow | null }): boolean => taskRecord(t).kind !== 'unbuilt';
 const SUPERSEDED_BANNER = 'The intent was reopened after this plan was written. Rewrite the plan before building.';
 
-/** What the build view starts from: the prepared branches, the time limit, the round if one was asked for, and Kata's checks folder. */
-export type BuildHandoff = {
-  start: BuildStart;
-  timeoutSecs: number;
-  /** One request per repository that gets a round agent; empty for a build that is not a round. */
-  rounds: RoundRequest[];
-  checksDir: string;
-  /** The build's choices: the keys switched off, for every run the build starts. */
-  choices?: BuildChoices;
-  /** The repositories whose leftovers the engineer confirmed continuing on top of: only their first run is told not to ask again. */
-  continueOnLeftovers?: string[];
-};
-
 type DocStem = 'intent' | 'spec' | 'plan';
 /** What the stage tiles select: a document, or what the build changed. */
 type Tab = DocStem | 'build';
+
+/** A change's stage by name; empty before the change is read. */
+const stageNameOf = (c: ChangeView | null): string => (c === null ? '' : stageName(c.offer.stage));
 
 /**
  * The document the page shows for a change: the current stage's, falling back to the last one that exists.
@@ -194,16 +171,17 @@ type Tab = DocStem | 'build';
  */
 const isDocStem = (s: string): s is DocStem => s === 'intent' || s === 'spec' || s === 'plan';
 
-function stemFor(c: ChangeInfo): DocStem {
-  const step = stageLabel(c.stage).step;
-  if (step === 'plan' || step === 'build' || step === 'done') return c.plan.exists ? 'plan' : c.spec.exists ? 'spec' : 'intent';
-  if (step === 'spec') return c.spec.exists ? 'spec' : 'intent';
+function stemFor(c: ChangeView): DocStem {
+  const step = c.offer.label.step;
+  const { spec, plan } = c.state.documents;
+  if (step === 'plan' || step === 'build' || step === 'done') return plan.exists ? 'plan' : spec.exists ? 'spec' : 'intent';
+  if (step === 'spec') return spec.exists ? 'spec' : 'intent';
   return 'intent';
 }
 
 /** What the change opens on: its Build tab once the plan is accepted, else the current stage's document. */
-function docFor(c: ChangeInfo): Tab {
-  const step = stageLabel(c.stage).step;
+function docFor(c: ChangeView): Tab {
+  const step = c.offer.label.step;
   return step === 'build' || step === 'done' ? 'build' : stemFor(c);
 }
 
@@ -215,6 +193,10 @@ function docFor(c: ChangeInfo): Tab {
 export class ChangePageViewModel {
   private readonly transport = inject(KataTransport);
   private readonly lock = inject(LockStore);
+  private readonly changeRuns = inject(ChangeRunStore);
+  private readonly landing = inject(RunLandingStore);
+  private readonly drafts = inject(ChangeDraftStore);
+  private readonly layout = inject(BuildLayoutViewModel, { optional: true });
   /** The preview every document run goes through; the template mounts its dialog. */
   readonly preview = inject(RunPreviewViewModel);
   private readonly givens = inject(GivenStore);
@@ -225,7 +207,6 @@ export class ChangePageViewModel {
   private readonly modes = inject(ModeStore);
   private readonly toasts = inject(ToastStore);
   private readonly progress = inject(ProgressStore);
-  private readonly stages = inject(SdlcStagesStore);
   /** Reading the change, reading a picked document, preparing a build, and the lock's long step: one progress entry for each place on the page. */
   readonly readingChange = this.progress.view('page');
   readonly readingDoc = this.progress.view('doc');
@@ -245,16 +226,116 @@ export class ChangePageViewModel {
   private readonly catalog = signal<CatalogEntry[]>([]);
   private readonly links = signal<RunLink[]>([]);
   private readonly records = signal<RunRecord[]>([]);
-  readonly change = signal<ChangeInfo | null>(null);
-  /** The pull request links the backend gave, saved or opened or from GitHub; the page never decides what they mean. */
-  readonly pullRequests = signal<PrLink[]>([]);
-  /** GitHub could not be asked about the pull requests, so the finished label stays. */
+  readonly change = signal<ChangeView | null>(null);
+  /** The pull request links the backend gave, from the plugin's record or an earlier declaration; the page never decides what they mean. */
+  readonly pullRequests = signal<PullRequestLink[]>([]);
+  /** The recorded pull requests could not be read, so the finished label stays. */
   readonly prCheckFailed = signal(false);
   /** The backend says the change is done: it has no actions left. */
   readonly done = signal(false);
-  private readonly linksFrom = signal<DoneView['linksFrom']>('none');
-  /** When the last background refresh of the link states began, in seconds; null until one has ended. A link last seen before it could not be asked about. */
-  private readonly refreshedAt = signal<number | null>(null);
+
+  // --- the change's own copy: where it is, whether it may be removed, and what removing it came to
+
+  /** The branch the copy holds, asked for in the background once the page shows; null until it answers. */
+  private readonly copyBranchName = signal<string | null>(null);
+  /** The backend's answer about removing the copy, asked for in the background once the page shows; nothing is offered until it arrives. */
+  private readonly removal = signal<CopyRemoval>({ outcome: 'notOffered' });
+  /** What the last removal or check came to, for the change it belongs to; the page reads the change again after a removal, so it is kept apart from the load. */
+  private readonly copyResult = signal<{ key: string; note: DocNotice } | null>(null);
+  private readonly changeKey = computed(() => `${this.system()}/${this.changeName()}`);
+
+  /** Where the change's copy is and the branch it holds; null when the change is not in a copy. */
+  readonly copy = computed<{ folder: string; branch: string | null } | null>(() => {
+    const state = this.change()?.state;
+    return state?.inCopy ? { folder: state.master, branch: this.copyBranchName() } : null;
+  });
+  /** The backend offered to remove the copy. Never true before the backend answered. */
+  readonly removalOffered = computed(() => this.copy() !== null && this.removal().outcome === 'offer');
+  /** The uncommitted files that keep the copy, as the backend named them; none when it names none. */
+  readonly keepFiles = computed<string[]>(() => {
+    const removal = this.removal();
+    return this.copy() !== null && removal.outcome === 'keep' ? removal.uncommitted : [];
+  });
+  /** The removal confirmation is on show. */
+  readonly removeAsked = signal(false);
+  /** What the last removal or check came to, for the page to show; null when there is nothing to say. */
+  readonly copyNote = computed<DocNotice | null>(() => {
+    const result = this.copyResult();
+    return result !== null && result.key === this.changeKey() ? result.note : null;
+  });
+  private setCopyNote(note: DocNotice | null): void {
+    this.copyResult.set(note === null ? null : { key: this.changeKey(), note });
+  }
+  private copyRef(): ChangeRef | null {
+    const workspace = this.current();
+    return workspace === null ? null : { workspace: workspace.folder, system: this.system(), change: this.changeName() };
+  }
+
+  /** Ask for the copy's branch and the removal offer without holding the page: GitHub is asked for the pull request states. */
+  private readCopy(seq: number, ref: ChangeRef): void {
+    this.copyBranchName.set(null);
+    this.removal.set({ outcome: 'notOffered' });
+    this.transport.sdlcCopyBranch(ref).then(
+      (branch) => seq === this.loadSeq && this.copyBranchName.set(branch),
+      () => undefined,
+    );
+    this.transport.sdlcCopyRemoval(ref).then(
+      (answer) => seq === this.loadSeq && this.removal.set(answer),
+      (e) => {
+        if (seq === this.loadSeq) this.setCopyNote({ tone: 'warning', text: `Could not check whether this copy can be removed: ${message(e)}`, lines: [] });
+      },
+    );
+  }
+  /** The engineer asked to remove the copy: only an offered removal is asked about. */
+  askRemoveCopy(): void {
+    if (this.removalOffered()) this.removeAsked.set(true);
+  }
+  declineRemoveCopy(): void {
+    this.removeAsked.set(false);
+  }
+  /** The engineer confirmed. Every outcome has a visible result: the copy goes, or it stays and the note says why. */
+  async confirmRemoveCopy(): Promise<void> {
+    this.removeAsked.set(false);
+    const ref = this.copyRef();
+    if (ref === null) return;
+    let out: RemoveOutcome;
+    try {
+      out = await this.transport.sdlcRemoveCopy(ref);
+    } catch (e) {
+      this.setCopyNote({ tone: 'warning', text: `The copy was not removed: ${message(e)}`, lines: [] });
+      return;
+    }
+    switch (out.outcome) {
+      case 'removed':
+        this.removal.set({ outcome: 'notOffered' });
+        this.setCopyNote({ tone: 'idle', text: 'The copy is removed. The change branch and its commits stay in the master repository.', lines: out.kept });
+        // The plugin reports the master repository now, not the folder of the copy that is gone.
+        await this.load();
+        return;
+      case 'keep':
+        this.removal.set({ outcome: 'keep', uncommitted: out.uncommitted });
+        this.setCopyNote({ tone: 'warning', text: 'The copy holds uncommitted files, so it is kept.', lines: out.uncommitted });
+        return;
+      case 'refused':
+        this.setCopyNote({ tone: 'warning', text: 'The plugin did not remove the copy.', lines: out.problems });
+        return;
+      case 'couldNotRun':
+        this.setCopyNote({ tone: 'warning', text: `The copy was not removed: the plugin could not run: ${out.message}`, lines: [] });
+        return;
+    }
+  }
+  async openCopyFolder(): Promise<void> {
+    const ref = this.copyRef();
+    if (ref === null) return;
+    try {
+      await this.transport.sdlcOpenCopyFolder(ref);
+    } catch (e) {
+      this.toasts.error(`Could not open the copy folder: ${message(e)}`);
+    }
+  }
+  /** The key of the change the backend was last told is open; the page tells it once per change, however often it reads the change. */
+  private openedKey = '';
+  private readonly linksFrom = signal<PullRequestsView['source']>(null);
   /** The shown document, raw as it is on disk, or null when the file is missing. */
   readonly doc = signal<string | null>(null);
   /** The shown spec or plan as the format program read it; null for the other documents, or when the program could not run. */
@@ -264,29 +345,22 @@ export class ChangePageViewModel {
   /** The review document as the format program reads it; null when the change has none or it could not be read. */
   private readonly reviewRecord = signal<ReviewRecord | null>(null);
   /** The notice above the open spec or plan; null when it needs none. */
-  readonly docNotice = computed<DocNotice | null>(() => this.unsettledNotice() ?? this.shown()?.notice ?? null);
+  readonly docNotice = computed<DocNotice | null>(() => this.unsettledNotice() ?? this.shown()?.notice ?? this.refusalNotice());
   /** A fix whose documents carry statuses the workflow never leaves on a fix: the page lists them, on every tab. */
   private readonly unsettledNotice = computed<DocNotice | null>(() => {
     const c = this.change();
-    if (c === null) return null;
-    // An older plugin or a program failure: the reason alone, since no status was read.
-    if (c.stage === 'fix-needs-plugin') {
-      return { tone: 'warning', text: c.plan_unreadable_reason ?? 'Needs ai-sdlc 0.13.0 or later.', lines: [] };
-    }
-    if (c.stage !== 'fix-unsettled') return null;
+    if (c === null || stageName(c.offer.stage) !== 'fix-unsettled') return null;
     const text = 'The workflow does not leave a fix in these statuses, so nothing can be run on it.';
-    // When the format program could not run, no status was read, so the headline about statuses would be false: say
-    // what happened, with the program's own message, and show no status line.
-    if (fixProgramFailed(c)) {
-      return { tone: 'warning', text: 'Kata could not read where this fix stands.', lines: c.plan_unreadable_reason === null ? [] : [c.plan_unreadable_reason] };
-    }
+    // When the plugin could not say where the fix stands, no status was read, so the headline about statuses would be false.
+    if (c.state.fix === null) return { tone: 'warning', text: 'Kata could not read where this fix stands.', lines: [] };
     // Each document shows the status HEAD holds, whether or not the working file exists: a deleted document is
     // "missing (HEAD: draft)", and one not in HEAD says so.
-    const status = (d: { status: string | null; head_status: string | null }) => {
-      if (d.status === null) return d.head_status === null ? 'missing' : `missing (HEAD: ${d.head_status})`;
-      return `${d.status} (HEAD: ${d.head_status ?? 'not committed'})`;
+    const status = (d: StateDocument) => {
+      if (d.workingStatus === null) return d.headStatus === null ? 'missing' : `missing (HEAD: ${d.headStatus})`;
+      return `${d.workingStatus} (HEAD: ${d.headStatus ?? 'not committed'})`;
     };
-    const lines = [`intent: ${status(c.intent)} · spec: ${status(c.spec)} · plan: ${status(c.plan)}`];
+    const { intent, spec, plan } = c.state.documents;
+    const lines = [`intent: ${status(intent)} · spec: ${status(spec)} · plan: ${status(plan)}`];
     return { tone: 'warning', text, lines };
   });
   /** What the open spec or plan shows, decided by the one owner of that table; null for the other tabs and before the first load. */
@@ -309,7 +383,7 @@ export class ChangePageViewModel {
         ...(review === null ? [] : [{ layout: review.layout, problems: review.problems }]),
       ],
       readiness,
-    ).notice;
+    ).notice ?? this.refusalNotice();
   });
   /** The shown spec or plan as the format program read it, unless a notice says the document is shown as plain text. */
   private readonly parsed = computed<ReadResult | null>(() => {
@@ -325,19 +399,6 @@ export class ChangePageViewModel {
   private pickSeq = 0;
 
   readonly masterBranch = computed(() => this.branches()?.current ?? null);
-  /** The system's naming setting as last read; null before the first load and when it could not be read. */
-  private readonly naming = signal<NamingState | null>(null);
-  /**
-   * The change was created on a pending branch, the system declares naming, and the engineer has not confirmed a name: the master stands on that
-   * pending branch (and only that change: another change opened meanwhile is not waiting for a name), which a confirmation renames in the same step. A change with a branch record, or one started before the setting existed, is on its own branch.
-   */
-  readonly needsName = computed(
-    () =>
-      this.change() !== null &&
-      this.naming()?.kind === 'setting' &&
-      (this.masterBranch() ?? '').startsWith(PENDING_PREFIX) &&
-      this.branches()?.pending_change === `${this.system()}/${this.changeName()}`,
-  );
   /** The branch name confirmation on show. */
   readonly nameRequest = this.runner.nameRequest;
   readonly crumbs = computed(() => (this.changeName() === '' ? [] : [this.changeName()]));
@@ -348,7 +409,8 @@ export class ChangePageViewModel {
   });
   readonly docs = computed<DocsPresent>(() => {
     const c = this.change();
-    return { intent: c?.intent.exists ?? false, spec: c?.spec.exists ?? false, plan: c?.plan.exists ?? false };
+    const d = c?.state.documents;
+    return { intent: d?.intent.exists ?? false, spec: d?.spec.exists ?? false, plan: d?.plan.exists ?? false };
   });
   /** A build or a skill run holds the page: its view stands in for the change's tabs, so nothing here may be clicked. */
   private readonly held = computed(() => this.session() !== null);
@@ -358,7 +420,7 @@ export class ChangePageViewModel {
    */
   readonly pills = computed<StagePill[]>(() => {
     const c = this.change();
-    return c === null || this.held() ? [] : stagePills(c.stage, this.done(), this.docs(), fixProgramFailed(c));
+    return c === null || this.held() ? [] : stagePills(c.offer.label, this.done(), this.docs());
   });
   /** The pull requests that have an address, for the toolbar's links; none while a build or a skill run holds the page. */
   readonly pullLinks = computed(() =>
@@ -367,16 +429,19 @@ export class ChangePageViewModel {
       : this.pullRequests().flatMap((p) => {
           if (p.url === null) return [];
           const number = prNumber(p.url);
-          return [{ repo: p.repo, url: p.url, number, label: number === null ? p.repo : `${p.repo} #${number}`, state: p.state, seen: this.seenLabel(p) }];
+          return [{ repo: p.repo, url: p.url, number, label: number === null ? p.repo : `${p.repo} #${number}`, state: this.stateLabel(p), seen: this.seenLabel(p) }];
         }),
   );
   /** Where the links come from when that is not this page's own declaration: "from the earlier declaration", else null. */
-  readonly linksNote = computed<string | null>(() => (this.linksFrom() === 'earlierDeclaration' && this.pullRequests().length > 0 ? 'from the earlier declaration' : null));
-  /** "last seen <time>" for a state GitHub did not confirm in the last refresh; null before a refresh ended and for a state it just gave. */
-  private seenLabel(p: PrLink): string | null {
-    const refreshed = this.refreshedAt();
-    if (refreshed === null || p.seenAt === null || p.seenAt >= refreshed) return null;
-    return `last seen ${new Date(p.seenAt * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
+  readonly linksNote = computed<string | null>(() => (this.linksFrom() === 'legacy' && this.pullRequests().length > 0 ? 'from the earlier declaration' : null));
+  /** The state a link shows: what GitHub said, else "checking" until the plugin has read it, else that it could not. */
+  private stateLabel(p: PullRequestLink): string {
+    return p.state ?? (p.lastSeen ? 'not read' : 'checking');
+  }
+  /** "last seen <time>" for a state that is not from the last read; null for a state the plugin just read and while it is still reading. */
+  private seenLabel(p: PullRequestLink): string | null {
+    if (!p.lastSeen) return null;
+    return p.seenAt === null ? 'last seen' : `last seen ${new Date(p.seenAt * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
   }
   /** The master repository's branch the change records, as the backend resolves it; null until read or when it cannot be. */
   private readonly recordedBranch = signal<string | null>(null);
@@ -401,8 +466,24 @@ export class ChangePageViewModel {
   readonly actions = computed(() => {
     const c = this.change();
     if (c === null || this.done()) return [];
-    if (stageLabel(c.stage).step !== 'build') return actionsForChange(c);
+    if (c.offer.label.step !== 'build') return this.offeredActions();
     return [...this.build.actions(), ...this.barExtras().map((e) => e.action)];
+  });
+  /** The actions the plugin's answer offers that the page has a control for, in the answer's order. */
+  private readonly offeredActions = computed<StageAction[]>(() => (this.change()?.offer.actions ?? []).map((a) => a.action));
+  /** What the answer says about an action: may it be used now, and if not why. Null for an action the answer does not list. */
+  private offered(action: StageAction): OfferedAction | null {
+    return this.change()?.offer.actions.find((a) => a.action === action) ?? null;
+  }
+  /** The plugin's message for an action it refuses; null when the action is not refused. */
+  private refusedWith(action: StageAction): string | null {
+    const o = this.offered(action);
+    return o !== null && !o.enabled ? o.reason : null;
+  }
+  /** The messages of the refused actions on show, as the plugin worded them: the first as the text, the rest as lines. */
+  private readonly refusalNotice = computed<DocNotice | null>(() => {
+    const reasons = [...new Set(this.actions().flatMap((a) => this.refusedWith(a) ?? []))];
+    return reasons.length === 0 ? null : { tone: 'warning', text: reasons[0], lines: reasons.slice(1) };
   });
   /**
    * The actions the build page's bar adds after its own: the build page has no way back to the documents, so the bar adds it
@@ -411,10 +492,10 @@ export class ChangePageViewModel {
    */
   readonly barExtras = computed(() => {
     const c = this.change();
-    if (c === null || this.done() || stageLabel(c.stage).step !== 'build') return [];
+    if (c === null || this.done() || c.offer.label.step !== 'build') return [];
     const own = this.build.actions();
-    return actionsForChange(c)
-      .filter((a) => (c.track === 'fix' ? a === 'reopen-fix' : (a === 'reopen-intent' || a === 'reopen-spec') && !own.includes(a)))
+    return this.offeredActions()
+      .filter((a) => a === 'rename' || (c.state.track === 'fix' ? a === 'reopen-fix' : (a === 'reopen-intent' || a === 'reopen-spec') && !own.includes(a)))
       .map((action) => ({ action, disabled: this.disabledFor(action), title: this.titleFor(action) }));
   });
   /** What blocks the build, shown above the plan; null when nothing does or another document is shown. */
@@ -423,32 +504,32 @@ export class ChangePageViewModel {
     if (c === null) return null;
     // A reopened intent or spec keeps its own stage once a plan exists (R1.5); name it on whichever tab is shown.
     // A superseded plan must also be rewritten once the document is accepted again (R1.3), so say so now.
-    if (c.plan.exists) {
-      const rewrite = c.plan.status === 'superseded' ? ' The plan must be rewritten first.' : '';
-      if (c.stage === 'intent-awaiting' || c.stage === 'intent-in-progress') return OUT_OF_DATE_BANNER['intent-reopened'] + rewrite;
-      if (c.stage === 'spec-awaiting') return OUT_OF_DATE_BANNER['spec-reopened'] + rewrite;
+    const stage = stageName(c.offer.stage);
+    const plan = c.state.documents.plan;
+    if (plan.exists) {
+      const rewrite = plan.workingStatus === 'superseded' ? ' The plan must be rewritten first.' : '';
+      if (stage === 'intent-awaiting' || stage === 'intent-in-progress') return INTENT_REOPENED + rewrite;
+      if (stage === 'spec-awaiting') return SPEC_REOPENED + rewrite;
     }
     if (this.shownDoc() !== 'plan') return null;
-    if (c.stage === 'plan-superseded') return SUPERSEDED_BANNER;
-    return c.stage === 'plan-out-of-date' && c.out_of_date !== null ? OUT_OF_DATE_BANNER[c.out_of_date] : null;
+    if (stage === 'plan-superseded') return SUPERSEDED_BANNER;
+    const cause = outOfDateCause(c.offer.stage);
+    return cause === null ? null : OUT_OF_DATE_BANNER[cause];
   });
   readonly primary = computed(() => primaryAction(this.actions()));
   /** An action's label at the change's stage: accepting a fix whose acceptance stopped reads differently. */
   labelOf(action: StageAction): string {
     const c = this.change();
-    return c === null ? actionLabel(action) : actionLabelAt(action, c.stage);
+    return c === null ? actionLabel(action) : actionLabelAt(action, stageName(c.offer.stage));
   }
   /** Whether an action's button is off: the lock holds it, or it is a fix run the plugin on this machine cannot do. */
   disabledFor(action: StageAction): boolean {
-    return this.locked() || this.needsLightTrack(action) || this.waitsForName(action);
+    return this.locked() || this.needsLightTrack(action) || this.refusedWith(action) !== null;
   }
   /** Why a fix run is unavailable; null for any other action and while it is available. */
   titleFor(action: StageAction): string | null {
-    if (this.waitsForName(action)) return NEEDS_NAME;
-    return this.needsLightTrack(action) ? NEEDS_LIGHT_TRACK : null;
-  }
-  private waitsForName(action: StageAction): boolean {
-    return this.needsName() && NEEDS_BRANCH.includes(action);
+    if (this.needsLightTrack(action)) return NEEDS_LIGHT_TRACK;
+    return this.refusedWith(action);
   }
   private needsLightTrack(action: StageAction): boolean {
     return FIX_RUNS.includes(action) && !this.lightTrack();
@@ -470,7 +551,9 @@ export class ChangePageViewModel {
   readonly usedBy = computed<UsedBy | null>(() => {
     const c = this.change();
     const stem = this.shownDoc();
-    return c === null || stem === 'build' ? null : usedBy(stem, c);
+    if (c === null || stem === 'build') return null;
+    const { spec, plan } = c.state.documents;
+    return usedBy(stem, { spec: { exists: spec.exists, status: spec.workingStatus }, plan: { exists: plan.exists, status: plan.workingStatus } });
   });
   /** The latest runs of the open document's stage for the rail, and how many the stage has had. */
   readonly railRuns = computed<{ rows: RunRow[]; total: number }>(() => {
@@ -479,16 +562,6 @@ export class ChangePageViewModel {
     if (w === null || stem === 'build') return { rows: [], total: 0 };
     const runs = stageRuns(this.links(), this.records(), w.id, this.system(), this.changeName(), stem);
     return recentRuns(runs, stem.charAt(0).toUpperCase() + stem.slice(1));
-  });
-
-  // --- the acceptance confirm
-  private readonly pendingDecision = signal<Decision | null>(null);
-  readonly confirmPrompt = computed(() => {
-    const d = this.pendingDecision();
-    if (d === null) return null;
-    const fix = this.pendingFix();
-    if (fix !== null) return `${fix.change}'s ${FILE[d]} has other uncommitted edits; rejecting the fix commits them too.`;
-    return `${FILE[d]} has other uncommitted edits; ${d === 'reject-intent' ? 'rejecting' : 'accepting'} commits them too.`;
   });
 
   // --- the feedback box: a revisit asks what should change before it runs
@@ -502,25 +575,11 @@ export class ChangePageViewModel {
   /** The waiting action cannot run with an empty box. */
   readonly feedbackRequired = computed(() => {
     const a = this.pendingRevisit();
-    const c = this.change();
-    return a !== null && c !== null && feedbackRequired(a, c.stage, c.out_of_date);
+    return a !== null && (this.offered(a)?.feedbackRequired ?? false);
   });
 
   // --- the build: its dialog, the leftovers confirm, the refusal, and what is handed to the build view
   private readonly status = signal<BuildStatus | null>(null);
-  private readonly checksDir = signal<string | null>(null);
-  /** The mode of the open build dialog, or null while it is closed. */
-  readonly buildMode = signal<BuildDialogMode | null>(null);
-  /** What the open round may fix, from the latest review; null outside a round. */
-  readonly buildOffer = signal<RoundOffer | null>(null);
-  /** The offer's findings in the Review group's groups and order, for the round dialog. */
-  readonly buildGroups = signal<RoundGroup[]>([]);
-  /** The master repository first, then every repository the plan names. */
-  readonly buildRepos = computed<string[]>(() => {
-    const master = this.scanMaster();
-    const planned = (this.status()?.repos ?? []).map((r) => r.repo);
-    return [...new Set([...(master === null ? [] : [master]), ...planned])];
-  });
   /** The plan's tasks with their build rows, for the plan tab's Tasks view; empty when there is no plan. */
   readonly buildTasks = computed(() => this.status()?.tasks ?? []);
   // --- the spec and plan views: which one is shown and what is picked in it; all of it starts over with the tab or the change
@@ -610,18 +669,6 @@ export class ChangePageViewModel {
     }
   }
 
-  /** Why the build did not start, or null. */
-  readonly refusal = signal<string | null>(null);
-  /** What the check found in the plan or a build log, when that is why the build did not start. */
-  readonly refusalProblems = signal<Problem[]>([]);
-  /** The branch that holds other work, when that is why the build did not start. */
-  readonly refusalTaken = signal<{ repo: string; branch: string } | null>(null);
-  private readonly pendingLeftovers = signal<RepoFiles[] | null>(null);
-  /** The confirm for continuing on top of the build's own leftovers: one line per repository and file; null while closed. */
-  readonly leftoverPrompt = computed(() => {
-    const left = this.pendingLeftovers();
-    return left === null ? null : { lines: left.flatMap((r) => r.files.map((f) => `${r.repo}: ${f}`)) };
-  });
   /** What the build view runs against: the workspace, the system and the change; null until the workspace is known. */
   readonly buildContext = computed<BuildContext | null>(() => {
     const w = this.current();
@@ -632,218 +679,69 @@ export class ChangePageViewModel {
     const systemRepos = (scan?.marker?.systems[system]?.repos ?? []).filter((r) => r !== master);
     return { workspaceId: w.id, folder: w.folder, system, change: this.changeName(), systemRepos };
   });
-  /** What the preview asked for, kept so confirming the leftovers prepares the same build again. */
-  private asked: BuildStartRequest | null = null;
-  /** The build's choices that go with `asked`. */
-  private askedChoices: BuildChoices = { off: new Set() };
-  /** Which build preview is the current one; a preview that is no longer current neither opens nor changes the page. */
-  private buildSeq = 0;
-  /** What the engineer asked for, kept with `asked`. */
-  private askedAction: BuildAction = 'start';
-
-  /** The key the build's choices are kept under. */
-  private buildKey(): string {
-    return `${this.system()}/${this.changeName()}`;
-  }
-
-  /** The build's request is in: prepare the build, never continuing on top of leftovers yet. */
-  async submitBuild(req: BuildStartRequest, choices?: BuildChoices, action?: BuildAction): Promise<void> {
-    await this.beginBuild(req, action ?? this.buildMode() ?? 'start', choices ?? { off: this.givens.build(this.buildKey())?.off ?? new Set() });
-  }
-
-  private async beginBuild(req: BuildStartRequest, action: BuildAction, choices: BuildChoices): Promise<void> {
-    this.askedAction = action;
-    this.buildMode.set(null);
-    this.buildOffer.set(null);
-    this.buildGroups.set([]);
-    this.asked = req;
-    this.askedChoices = choices;
-    await this.prepare(false);
-  }
-
-  cancelBuild(): void {
-    this.buildSeq++;
-    this.buildMode.set(null);
-    this.buildOffer.set(null);
-    this.buildGroups.set([]);
-    this.preview.cancel();
-  }
-
-  /**
-   * Open the build's preview, pre-set to the build's choices (the session's when it has none yet). A preview is
-   * never awaited by its caller: the engineer answers it. What they confirm is the build's from then on, except for a
-   * review started by hand, whose choices are that review's alone.
-   */
-  private openBuildPreview(which: 'start' | 'continue' | 'round' | 'review'): void {
-    this.buildMode.set(which === 'review' ? null : which);
-    const latest = which === 'round' ? this.build.latestReview() : null;
-    const offer = which === 'round' ? roundOffer(latest, this.buildRepos()) : null;
-    this.buildOffer.set(offer);
-    this.buildGroups.set(offer !== null && latest !== null ? roundGroups(offer, this.build.findingGroups(), latest.findings) : []);
-    void this.previewBuild(which);
-  }
-
-  private async previewBuild(which: 'start' | 'continue' | 'round' | 'review'): Promise<void> {
-    const seq = ++this.buildSeq;
-    const w = this.current();
-    const master = this.scanMaster();
-    const context = this.buildContext();
-    const checksDir = this.checksDir();
-    const stale = () => seq !== this.buildSeq;
-    const giveUp = () => {
-      if (!stale()) this.cancelBuild();
-    };
-    if (!w || master === null || context === null) return giveUp();
-    if (checksDir === null) {
-      this.toasts.error("Could not read Kata's checks folder.");
-      return giveUp();
-    }
-    const kind = { start: 'start', continue: 'continue-all', round: 'round', review: 'manual-review' } as const;
-    const titles = { start: 'Start build', continue: 'Continue build', round: 'Start round', review: 'Run review' } as const;
-    const actions: Record<typeof which, BuildAction> = { start: 'start', continue: 'continue', round: 'round', review: 'round' };
-    const limit = which === 'review' ? REVIEW_TIMEOUT_SECS : DEFAULT_BUILD_SECS;
-    let result;
-    try {
-      const settings = this.modes.settings() ?? (await this.modes.load());
-      const sectionFor = (repo: string | null) => {
-        const run: BuildRun = {
-          target: repo === null ? 'review' : { repo },
-          timeoutSecs: limit,
-          instructions: null,
-          workspaceFolder: w.folder,
-          masterRepo: master,
-          systemRepos: context.systemRepos,
-          checksDir,
-          continueOnLeftovers: false,
-        };
-        const spec = specFor('build', null, { folder: w.folder, system: context.system, change: context.change }, settings, [], run);
-        return { title: repo ?? 'Review', repo, spec, workdir: spec.workdir };
-      };
-      const status = this.status()?.repos ?? [];
-      const planned = status.map((r) => r.repo).filter((r) => r !== master);
-      const unfinished = status.filter((r) => r.repo !== master && r.state.kind !== 'done').map((r) => r.repo);
-      const repos = { start: planned, continue: unfinished.length > 0 ? unfinished : planned, round: this.buildRepos(), review: [] as string[] }[which];
-      const sections = [...repos.map((r) => sectionFor(r)), ...(which === 'round' ? [] : [sectionFor(null)])];
-      if (stale()) return;
-      result = await this.preview.openBuild({
-        title: titles[which],
-        kind: kind[which],
-        sections,
-        from: { session: this.givens.session(), job: null, build: this.givens.build(this.buildKey())?.off ?? null },
-        limitSecs: limit,
-        offer: this.buildOffer(),
-      });
-    } catch (e) {
-      this.toasts.error(`Could not preview the build: ${message(e)}`);
-      return giveUp();
-    }
-    if (result === null || stale()) return giveUp();
-    const choices: BuildChoices = { off: result.off };
-    if (which !== 'review') this.givens.setBuild(this.buildKey(), choices);
-    await this.submitBuild(result.request ?? { timeoutSecs: limit, rounds: null }, choices, actions[which]);
-  }
-
-  /** The operator accepted the leftovers: prepare the same build again, this time continuing on top of them. */
-  async confirmLeftovers(): Promise<void> {
-    const confirmed = (this.pendingLeftovers() ?? []).map((r) => r.repo);
-    this.pendingLeftovers.set(null);
-    if (this.asked !== null) await this.prepare(true, confirmed);
-  }
-
-  cancelLeftovers(): void {
-    this.pendingLeftovers.set(null);
-    this.asked = null;
-  }
-
-  closeRefusal(): void {
-    this.refusal.set(null);
-    this.refusalProblems.set([]);
-    this.refusalTaken.set(null);
-  }
-
   /**
    * Pick a new name for the change's branch, from a refusal or from the done dialog. The rename covers every repository that has the
    * branch; the build can be started again after it, and the page reads the change again. Null when the dialog was closed.
    */
   async renameBranch(branch: string | null): Promise<string | null> {
     const w = this.current();
-    const master = this.scanMaster();
-    if (w === null || master === null || branch === null) return null;
-    const named = await this.runner.requestRename({ folder: w.folder, workspaceId: w.id, masterRepo: master, system: this.system(), change: this.changeName(), current: branch });
-    return named?.branch ?? null;
+    if (w === null || branch === null) return null;
+    const named = await this.runner.requestRename({ folder: w.folder, workspaceId: w.id, system: this.system(), change: this.changeName(), current: branch });
+    if (named === null) return null;
+    // The pull requests opened from the old name stay open on GitHub: list them to close by hand.
+    if (named.oldPullRequests.length > 0) {
+      this.prLeftBehind.set(named.oldPullRequests.map((p) => ({ repo: p.repo, url: p.url, branch: named.from })));
+    }
+    return named.branch;
   }
 
-  /** The build refusal's Pick a new branch name: the refusal closes, the rename dialog opens. */
-  async renameFromRefusal(branch: string | null): Promise<void> {
-    this.closeRefusal();
-    await this.renameBranch(branch);
-  }
-
-  // --- declaring done: Kata's own checks first, then the confirmation
+  // --- declaring done: the confirmation, then the plugin's step
   /** What the done dialog shows; the dialog is open exactly while this is set. */
   readonly doneReport = signal<DoneReport | null>(null);
-  /** The engineer's word, in the done dialog, that the pull requests open with the high-severity findings unresolved. */
-  readonly doneAcknowledged = signal(false);
-  private doneRepos: PublishRepo[] = [];
-  /** The branch declaring done found for the change, named in the push progress lines. */
-  private doneBranch: string | null = null;
-  /** The results of opening the pull requests, shown in a dialog that is open exactly while this is set. */
-  readonly prList = signal<PrResult[] | null>(null);
-  /** The pull requests an earlier branch name left open on GitHub, shown with the list. */
-  readonly prLeftBehind = signal<PrEntry[]>([]);
+  /** What the plugin answered to declaring done; the result dialog is open while this is set. */
+  readonly declareView = signal<DeclareView | null>(null);
+  /** The pull requests an earlier branch name left open on GitHub, shown with the result. */
+  readonly prLeftBehind = signal<LeftBehind[]>([]);
 
-  /** The operator confirmed: open the pull requests. */
+  /** The engineer confirmed: the plugin verifies the change, pushes and opens the pull requests. */
   async confirmDone(): Promise<void> {
-    const report = this.doneReport();
-    if (report === null || !canConfirm(report, this.doneAcknowledged())) return;
+    if (this.doneReport() === null) return;
     this.doneReport.set(null);
-    await this.publish();
+    await this.declare();
   }
 
-  /** Open the pull requests again after some failed; the ones already open are reused. */
-  async retryPublish(): Promise<void> {
-    this.prList.set(null);
-    await this.publish();
+  /** Ask the plugin again after it stopped part way; it carries on from there. */
+  async declareAgain(): Promise<void> {
+    this.declareView.set(null);
+    await this.declare();
   }
 
-  closePrList(): void {
-    this.prList.set(null);
+  closeDeclareView(): void {
+    this.declareView.set(null);
     this.prLeftBehind.set([]);
   }
 
-  /** Pick a new name from the pull request list after a clash; the engineer declares done again afterward. */
-  async renameFromPrList(branch: string): Promise<void> {
-    this.closePrList();
-    await this.renameBranch(branch);
-  }
-
-  private async publish(): Promise<void> {
+  /** Run the plugin's `change.done`, showing the step it reports as the lock's progress line. */
+  private async declare(): Promise<void> {
     const w = this.current();
-    const master = this.scanMaster();
-    if (!w || master === null) return;
-    let results: PrResult[] = [];
-    let leftBehind: PrEntry[] = [];
-    // Each push and each pull request the backend reports becomes the lock's progress line, named by its repository.
-    const unlisten = await this.transport.onPublishStep((step) => {
-      if (step.kind === 'pushing') this.progress.begin('pushing', progressLabels.pushing(this.changeName(), step.repo, this.doneBranch), 'lock');
-      else this.progress.begin('opening-prs', progressLabels.openingPr(step.repo), 'lock');
-    });
+    if (!w) return;
+    const ref = { workspace: w.folder, system: this.system(), change: this.changeName() };
+    let view: DeclareView | null = null;
+    const unlisten = await this.transport.onDoneStep((step) => this.progress.begin(DONE_STEP_LINE[step.kind], step.label, 'lock'));
     let out: Awaited<ReturnType<LockStore['runSteps']>>;
     try {
       out = await this.lock.runSteps('Opening pull requests', [
         {
-          label: 'Open pull requests',
+          label: 'Declare done',
           run: async () => {
             try {
-              const summary = await this.transport.sdlcPublish(w.folder, w.id, master, this.system(), this.changeName(), this.doneRepos);
-              results = summary.results;
-              leftBehind = summary.leftBehind;
+              view = await this.transport.sdlcDeclareDone(ref);
             } catch (e) {
               this.progress.fail('lock');
               throw e;
             }
             this.progress.end('lock');
-            return plural(results.length, 'repository', 'repositories');
+            return null;
           },
         },
       ]);
@@ -851,63 +749,96 @@ export class ChangePageViewModel {
       unlisten();
       this.progress.end('lock');
     }
-    if (out === 'done') {
-      this.prLeftBehind.set(leftBehind);
-      this.prList.set(results);
-    }
+    if (out === 'done') this.declareView.set(view);
     await this.load();
   }
 
   /** Ask for another round instead of opening the pull requests. */
   doneRound(): void {
     this.doneReport.set(null);
-    this.openBuildPreview('round');
+    this.closeDeclareView();
+    void this.startBuild(this.build.openRound());
   }
 
   /** Open the review's preview; Start run hands the build view a review only: every task has a row, so nothing else runs. */
   async doneRunReview(): Promise<void> {
     this.doneReport.set(null);
-    this.openBuildPreview('review');
+    this.closeDeclareView();
+    void this.startBuild(this.build.openPreview('review'));
+  }
+
+  /** Show the Build tab once the build the engineer asked for has started. */
+  private async startBuild(started: Promise<boolean>): Promise<void> {
+    if (await started) this.picked.set('build');
   }
 
   cancelDone(): void {
     this.doneReport.set(null);
   }
 
-  /** Pick a new name for the change's branch from the done dialog; declaring done starts again after a rename. */
-  async renameFromDone(branch: string): Promise<void> {
-    const before = this.doneReport();
-    this.doneReport.set(null);
-    // A new name starts declaring done again from the first step; a closed dialog brings the report back as it was.
-    if ((await this.renameBranch(branch)) !== null) await this.declareDone();
-    else this.doneReport.set(before);
-  }
-
-  // --- the lock: Kata's own checks in the overlay, an agent run as the session view
-  readonly locked = computed(() => this.lock.active() !== null);
+  // --- the lock: Kata's own checks in the overlay; an agent run as the session view
+  /** The session of this change's own document run, which no other page shows and which does not lock any other change. */
+  private readonly runKey = computed(() => {
+    const w = this.current();
+    return w ? changeRunKey({ workspace: w.folder, system: this.system(), change: this.changeName() }) : null;
+  });
+  private readonly ownRun = computed(() => {
+    const key = this.runKey();
+    return key === null ? null : this.changeRuns.session(key);
+  });
+  /** What holds this page: Kata's own checks, a run that took the screen, or this change's own live document run. */
+  readonly locked = computed(() => this.lock.active() !== null || this.ownRun() !== null);
   readonly lockView = computed(() => {
     const v = this.lock.active();
     return v?.kind === 'steps' ? v : null;
   });
-  readonly lockElapsed = this.lock.elapsedSecs;
-  readonly lockDeadline = this.lock.deadlineSecs;
-  /** The agent run that holds the page, live or finished, or null. */
+  /** The agent run the page shows, live or finished: this change's own, else a run that took the screen; or null. */
   readonly session = computed(() => {
+    const own = this.ownRun();
+    if (own) return { kind: 'run' as const, title: own.title, finished: own.finished, spec: own.spec };
     const v = this.lock.active();
     const spec = this.lock.spec();
     return v?.kind === 'run' && spec ? { ...v, spec } : null;
   });
-  readonly runState = this.runs.state;
-  readonly events = this.runs.events;
-  readonly summary = this.runs.summary;
-  readonly asks = this.runs.asks;
-  readonly messages = this.runs.messages;
-  readonly messageRefusal = this.runs.refusal;
-  readonly permissions = this.runs.permissions;
-  readonly given = this.runs.given;
-  readonly leftovers = this.runner.leftovers;
-  /** The session view's Close waits for the run's after-run work and for any leftover decision. */
-  readonly closeBlocked = computed(() => this.runner.settling() || this.runner.leftovers() !== null);
+  private readonly ownSnap = computed(() => {
+    const key = this.runKey();
+    return this.ownRun() !== null && key !== null ? this.changeRuns.snapshot(key) : null;
+  });
+  readonly lockElapsed = (): number => {
+    const key = this.runKey();
+    return this.ownRun() !== null && key !== null ? this.changeRuns.elapsedSecs(key) : this.lock.elapsedSecs();
+  };
+  readonly lockDeadline = (): number | null => {
+    const key = this.runKey();
+    return this.ownRun() !== null && key !== null ? this.changeRuns.deadlineSecs(key) : this.lock.deadlineSecs();
+  };
+  readonly runState = computed(() => this.ownSnap()?.state ?? this.runs.state());
+  readonly events = computed(() => this.ownSnap()?.events ?? this.runs.events());
+  readonly summary = computed(() => this.ownSnap()?.summary ?? this.runs.summary());
+  readonly asks = computed(() => this.ownSnap()?.asks ?? this.runs.asks());
+  readonly messages = computed(() => this.ownSnap()?.messages ?? this.runs.messages());
+  readonly messageRefusal = computed(() => this.ownSnap()?.refusal ?? this.runs.refusal());
+  readonly permissions = computed(() => this.ownSnap()?.permissions ?? this.runs.permissions());
+  readonly given = computed(() => this.ownSnap() === null ? this.runs.given() : this.ownSnap()!.given);
+  /**
+   * What a stopped run of this change left behind. A run of no change offers its leftovers on the home, where it was started, and
+   * another change's on that change; neither shows here, even while this page has no workspace and so no change key.
+   */
+  readonly leftovers = computed(() => {
+    const key = this.runKey();
+    return key === null ? null : this.runner.leftoversOn(key);
+  });
+  /**
+   * The session view's Close waits for the after-run work of the run it shows, read by that run's id, and for this change's own leftover
+   * decision; it never waits on a run it does not show. The run on show is this change's own session (its document run, or the intent
+   * run that started it) or the solo run that took the screen. A run that took the screen offers its leftovers on the home, and so does
+   * the intent run; the toast that ends each counts them.
+   */
+  readonly closeBlocked = computed(() => {
+    const own = this.ownRun();
+    if (own !== null) return (own.runId !== null && this.runner.settlingRun(own.runId)) || this.leftovers() !== null;
+    return this.session() !== null && this.runner.settlingRun(this.runs.lastRunId());
+  });
 
   constructor() {
     // The router reuses this screen when only the change param moves, so the load follows the params, not a snapshot.
@@ -915,6 +846,18 @@ export class ChangePageViewModel {
       this.system();
       this.changeName();
       untracked(() => void this.load());
+    });
+    // A run picked from the running changes is shown once the change it belongs to is on the page.
+    effect(() => {
+      const asked = this.landing.pending();
+      const ready = this.state() === 'ready';
+      const system = this.system();
+      const change = this.changeName();
+      untracked(() => {
+        if (asked === null || !ready || asked.system !== system || asked.change !== change) return;
+        this.landing.clear();
+        this.land(asked.run);
+      });
     });
     // A confirmation names the branch, whoever opened it (this page, or the start of the change): read the change again.
     effect(() => {
@@ -925,9 +868,9 @@ export class ChangePageViewModel {
         void this.load();
       });
     });
-    // The build page gives the lock back when the build ends or stops; the change is read again then, so its stage, pill and actions follow it.
+    // The change is read again when the backend's build ends or stops, so its stage, pill and actions follow it.
     effect(() => {
-      const building = this.lock.active()?.kind === 'build';
+      const building = this.build.active();
       untracked(() => {
         const ended = this.wasBuilding && !building;
         this.wasBuilding = building;
@@ -939,7 +882,7 @@ export class ChangePageViewModel {
   /** The branches named so far, as this page last saw them: the page reads the change again when a confirmation names one. */
   private seenNamed = this.runner.named();
 
-  /** Whether the lock was held for a build the last time it changed. */
+  /** Whether the backend's build was going the last time it changed. */
   private wasBuilding = false;
 
   /** `?demo=sdlc` starts the scripted spec run once the change has loaded. Browser only, never under Tauri. */
@@ -949,21 +892,7 @@ export class ChangePageViewModel {
     if (this.state() === 'ready') await this.runStage('continue-spec');
   }
 
-  // --- naming
-
-  /** Open the branch name confirmation of this change. Closing it changes nothing: the page keeps asking. */
-  async openNameDialog(): Promise<void> {
-    const w = this.current();
-    const master = this.scanMaster();
-    const pending = this.masterBranch();
-    const change = this.change();
-    if (w === null || master === null || pending === null || change === null || this.refuseWhileLocked()) return;
-    await this.runner.requestName({ folder: w.folder, masterRepo: master, system: this.system(), change: this.changeName(), pending, workType: null, track: change.track });
-  }
-
-  nameType(type: WorkType): void {
-    void this.runner.setNameType(type);
-  }
+  // --- renaming
 
   acceptName(name: string): void {
     void this.runner.confirmName(name);
@@ -976,34 +905,33 @@ export class ChangePageViewModel {
   // --- actions
 
   async act(action: StageAction): Promise<void> {
-    // The build holds the lock it runs under; cancelling it is the one action that is always allowed.
+    // The build is hosted by the backend and holds no lock here; stopping it is allowed whatever else is going.
     if (action !== 'cancel-build' && this.refuseWhileLocked()) return;
     if (this.needsLightTrack(action)) {
       this.toasts.error(NEEDS_LIGHT_TRACK);
       return;
     }
-    if (this.waitsForName(action)) {
-      this.toasts.error(NEEDS_NAME);
-      return;
-    }
     switch (action) {
       case 'accept-intent':
-      case 'reject-intent':
       case 'accept-spec':
       case 'accept-plan':
-        await this.commitDecision(action, false);
+        await this.acceptDocument(ACCEPTS[action] ?? 'spec');
         return;
       case 'commit-acceptance':
-        await this.commitDecision(ACCEPTED_UNCOMMITTED[this.change()?.stage ?? ''] ?? 'accept-spec', false);
+        await this.acceptDocument(ACCEPTED_UNCOMMITTED[stageNameOf(this.change())] ?? 'spec');
+        return;
+      case 'reject-intent':
+      case 'reject-fix':
+        await this.rejectChange();
         return;
       case 'start-build':
-        this.openBuildPreview('start');
+        void this.startBuild(this.build.openPreview('start'));
         return;
       case 'continue-build':
-        this.openBuildPreview('continue');
+        void this.startBuild(this.build.openPreview('continue'));
         return;
       case 'another-round':
-        this.openBuildPreview('round');
+        void this.startBuild(this.build.openRound());
         return;
       case 'run-review':
         await this.doneRunReview();
@@ -1014,12 +942,15 @@ export class ChangePageViewModel {
       case 'cancel-build':
         this.build.cancelBuild();
         return;
+      case 'rename':
+        await this.renameBranch(this.expectedBranch());
+        return;
       case 'full-pipeline-instead':
         await this.openFullPipeline();
         return;
       default:
         // Regenerating an existing document first asks what should change; a first draft just runs.
-        if (revisits(action)) this.pendingRevisit.set(action);
+        if (this.offered(action)?.revisits === true) this.pendingRevisit.set(action);
         else await this.runStage(action);
     }
   }
@@ -1036,26 +967,6 @@ export class ChangePageViewModel {
     this.pendingRevisit.set(null);
   }
 
-  /** The operator confirmed that the file has other edits and the commit should take them too. */
-  async confirmDecision(): Promise<void> {
-    const d = this.pendingDecision();
-    this.pendingDecision.set(null);
-    const fix = this.pendingFix();
-    this.pendingFix.set(null);
-    if (d === null) return;
-    if (fix !== null) await this.closeFix(fix, true);
-    else await this.commitDecision(d, true);
-  }
-
-  async cancelConfirm(): Promise<void> {
-    this.pendingDecision.set(null);
-    const fix = this.pendingFix();
-    this.pendingFix.set(null);
-    if (fix === null) return;
-    await this.leaveFixOpen(fix, 'its other edits were not committed');
-    await this.load();
-  }
-
   // --- taking the full pipeline instead of a drafted fix
 
   readonly pipelineOpen = signal(false);
@@ -1065,11 +976,8 @@ export class ChangePageViewModel {
   /** Whether the plugin on this machine can triage a change. */
   readonly lightTrack = computed(() => {
     const r = this.readiness();
-    return r !== null && r.kind === 'ready' && r.lightTrack;
+    return r !== null && r.kind === 'ready';
   });
-  /** The fix whose rejection waits on the other-edits confirm, after its replacement opened; null when none does. */
-  private readonly pendingFix = signal<FixClose | null>(null);
-
   /** Read the fix's intent and open New change on the full pipeline with the fix as its description. */
   private async openFullPipeline(): Promise<void> {
     const master = this.masterDir();
@@ -1093,9 +1001,8 @@ export class ChangePageViewModel {
    * the runner has already said why for a refused or stopped start and for a run that made no change, so only an
    * error thrown here gets a toast. The dialog's Start is the engineer's confirmation that the fix will close.
    *
-   * The sequence: read the branch the master repository is on (the fix's documents live there), start the new change,
-   * which leaves the master on the new change's branch, then check out the fix's branch, commit `reject-intent` for the
-   * fix, and check out the new change's branch again. See `closeFix`.
+   * The sequence: start the new change, then ask the plugin to reject the fix (its own copy holds the fix's documents,
+   * so no branch is switched). See `closeFix`.
    */
   async startPipeline(system: string, idea: string): Promise<void> {
     this.pipelineOpen.set(false);
@@ -1104,13 +1011,10 @@ export class ChangePageViewModel {
     const master = this.masterDir();
     if (!workspace || !scan || !master) return;
     // Captured before the await: newChange navigates to the new change, and this page and ViewModel are reused.
-    const fixRef: ChangeRef = { system: this.system(), change: this.changeName() };
+    const fixRef: ChangeRef = { workspace: workspace.folder, system: this.system(), change: this.changeName() };
     let outcome;
-    let fixBranch: string | null;
     try {
       const branches = await this.transport.sdlcBranches(master);
-      fixBranch = branches.current;
-      if (fixBranch === null) throw new Error('the master repository is not on a branch');
       // A setting that cannot be used stops the start, as on the workspace home; there is no fall back to `change/` naming (R3.2).
       const repo = masterRepo(scan);
       let naming: NamingState = { kind: 'none' };
@@ -1129,63 +1033,40 @@ export class ChangePageViewModel {
       return;
     }
     if (outcome.kind !== 'opened') return;
-    await this.closeFix({ ...fixRef, master, fixBranch, newBranch: outcome.branch }, false);
+    await this.closeFix(fixRef);
   }
 
   /**
-   * Close the fix after its replacement opened. The master repository is on the new change's branch by now, where the
-   * fix's folder may be missing or stale, so: check out the fix's branch (skipped when it is the new branch), commit the
-   * rejection there, and check out the new change's branch again. A failed first checkout decides nothing; a failed
-   * decision still returns to the new branch; each failure is said in a toast, never left as a half state. An
-   * other-edits confirm keeps the master on the fix's branch until it is answered.
+   * Close the fix after its replacement opened: the plugin commits the rejection in the fix's copy and removes the copy,
+   * keeping its record on the master's branch. Every refusal is said in a toast and leaves the fix open.
    */
-  private async closeFix(fix: FixClose, confirmed: boolean): Promise<void> {
-    const master = fix.master;
-    const swap = fix.fixBranch !== fix.newBranch;
-    if (swap && confirmed === false) {
-      try {
-        await this.transport.sdlcCheckout(master, fix.fixBranch);
-      } catch (e) {
-        await this.leaveFixOpen(fix, message(e), false);
-        return;
-      }
-    }
-    let problem: string | null = null;
+  private async closeFix(fix: ChangeRef): Promise<void> {
+    let out: RejectOutcome;
     try {
-      const out = await this.transport.sdlcDecide(master, fix.system, fix.change, 'reject-intent', confirmed);
-      switch (out.kind) {
-        case 'needsConfirm':
-          this.pendingDecision.set('reject-intent');
-          this.pendingFix.set(fix);
-          return;
-        case 'gitFailed':
-          problem = out.stderr.trim() === '' ? 'git refused the commit' : out.stderr;
-          break;
-        case 'committed':
-          this.toasts.success(`${DONE['reject-intent']} · committed`);
-          break;
-      }
+      out = await this.transport.sdlcReject(fix);
     } catch (e) {
-      problem = message(e);
+      this.toasts.error(fixStays(fix, message(e)));
+      await this.load();
+      return;
     }
-    if (problem !== null) await this.leaveFixOpen(fix, problem, swap);
-    else if (swap) await this.returnToNewChange(fix);
+    switch (out.outcome) {
+      case 'rejected':
+        this.toasts.success(rejectedSaid(out.recordBranch));
+        break;
+      case 'rejectedNotRemoved':
+        this.toasts.error(`The new change started and the fix ${fix.change} is rejected, but its copy was not removed: ${out.problems.join('\n')}`);
+        break;
+      case 'refused':
+        this.toasts.error(fixStays(fix, out.message));
+        break;
+      case 'notCommitted':
+        this.toasts.error(fixStays(fix, out.problems.join('\n')));
+        break;
+      case 'couldNotRun':
+        this.toasts.error(fixStays(fix, out.message));
+        break;
+    }
     await this.load();
-  }
-
-  /** Say the fix stays open, after returning the master to the new change's branch when it had left it. */
-  private async leaveFixOpen(fix: FixClose, why: string, returning = true): Promise<void> {
-    if (returning && fix.fixBranch !== fix.newBranch) await this.returnToNewChange(fix);
-    this.toasts.error(fixStays(fix, why));
-  }
-
-  /** Check out the new change's branch again; a failure says where the master and the new change are. */
-  private async returnToNewChange(fix: FixClose): Promise<void> {
-    try {
-      await this.transport.sdlcCheckout(fix.master, fix.newBranch);
-    } catch (e) {
-      this.toasts.error(`The master repository is on ${fix.fixBranch} and the new change is on ${fix.newBranch}: ${message(e)}. Check out ${fix.newBranch} to continue.`);
-    }
   }
 
   /** The preview a run goes through; null when it was cancelled or could not be opened. */
@@ -1205,7 +1086,10 @@ export class ChangePageViewModel {
       this.pickSeq++;
       this.pendingDoc.set(null);
       this.progress.end('doc');
-      if (this.shownDoc() !== 'build' && this.change() !== null) this.picked.set('build');
+      if (this.shownDoc() !== 'build' && this.change() !== null) {
+        this.picked.set('build');
+        this.rememberTab();
+      }
       return;
     }
     if (!isDocStem(stem) || !this.docs()[stem]) return;
@@ -1233,6 +1117,7 @@ export class ChangePageViewModel {
       this.doc.set(text);
       this.read.set(read);
       this.picked.set(stem);
+      this.rememberTab();
       this.pendingDoc.set(null);
       this.progress.end('doc');
     } catch (e) {
@@ -1268,27 +1153,56 @@ export class ChangePageViewModel {
   // --- the lock overlay and leftovers
 
   cancelLock(): void {
-    this.lock.cancel();
+    const key = this.runKey();
+    if (this.ownRun() !== null && key !== null) this.changeRuns.cancel(key);
+    else this.lock.cancel();
   }
 
   closeSession(): void {
-    this.lock.close();
+    const key = this.runKey();
+    this.setMessageDraft('');
+    if (this.ownRun() !== null && key !== null) this.changeRuns.close(key);
+    else this.lock.close();
   }
 
   answer(e: { id: string; answers: string[][] }): void {
-    this.lock.answer(e.id, e.answers);
+    const key = this.runKey();
+    if (this.ownRun() !== null && key !== null) this.changeRuns.answer(key, e.id, e.answers);
+    else this.lock.answer(e.id, e.answers);
+  }
+
+  /** The change as the draft store names it; null until a workspace is open. */
+  private readonly draftRef = computed<ChangeWithWorkspace | null>(() => {
+    const w = this.current();
+    return w ? { workspace: w.folder, system: this.system(), change: this.changeName() } : null;
+  });
+
+  /** The message typed for this change's session and not sent, which survives leaving the page. */
+  readonly messageDraft = computed(() => {
+    const ref = this.draftRef();
+    return ref === null ? '' : this.drafts.message(ref, SESSION_RUN);
+  });
+
+  setMessageDraft(text: string): void {
+    const ref = this.draftRef();
+    if (ref !== null) this.drafts.setMessage(ref, SESSION_RUN, text);
   }
 
   say(text: string): void {
-    this.lock.say(text);
+    this.setMessageDraft('');
+    const key = this.runKey();
+    if (this.ownRun() !== null && key !== null) this.changeRuns.say(key, text);
+    else this.lock.say(text);
   }
 
   decide(e: { id: string; allow: boolean; message: string | null }): void {
-    this.lock.decide(e.id, e.allow, e.message);
+    const key = this.runKey();
+    if (this.ownRun() !== null && key !== null) this.changeRuns.decide(key, e.id, e.allow, e.message);
+    else this.lock.decide(e.id, e.allow, e.message);
   }
 
   async discardLeftovers(choices: DiscardChoice[]): Promise<void> {
-    await this.runner.discardAll(choices);
+    await this.runner.discardAll(choices, this.runKey());
     await this.load();
   }
 
@@ -1302,13 +1216,13 @@ export class ChangePageViewModel {
   }
 
   closeLeftovers(): void {
-    this.runner.closeLeftovers();
+    this.runner.closeLeftovers(this.runKey());
   }
 
   // --- internals
 
   private refuseWhileLocked(): boolean {
-    if (this.lock.active() === null) return false;
+    if (!this.locked()) return false;
     this.toasts.error(BUSY);
     return true;
   }
@@ -1319,230 +1233,41 @@ export class ChangePageViewModel {
   });
 
   /**
-   * Check that GitHub, the commits, the review and every repository's checks are in order, then show the dialog.
-   * A step that refuses is recorded and the steps after it do not run. Nothing throws.
+   * Read the repositories, their branch and what the plugin recorded for their checks, then show the confirmation. Nothing is checked here:
+   * the plugin verifies the change when it is asked. Nothing throws.
    */
   private async declareDone(): Promise<void> {
     const w = this.current();
     const master = this.scanMaster();
-    if (this.change()?.stage !== 'build-finished' || !w || master === null) return;
+    if (stageNameOf(this.change()) !== 'build-finished' || !w || master === null) return;
     const folder = w.folder;
     const system = this.system();
     const change = this.changeName();
-    let touched: PublishRepo[];
-    let branch: string | null;
-    try {
-      touched = await this.transport.sdlcTouchedRepos(folder, master, system, change);
-      // The branch the change really has: it may carry a team name, not change/<change>.
-      branch = (await this.transport.sdlcChangeRepos(folder, master, system, change)).find((r) => r.repo === master)?.branch ?? null;
-      for (const r of touched) {
-        if ((await this.transport.sdlcDiffFiles(r.path, 'uncommitted')).files.length > 0) {
-          this.toasts.error(`Commit or discard the uncommitted edits in ${r.repo} before declaring done.`);
-          return;
-        }
-      }
-    } catch (e) {
-      this.toasts.error(`Could not read the repositories: ${message(e)}`);
-      return;
-    }
-
-    const productRepos = (this.status()?.repos ?? []).map((r) => r.repo).filter((r) => r !== master);
-    const got = {
-      account: null as string | null,
-      notReady: null as string | null,
-      offenders: [] as Offender[],
-      review: { missing: 'none' } as DoneReview,
-      plan: null as ChecksPlan | null,
-      checksError: null as string | null,
-      clashes: [] as RemoteClash[],
-      results: new Map<string, RepoChecks>(),
-    };
-    const refuse = (e: unknown): never => {
-      got.notReady = message(e);
-      throw new Error(got.notReady);
-    };
-    let planLoaded = false;
-    const loadPlan = async () => {
-      if (planLoaded) return;
-      planLoaded = true;
-      try {
-        got.plan = await this.transport.sdlcChecksLoad(folder, master, system);
-      } catch (e) {
-        got.checksError = message(e);
-      }
-    };
-
+    let repos: ChangeRepo[] = [];
+    let views: RepoCheckView[] = [];
     const out = await this.lock.runSteps('Declaring done', [
       {
-        label: 'Signed in to GitHub',
+        label: 'Repositories of the change',
         run: async () => {
-          try {
-            got.account = await this.transport.sdlcGhSignedIn(touched);
-          } catch (e) {
-            refuse(e);
-          }
-          return got.account;
+          repos = await this.transport.sdlcChangeRepos(folder, master, system, change);
+          return plural(repos.length, 'repository', 'repositories');
         },
       },
       {
-        label: 'Origins are GitHub repositories',
+        label: 'Checks the plugin recorded',
         run: async () => {
-          try {
-            await this.transport.sdlcGhOrigins(touched);
-          } catch (e) {
-            refuse(e);
-          }
-          return plural(touched.length, 'repository', 'repositories');
+          views = await this.transport.sdlcChecksView({ workspace: folder, system, change });
+          return plural(views.length, 'repository', 'repositories');
         },
       },
-      {
-        label: 'Branch is free on GitHub',
-        run: async () => {
-          got.clashes = await this.transport.sdlcRemoteClashes(touched, master, system, change);
-          return got.clashes.length === 0 ? 'free in every repository' : plural(got.clashes.length, 'repository holds', 'repositories hold') + ' other work on it';
-        },
-      },
-      {
-        label: 'Commit rules',
-        run: async () => {
-          got.offenders = await this.transport.sdlcCommitOffenders(folder, master, system, change);
-          return got.offenders.length === 0 ? 'all follow the rules' : plural(got.offenders.length, 'commit breaks', 'commits break') + ' them';
-        },
-      },
-      {
-        label: 'Review covers the current work',
-        run: async () => {
-          const [links, records, heads] = await Promise.all([
-            this.transport.sdlcRunLinks(),
-            this.transport.listRuns(),
-            this.transport.sdlcBuildHeads(folder, master, system, [master, ...productRepos], change),
-          ]);
-          // The review document decides when the change has one; the review run's exit code and words only when it has not.
-          const document = await this.transport.sdlcReviewRecord(masterPath(folder, master), system, change);
-          const state = reviewState(links, records, heads, { workspaceId: w.id, system, change }, document, master);
-          if (state.kind === 'current-document') {
-            const latest = shownSection(state.review);
-            got.review = { at: latest.reviewedAt, findings: latest.findings };
-            return latest.findings.length === 0 ? 'reviewed, nothing found' : plural(latest.findings.length, 'finding', 'findings');
-          }
-          if (state.kind !== 'current') {
-            got.review = { missing: state.kind };
-            return REVIEW_MISSING_TEXT[state.kind];
-          }
-          const findings = reviewFindings(await this.transport.loadRun(state.link.run_id));
-          got.review = { at: state.link.started_at * 1000, findings, older: true };
-          return plural(findings.length, 'finding', 'findings');
-        },
-      },
-      ...touched.map((r) => ({
-        label: `Checks · ${r.repo}`,
-        run: async () => {
-          await loadPlan();
-          if (got.checksError !== null) return 'not run';
-          this.progress.begin('running-checks', progressLabels.runningChecks(r.repo), 'lock');
-          let result: RepoChecks;
-          try {
-            result = await this.transport.sdlcRunChecks(folder, master, system, r);
-          } catch (e) {
-            this.progress.fail('lock');
-            throw e;
-          }
-          this.progress.end('lock');
-          got.results.set(r.repo, result);
-          return checkLabel(result);
-        },
-      })),
     ]);
-    if (out === 'cancelled' || (out === 'failed' && got.notReady === null)) return;
-
-    this.doneRepos = touched;
-    this.doneBranch = branch;
-    // Each report asks afresh: an acknowledgement covers the findings it was given for, not the next review's.
-    this.doneAcknowledged.set(false);
+    if (out !== 'done') return;
     this.doneReport.set({
-      account: got.account,
-      notReady: got.notReady,
-      branch,
-      clashes: got.clashes,
-      repos: touched.map((r) => ({
-        repo: r.repo,
-        base: r.base,
-        checks: (got.plan?.checks ?? []).filter((c) => c.repo === r.repo),
-        result: got.results.get(r.repo) ?? null,
-      })),
-      offenders: got.offenders,
+      // The branch the change really has: it may carry a team name, not change/<change>.
+      branch: repos.find((r) => r.repo === master)?.branch ?? null,
+      repos: repos.map((r) => ({ repo: r.repo, base: r.base.base, view: views.find((v) => v.repo === r.repo) ?? null })),
       departures: this.status()?.departures ?? [],
-      review: got.review,
-      checksPath: got.plan?.path ?? `${this.checksDir() ?? ''}/${system}.toml`,
-      checksError: got.checksError,
     });
-  }
-
-  private async prepare(continueWithLeftovers: boolean, confirmedRepos: string[] = []): Promise<void> {
-    const w = this.current();
-    const master = this.scanMaster();
-    const asked = this.asked;
-    const checksDir = this.checksDir();
-    if (!w || master === null || asked === null) return;
-    if (checksDir === null) {
-      this.toasts.error("Could not read Kata's checks folder.");
-      return;
-    }
-    this.progress.begin('preparing-build', progressLabels.preparingBuild(), 'build');
-    let out: Awaited<ReturnType<SdlcRunner['prepareBuild']>>;
-    try {
-      out = await this.runner.prepareBuild({
-        folder: w.folder,
-        masterRepo: master,
-        system: this.system(),
-        change: this.changeName(),
-        action: this.askedAction,
-        continueWithLeftovers,
-        pending: asked.rounds?.map((r) => r.repo) ?? [],
-      });
-    } catch (e) {
-      this.progress.fail('build');
-      throw e;
-    }
-    // A refusal is the preparation failing: its line goes before the refusal shows where it shows today.
-    if (out.kind === 'refused' || out.kind === 'branch-taken') this.progress.fail('build');
-    else this.progress.end('build');
-    if (out.kind === 'branch-taken') {
-      // Nothing was created or switched; the refusal names the branch and offers a new one.
-      this.asked = null;
-      this.refusal.set(`The branch ${out.branch} in ${out.repo} holds other work`);
-      this.refusalProblems.set([]);
-      this.refusalTaken.set({ repo: out.repo, branch: out.branch });
-      return;
-    }
-    switch (out.kind) {
-      case 'refused':
-        this.asked = null;
-        this.refusal.set(out.reason);
-        this.refusalProblems.set(out.problems ?? []);
-        return;
-      case 'needs-confirm':
-        this.pendingLeftovers.set(out.leftovers);
-        return;
-      case 'ready': {
-        this.asked = null;
-        const context = this.buildContext();
-        if (context === null) return;
-        const started = await this.build.start(
-          {
-            start: out.start,
-            timeoutSecs: asked.timeoutSecs,
-            rounds: asked.rounds ?? [],
-            checksDir,
-            choices: this.askedChoices,
-            continueOnLeftovers: confirmedRepos,
-          },
-          context,
-        );
-        if (started) this.picked.set('build');
-        return;
-      }
-    }
   }
 
   private masterDir(): string | null {
@@ -1552,30 +1277,68 @@ export class ChangePageViewModel {
     return w && repo ? masterPath(w.folder, repo) : null;
   }
 
-  /** Record a decision on the change the page shows. */
-  private async commitDecision(decision: Decision, confirmed: boolean): Promise<DecisionOutcome> {
-    const master = this.masterDir();
-    if (master === null) return 'error';
-    let out;
+  /** Accept a document of the change the page shows: the plugin commits it and runs the team's accepting hooks. */
+  private async acceptDocument(doc: ChangeDocument): Promise<void> {
+    const ref = this.draftRef();
+    if (ref === null) return;
+    let out: AcceptOutcome;
     try {
-      out = await this.transport.sdlcDecide(master, this.system(), this.changeName(), decision, confirmed);
+      out = await this.transport.sdlcAccept(ref, doc);
     } catch (e) {
-      this.toasts.error(`Could not record the decision: ${message(e)}`);
-      return 'error';
+      this.toasts.error(`Could not accept the ${doc}: ${message(e)}`);
+      return;
     }
-    switch (out.kind) {
-      case 'needsConfirm':
-        this.pendingDecision.set(decision);
-        return 'needsConfirm';
-      case 'gitFailed':
-        this.toasts.error(out.stderr.trim() === '' ? 'git refused the commit' : out.stderr);
+    switch (out.outcome) {
+      case 'accepted':
+        if (out.warnings.length === 0) this.toasts.success(`Accepted ${doc} · committed`);
+        else this.toasts.info([`Accepted ${doc} · committed, with warnings from the plugin.`, ...out.warnings].join('\n'));
         break;
-      case 'committed':
-        this.toasts.success(`${DONE[decision]} · committed`);
+      case 'acceptedHookFailed':
+        this.toasts.error(`Accepted ${doc} and committed it, but ${out.hook === null ? 'a hook on accepting' : `the hook ${out.hook}`} failed.\n${[...out.problems, outputTail(out.output)].filter((s) => s !== '').join('\n')}`);
+        break;
+      case 'acceptedHookCouldNotRun':
+        this.toasts.error(`Accepted ${doc} and committed it, but this machine could not run the hooks on accepting.\n${outputTail(out.output)}`);
+        break;
+      case 'notCommitted':
+        this.toasts.error(`The ${doc} was not committed.\n${out.problems.join('\n')}`);
+        break;
+      case 'couldNotRun':
+        this.toasts.error(`Could not accept the ${doc}: ${out.message}`);
         break;
     }
     await this.load();
-    return out.kind;
+  }
+
+  /** Reject the change the page shows through the plugin; once it is gone the page goes back to the workspace. */
+  private async rejectChange(): Promise<void> {
+    const ref = this.draftRef();
+    if (ref === null) return;
+    let out: RejectOutcome;
+    try {
+      out = await this.transport.sdlcReject(ref);
+    } catch (e) {
+      this.toasts.error(`Could not reject the change: ${message(e)}`);
+      return;
+    }
+    switch (out.outcome) {
+      case 'rejected':
+        this.toasts.success(rejectedSaid(out.recordBranch));
+        await this.toHome();
+        return;
+      case 'rejectedNotRemoved':
+        this.toasts.error(`Rejected and committed, but the change's copy was not removed.\n${out.problems.join('\n')}`);
+        break;
+      case 'refused':
+        this.toasts.error(out.message);
+        break;
+      case 'notCommitted':
+        this.toasts.error(`The rejection was not committed.\n${out.problems.join('\n')}`);
+        break;
+      case 'couldNotRun':
+        this.toasts.error(`Could not reject the change: ${out.message}`);
+        break;
+    }
+    await this.load();
   }
 
   private async runStage(action: StageAction, feedback = ''): Promise<void> {
@@ -1594,9 +1357,7 @@ export class ChangePageViewModel {
       const settings = this.modes.settings() ?? (await this.modes.load());
       const ctx = { folder: workspace.folder, system: this.system(), change: this.changeName(), feedback };
       if (run.kind === 'fix') {
-        const checksDir = this.checksDir() ?? (await this.readChecksDir());
-        if (checksDir === null) throw new Error('the checks folder is not known');
-        built = specFor(run.kind, action, ctx, settings, this.catalog(), undefined, restrictedFor(workspace.folder, scan, checksDir));
+        built = specFor(run.kind, action, ctx, settings, this.catalog(), restrictedFor(workspace.folder, scan));
       } else {
         built = specFor(run.kind, action, ctx, settings, this.catalog());
       }
@@ -1605,8 +1366,11 @@ export class ChangePageViewModel {
       return;
     }
     let spec: RunSpec | null;
+    const ref = { workspace: workspace.folder, system: this.system(), change: this.changeName() };
     try {
-      spec = await this.preview.open({ spec: built, mode: 'sdlc', workdir: built.workdir, from: { session: this.givens.session(), job: null, build: null } });
+      // The preview shows the run-spec the backend composes for this form, the one `sdlcRunChange` launches.
+      const shown = await this.transport.sdlcPreviewChangeRun(ref, run.kind, documentForm(built));
+      spec = await this.preview.open({ spec: shown, mode: 'sdlc', workdir: shown.workdir, from: { session: this.givens.session(), job: null, build: null } });
     } catch (e) {
       this.toasts.error(`Could not preview the run: ${message(e)}`);
       return;
@@ -1618,7 +1382,7 @@ export class ChangePageViewModel {
       productRepos: productRepos(scan),
       link: { system: this.system(), change: this.changeName(), stage: run.kind },
       label: run.label,
-    });
+    }, { ref, kind: run.kind });
     await this.load();
   }
 
@@ -1640,7 +1404,7 @@ export class ChangePageViewModel {
     try {
       return await this.transport.sdlcPluginReadiness(folder);
     } catch {
-      return { kind: 'missing' };
+      return { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
     }
   }
 
@@ -1663,49 +1427,44 @@ export class ChangePageViewModel {
     }
   }
 
-  /** Whether the change is done and with which links, from what the backend saved; GitHub is asked only when nothing is saved. A failed read is not an error, it just leaves the change unfinished. */
-  private async readDoneView(folder: string, master: string, workspaceId: string, system: string, name: string, buildFinished: boolean): Promise<DoneView> {
+  /** Whether the change is done and with which links, from the plugin's record at once, without asking GitHub. A failed read is not an error, it just leaves the change unfinished. */
+  private async readPullRequests(folder: string, workspaceId: string, system: string, name: string, buildFinished: boolean): Promise<{ view: PullRequestsView; failed: boolean }> {
     try {
-      return await this.transport.sdlcDoneView(folder, master, workspaceId, system, name, buildFinished);
+      return { view: await this.transport.sdlcPullRequestsView(folder, workspaceId, system, name, false), failed: false };
     } catch {
-      return { done: false, links: [], linksFrom: 'none', offerDeclare: buildFinished, prCheckFailed: buildFinished };
+      return { view: { done: false, source: null, links: [], declareOffered: buildFinished }, failed: buildFinished };
     }
   }
 
-  private applyDoneView(view: DoneView): void {
+  private applyPullRequests(view: PullRequestsView, failed: boolean): void {
     this.done.set(view.done);
     this.pullRequests.set(view.links);
-    this.prCheckFailed.set(view.prCheckFailed);
-    this.linksFrom.set(view.linksFrom);
+    this.prCheckFailed.set(failed);
+    this.linksFrom.set(view.source);
   }
 
-  /** Ask GitHub for the saved links' states without holding the page: the links stay as saved until it answers, and stay when it cannot. */
-  private async refreshLinks(seq: number, folder: string, master: string, workspaceId: string, system: string, name: string, buildFinished: boolean): Promise<void> {
-    const started = Math.floor(Date.now() / 1000);
-    let view: DoneView | null;
+  /** Ask the plugin for the links' states without holding the page: the links stay as they are until it answers. A link it could not read keeps the state last seen, and all of them do when it cannot answer. */
+  private async refreshLinks(seq: number, folder: string, workspaceId: string, system: string, name: string): Promise<void> {
+    let view: PullRequestsView | null;
     try {
-      view = await this.transport.sdlcRefreshPrStates(folder, master, workspaceId, system, name, buildFinished);
+      view = await this.transport.sdlcPullRequestsView(folder, workspaceId, system, name, true);
     } catch {
       view = null;
     }
     if (seq !== this.loadSeq) return;
-    if (view !== null) this.applyDoneView(view);
-    this.refreshedAt.set(started);
-  }
-
-  private async readChecksDir(): Promise<string | null> {
-    try {
-      return await this.transport.sdlcChecksDir();
-    } catch (e) {
-      this.toasts.error(`Could not read Kata's checks folder: ${message(e)}`);
-      return null;
-    }
+    const before = this.pullRequests();
+    const kept = (l: PullRequestLink): PullRequestLink => {
+      const earlier = before.find((b) => b.url === l.url);
+      return { ...l, state: earlier?.state ?? null, lastSeen: true, seenAt: earlier?.seenAt ?? null };
+    };
+    const links = view === null ? before.map((l) => (l.state === null ? kept(l) : l)) : view.links.map((l) => (l.state === null ? kept(l) : l));
+    this.pullRequests.set(links);
   }
 
   /** Read this one change; a change the workspace does not have is none, any other failure is raised. */
-  private async readOwnChange(master: string, system: string, name: string): Promise<{ info: ChangeInfo | null }> {
+  private async readOwnChange(folder: string, system: string, name: string): Promise<{ info: ChangeView | null }> {
     try {
-      return { info: await this.transport.sdlcReadChange(master, system, name) };
+      return { info: await this.transport.sdlcChangeState(folder, system, name) };
     } catch (e) {
       if (/there is no change|no change folder/.test(message(e))) return { info: null };
       throw e;
@@ -1721,16 +1480,70 @@ export class ChangePageViewModel {
     }
   }
 
-  /** The system's naming setting; null when it cannot be read, which the page treats as no declaration. */
-  private async readNaming(folder: string, repo: string, system: string): Promise<NamingState | null> {
+  /** Read the change from disk. A newer call supersedes an older one still in flight. */
+  /** A run picked from the running changes may belong to another workspace than the open one: make that workspace the open one, as picking it in the switcher does, before the page reads the change. */
+  private async openAskedWorkspace(workspaces: WorkspaceEntry[], system: string, change: string): Promise<void> {
+    const asked = this.landing.pending();
+    if (asked === null || asked.system !== system || asked.change !== change) return;
+    const target = workspaces.find((w) => w.id === asked.workspaceId);
+    if (target === undefined || target.id === this.current()?.id) return;
+    const next = workspaces.map((w) => (w.id === target.id ? { ...w, last_opened: nowSecs() } : w));
+    this.workspaces.set(next);
     try {
-      return await this.transport.sdlcNaming(folder, repo, system);
-    } catch {
-      return null;
+      await this.transport.sdlcSaveWorkspaces(next);
+    } catch (e) {
+      this.toasts.error(`Could not save the workspace list: ${message(e)}`);
     }
   }
 
-  /** Read the change from disk. A newer call supersedes an older one still in flight. */
+  /** Show the run the engineer picked from the running changes: a build or review run on the Build tab with its repository (or the review) picked, where its question waits; a document run is this change's own session, already on show. */
+  private land(run: OpenRun): void {
+    if (run.kind === 'review') this.build.choose({ kind: 'review' });
+    else if (run.kind === 'build' && run.repo !== null) this.build.choose({ kind: 'repo', repo: run.repo });
+    else return;
+    // The run the engineer asked for wins over the mode they left: the stage's own mode shows it.
+    const ref = this.draftRef();
+    if (ref !== null) this.drafts.setMode(ref, null);
+    this.layout?.showSuited();
+    this.picked.set('build');
+    this.rememberTab();
+  }
+
+  private rememberTab(): void {
+    const ref = this.draftRef();
+    if (ref !== null) this.drafts.setTab(ref, this.picked());
+  }
+
+  /** The change the page last opened on the tab the engineer left it on, so a reload of the same change starts over as before. */
+  private restoredFor: string | null = null;
+
+  /**
+   * Open the tab the engineer left this change on. A run picked from the running changes wins over it: the engineer asked for that
+   * run just now, and its request is still waiting, so the remembered tab is left as it is for the run to replace.
+   */
+  private restoreTab(): void {
+    const ref = this.draftRef();
+    if (ref === null) return;
+    const key = changeRunKey(ref);
+    if (this.restoredFor !== key) {
+      this.restoredFor = key;
+      const asked = this.landing.pending();
+      const tab = this.drafts.tab(ref);
+      if (asked !== null && asked.system === ref.system && asked.change === ref.change) return;
+      if (tab !== null && tab !== this.shownDoc()) void this.showDoc(tab);
+    } else {
+      this.drafts.setTab(ref, null);
+    }
+  }
+
+  /** The change leaves the running changes once nothing of it needs them: best effort, a failure changes nothing on the page. */
+  private tellOpened(workspace: string, system: string, change: string): void {
+    const key = `${workspace}|${system}/${change}`;
+    if (key === this.openedKey) return;
+    this.openedKey = key;
+    this.transport.sdlcMarkOpened({ workspace, system, change }).catch(() => undefined);
+  }
+
   private async load(): Promise<void> {
     const seq = ++this.loadSeq;
     const system = this.system();
@@ -1740,7 +1553,7 @@ export class ChangePageViewModel {
     const failRead = () => {
       if (seq === this.loadSeq) this.progress.fail('page');
     };
-    const finish = (state: ChangeState, change: ChangeInfo | null, doc: string | null, read: ReadResult | ReadError | null = null) => {
+    const finish = (state: ChangeState, change: ChangeView | null, doc: string | null, read: ReadResult | ReadError | null = null) => {
       if (seq !== this.loadSeq) return;
       this.progress.end('page');
       this.progress.end('doc');
@@ -1763,6 +1576,8 @@ export class ChangePageViewModel {
     }
     if (seq !== this.loadSeq) return;
     this.workspaces.set(workspaces);
+    await this.openAskedWorkspace(workspaces, system, name);
+    if (seq !== this.loadSeq) return;
     const w = this.current();
     if (!w) {
       finish('not-found', null, null);
@@ -1776,48 +1591,49 @@ export class ChangePageViewModel {
         return;
       }
       const master = masterPath(w.folder, repo);
-      const [branches, own, links, records, catalog, naming, recorded] = await Promise.all([
+      const [branches, own, links, records, catalog, recorded] = await Promise.all([
         this.transport.sdlcBranches(master),
-        this.readOwnChange(master, system, name),
+        this.readOwnChange(w.folder, system, name),
         this.transport.sdlcRunLinks(),
         this.transport.listRuns(),
         this.transport.catalog(w.folder),
-        this.readNaming(w.folder, repo, system),
         this.readRecordedBranch(w.folder, repo, system, name),
       ]);
       const found = own.info;
-      // A home pass still running shows this stage at once, and this page never waits for that pass.
-      if (found) this.stages.put(w.id, found);
       const doc = found ? await this.transport.sdlcReadDoc(master, system, name, stemFor(found)) : null;
       const read = found ? await this.readParsed(master, system, name, stemFor(found)) : null;
-      const status = found?.plan.exists ? await this.readStatus(master, system, name) : null;
+      const status = found?.state.documents.plan.exists ? await this.readStatus(master, system, name) : null;
       const readiness = await this.readReadiness(w.folder);
-      const review = found?.plan.exists ? await this.readReviewRecord(master, system, name) : null;
-      const checksDir = this.checksDir() ?? (await this.readChecksDir());
-      const buildFinished = found?.stage === 'build-finished';
-      const doneView: DoneView = found?.plan.exists
-        ? await this.readDoneView(w.folder, repo, w.id, system, name, buildFinished)
-        : { done: false, links: [], linksFrom: 'none', offerDeclare: false, prCheckFailed: false };
+      const review = found?.state.documents.plan.exists ? await this.readReviewRecord(master, system, name) : null;
+      const buildFinished = stageNameOf(found ?? null) === 'build-finished';
+      const pulls = found?.state.documents.plan.exists
+        ? await this.readPullRequests(w.folder, w.id, system, name, buildFinished)
+        : { view: { done: false, source: null, links: [], declareOffered: false } satisfies PullRequestsView, failed: false };
       if (seq !== this.loadSeq) return;
-      this.refreshedAt.set(null);
-      this.applyDoneView(doneView);
+      this.applyPullRequests(pulls.view, pulls.failed);
       this.status.set(status);
       this.readiness.set(readiness);
       this.reviewRecord.set(review);
-      this.checksDir.set(checksDir);
       this.scan.set(scan);
       this.branches.set(branches);
       this.recordedBranch.set(recorded);
-      this.naming.set(naming);
       this.links.set(links);
       this.records.set(records);
       this.catalog.set(catalog);
       finish(found ? 'ready' : 'not-found', found, doc, read);
+      if (found) this.restoreTab();
+      if (found) this.tellOpened(w.folder, system, name);
+      // The copy line shows at once; what the slow backend answers about it arrives later and is shown only when it does.
+      if (found?.state.inCopy) this.readCopy(seq, { workspace: w.folder, system, change: name });
+      else {
+        this.copyBranchName.set(null);
+        this.removal.set({ outcome: 'notOffered' });
+      }
       // The build page shows the change's tasks, sessions and findings whether or not a build ran on this page.
       const context = this.buildContext();
       if (found && context !== null) this.build.loaded.set({ ctx: context, master: { repo, path: master }, change: found, status, done: this.done(), review });
-      // Saved links show first; their states are asked for in the background.
-      if (found && doneView.links.length > 0 && doneView.linksFrom !== 'github') void this.refreshLinks(seq, w.folder, repo, w.id, system, name, buildFinished);
+      // The recorded links show first; the plugin reads their states from GitHub in the background. Pull requests an earlier version of Kata saved are not read: the plugin does not know them.
+      if (found && pulls.view.source === 'plugin' && pulls.view.links.length > 0) void this.refreshLinks(seq, w.folder, w.id, system, name);
     } catch (e) {
       failRead();
       this.toasts.error(`Could not read the change: ${message(e)}`);

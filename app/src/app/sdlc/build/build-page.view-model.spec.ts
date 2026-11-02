@@ -1,32 +1,38 @@
-import { Component, effect } from '@angular/core';
+import { Component, effect, signal } from '@angular/core';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
+import type { BuildEvent } from '@bindings/BuildEvent';
+import type { BuildState } from '@bindings/BuildState';
 import type { BuildStatus } from '@bindings/BuildStatus';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
-import type { Leftovers } from '@bindings/Leftovers';
-import type { Participant } from '@bindings/Participant';
+import type { ChangeKey } from '@bindings/ChangeKey';
+import type { OfferStage } from '@bindings/OfferStage';
+import type { RepoCheckView } from '@bindings/RepoCheckView';
+import type { ReviewRecord } from '@bindings/ReviewRecord';
+import type { ReviewRows } from '@bindings/ReviewRows';
+import type { RoundOffer } from '@bindings/RoundOffer';
+import type { RoundPicks } from '@bindings/RoundPicks';
+import type { RoundPlan } from '@bindings/RoundPlan';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
+import type { StartForm } from '@bindings/StartForm';
 import type { TaskLink } from '@bindings/TaskLink';
 import { toastState } from '@spartan-ng/brain/sonner';
-import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
-import { LockStore } from '../../core/lock/lock.store';
+import { ProgressStore } from '../../core/progress/progress.store';
+import { ChangeDraftStore } from '../../core/sdlc/change-draft.store';
 import { RunStore } from '../../core/run/run.store';
-import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
-import { givenKey, type KindGroup, type PresetRow } from '../../lib/given';
-import { safetyRules, specFor, type BuildRun } from '../../lib/sdlc';
+import { GivenStore } from '../../core/given/given.store';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
-import type { BuildHandoff } from '../change/change-page.view-model';
+import { IDLE, type RunSnapshot } from '../../core/run/reduce';
 import { BuildLayoutViewModel } from './build-layout.view-model';
 import { BuildPageViewModel, findingsAreaOf, type BuildContext, type Departure, type FindingsView, type ReviewEntry } from './build-page.view-model';
-import { readAllChanges } from '../../../testing/read-all';
+import { atStage, readAllChanges } from '../../../testing/read-all';
 
 const FOLDER = MOCK_WORKSPACE_FOLDER;
 const CTX: BuildContext = { workspaceId: 'acme-commerce', folder: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE, systemRepos: [] };
-const REVIEW_NAME = `sdlc-commerce-${MOCK_BUILD_CHANGE}-review`;
+const REF = { workspace: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE };
 
 /** Stands in for the change page, which provides the build page's view model and the preview beside its own. */
 @Component({ template: '', providers: [BuildPageViewModel, RunPreviewViewModel] })
@@ -35,36 +41,24 @@ class Host {}
 /** The hosts made in this test, so a time step can run the change detection that carries their view effects. */
 let hosts: ComponentFixture<Host>[] = [];
 
-/** Another host, as the change page would be if it were opened a second time. */
 function openHost() {
   const fixture = TestBed.createComponent(Host);
   hosts.push(fixture);
   return fixture;
 }
 
-/** `confirm` (the default) lets the build preview confirm at once with the build's own choices, so a test about something else never meets it; `real` leaves it to the test. */
-function setup(transport = new MockTransport(), preview: 'confirm' | 'real' = 'confirm') {
+function setup(transport = new MockTransport()) {
   TestBed.configureTestingModule({
     providers: [provideRouter([]), { provide: KataTransport, useValue: transport }],
   });
   const host = openHost();
-  const previewVm = host.debugElement.injector.get(RunPreviewViewModel);
-  if (preview === 'confirm') vi.spyOn(previewVm, 'openBuild').mockImplementation(async (req) => ({ off: new Set(req.from.build ?? []), request: null }));
   return {
     host,
-    preview: previewVm,
-    givens: TestBed.inject(GivenStore),
+    preview: host.debugElement.injector.get(RunPreviewViewModel),
     vm: host.debugElement.injector.get(BuildPageViewModel),
     transport,
-    lock: TestBed.inject(LockStore),
-    runner: TestBed.inject(SdlcRunner),
+    runs: TestBed.inject(RunStore),
   };
-}
-
-async function handoffFor(transport: MockTransport, over: Partial<BuildHandoff> = {}): Promise<BuildHandoff> {
-  const out = await transport.sdlcBuildPrepare(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, false, [], 'start');
-  if (out.kind !== 'ready') throw new Error('the mock build did not prepare');
-  return { start: out.start, timeoutSecs: 5400, rounds: [], checksDir: await transport.sdlcChecksDir(), ...over };
 }
 
 /** Advances the fake clock in small steps, flushing effects between them, the way a running app would. */
@@ -77,25 +71,33 @@ const advance = async (ms: number) => {
 };
 
 /** Runs the build to its end, answering every question the agents ask, until `done` holds. */
-async function drive(vm: BuildPageViewModel, lock: LockStore, done: () => boolean, limitMs = 60000) {
+async function drive(vm: BuildPageViewModel, runs: RunStore, done: () => boolean, limitMs = 60000) {
   for (let t = 0; t < limitMs && !done(); t += 100) {
     await advance(100);
-    for (const w of lock.waiting()) if (w.kind === 'answer') vm.answer(w.runId, { id: 'q1', answers: [['Reuse it']] });
+    for (const g of vm.groups()) {
+      for (const run of g.runs) {
+        const ask = run.asks.find((a) => a.answers === null);
+        if (ask && run.state === 'awaiting') void runs.submitAnswer(run.id, ask.id, [['Reuse it']]);
+      }
+    }
   }
   await advance(200);
   expect(done()).toBe(true);
 }
 
-/** The build's participants as the backend answers them: the master and the two product repositories, each with what it owns. */
-const part = (repo: string, over: Partial<Participant> = {}): Participant => ({ repo, path: `${FOLDER}/${repo}`, master: repo === MOCK_MASTER, files: [], rows: [], ...over });
-const everyone = (over: Record<string, Partial<Participant>> = {}): Participant[] => [MOCK_MASTER, 'commerce-core', 'customer-portal'].map((r) => part(r, over[r]));
-const ROW = (repo: string) => `intent/commerce/${MOCK_BUILD_CHANGE}/build/${repo}.md`;
-
 const group = (vm: BuildPageViewModel, repo: string) => vm.view().groups.find((g) => g.repo === repo)!;
-const stopOf = (vm: BuildPageViewModel, repo: string) => vm.view().stops.find((s) => s.repo === repo);
-/** A stop line as the page words it: the lowercase tail of a "Stopped: ..." reason. */
-const stopLine = (reason: string) => reason.replace(/^Stopped: /, 'stopped: ');
 const finished = (vm: BuildPageViewModel) => () => vm.phase() === 'finished' && vm.findings().length > 0;
+const keyOf = (change: string): ChangeKey => ({ workspace: { key: FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system: 'commerce', change });
+const state = (over: Partial<BuildState> = {}): BuildState => ({ phase: 'building', going: ['commerce-core'], stopped: {}, rounds: {}, waiting: [], report: null, ...over });
+
+/** The page opened on the mock build change, as the change page would give it. */
+async function opened(s: ReturnType<typeof setup>, over: { stage?: OfferStage; built?: boolean; review?: ReviewRecord | null; done?: boolean } = {}) {
+  const status = await s.transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
+  const [found] = (await readAllChanges(s.transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
+  const change = over.stage === undefined ? found : atStage(found, over.stage);
+  const load = () => s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change, status, done: over.done ?? false, review: over.review ?? null });
+  return { ...s, load, status, change };
+}
 
 beforeEach(() => {
   hosts = [];
@@ -107,1385 +109,163 @@ afterEach(() => {
   toastState.reset();
 });
 
-describe('the build page starts, stops and continues the same runs as the build view did', () => {
-  it('starting a build prepares branches and starts every repository that does not wait (R2.1)', async () => {
-    const { vm, transport, lock } = setup();
-    const runSpec = vi.spyOn(transport, 'runSpec');
-    expect(await vm.start(await handoffFor(transport), CTX)).toBe(true);
-    await advance(100);
-    expect(runSpec).toHaveBeenCalledTimes(2);
-    const workdirs = runSpec.mock.calls.map(([spec]) => spec.workdir).sort();
-    expect(workdirs).toEqual([`${FOLDER}/commerce-core`, `${FOLDER}/customer-portal`]);
-    expect(runSpec.mock.calls.every(([, group]) => group === `build:commerce/${MOCK_BUILD_CHANGE}`)).toBe(true);
-    expect(lock.active()).toMatchObject({ kind: 'build', title: 'Build', finished: false });
+describe('the build page follows the build the backend hosts', () => {
+  it('starting a build through the host starts every repository that does not wait, and the page follows each run (R2.1)', async () => {
+    const s = await opened(setup());
+    await s.load();
+    expect(await s.vm.startBuild({ timeoutSecs: 5400 })).toBe('started');
+    await advance(500);
+    expect(s.vm.phase()).toBe('building');
+    expect(s.vm.view().actions).toEqual(['cancel-build']);
+    expect(s.vm.view().groups.map((g) => g.repo)).toEqual(['commerce-core', 'customer-portal']);
+    expect(s.vm.groups().map((g) => g.key).sort()).toEqual(['commerce-core', 'customer-portal']);
+    expect(group(s.vm, 'commerce-core')).toMatchObject({ status: { tone: 'success' }, action: 'cancel' });
+    expect(group(s.vm, 'commerce-core').tasks[0].status).toEqual({ tone: 'success', label: 'Running' });
+    expect(s.vm.view().sessions.length).toBeGreaterThan(0);
+    expect(s.vm.view().facts.tasks).toBe('0/3 tasks');
   });
 
-  it('gives the build page its view: a group per repository with its heading, the review entry, the shown areas and the pick', async () => {
-    const { vm, transport } = setup();
-    expect(await vm.start(await handoffFor(transport), CTX)).toBe(true);
+  it('shows the progress line while the host starts a build, and takes it away when the start has answered', async () => {
+    const s = await opened(setup());
+    await s.load();
+    let release!: () => void;
+    const slow = new Promise<void>((resolve) => (release = resolve));
+    const real = s.transport.sdlcBuildStart.bind(s.transport);
+    vi.spyOn(s.transport, 'sdlcBuildStart').mockImplementation(async (ref, form) => {
+      await slow;
+      return real(ref, form);
+    });
+    const progress = TestBed.inject(ProgressStore);
+    const starting = s.vm.startBuild({ timeoutSecs: 60 });
+    await advance(600);
+    expect(progress.view('build')()?.label).toBe('Checking the repositories before building');
+    release();
+    await starting;
+    expect(progress.view('build')()).toBeNull();
+  });
+
+  it('Cancel on one repository stops only its run, and the host says the repository stopped (R6.1)', async () => {
+    const s = await opened(setup());
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
+    await advance(500);
+    s.vm.select('commerce-core');
+    s.vm.cancelRun();
+    await advance(500);
+    expect(group(s.vm, 'commerce-core')).toMatchObject({ status: { tone: 'error', label: 'Stopped at T1' }, action: 'continue', stopLine: 'stopped: cancelled' });
+    expect(group(s.vm, 'customer-portal').action).toBe('cancel');
+    expect(s.vm.phase()).toBe('building');
+  });
+
+  it('Cancel build stops every run and starts none', async () => {
+    const s = await opened(setup());
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
+    await advance(500);
+    s.vm.cancelBuild();
+    await advance(500);
+    expect(s.vm.phase()).toBe('cancelled');
+    expect(s.vm.stage()).toBe('cancelled');
+    expect(s.vm.view().groups.every((g) => g.action === 'continue' || g.action === null)).toBe(true);
+    expect(s.vm.stageMessage()?.title).toBe('The build was cancelled.');
+  });
+
+  it('Continue runs the stopped repository again through the host, after its preview (R6.1)', async () => {
+    const s = await opened(setup());
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
+    await advance(500);
+    s.vm.select('commerce-core');
+    s.vm.cancelRun();
+    await advance(500);
+    const resume = vi.spyOn(s.transport, 'sdlcBuildContinue');
+    vi.spyOn(s.preview, 'openBuild').mockImplementation(async (req) => ({ off: new Set(req.from.build ?? []), request: null, picks: null, plan: null }));
+    s.vm.select('commerce-core');
+    await s.vm.continueRun();
+    expect(resume).toHaveBeenCalledWith(REF, 'commerce-core', []);
+    await advance(500);
+    expect(group(s.vm, 'commerce-core').action).toBe('cancel');
+  });
+
+  it('a committed row shows its task done and the next one running without a click', async () => {
+    const s = await opened(setup());
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
+    await advance(300);
+    const states = (repo: string) => Object.fromEntries(s.vm.taskAreas().find((g) => g.repo === repo)!.tasks.map((t) => [t.id, t.state.kind]));
+    expect(states('customer-portal')).toEqual({ T2: 'running', T3: 'not-started' });
+    const sdlc = (s.transport as unknown as { sdlc: { commitRows(t: { id: string; name: string; repo: string; dependsOn: string[] }[]): void } }).sdlc;
+    sdlc.commitRows([
+      { id: 'T1', name: '', repo: 'commerce-core', dependsOn: [] },
+      { id: 'T2', name: '', repo: 'customer-portal', dependsOn: [] },
+    ]);
     await advance(2500);
-    const view = vm.view();
-    expect(view.stage).toBe('running');
-    expect(view.facts.tasks).toBe('0/3 tasks');
-    expect(view.actions).toEqual(['cancel-build']);
-    expect(view.groups.map((g) => g.repo)).toEqual(['commerce-core', 'customer-portal']);
-    expect(view.groups[0]).toMatchObject({ status: { tone: 'success' }, action: 'cancel', picked: true });
-    expect(view.groups[0].tasks[0].status).toEqual({ tone: 'success', label: 'Running' });
-    expect(view.review.picked).toBe(false);
-    expect(view.pick).toEqual({ kind: 'repo', repo: 'commerce-core' });
-    expect(view.areas).toEqual({ activity: true, files: true });
-    expect(view.sessions.length).toBeGreaterThan(0);
-    expect(view.findingsArea.review).toBeNull();
+    expect(states('customer-portal')).toEqual({ T2: 'done', T3: 'running' });
   });
 
-  it('refuses to start while another task holds the lock, and starts nothing', async () => {
-    const { vm, transport, lock } = setup();
-    const runSpec = vi.spyOn(transport, 'runSpec');
-    lock.beginBuild('Other');
-    expect(await vm.start(await handoffFor(transport), CTX)).toBe(false);
-    await advance(100);
-    expect(runSpec).not.toHaveBeenCalled();
-  });
-
-  it('each repository has its own row, status, task and observe pane (R19.3)', async () => {
-    const { vm, transport } = setup();
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(1000);
-    expect(vm.view().groups.map((g) => g.repo)).toEqual(['commerce-core', 'customer-portal']);
-    expect(group(vm, 'commerce-core').status).toEqual({ tone: 'success', label: 'Working · T1' });
-    expect(group(vm, 'customer-portal').status).toEqual({ tone: 'success', label: 'Working · T2' });
-    expect(vm.view().review.status).toEqual({ tone: 'idle', label: 'Not run' });
-    expect(vm.tasksLabel()).toBe('0/3 tasks');
-
-    expect(vm.selected()).toBe('commerce-core');
-    expect(vm.shownSessions().map((r) => r.spec?.workdir)).toEqual([`${FOLDER}/commerce-core`]);
-    expect(vm.shownSessions()[0].events.length).toBeGreaterThan(0);
-    expect(vm.shownSessions()[0].startedAt).toBe('09:00:00');
-    expect(group(vm, 'commerce-core').action).toBe('cancel');
-
-    vm.select('customer-portal');
-    expect(vm.shownSessions().map((r) => r.spec?.workdir)).toEqual([`${FOLDER}/customer-portal`]);
-  });
-
-  it('reads the build log again when a run finishes a Bash call, since logging a task is a commit', async () => {
-    const { vm, transport } = setup();
-    const status = vi.spyOn(transport, 'sdlcBuildStatus');
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(1000);
-    const before = status.mock.calls.length;
-    await advance(1500);
-    expect(group(vm, 'commerce-core').action).toBe('cancel');
-    expect(status.mock.calls.length).toBeGreaterThan(before);
-  });
-
-  it('the waiting notice says how long the agent has waited, and the time advances with the clock (R11.1)', async () => {
-    const { vm, transport, lock } = setup();
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(2000);
-    expect(lock.waiting()).toHaveLength(1);
-    const secs = (text: string) => Number(text.split(':')[0]) * 60 + Number(text.split(':')[1]);
-    const before = vm.waitingNotices()[0].waited;
-    expect(before).toMatch(/^[0-9]+:[0-9]{2}$/);
-    await advance(83000);
-    const after = vm.waitingNotices()[0].waited;
-    expect(secs(after) - secs(before)).toBeGreaterThanOrEqual(82);
-    expect(secs(after) - secs(before)).toBeLessThanOrEqual(84);
-  });
-
-  it('a repository row shows the waiting clock while its run waits (R4.1)', async () => {
-    const { vm, transport, lock } = setup();
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(2000);
-    expect(lock.waiting()).toHaveLength(1);
-    const waiting = group(vm, 'customer-portal');
-    expect(waiting.status).toEqual({ tone: 'warning', label: 'Waiting for you' });
-    expect(waiting.paused).toMatch(/^\d:\d{2} waiting \(not counted\)$/);
-    expect(waiting.unseen).toBeGreaterThan(0);
-    expect(group(vm, 'commerce-core').unseen).toBe(0);
-    expect(group(vm, 'commerce-core').paused).toBeNull();
-
-    const clockBefore = group(vm, 'customer-portal').clock;
-    await advance(3000);
-    expect(group(vm, 'customer-portal').clock).toBe(clockBefore);
-    expect(group(vm, 'customer-portal').paused).not.toBe(waiting.paused);
-
-    vm.answer(lock.waiting()[0].runId, { id: 'q1', answers: [['Reuse it']] });
-    await advance(100);
-    expect(group(vm, 'customer-portal').status.tone).toBe('success');
-    expect(group(vm, 'customer-portal').paused).toBeNull();
-  });
-
-  it('an agent is denied edits in every product repository of the system, even one the plan does not name (R18.5)', async () => {
-    const { vm, transport } = setup();
-    const runSpec = vi.spyOn(transport, 'runSpec');
-    const ctx = { ...CTX, systemRepos: ['commerce-core', 'customer-portal', 'billing-api'] };
-    await vm.start(await handoffFor(transport), ctx);
-    await advance(100);
-    const core = runSpec.mock.calls.map(([spec]) => spec).find((s) => s.workdir === `${FOLDER}/commerce-core`)!;
-    const denied = (core.permissions?.deny ?? []).join('\n');
-    expect(denied).toContain('/billing-api/**');
-    expect(denied).toContain('/customer-portal/**');
-    expect(denied).not.toContain('/commerce-core/**');
-  });
-
-  it('a repository the backend does not report as checked out stops with an error and never runs in a guessed folder (R2.4)', async () => {
-    const { vm, transport, runner } = setup();
-    vi.spyOn(transport, 'sdlcBuildParticipants').mockResolvedValue(everyone().filter((p) => p.repo !== 'commerce-core'));
-    const runInRepo = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
-      link.onRun?.(`fake-${target.repo}`);
-      return { exit: 0, error: null };
-    });
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(500);
-    expect(runInRepo.mock.calls.some(([t]) => t.repo === 'commerce-core')).toBe(false);
-    expect(group(vm, 'commerce-core').status.tone).toBe('error');
-    expect(stopOf(vm, 'commerce-core')!.reason).toContain('commerce-core');
-  });
-
-  it('a repository the backend does not name is stopped with the R2.4 message alone, not as an agent failure (R2.4)', async () => {
-    const { vm, transport, runner } = setup();
-    vi.spyOn(transport, 'sdlcBuildParticipants').mockResolvedValue(everyone().filter((p) => p.repo !== 'commerce-core'));
-    vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
-      link.onRun?.(`fake-${target.repo}`);
-      return { exit: 0, error: null };
-    });
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(500);
-    expect(group(vm, 'commerce-core').status.tone).toBe('error');
-    expect(stopOf(vm, 'commerce-core')!.reason).toBe('stopped: commerce-core is not checked out in this workspace');
-    expect(stopOf(vm, 'commerce-core')!.reason).not.toContain('the agent failed');
-  });
-
-  it('names the work clock against the time limit', async () => {
-    const { vm, transport } = setup();
-    await vm.start(await handoffFor(transport, { timeoutSecs: 5400 }), CTX);
-    await advance(3000);
-    expect(group(vm, 'commerce-core').clock).toMatch(/^work 0:00:0\d of 1:30:00$/);
-  });
-
-  it.each([
-    [124, null, 'Stopped: reached the time limit'],
-    [130, null, 'Stopped: cancelled'],
-    [123, null, 'Stopped: nobody answered'],
-    [1, 'boom', 'Stopped: the agent failed · boom'],
-  ])('a stopped repository shows its reason and Continue, and keeps its commits (R6.1), exit %s', async (exit, error, message) => {
-    const { vm, transport, runner } = setup();
-    const discard = vi.spyOn(transport, 'sdlcDiscard');
-    vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
-      link.onRun?.(`fake-${target.repo}`);
-      return { exit, error };
-    });
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(500);
-    expect(vm.phase()).toBe('stopped');
-    expect(group(vm, 'commerce-core').status.tone).toBe('error');
-    expect(stopOf(vm, 'commerce-core')!.reason).toBe(stopLine(message));
-    expect(group(vm, 'customer-portal').status.tone).toBe('error');
-    expect(stopOf(vm, 'customer-portal')!.reason).toBe(stopLine(message));
-    vm.select('commerce-core');
-    expect(group(vm, 'commerce-core').action).toBe('continue');
-    expect(discard).not.toHaveBeenCalled();
-  });
-
-  it('Continue runs the stopped repository again and reopens the build', async () => {
-    const { vm, transport, runner, lock } = setup();
-    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
-    const real = runner.runInRepo.bind(runner);
-    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
-      if (run.mock.calls.length <= 2) {
-        link.onRun?.(`fake-${target.repo}`);
-        return { exit: 124, error: null };
-      }
-      return real(target, spec, link);
-    });
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(500);
-    expect(lock.active()).toBeNull();
-    vm.select('commerce-core');
-    await vm.continueRun();
-    await advance(500);
-    expect(prepare).toHaveBeenCalledTimes(2);
-    expect(prepare.mock.calls[1][4]).toBe(false);
-    expect(run).toHaveBeenCalledTimes(3);
-    expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
-    expect(group(vm, 'commerce-core').status.label).toBe('Working · T1');
-  });
-
-  it('a repository with several runs shows the latest in full and each earlier one as a line that can be opened', async () => {
-    const { vm, transport, runner } = setup();
-    const real = runner.runInRepo.bind(runner);
-    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
-      if (run.mock.calls.length <= 2) {
-        link.onRun?.(`fake-${target.repo}`);
-        return { exit: 124, error: null };
-      }
-      return real(target, spec, link);
-    });
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(500);
-    vm.select('commerce-core');
-    await vm.continueRun();
-    await advance(500);
-    const [earlier, latest] = vm.shownSessions();
-    expect(vm.shownSessions()).toHaveLength(2);
-    expect(earlier).toMatchObject({ latest: false, expanded: false });
-    expect(earlier.outcome).toMatch(/^[A-Z]/);
-    expect(latest).toMatchObject({ latest: true });
-    vm.toggleRun(earlier.id);
-    expect(vm.shownSessions()[0].expanded).toBe(true);
-    vm.toggleRun(earlier.id);
-    expect(vm.shownSessions()[0].expanded).toBe(false);
-  });
-
-  it('Continue after the branches were settled is refused with the problems when a build log fails the check, and starts nothing (R8.1)', async () => {
-    const { vm, transport, runner } = setup();
-    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
-    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
-      link.onRun?.(`fake-${target.repo}`);
-      return { exit: 124, error: null };
-    });
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(500);
-    vm.select('commerce-core');
-    const problem = { file: 'build/app.md', line: 14, message: 'entry T1 is recorded twice, first on line 7' };
-    prepare.mockResolvedValueOnce({ kind: 'refused', message: 'A build log does not pass the check', problems: [problem] });
-    await vm.continueRun();
-    await advance(500);
-    expect(prepare.mock.calls[1][6]).toBe('continue');
-    expect(vm.refusal()).toEqual({ reason: 'A build log does not pass the check', problems: [problem] });
-    expect(run).toHaveBeenCalledTimes(2);
-    vm.closeRefusal();
-    expect(vm.refusal()).toBeNull();
-  });
-
-  it('Continue refused because the change branch holds other work names the repository and branch, and offers a new name (R9.1)', async () => {
-    const { vm, transport, runner } = setup();
-    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
-    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
-      link.onRun?.(`fake-${target.repo}`);
-      return { exit: 124, error: null };
-    });
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(500);
-    vm.select('commerce-core');
-    prepare.mockResolvedValueOnce({ kind: 'branchTaken', repo: 'kata', branch: 'feat/PROJ-123-reset' });
-    await vm.continueRun();
-    await advance(500);
-    expect(vm.refusal()).toEqual({
-      reason: 'The branch feat/PROJ-123-reset in kata holds other work',
-      problems: [],
-      taken: { repo: 'kata', branch: 'feat/PROJ-123-reset' },
-    });
-    expect(run).toHaveBeenCalledTimes(2);
-  });
-
-  it('Continue after the branches were settled asks before going on top of leftovers, and starts nothing until confirmed (R6.4)', async () => {
-    const { vm, transport, runner } = setup();
-    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
-    const real = runner.runInRepo.bind(runner);
-    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
-      if (run.mock.calls.length <= 2) {
-        link.onRun?.(`fake-${target.repo}`);
-        return { exit: 124, error: null };
-      }
-      return real(target, spec, link);
-    });
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(500);
-    vm.select('commerce-core');
-    prepare.mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['src/new.rs'] }] });
-    await vm.continueRun();
-    await advance(500);
-    expect(vm.leftoverPrompt()).toEqual({ lines: ['commerce-core: src/new.rs'] });
-    expect(prepare.mock.calls[1][4]).toBe(false);
-    expect(run).toHaveBeenCalledTimes(2);
-
-    await vm.confirmContinue();
-    await advance(500);
-    expect(vm.leftoverPrompt()).toBeNull();
-    expect(prepare.mock.calls.at(-1)![4]).toBe(true);
-    expect(run).toHaveBeenCalledTimes(3);
-  });
-
-  it('the confirmation covers only the run it was given for: another repository is not told to skip asking (R6.4)', async () => {
-    const { vm, transport, runner } = setup();
-    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
-    vi.spyOn(transport, 'sdlcSnapshot').mockResolvedValue({ head: 'abc', dirty: {} });
-    const real = runner.runInRepo.bind(runner);
-    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
-      if (run.mock.calls.length <= 2) {
-        link.onRun?.(`fake-${target.repo}`);
-        return { exit: 124, error: null };
-      }
-      return real(target, spec, link);
-    });
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(500);
-    vm.select('commerce-core');
-    prepare.mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['src/new.rs'] }] });
-    await vm.continueRun();
-    await vm.confirmContinue();
-    await advance(100);
-    const told = (repo: string) => run.mock.calls.filter(([t]) => t.repo === repo).at(-1)![1].task;
-    expect(told('commerce-core')).toContain('already confirmed');
-
-    vm.select('customer-portal');
-    await vm.continueRun();
-    await advance(100);
-    expect(run).toHaveBeenCalledTimes(4);
-    expect(told('customer-portal')).not.toContain('already confirmed');
-  });
-
-  it('a first-handoff confirmation covers the named repository once, not its later runs or the review (R6.4)', async () => {
-    const { vm, transport, runner, lock } = setup();
-    const run = vi.spyOn(runner, 'runInRepo');
-    await vm.start(await handoffFor(transport, { continueOnLeftovers: ['commerce-core'] }), CTX);
-    await drive(vm, lock, finished(vm));
-    const told = (pick: (t: { repo?: string; kind: string }) => boolean) => run.mock.calls.filter(([t]) => pick(t)).map(([, spec]) => spec.task);
-    expect(told((t) => t.repo === 'commerce-core' && t.kind === 'repo')[0]).toContain('already confirmed');
-    expect(told((t) => t.repo === 'customer-portal')[0]).not.toContain('already confirmed');
-    expect(told((t) => t.kind === 'review')[0]).not.toContain('already confirmed');
-  });
-
-  it('declining the leftovers starts nothing (R6.4)', async () => {
-    const { vm, transport, runner } = setup();
-    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
-    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
-      link.onRun?.(`fake-${target.repo}`);
-      return { exit: 124, error: null };
-    });
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(500);
-    vm.select('commerce-core');
-    prepare.mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['src/new.rs'] }] });
-    await vm.continueRun();
-    vm.cancelContinue();
-    await advance(500);
-    expect(vm.leftoverPrompt()).toBeNull();
-    expect(run).toHaveBeenCalledTimes(2);
-  });
-
-  it('Continue while other repositories still run asks about the stopped repository\'s uncommitted edits first (R6.4, R6.7)', async () => {
-    const { vm, transport, runner } = setup();
-    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
-    vi.spyOn(transport, 'sdlcBuildParticipants').mockResolvedValue(everyone({ 'commerce-core': { files: ['src/half.rs'] } }));
-    const real = runner.runInRepo.bind(runner);
-    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
-      if (target.kind === 'repo' && target.repo === 'commerce-core' && run.mock.calls.length <= 2) {
-        link.onRun?.('fake-commerce-core');
-        return { exit: 124, error: null };
-      }
-      return real(target, spec, link);
-    });
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(500);
-    expect(vm.phase()).toBe('building');
-    vm.select('commerce-core');
-    expect(group(vm, 'commerce-core').action).toBe('continue');
-    const calls = run.mock.calls.length;
-
-    await vm.continueRun();
-    await advance(100);
-    expect(vm.leftoverPrompt()).toEqual({ lines: ['commerce-core: src/half.rs'] });
-    expect(run).toHaveBeenCalledTimes(calls);
-    expect(prepare).toHaveBeenCalledTimes(1);
-
-    await vm.confirmContinue();
-    await advance(100);
-    expect(vm.leftoverPrompt()).toBeNull();
-    expect(run).toHaveBeenCalledTimes(calls + 1);
-  });
-
-  it('the review starts by itself and its findings are shown most serious first (R8.2)', async () => {
-    const { vm, transport, lock } = setup();
-    const runSpec = vi.spyOn(transport, 'runSpec');
-    await vm.start(await handoffFor(transport), CTX);
-    await drive(vm, lock, finished(vm));
-    const names = runSpec.mock.calls.map(([spec]) => spec.name);
-    expect(names.filter((n) => n === REVIEW_NAME)).toHaveLength(1);
-    expect(runSpec.mock.calls.find(([spec]) => spec.name === REVIEW_NAME)![0].workdir).toBe(`${FOLDER}/${MOCK_MASTER}`);
-    expect(vm.findings().map((f) => f.text)).toEqual([
+  it('the host reviews the finished build by itself and the page shows its findings, most serious first (R8.2)', async () => {
+    const s = await opened(setup());
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
+    await drive(s.vm, s.runs, () => s.vm.phase() === 'finished' && s.vm.findings().length > 0);
+    expect(s.vm.findings().map((f) => f.text)).toEqual([
       'The upload limit is duplicated in commerce-core and customer-portal.',
       'The refusal message has no test.',
     ]);
-    expect(vm.view().stage).toBe('review-finished');
-    expect(group(vm, 'commerce-core').status).toEqual({ tone: 'success', label: 'Finished' });
-    expect(vm.tasksLabel()).toBe('3/3 tasks');
-    expect(lock.active()).toBeNull();
+    expect(s.vm.view().stage).toBe('review-finished');
+    expect(group(s.vm, 'commerce-core').status).toEqual({ tone: 'success', label: 'Finished' });
+    expect(s.vm.tasksLabel()).toBe('3/3 tasks');
+    expect(s.vm.active()).toBe(false);
   });
 
-  describe('findings from the review document', () => {
-    const section = (number: number, reviewed_at: string, findings: { id: string; severity: 'high' | 'medium' | 'low'; text: string }[]) => ({
-      number,
-      reviewed_at,
-      commits: { 'commerce-core': 'aaaaaaa' },
-      findings: findings.map((f) => ({ ...f, file: 'src/a.ts', line: 4 })),
-    });
-    /** What the format program reports about the review document; none unless a test sets it. */
-    let documentProblems: { file: string; line: number; message: string }[] = [];
-    beforeEach(() => {
-      documentProblems = [];
-    });
-    /** The review document as the plugin leaves it: no review until the review run starts, then `reviews`. */
-    const withDocument = (transport: MockTransport, ...reviews: ReturnType<typeof section>[]) => {
-      let reviewed = false;
-      const runSpec = transport.runSpec.bind(transport);
-      vi.spyOn(transport, 'runSpec').mockImplementation((...args: Parameters<MockTransport['runSpec']>) => {
-        if (args[0].name === REVIEW_NAME) reviewed = true;
-        return runSpec(...args);
-      });
-      return vi.spyOn(transport, 'sdlcReviewRecord').mockImplementation(async () => ({ layout: 2, reviews: reviewed ? reviews : [], problems: reviewed ? documentProblems : [], master_moved: [] }));
-    };
-    const shown = (vm: BuildPageViewModel) => () => vm.phase() === 'finished' && vm.view().findingsArea.review !== null;
-
-    it('findings come from review.md, not the run words (R14.2)', async () => {
-      const { vm, transport, lock } = setup();
-      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'The limit is not enforced on retry.' }]));
-      await vm.start(await handoffFor(transport), CTX);
-      await drive(vm, lock, shown(vm));
-      expect(vm.findings().map((f) => [f.severity, f.text])).toEqual([['high', 'The limit is not enforced on retry.']]);
-      expect(vm.older()).toBe(false);
-    });
-
-    it('findings written out of order are shown most serious first, equal ranks in the order written (R7.1)', async () => {
-      const { vm, transport, lock } = setup();
-      withDocument(
-        transport,
-        section(1, '2026-10-19', [
-          { id: 'F1', severity: 'low', text: 'a stale comment' },
-          { id: 'F2', severity: 'high', text: 'the limit is not enforced' },
-          { id: 'F3', severity: 'medium', text: 'the message has no test' },
-          { id: 'F4', severity: 'high', text: 'the retry loops forever' },
-        ]),
-      );
-      await vm.start(await handoffFor(transport), CTX);
-      await drive(vm, lock, shown(vm));
-      const order = ['the limit is not enforced', 'the retry loops forever', 'the message has no test', 'a stale comment'];
-      expect(vm.findings().map((f) => f.text)).toEqual(order);
-      expect(vm.view().findingsArea.review!.findings.map((f) => f.text)).toEqual(order);
-    });
-
-    it('a review with no findings shows reviewed, nothing found (R14.3)', async () => {
-      const { vm, transport, lock } = setup();
-      withDocument(transport, section(1, '2026-10-19', []));
-      await vm.start(await handoffFor(transport), CTX);
-      await drive(vm, lock, shown(vm));
-      expect(vm.findings()).toEqual([]);
-      expect(vm.emptyText()).toBe('Reviewed, nothing found.');
-    });
-
-    it('a second review is shown with the first one available (R15.1)', async () => {
-      const { vm, transport, lock } = setup();
-      withDocument(
-        transport,
-        section(1, '2026-10-18', [{ id: 'F1', severity: 'high', text: 'one' }]),
-        section(2, '2026-10-19', [{ id: 'F1', severity: 'low', text: 'two' }]),
-      );
-      await vm.start(await handoffFor(transport), CTX);
-      await drive(vm, lock, shown(vm));
-      expect(vm.findings().map((f) => f.text)).toEqual(['two']);
-      expect(vm.replaced().map((r) => [r.label, r.groups.flatMap((g) => g.findings).map((f) => f.text)])).toEqual([['Review 1 of 2026-10-18', ['one']]]);
-    });
-
-    it('a review run that leaves no review document says the review did not record its findings (F14)', async () => {
-      const { vm, transport, lock } = setup();
-      vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(null);
-      await vm.start(await handoffFor(transport), CTX);
-      await drive(vm, lock, shown(vm));
-      expect(vm.findings()).toEqual([]);
-      expect(vm.emptyText()).toBe('The review did not record its findings');
-      expect(vm.older()).toBe(false);
-    });
-
-    it('a review run that adds no section does not show the previous review as current (F14)', async () => {
-      const { vm, transport, lock } = setup();
-      vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({
-        layout: 2,
-        reviews: [section(1, '2026-10-18', [{ id: 'F1', severity: 'high', text: 'one' }])],
-        problems: [],
-        master_moved: [],
-      });
-      await vm.start(await handoffFor(transport), CTX);
-      await drive(vm, lock, shown(vm));
-      expect(vm.findings()).toEqual([]);
-      expect(vm.emptyText()).toBe('The review did not record its findings');
-    });
-
-    it('a review whose findings failed their schema shows its problems above the findings (F6)', async () => {
-      const { vm, transport, lock } = setup();
-      documentProblems = [{ file: 'build/review.md', line: 12, message: 'finding F1 has no file' }];
-      withDocument(transport, section(1, '2026-10-19', []));
-      await vm.start(await handoffFor(transport), CTX);
-      await drive(vm, lock, shown(vm));
-      expect(vm.reviewNotice()).toEqual({
-        tone: 'warning',
-        text: 'This document does not follow the layout',
-        lines: ['line 12: finding F1 has no file'],
-      });
-    });
-
-    /** Stands in for the check of what the review run left in the master repository. */
-    const verifying = (transport: MockTransport, flagged: string[]) => {
-      return vi.spyOn(transport, 'sdlcReviewVerify').mockResolvedValue(flagged);
-    };
-
-    it('a review run that also changed plugin/ names the file and is not the current review (F7)', async () => {
-      const { vm, transport, lock } = setup();
-      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
-      const verify = verifying(transport, ['plugin/format/check.mjs']);
-      await vm.start(await handoffFor(transport), CTX);
-      await drive(vm, lock, shown(vm));
-      expect(verify).toHaveBeenCalledWith(expect.any(String), 'commerce', MOCK_BUILD_CHANGE, '0'.repeat(40), expect.anything());
-      expect(vm.reviewNotice()?.tone).toBe('warning');
-      expect(vm.reviewNotice()?.lines).toEqual(['plugin/format/check.mjs']);
-      expect(vm.findings()).toEqual([]);
-      expect(vm.emptyText()).toBe('The review did not record its findings');
-    });
-
-    /** A master whose tree holds `now` when the review run ends and `before` when it starts; the check gets the starting tree to compare with. */
-    const treeCheck = (transport: MockTransport, before: Record<string, string>, now: Record<string, string>) => {
-      const snapshot = transport.sdlcSnapshot.bind(transport);
-      vi.spyOn(transport, 'sdlcSnapshot').mockImplementation(async (path) => ({ ...(await snapshot(path)), dirty: before }));
-      return vi.spyOn(transport, 'sdlcReviewVerify').mockImplementation((...args: unknown[]) => {
-        const start = (args[4] ?? {}) as Record<string, string>;
-        return Promise.resolve(Object.keys(now).filter((file) => start[file] !== now[file]));
-      });
-    };
-
-    it('a stray file left dirty before the review run does not hide a correctly recorded review (F18)', async () => {
-      const { vm, transport, lock } = setup();
-      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
-      treeCheck(transport, { 'notes/stray.md': 'aaaa' }, { 'notes/stray.md': 'aaaa' });
-      await vm.start(await handoffFor(transport), CTX);
-      await drive(vm, lock, shown(vm));
-      expect(vm.reviewNotice()).toBeNull();
-      expect(vm.findings().map((f) => f.text)).toEqual(['one']);
-    });
-
-    it('a file the review run left dirty is still flagged beside one that was dirty before (F18)', async () => {
-      const { vm, transport, lock } = setup();
-      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
-      treeCheck(transport, { 'notes/stray.md': 'aaaa' }, { 'notes/stray.md': 'aaaa', 'plugin/format/check.mjs': 'bbbb' });
-      await vm.start(await handoffFor(transport), CTX);
-      await drive(vm, lock, shown(vm));
-      expect(vm.reviewNotice()?.lines).toEqual(['plugin/format/check.mjs']);
-      expect(vm.findings()).toEqual([]);
-    });
-
-    it('R4.1: the Review group lists the findings of the finished review as rows with counts', async () => {
-      const { vm, transport, lock } = setup();
-      await vm.start(await handoffFor(transport), CTX);
-      await drive(vm, lock, finished(vm));
-      const rows = vm.view().review.rows!;
-      expect(rows.total).toBe(2);
-      expect(rows.counts.reduce((n, c) => n + c.n, 0)).toBe(2);
-      expect(rows.groups.flatMap((g) => [...g.rows, ...g.low]).map((r) => r.summary)).toEqual([
-        'The upload limit is duplicated in commerce-core and customer-portal.',
-        'The refusal message has no test.',
-      ]);
-      expect(vm.view().review.stale).toBeNull();
-      expect(vm.view().review.nothingFound).toBe(false);
-    });
-
-    it('R4.3: a review that found nothing reads as reviewed with nothing found', async () => {
-      const { vm, transport, lock } = setup();
-      withDocument(transport, section(1, '2026-10-19', []));
-      await vm.start(await handoffFor(transport), CTX);
-      await drive(vm, lock, shown(vm));
-      expect(vm.view().review.nothingFound).toBe(true);
-      expect(vm.view().review.rows).toMatchObject({ total: 0, groups: [] });
-    });
-
-    it('R4.6: only the findings of the second review are listed, and latestReview carries its number', async () => {
-      const { vm, transport, lock } = setup();
-      withDocument(
-        transport,
-        section(1, '2026-10-18', [{ id: 'F1', severity: 'high', text: 'one' }]),
-        section(2, '2026-10-19', [{ id: 'F1', severity: 'low', text: 'two' }]),
-      );
-      await vm.start(await handoffFor(transport), CTX);
-      await drive(vm, lock, shown(vm));
-      const rows = vm.view().review.rows!;
-      expect(rows.groups.flatMap((g) => [...g.rows, ...g.low]).map((r) => r.summary)).toEqual(['two']);
-      expect(vm.latestReview()).toEqual({ number: 2, findings: vm.findings(), stale: false });
-    });
-
-    it('R4.7: a review that predates the latest commits keeps its rows and sets the stale notice', async () => {
-      const { vm, transport } = setup();
-      const status = await transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
-      const [found] = (await readAllChanges(transport, `${FOLDER}/${MOCK_MASTER}`)).filter((c) => c.change === MOCK_BUILD_CHANGE);
-      const document = { layout: 2, reviews: [section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }])], problems: [], master_moved: ['src/a.ts'] };
-      await vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: { ...found, stage: 'build-finished' }, status, done: false, review: document });
-      await advance(300);
-      const review = vm.view().review;
-      expect(review.rows?.total).toBe(1);
-      expect(review.stale).toBe('The work changed since it was reviewed.');
-      expect(vm.latestReview()).toMatchObject({ number: 1, stale: true });
-    });
-
-    it('latestReview is null before any review has findings or words to read', () => {
-      const { vm } = setup();
-      expect(vm.latestReview()).toBeNull();
-      expect(vm.view().review.rows).toBeNull();
-    });
-
-    it('toggleLow opens and closes the low findings of a repository', () => {
-      const { vm } = setup();
-      vm.toggleLow('catalog-api');
-      expect(vm.view().review.openLow.has('catalog-api')).toBe(true);
-      vm.toggleLow('catalog-api');
-      expect(vm.view().review.openLow.has('catalog-api')).toBe(false);
-    });
-
-    it('a review run that touched only the review document is the current review (F7)', async () => {
-      const { vm, transport, lock } = setup();
-      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
-      const verify = verifying(transport, []);
-      await vm.start(await handoffFor(transport), CTX);
-      await drive(vm, lock, shown(vm));
-      expect(verify).toHaveBeenCalled();
-      expect(vm.reviewNotice()).toBeNull();
-      expect(vm.findings().map((f) => f.text)).toEqual(['one']);
-    });
-  });
-
-  it('a round that adds commits is reviewed again and the old findings are marked replaced (R8.4)', async () => {
-    const { vm, transport, lock } = setup();
-    await vm.start(await handoffFor(transport), CTX);
-    await drive(vm, lock, finished(vm));
-
-    const heads = vi.spyOn(transport, 'sdlcBuildHeads');
-    heads.mockResolvedValueOnce({ 'commerce-core': 'aaaaaaa' });
-    heads.mockResolvedValue({ 'commerce-core': 'bbbbbbb' });
-    const runSpec = vi.spyOn(transport, 'runSpec');
-    const next = openHost().debugElement.injector.get(BuildPageViewModel);
-    const rounds = [{ ...{ instructions: 'rename the status field to state', repo: 'commerce-core' }, summary: '' }];
-    await next.start(await handoffFor(transport, { rounds }), CTX);
-    await drive(next, lock, finished(next));
-    const specs = runSpec.mock.calls.map(([spec]) => spec);
-    expect(specs.filter((s) => s.name === REVIEW_NAME)).toHaveLength(1);
-    expect(specs[0].task).toContain('rename the status field to state');
-    expect(next.findings()).toHaveLength(2);
-    expect(next.replaced()).toHaveLength(1);
-    expect(next.replaced()[0].groups.flatMap((g) => g.findings)).toHaveLength(2);
-    expect(next.replaced()[0].label).toBe('Review 1 of 2026-10-19');
-  });
-
-  it('a round that adds no commits is not reviewed again', async () => {
-    const { vm, transport, lock } = setup();
-    await vm.start(await handoffFor(transport), CTX);
-    await drive(vm, lock, finished(vm));
-
-    const runSpec = vi.spyOn(transport, 'runSpec');
-    const next = openHost().debugElement.injector.get(BuildPageViewModel);
-    const rounds = [{ ...{ instructions: 'look at the logging', repo: 'commerce-core' }, summary: '' }];
-    await next.start(await handoffFor(transport, { rounds }), CTX);
-    await drive(next, lock, () => next.phase() === 'finished');
-    expect(runSpec.mock.calls.map(([spec]) => spec.name)).not.toContain(REVIEW_NAME);
-    expect(next.replaced()).toEqual([]);
-  });
-
-  it('the build stops and lists what is left', async () => {
-    const { vm, transport, runner, lock } = setup();
-    const task = (id: string, name: string, repo: string, dependsOn: string[], done: boolean) => ({
-      id, name, repo, dependsOn, text: `### ${id}`, row: done ? { task: id, repo, commits: ['abc1234'], departure: null } : null,
-    });
-    const status: BuildStatus = {
-      hasTasks: true,
-      problems: [], logLayouts: [],
-      departures: [],
-      tasks: [task('T1', 'one', 'commerce-core', [], false), task('T2', 'two', 'customer-portal', [], true), task('T3', 'three', 'customer-portal', ['T1'], false)],
-      repos: [
-        { repo: 'commerce-core', firstUnfinished: 'T1', state: { kind: 'ready', task: 'T1' }, tasks: 1, finished: 0 },
-        { repo: 'customer-portal', firstUnfinished: 'T3', state: { kind: 'waiting', task: 'T3', onTask: 'T1', onRepo: 'commerce-core' }, tasks: 2, finished: 1 },
-      ],
-    };
-    vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(status);
-    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
-      link.onRun?.(`fake-${target.repo}`);
-      return { exit: 124, error: null };
-    });
-    const finish = vi.spyOn(runner, 'finishBuild').mockResolvedValue();
-    const h = await handoffFor(transport);
-    await vm.start(h, CTX);
-    await advance(500);
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(vm.phase()).toBe('stopped');
-    expect(vm.report()).toEqual({
-      unfinished: [
-        { repo: 'commerce-core', tasks: ['T1'] },
-        { repo: 'customer-portal', tasks: ['T3'] },
-      ],
-      waiting: [{ repo: 'customer-portal', task: 'T3', onTask: 'T1', onRepo: 'commerce-core' }],
-    });
-    expect(group(vm, 'customer-portal').status).toEqual({ tone: 'idle', label: 'Waiting for T1 in commerce-core' });
-    expect(finish).toHaveBeenCalledWith(h.start);
-    expect(lock.active()).toBeNull();
-  });
-
-  describe('a round for the master repository', () => {
-    const doneTask = (id: string, repo: string) => ({
-      id, name: id, repo, dependsOn: [], text: `### ${id}`, row: { task: id, repo, commits: ['abc1234'], departure: null },
-    });
-    const allDone: BuildStatus = {
-      hasTasks: true,
-      problems: [], logLayouts: [],
-      departures: [],
-      tasks: [doneTask('T1', 'commerce-core'), doneTask('T2', 'customer-portal')],
-      repos: [
-        { repo: 'commerce-core', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
-        { repo: 'customer-portal', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
-      ],
-    };
-    const rounds = [{ ...{ instructions: 'tidy the notes', repo: MOCK_MASTER }, summary: '' }];
-
-    it('has a row, shows why it stopped and Continue runs it again (R6.1, R8.1)', async () => {
-      const { vm, transport, runner } = setup();
-      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(allDone);
-      const targets: string[] = [];
-      const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
-        targets.push(target.kind === 'review' ? 'review' : target.repo);
-        link.onRun?.(`fake-${targets.length}`);
-        return targets.length === 1 ? { exit: 124, error: null } : { exit: 0, error: null };
-      });
-      await vm.start(await handoffFor(transport, { rounds }), CTX);
-      await advance(500);
-      expect(targets).toEqual([MOCK_MASTER]);
-      expect(vm.phase()).toBe('stopped');
-      expect(group(vm, MOCK_MASTER).status.tone).toBe('error');
-      expect(stopOf(vm, MOCK_MASTER)!.reason).toBe('stopped: reached the time limit');
-      vm.select(MOCK_MASTER);
-      expect(group(vm, MOCK_MASTER).action).toBe('continue');
-      expect(vm.shownSessions()).toHaveLength(1);
-
-      await vm.continueRun();
-      await advance(500);
-      expect(targets.slice(0, 2)).toEqual([MOCK_MASTER, MOCK_MASTER]);
-      expect(run.mock.calls[1][1].task).toContain('tidy the notes');
-      expect(run.mock.calls[1][0].path).toBe(`${FOLDER}/${MOCK_MASTER}`);
-    });
-
-    it('shows its row while it waits to start and after it ran', async () => {
-      const { vm, transport, runner } = setup();
-      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(allDone);
-      vi.spyOn(runner, 'runInRepo').mockImplementation(async (_target, _spec, link) => {
-        link.onRun?.('fake-master');
-        return { exit: 0, error: null };
-      });
-      await vm.start(await handoffFor(transport, { rounds }), CTX);
-      await advance(500);
-      expect(group(vm, MOCK_MASTER).status.tone).not.toBe('error');
-      expect(stopOf(vm, MOCK_MASTER)).toBeUndefined();
-    });
-
-    it('a round that commits there is reviewed again, from heads that include the master (R8.4)', async () => {
-      const { vm, transport, runner } = setup();
-      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(allDone);
-      const heads = vi.spyOn(transport, 'sdlcBuildHeads');
-      heads.mockImplementation(async (_folder, _master, _system, repos) => Object.fromEntries(repos.map((r) => [r, r === MOCK_MASTER && run.mock.calls.length > 0 ? 'm2' : 'm1'])));
-      const targets: string[] = [];
-      const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
-        targets.push(target.kind === 'review' ? 'review' : target.repo);
-        link.onRun?.(`fake-${targets.length}`);
-        return { exit: 0, error: null };
-      });
-      await vm.start(await handoffFor(transport, { rounds }), CTX);
-      await advance(500);
-      expect(heads.mock.calls.every(([, repos]) => repos.includes(MOCK_MASTER))).toBe(true);
-      expect(targets).toEqual([MOCK_MASTER, 'review']);
-    });
-  });
-
-  it('Cancel build cancels every run and starts none', async () => {
-    const { vm, transport } = setup();
-    const runSpec = vi.spyOn(transport, 'runSpec');
-    const cancel = vi.spyOn(transport, 'cancelRun');
-    const discard = vi.spyOn(transport, 'sdlcDiscard');
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(600);
-    expect(vm.active()).toBe(true);
-    vm.cancelBuild();
-    await advance(1000);
-    expect(cancel).toHaveBeenCalledTimes(2);
-    expect(runSpec).toHaveBeenCalledTimes(2);
-    expect(vm.phase()).toBe('cancelled');
-    expect(vm.active()).toBe(false);
-    expect(group(vm, 'commerce-core').status.tone).toBe('error');
-    expect(stopOf(vm, 'commerce-core')!.reason).toBe('stopped: cancelled');
-    expect(discard).not.toHaveBeenCalled();
-  });
-
-  it('Cancel on one repository cancels only its run', async () => {
-    const { vm, transport } = setup();
-    const cancel = vi.spyOn(transport, 'cancelRun');
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(600);
-    vm.select('commerce-core');
-    vm.cancelRun();
-    await advance(600);
-    expect(cancel).toHaveBeenCalledTimes(1);
-    expect(group(vm, 'commerce-core').status.tone).toBe('error');
-    expect(stopOf(vm, 'commerce-core')!.reason).toBe('stopped: cancelled');
-    expect(group(vm, 'customer-portal').status.tone).not.toBe('error');
-  });
-
-  it('Another round on a finished repository, then Cancel, shows Stopped and Continue runs the round again with its instructions (B1)', async () => {
-    const { vm, transport, runner } = setup();
-    const doneTask = (id: string, repo: string) => ({
-      id, name: id, repo, dependsOn: [], text: `### ${id}`, row: { task: id, repo, commits: ['abc1234'], departure: null },
-    });
-    vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({
-      hasTasks: true,
-      problems: [], logLayouts: [],
-      departures: [],
-      tasks: [doneTask('T1', 'commerce-core'), doneTask('T2', 'customer-portal')],
-      repos: [
-        { repo: 'commerce-core', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
-        { repo: 'customer-portal', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
-      ],
-    });
-    let release: () => void = () => undefined;
-    const gate = new Promise<void>((r) => (release = r));
-    vi.spyOn(TestBed.inject(RunStore), 'cancelRun').mockImplementation(async () => release());
-    const targets: string[] = [];
-    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
-      targets.push(target.kind === 'review' ? 'review' : target.repo);
-      link.onRun?.(`fake-${targets.length}`);
-      if (targets.length > 1) return { exit: 0, error: null };
-      await gate;
-      return { exit: 130, error: null };
-    });
-    const rounds = [{ ...{ instructions: 'rename the status field', repo: 'commerce-core' }, summary: '' }];
-    await vm.start(await handoffFor(transport, { rounds }), CTX);
+  it('runs the backend started are linked to the change once their transcript shows, and each task once', async () => {
+    const s = await opened(setup());
+    const linkRun = vi.spyOn(s.transport, 'sdlcLinkRun');
+    const before = await s.transport.sdlcTaskLinks();
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
     await advance(300);
-    vm.select('commerce-core');
-    vm.cancelRun();
-    await advance(500);
-    expect(targets).toEqual(['commerce-core']);
-    expect(vm.phase()).toBe('stopped');
-    expect(group(vm, 'commerce-core').status.tone).toBe('error');
-    expect(stopOf(vm, 'commerce-core')!.reason).toBe('stopped: cancelled');
-    vm.select('commerce-core');
-    expect(group(vm, 'commerce-core').action).toBe('continue');
-
-    await vm.continueRun();
-    await advance(500);
-    expect(targets.slice(0, 2)).toEqual(['commerce-core', 'commerce-core']);
-    expect(run.mock.calls[1][1].task).toContain('rename the status field');
+    const sdlc = (s.transport as unknown as { sdlc: { commitRows(t: { id: string; name: string; repo: string; dependsOn: string[] }[]): void } }).sdlc;
+    sdlc.commitRows([{ id: 'T1', name: '', repo: 'commerce-core', dependsOn: [] }]);
+    await advance(2500);
+    expect(linkRun.mock.calls.map(([l]) => l.stage).sort()).toEqual(['build:commerce-core', 'build:customer-portal']);
+    const id = s.vm.groups().find((g) => g.key === 'commerce-core')!.runs[0].id;
+    // The host records which run recorded a task; the page never writes a task link.
+    expect(await s.transport.sdlcTaskLinks()).toEqual(before);
+    expect(id).toBeTruthy();
   });
 
-  describe('Continue asks about what its own repository left, wherever it was written (R6.4, R6.6)', () => {
-    const doneTask = (id: string, repo: string) => ({
-      id, name: id, repo, dependsOn: [], text: `### ${id}`, row: { task: id, repo, commits: ['abc1234'], departure: null },
-    });
-    const allDone: BuildStatus = {
-      hasTasks: true,
-      problems: [], logLayouts: [],
-      departures: [],
-      tasks: [doneTask('T1', 'commerce-core'), doneTask('T2', 'customer-portal')],
-      repos: [
-        { repo: 'commerce-core', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
-        { repo: 'customer-portal', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
-      ],
-    };
-    const coreDonePortalReady: BuildStatus = {
-      hasTasks: true,
-      problems: [], logLayouts: [],
-      departures: [],
-      tasks: [doneTask('T1', 'commerce-core'), { id: 'T2', name: 'two', repo: 'customer-portal', dependsOn: [], text: '### T2', row: null }],
-      repos: [
-        { repo: 'commerce-core', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
-        { repo: 'customer-portal', firstUnfinished: 'T2', state: { kind: 'ready', task: 'T2' }, tasks: 1, finished: 0 },
-      ],
-    };
-
-    /** The first run of `stopper` stops at once; every other repository's run is held (never ends) when `hold` is set. */
-    function stopFirstRunOf(runner: SdlcRunner, stopper: string, hold: boolean) {
-      const seen: string[] = [];
-      const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
-        const key = target.kind === 'review' ? 'review' : target.repo;
-        seen.push(key);
-        link.onRun?.(`fake-${seen.length}`);
-        if (key === stopper) return seen.filter((k) => k === key).length === 1 ? { exit: 124, error: null } : { exit: 0, error: null };
-        if (hold) await new Promise<void>(() => undefined);
-        return { exit: 0, error: null };
-      });
-      return run;
-    }
-    const told = (run: ReturnType<typeof stopFirstRunOf>, repo: string) => run.mock.calls.filter(([t]) => t.kind === 'repo' && t.repo === repo).at(-1)![1].task;
-
-    it('a stopped master round that left edits goes through the confirmation while other runs go, like any repository (B2)', async () => {
-      const { vm, transport, runner } = setup();
-      const asked = vi.spyOn(transport, 'sdlcBuildParticipants').mockResolvedValue(everyone({ [MOCK_MASTER]: { files: ['notes/half.md'] } }));
-      const run = stopFirstRunOf(runner, MOCK_MASTER, true);
-      await vm.start(await handoffFor(transport, { rounds: [{ ...{ instructions: 'tidy the notes', repo: MOCK_MASTER }, summary: '' }] }), CTX);
-      await advance(500);
-      expect(vm.phase()).toBe('building');
-      vm.select(MOCK_MASTER);
-      expect(group(vm, MOCK_MASTER).action).toBe('continue');
-      const calls = run.mock.calls.length;
-
-      await vm.continueRun();
-      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, [MOCK_MASTER]);
-      expect(vm.leftoverPrompt()).toEqual({ lines: [`${MOCK_MASTER}: notes/half.md`] });
-      expect(run).toHaveBeenCalledTimes(calls);
-
-      await vm.confirmContinue();
-      await advance(100);
-      expect(run).toHaveBeenCalledTimes(calls + 1);
-      expect(told(run, MOCK_MASTER)).toContain('already confirmed');
-    });
-
-    it("a stopped master round that left edits goes through the confirmation after the build ended, and the backend is told the round is the master's (B2)", async () => {
-      const { vm, transport, runner } = setup();
-      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(allDone);
-      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
-      const run = stopFirstRunOf(runner, MOCK_MASTER, false);
-      await vm.start(await handoffFor(transport, { rounds: [{ ...{ instructions: 'tidy the notes', repo: MOCK_MASTER }, summary: '' }] }), CTX);
-      await advance(500);
-      expect(vm.phase()).toBe('stopped');
-      vm.select(MOCK_MASTER);
-      prepare.mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: MOCK_MASTER, files: ['notes/half.md'] }] });
-
-      await vm.continueRun();
-      expect(prepare.mock.calls[1][4]).toBe(false);
-      expect(prepare.mock.calls[1][5]).toEqual([MOCK_MASTER]);
-      expect(vm.leftoverPrompt()).toEqual({ lines: [`${MOCK_MASTER}: notes/half.md`] });
-      expect(run).toHaveBeenCalledTimes(1);
-
-      await vm.confirmContinue();
-      await advance(100);
-      expect(prepare.mock.calls.at(-1)![4]).toBe(true);
-      expect(prepare.mock.calls.at(-1)![5]).toEqual([MOCK_MASTER]);
-      expect(told(run, MOCK_MASTER)).toContain('already confirmed');
-    });
-
-    it("an unsaved row in a repository's build log is shown as that repository's leftover and its run is told it was confirmed (B3)", async () => {
-      const { vm, transport, runner } = setup();
-      const asked = vi.spyOn(transport, 'sdlcBuildParticipants').mockResolvedValue(everyone({ 'commerce-core': { rows: [ROW('commerce-core')] } }));
-      const run = stopFirstRunOf(runner, 'commerce-core', true);
-      await vm.start(await handoffFor(transport), CTX);
-      await advance(500);
-      vm.select('commerce-core');
-      expect(group(vm, 'commerce-core').action).toBe('continue');
-      const calls = run.mock.calls.length;
-
-      await vm.continueRun();
-      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, ['commerce-core']);
-      expect(vm.leftoverPrompt()).toEqual({ lines: [`commerce-core: ${ROW('commerce-core')}`] });
-      expect(run).toHaveBeenCalledTimes(calls);
-
-      await vm.confirmContinue();
-      await advance(100);
-      expect(run).toHaveBeenCalledTimes(calls + 1);
-      expect(told(run, 'commerce-core')).toContain('already confirmed');
-    });
-
-    it('a round on a finished repository that stopped with edits asks on Continue while other runs go (B4)', async () => {
-      const { vm, transport, runner } = setup();
-      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(coreDonePortalReady);
-      const asked = vi.spyOn(transport, 'sdlcBuildParticipants').mockResolvedValue(everyone({ 'commerce-core': { files: ['src/half.rs'] } }));
-      const run = stopFirstRunOf(runner, 'commerce-core', true);
-      await vm.start(await handoffFor(transport, { rounds: [{ ...{ instructions: 'rename the status field', repo: 'commerce-core' }, summary: '' }] }), CTX);
-      await advance(500);
-      expect(vm.phase()).toBe('building');
-      vm.select('commerce-core');
-      expect(group(vm, 'commerce-core').action).toBe('continue');
-      const calls = run.mock.calls.length;
-
-      await vm.continueRun();
-      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, ['commerce-core']);
-      expect(vm.leftoverPrompt()).toEqual({ lines: ['commerce-core: src/half.rs'] });
-      expect(run).toHaveBeenCalledTimes(calls);
-
-      await vm.confirmContinue();
-      await advance(100);
-      expect(run).toHaveBeenCalledTimes(calls + 1);
-      expect(told(run, 'commerce-core')).toContain('rename the status field');
-    });
-
-    it('a round on a finished repository that stopped with edits asks on Continue after the build ended (B4)', async () => {
-      const { vm, transport, runner } = setup();
-      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(allDone);
-      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
-      const run = stopFirstRunOf(runner, 'commerce-core', false);
-      await vm.start(await handoffFor(transport, { rounds: [{ ...{ instructions: 'rename the status field', repo: 'commerce-core' }, summary: '' }] }), CTX);
-      await advance(500);
-      expect(vm.phase()).toBe('stopped');
-      vm.select('commerce-core');
-      prepare.mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['src/half.rs'] }] });
-
-      await vm.continueRun();
-      expect(prepare.mock.calls[1][5]).toEqual(['commerce-core']);
-      expect(vm.leftoverPrompt()).toEqual({ lines: ['commerce-core: src/half.rs'] });
-      expect(run).toHaveBeenCalledTimes(1);
-
-      await vm.confirmContinue();
-      await advance(100);
-      expect(run).toHaveBeenCalledTimes(2);
-      expect(told(run, 'commerce-core')).toContain('already confirmed');
-    });
+  it('the switched-off given items of the build go to the host with a start, a preview, a continue and a review', async () => {
+    const s = await opened(setup());
+    await s.load();
+    const key = `commerce/${MOCK_BUILD_CHANGE}`;
+    const off = ['personal:plugin:superpowers@claude-plugins-official', 'run-spec:skill:doc-writer'];
+    TestBed.inject(GivenStore).setBuild(key, { off: new Set(off) });
+    const start = vi.spyOn(s.transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'started', uncommitted: {} });
+    await s.vm.startBuild({ timeoutSecs: 60 });
+    expect(start).toHaveBeenCalledWith(REF, { timeoutSecs: 60, off });
+    const previewed = vi.spyOn(s.transport, 'sdlcPreviewBuild');
+    vi.spyOn(s.preview, 'openBuild').mockResolvedValue(null);
+    await s.vm.openPreview('start');
+    expect(previewed.mock.calls[0][3].off).toEqual(off);
+    vi.spyOn(s.preview, 'openBuild').mockImplementation(async (req) => ({ off: new Set(req.from.build ?? []), request: null, picks: null, plan: null }));
+    const resume = vi.spyOn(s.transport, 'sdlcBuildContinue').mockResolvedValue({ kind: 'started', uncommitted: {} });
+    s.vm.select('commerce-core');
+    await s.vm.continueRun();
+    expect(resume).toHaveBeenCalledWith(REF, 'commerce-core', off);
   });
 
-  describe('a Continue that lands while the build is being released (R14.1, R16.1)', () => {
-    it('waits for the release and takes the lock again, so the run it starts never has a closed lock', async () => {
-      const { vm, transport, runner, lock, preview } = setup(new MockTransport(), 'real');
-      let endPortal!: () => void;
-      let settleBranches!: () => void;
-      let confirmPreview!: () => void;
-      const finish = vi.spyOn(runner, 'finishBuild').mockImplementation(() => new Promise<void>((resolve) => (settleBranches = resolve)));
-      const seen: string[] = [];
-      vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
-        const key = target.kind === 'review' ? 'review' : target.repo;
-        seen.push(key);
-        link.onRun?.(`fake-${seen.length}`);
-        if (key === 'commerce-core') {
-          // The first run stops at once; the run after Continue never ends.
-          if (seen.filter((k) => k === key).length === 1) return { exit: 124, error: null };
-          await new Promise<void>(() => undefined);
-        }
-        await new Promise<void>((resolve) => (endPortal = resolve));
-        return { exit: 0, error: null };
-      });
-      vi.spyOn(preview, 'openBuild').mockImplementation(
-        (req) => new Promise((resolve) => (confirmPreview = () => resolve({ off: new Set(req.from.build ?? []), request: null }))),
-      );
-      await vm.start(await handoffFor(transport), CTX);
-      await advance(500);
-      expect(vm.phase()).toBe('building');
-      vm.select('commerce-core');
-      expect(group(vm, 'commerce-core').action).toBe('continue');
-
-      // Continue is open on its preview while customer-portal's last run ends and the release starts.
-      const going = vm.continueRun();
-      await vi.waitFor(() => expect(confirmPreview).toBeDefined());
-      endPortal();
-      await advance(500);
-      expect(finish).toHaveBeenCalledTimes(1);
-      expect(lock.active()).toMatchObject({ kind: 'build', finished: true });
-
-      // The engineer confirms inside the release.
-      confirmPreview();
-      await advance(200);
-      settleBranches();
-      await going;
-      await advance(500);
-
-      expect(seen.filter((k) => k === 'commerce-core')).toHaveLength(2);
-      expect(vm.phase()).toBe('building');
-      expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
-      expect(vm.view().groups.find((g) => g.repo === 'commerce-core')!.status.label).toBe('Working · T1');
-    });
-
-    it('prepares the branches again when the release starts while Continue reads the participants, before the run launches', async () => {
-      const { vm, transport, runner, lock } = setup();
-      let endPortal!: () => void;
-      let answerParticipants!: () => void;
-      let armed = false;
-      const real = transport.sdlcBuildParticipants.bind(transport);
-      vi.spyOn(transport, 'sdlcBuildParticipants').mockImplementation(async (...args) => {
-        const out = await real(...args);
-        if (armed) await new Promise<void>((resolve) => (answerParticipants = resolve));
-        return out;
-      });
-      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
-      vi.spyOn(runner, 'finishBuild').mockResolvedValue();
-      const seen: string[] = [];
-      vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
-        const key = target.kind === 'review' ? 'review' : target.repo;
-        seen.push(key);
-        link.onRun?.(`fake-${seen.length}`);
-        if (key === 'commerce-core') {
-          if (seen.filter((k) => k === key).length === 1) return { exit: 124, error: null };
-          await new Promise<void>(() => undefined);
-        }
-        await new Promise<void>((resolve) => (endPortal = resolve));
-        return { exit: 0, error: null };
-      });
-      await vm.start(await handoffFor(transport), CTX);
-      await advance(500);
-      expect(vm.phase()).toBe('building');
-      vm.select('commerce-core');
-      const prepared = prepare.mock.calls.length;
-
-      armed = true;
-      const going = vm.continueRun();
-      await vi.waitFor(() => expect(answerParticipants).toBeDefined());
-      endPortal();
-      await advance(500);
-      expect(lock.active()).toBeNull();
-
-      answerParticipants();
-      await going;
-      await advance(200);
-
-      expect(prepare.mock.calls.slice(prepared).map((c) => c[6])).toEqual(['continue']);
-      expect(seen.filter((k) => k === 'commerce-core')).toHaveLength(2);
-      expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
-    });
-  });
-});
-
-describe('the build\'s choices in the build view', () => {
-  const GITHUB = 'personal:tool-server:github';
-  const KEY = `commerce/${MOCK_BUILD_CHANGE}`;
-  const dbKey = (repo: string) => givenKey(`project:tool-server:${repo}-db`, `${FOLDER}/${repo}`);
-  const previewReady = (preview: RunPreviewViewModel) => vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
-  const flat = (groups: KindGroup[]): PresetRow[] => groups.flatMap((k) => k.groups.flatMap((g) => g.rows.flatMap((e) => [e.row, ...e.followers])));
-  const limit = (preview: RunPreviewViewModel) => preview.settings().find((s) => s.label === 'Time limit');
-
-  /** Both repositories' first runs stop at the time limit, so Continue is offered; the third run goes the real way. */
-  const stopFirstTwo = (runner: SdlcRunner) => {
-    const real = runner.runInRepo.bind(runner);
-    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
-      if (run.mock.calls.length <= 2) {
-        link.onRun?.(`fake-${target.repo}`);
-        return { exit: 124, error: null };
-      }
-      return real(target, spec, link);
-    });
-    return run;
-  };
-
-  it('project items are listed and applied per repository (R11.2)', async () => {
-    const { vm, transport, runner } = setup();
-    const run = stopFirstTwo(runner);
-    const choices = { off: new Set([GITHUB, dbKey('commerce-core')]) };
-    await vm.start(await handoffFor(transport, { choices }), CTX);
-    await advance(500);
-    const given = (repo: string) => run.mock.calls.map(([, spec]) => spec).find((s) => s.workdir === `${FOLDER}/${repo}`)!.given!;
-    // Switching commerce-core's project tool server off reaches commerce-core's run and not customer-portal's.
-    expect(given('commerce-core').tool_servers).toEqual([GITHUB, 'project:tool-server:commerce-core-db']);
-    expect(given('customer-portal').tool_servers).toEqual([GITHUB]);
-  });
-
-  it('a build preview lists each repository\'s project hooks locked and applies its tool servers per repository (R11.5)', async () => {
-    const { vm, transport, runner, preview } = setup(new MockTransport(), 'real');
-    const settings = await transport.sdlcSettings();
-    const sectionOf = (repo: string) => {
-      const run: BuildRun = {
-        target: { repo },
-        timeoutSecs: 5400,
-        instructions: null,
-        workspaceFolder: FOLDER,
-        masterRepo: MOCK_MASTER,
-        systemRepos: ['commerce-core', 'customer-portal'],
-        checksDir: '/checks',
-        continueOnLeftovers: false,
-      };
-      const spec = specFor('build', null, { folder: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE }, settings, [], run);
-      return { title: repo, repo, spec, workdir: spec.workdir };
-    };
-    const opened = preview.openBuild({
-      title: 'Start build',
-      kind: 'start',
-      sections: [sectionOf('commerce-core'), sectionOf('customer-portal')],
-      from: { session: new Set(), job: null, build: null },
-      limitSecs: 5400,
-    });
-    await previewReady(preview);
-    for (const title of ['commerce-core', 'customer-portal']) {
-      const rows = flat(preview.sections()!.find((s) => s.title === title)!.groups);
-      const hooks = rows.filter((r) => r.item.kind === 'hook');
-      expect(hooks.length).toBeGreaterThan(0);
-      for (const hook of hooks) expect(hook.locked).toMatchObject({ kind: 'build' });
-      expect(rows.some((r) => r.item.id === `project:tool-server:${title}-db`)).toBe(true);
-      expect(rows.some((r) => r.item.id === `project:tool-server:${title === 'commerce-core' ? 'customer-portal' : 'commerce-core'}-db`)).toBe(false);
-    }
-
-    preview.toggle(dbKey('commerce-core'), true);
-    preview.start();
-    const result = (await opened)!;
-    expect(result.off).toEqual(new Set([dbKey('commerce-core')]));
-
-    const run = stopFirstTwo(runner);
-    await vm.start(await handoffFor(transport, { choices: { off: result.off } }), CTX);
-    await advance(500);
-    const given = (repo: string) => run.mock.calls.map(([, spec]) => spec).find((s) => s.workdir === `${FOLDER}/${repo}`)!.given!;
-    expect(given('commerce-core').tool_servers).toEqual(['project:tool-server:commerce-core-db']);
-    expect(given('customer-portal').tool_servers).toEqual([]);
-    // The kind of run is kept beside the build's choices.
-    expect(given('commerce-core')).toMatchObject({ build: true, required_plugins: ['ai-sdlc'], hooks: [] });
-  });
-
-  it('the review section lists the master repository\'s project items (R11.3)', async () => {
-    const { vm, transport, lock } = setup();
-    const runSpec = vi.spyOn(transport, 'runSpec');
-    const choices = { off: new Set([dbKey(MOCK_MASTER)]) };
-    await vm.start(await handoffFor(transport, { choices }), CTX);
-    await drive(vm, lock, finished(vm));
-    const specs = runSpec.mock.calls.map(([spec]) => spec);
-    // The master's project item is given to the review, which runs in the master, and to no product repository's run.
-    expect(specs.find((s) => s.name === REVIEW_NAME)!.given!.tool_servers).toEqual([`project:tool-server:${MOCK_MASTER}-db`]);
-    for (const s of specs.filter((x) => x.name !== REVIEW_NAME)) expect(s.given!.tool_servers).toEqual([]);
-  });
-
-  it('each repository\'s run shows its own given view (R13.2)', async () => {
-    const { vm, transport } = setup();
-    // The scripted engine records nothing of what a run was given, so every run reports its own project item the way the real one does.
-    const folders = new Map<string, string>();
-    const runSpec = transport.runSpec.bind(transport);
-    vi.spyOn(transport, 'runSpec').mockImplementation(async (spec, group) => {
-      const id = await runSpec(spec, group);
-      folders.set(id, spec.workdir.split('/').pop()!);
-      return id;
-    });
-    const listen = transport.onRunEvent.bind(transport);
-    vi.spyOn(transport, 'onRunEvent').mockImplementation((cb) =>
-      listen((runId, ev) => {
-        cb(runId, ev);
-        const repo = folders.get(runId);
-        if (repo === undefined || ev.type === 'run.given') return;
-        cb(runId, {
-          type: 'run.given',
-          items: [{ id: `project:tool-server:${repo}-db`, kind: 'tool-server', source: 'project', name: `${repo}-db`, detail: '', off: false, status: 'given' }],
-          settings: {},
-          env: [],
-          warnings: [],
-        } as never);
-      }),
-    );
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(1500);
-    const idsOf = (repo: string) => vm.groups().find((g) => g.key === repo)!.runs.flatMap((r) => r.given?.items.map((i) => i.id) ?? []);
-    expect(idsOf('commerce-core')).toContain('project:tool-server:commerce-core-db');
-    expect(idsOf('commerce-core')).not.toContain('project:tool-server:customer-portal-db');
-    expect(idsOf('customer-portal')).toContain('project:tool-server:customer-portal-db');
-    expect(idsOf('customer-portal')).not.toContain('project:tool-server:commerce-core-db');
-  });
-
-  it('continuing one stopped repository opens its preview pre-set to the build\'s choices, and what is changed there is the build\'s from then on (R12.1, R17.3, R7.1)', async () => {
-    const { vm, transport, runner, preview, givens } = setup(new MockTransport(), 'real');
-    const off = new Set([GITHUB, dbKey('commerce-core')]);
-    givens.setBuild(KEY, { off });
-    const run = stopFirstTwo(runner);
-    await vm.start(await handoffFor(transport, { choices: { off } }), CTX);
-    await advance(500);
-    vm.select('commerce-core');
-    const going = vm.continueRun();
-    await previewReady(preview);
-
-    // Pre-set and marked as the build's, in the shared rows and in the repository's own section.
-    expect(flat(preview.groups()).find((r) => r.item.id === GITHUB)).toMatchObject({ off: true, mark: 'build' });
-    expect(preview.sections()!.map((s) => s.title)).toEqual(['commerce-core']);
-    expect(flat(preview.sections()![0].groups).find((r) => r.item.id === 'project:tool-server:commerce-core-db')).toMatchObject({ off: true, mark: 'build' });
-    // The limits are the build's, read-only; the safety rules are listed.
-    expect(preview.buildForm()).toBeNull();
-    expect(limit(preview)).toEqual({ label: 'Time limit', value: '1 h 30 min', source: "the build's" });
-    expect(preview.safetyRules()).toEqual(safetyRules('repo'));
-    expect(run).toHaveBeenCalledTimes(2);
-
-    preview.toggle(GITHUB, false);
-    preview.start();
-    await going;
-    await advance(500);
-    // The change is the build's now, and the repository's next run is given it.
-    expect(givens.build(KEY)!.off).toEqual(new Set([dbKey('commerce-core')]));
-    expect(run.mock.calls[2][1].given!.tool_servers).toEqual(['project:tool-server:commerce-core-db']);
-  });
-
-  it('cancelling the continue preview starts nothing and keeps the build\'s choices', async () => {
-    const { vm, transport, runner, preview, givens } = setup(new MockTransport(), 'real');
-    givens.setBuild(KEY, { off: new Set([GITHUB]) });
-    const run = stopFirstTwo(runner);
-    await vm.start(await handoffFor(transport, { choices: { off: new Set([GITHUB]) } }), CTX);
-    await advance(500);
-    vm.select('commerce-core');
-    const going = vm.continueRun();
-    await previewReady(preview);
-    preview.toggle(GITHUB, false);
-    preview.cancel();
-    await going;
-    await advance(500);
-    expect(run).toHaveBeenCalledTimes(2);
-    expect(givens.build(KEY)!.off).toEqual(new Set([GITHUB]));
-  });
-});
-
-const LEFT: Leftovers = { new_commits: [], discardable: ['src/x.rs'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
-
-/** commerce-core has an unfinished task and customer-portal waits for it, however many runs end. */
-const UNFINISHED: BuildStatus = {
-  hasTasks: true,
-  problems: [],
-  logLayouts: [],
-  departures: [],
-  tasks: [
-    { id: 'T1', name: 'one', repo: 'commerce-core', dependsOn: [], text: '### T1', row: null },
-    { id: 'T2', name: 'two', repo: 'customer-portal', dependsOn: ['T1'], text: '### T2', row: null },
-  ],
-  repos: [
-    { repo: 'commerce-core', firstUnfinished: 'T1', state: { kind: 'ready', task: 'T1' }, tasks: 1, finished: 0 },
-    { repo: 'customer-portal', firstUnfinished: 'T2', state: { kind: 'waiting', task: 'T2', onTask: 'T1', onRepo: 'commerce-core' }, tasks: 1, finished: 0 },
-  ],
-};
-
-/** A build whose runs really run, so each leaves `LEFT` behind, and are then reported as out of time: the build stops with its leftovers on show. */
-async function stoppedWithLeftovers() {
-  const ctx = setup();
-  const { vm, transport, runner, lock } = ctx;
-  vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue(LEFT);
-  vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(UNFINISHED);
-  const discard = vi.spyOn(transport, 'sdlcDiscard');
-  const real = runner.runInRepo.bind(runner);
-  const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
-    await real(target, spec, link);
-    return { exit: 124, error: null };
-  });
-  await vm.start(await handoffFor(transport), CTX);
-  await drive(vm, lock, () => vm.phase() === 'stopped' && runner.leftovers() !== null);
-  return { ...ctx, run, discard };
-}
-
-it('the lock is released once the build is settled and taken again by Continue', async () => {
-  const { vm, runner, lock } = await stoppedWithLeftovers();
-  // The build is over, but the leftovers are still on show: the page keeps the lock until the engineer has chosen.
-  expect(lock.active()).toMatchObject({ kind: 'build', finished: true });
-  runner.closeLeftovers();
-  await advance(300);
-  expect(runner.leftovers()).toBeNull();
-  expect(lock.active()).toBeNull();
-
-  vm.select('commerce-core');
-  await vm.continueRun();
-  await advance(100);
-  expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
-});
-
-describe('no leftover is discarded without the engineer\'s choice', () => {
-  it('continuing the stopped repository on top of its leftovers discards nothing', async () => {
-    const { vm, transport, runner, run, discard } = await stoppedWithLeftovers();
-    runner.closeLeftovers();
-    await advance(300);
-    vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['src/x.rs'] }] });
-    vm.select('commerce-core');
-    await vm.continueRun();
-    expect(vm.leftoverPrompt()).toEqual({ lines: ['commerce-core: src/x.rs'] });
-    await vm.confirmContinue();
-    await advance(300);
-    expect(run).toHaveBeenCalledTimes(2);
-    expect(discard).not.toHaveBeenCalled();
-  });
-
-  it('asking for a round discards nothing', async () => {
-    const { vm, transport, runner, run, discard } = await stoppedWithLeftovers();
-    runner.closeLeftovers();
-    await advance(300);
-    const rounds = [{ ...{ instructions: 'tidy up the logging', repo: 'commerce-core' }, summary: '' }];
-    expect(await vm.start(await handoffFor(transport, { rounds }), CTX)).toBe(true);
-    await advance(300);
-    expect(run).toHaveBeenCalledTimes(2);
-    expect(run.mock.calls[1][1].task).toContain('tidy up the logging');
-    expect(discard).not.toHaveBeenCalled();
-  });
-
-  it('leaving the page with leftovers on show discards nothing', async () => {
-    const { host, runner, discard } = await stoppedWithLeftovers();
-    expect(runner.leftovers()).not.toBeNull();
-    hosts = hosts.filter((h) => h !== host);
-    host.destroy();
-    await advance(300);
-    expect(discard).not.toHaveBeenCalled();
+  it('answers and messages go to the run store by run id', async () => {
+    const s = await opened(setup());
+    const answer = vi.spyOn(s.runs, 'submitAnswer').mockResolvedValue();
+    const decide = vi.spyOn(s.runs, 'submitDecision').mockResolvedValue();
+    const message = vi.spyOn(s.runs, 'sendMessage').mockResolvedValue();
+    s.vm.answer('7', { id: 'q1', answers: [['Reuse it']] });
+    s.vm.decide('7', { id: 'p1', allow: false, message: 'not that' });
+    s.vm.sendMessage('7', 'skip it');
+    expect(answer).toHaveBeenCalledWith('7', 'q1', [['Reuse it']]);
+    expect(decide).toHaveBeenCalledWith('7', 'p1', false, 'not that');
+    expect(message).toHaveBeenCalledWith('7', 'skip it');
   });
 });
 
@@ -1497,36 +277,53 @@ describe('the build page shows tasks and sessions from the build log, the run li
   const T1_ROW = { task: 'T1', repo: 'commerce-core', commits: ['aaaaaaa'], departure: null };
 
   /** A page opened on a change with nothing running; T1 is in the build log when `built`. */
-  async function opened(over: { links?: RunLink[]; taskLinks?: TaskLink[]; records?: RunRecord[]; built?: boolean; stage?: ChangeInfo['stage'] } = {}) {
+  async function page(over: { links?: RunLink[]; taskLinks?: TaskLink[]; records?: RunRecord[]; built?: boolean; stage?: OfferStage } = {}) {
     const s = setup();
     vi.spyOn(s.transport, 'sdlcRunLinks').mockResolvedValue(over.links ?? []);
     vi.spyOn(s.transport, 'sdlcTaskLinks').mockResolvedValue(over.taskLinks ?? []);
     vi.spyOn(s.transport, 'listRuns').mockResolvedValue(over.records ?? []);
-    const status = await s.transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
-    if (over.built ?? true) status.tasks = status.tasks.map((t) => (t.id === 'T1' ? { ...t, row: T1_ROW } : t));
-    const [found] = (await readAllChanges(s.transport, `${FOLDER}/${MOCK_MASTER}`)).filter((c) => c.change === MOCK_BUILD_CHANGE);
-    const change = over.stage === undefined ? found : { ...found, stage: over.stage };
-    const load = () => s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change, status, done: false, review: null });
-    return { ...s, load, status };
+    const base = await s.transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
+    const status: BuildStatus = (over.built ?? true) ? { ...base, tasks: base.tasks.map((t) => (t.id === 'T1' ? { ...t, row: T1_ROW } : t)) } : base;
+    vi.spyOn(s.transport, 'sdlcBuildStatus').mockResolvedValue(status);
+    return opened(s, over.stage === undefined ? {} : { stage: over.stage });
   }
-  const states = (vm: BuildPageViewModel, repo: string) => Object.fromEntries(vm.taskAreas().find((g) => g.repo === repo)!.tasks.map((t) => [t.id, t.state.kind]));
 
-  it('a committed row shows its task done and the next one running without a click', async () => {
-    const { vm, transport } = setup();
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(300);
-    expect(states(vm, 'customer-portal')).toEqual({ T2: 'running', T3: 'not-started' });
-    const sdlc = (transport as unknown as { sdlc: { commitRows(t: { id: string; name: string; repo: string; dependsOn: string[] }[]): void } }).sdlc;
-    sdlc.commitRows([
-      { id: 'T1', name: '', repo: 'commerce-core', dependsOn: [] },
-      { id: 'T2', name: '', repo: 'customer-portal', dependsOn: [] },
+  it('shows where each repository stands and what each task shows as the backend decided, from the status and live state it read (F12)', async () => {
+    const s = await page({ built: false });
+    // The backend says the repository stopped on T1, though nothing in the log or the host would: the page follows the backend.
+    const board = vi.spyOn(s.transport, 'sdlcBuildBoard').mockResolvedValue([
+      { repo: 'commerce-core', situation: { kind: 'stopped', task: 'T1', reason: 'from the backend' }, tasks: [{ id: 'T1', state: { kind: 'stopped', reason: 'from the backend' } }] },
     ]);
-    await advance(2500);
-    expect(states(vm, 'customer-portal')).toEqual({ T2: 'done', T3: 'running' });
+    await s.load();
+    expect(board).toHaveBeenCalled();
+    const [repos, status, going, stopped] = board.mock.calls.at(-1)!;
+    expect(repos).toContain('commerce-core');
+    expect(status).toEqual(s.status);
+    expect(going).toEqual([]);
+    expect(stopped).toEqual({});
+    const area = s.vm.taskAreas().find((g) => g.repo === 'commerce-core')!;
+    expect(area.situation).toEqual({ kind: 'stopped', task: 'T1', reason: 'from the backend' });
+    expect(area.tasks.find((t) => t.id === 'T1')!.state).toEqual({ kind: 'stopped', reason: 'from the backend' });
+  });
+
+  it('judges the review by the standing the backend decided from the links, records, heads and document the page read (F12)', async () => {
+    const s = await page({ links: [link('review', 'run-r', secs(8))], records: [record('run-r', 0)] });
+    vi.spyOn(s.transport, 'sdlcBuildHeads').mockResolvedValue({ 'commerce-core': 'abc1234' });
+    const standing = vi.spyOn(s.transport, 'sdlcReviewStanding').mockResolvedValue({ kind: 'stale' });
+    await s.load();
+    expect(standing).toHaveBeenCalledWith({
+      links: [link('review', 'run-r', secs(8))],
+      records: [record('run-r', 0)],
+      heads: { 'commerce-core': 'abc1234' },
+      scope: { workspaceId: CTX.workspaceId, system: 'commerce', change: MOCK_BUILD_CHANGE },
+      document: null,
+      master: MOCK_MASTER,
+    });
+    expect(s.vm.reviewEntry()).toBe('stale');
   });
 
   it('picking a task shows the session that recorded it', async () => {
-    const { vm, load } = await opened({
+    const { vm, load } = await page({
       links: [link('build:commerce-core', 'run-a', secs(8)), link('build:commerce-core', 'run-b', secs(9))],
       taskLinks: [taskLink('T1', 'run-b')],
     });
@@ -1538,45 +335,33 @@ describe('the build page shows tasks and sessions from the build log, the run li
   });
 
   it('a task with no known session shows its repository\'s sessions and says so', async () => {
-    const { vm, load } = await opened({ links: [link('build:commerce-core', 'run-a', secs(8)), link('build:commerce-core', 'run-b', secs(9))] });
+    const { vm, load } = await page({ links: [link('build:commerce-core', 'run-a', secs(8)), link('build:commerce-core', 'run-b', secs(9))] });
     await load();
     vm.choose({ kind: 'task', task: 'T1' });
     expect(vm.shownSessions().map((s) => s.id)).toEqual(['run-a', 'run-b']);
     expect(vm.sessionNote()).toBe('This task was recorded before Kata linked tasks to runs, or on another machine. Showing every session of commerce-core.');
   });
 
-  it('a reopened change at build-stopped names why a repository stopped once, in one wording (R2.1, R6.1)', async () => {
-    const { vm, load } = await opened({ built: false, stage: 'build-stopped', links: [link('build:commerce-core', 'run-a', secs(8))], records: [record('run-a', 1)] });
+  it('a reopened change shows each repository from the build log alone: ready ones as not started, with no stop the backend did not announce', async () => {
+    const { vm, load, change } = await page({ built: false, stage: 'build-stopped', links: [link('build:commerce-core', 'run-a', secs(8))], records: [record('run-a', 1)] });
     await load();
-    const view = vm.view();
-    expect(view.stops).toContainEqual({ repo: 'commerce-core', reason: 'stopped: the agent failed' });
-    expect(group(vm, 'commerce-core').stopLine).toBe('stopped: the agent failed');
-    // The stops list says it; the stage message does not say it again (R6.1).
-    expect(view.stageMessage!.lines.filter((l) => l.includes('commerce-core'))).toEqual([]);
-    expect(view.stops.filter((s) => s.repo === 'commerce-core')).toHaveLength(1);
-    expect(JSON.stringify(view)).not.toContain('Stopped: Stopped');
-    expect(JSON.stringify(view)).not.toContain('stopped: Stopped');
-  });
-
-  it('a combination the situation table calls impossible gives one fallback heading and does not break the page (R2.1)', async () => {
-    const { vm, load } = await opened({ built: false, stage: 'build-finished' });
-    await load();
-    expect(() => vm.view()).not.toThrow();
     const g = group(vm, 'commerce-core');
-    expect(g.status).toEqual({ tone: 'warning', label: 'Cannot tell where this stands' });
+    expect(g.status).toEqual({ tone: 'idle', label: 'Not started' });
     expect(g.action).toBeNull();
-    expect(g.tasks.length).toBeGreaterThan(0);
-    expect(g.tasks.every((t) => t.status.label === 'Not started')).toBe(true);
+    expect(g.stopLine).toBeNull();
+    expect(vm.view().stops).toEqual([]);
+    // What the bar offers is what the plugin's answer lists for the change.
+    expect(vm.view().actions).toEqual(change.offer.actions.map((a) => a.action).filter((a) => ['start-build', 'continue-build', 'another-round', 'run-review', 'declare-done'].includes(a)));
   });
 
   it('earlier runs fold under the latest with their start time and how they ended', async () => {
-    const { vm, transport, load } = await opened({
+    const { vm, load } = await page({
       built: false,
       links: [link('build:commerce-core', 'run-a', secs(8)), link('build:commerce-core', 'run-b', secs(8, 30))],
       records: [record('run-a', 124), record('run-b', 1)],
     });
     await load();
-    await vm.start(await handoffFor(transport), CTX);
+    await vm.startBuild({ timeoutSecs: 5400 });
     await advance(500);
     vm.choose({ kind: 'repo', repo: 'commerce-core' });
     const [a, b, live] = vm.shownSessions();
@@ -1586,22 +371,12 @@ describe('the build page shows tasks and sessions from the build log, the run li
     expect(b.outcome).toContain('exit 1 ');
     expect([a.latest, b.latest, live.latest]).toEqual([false, false, true]);
     expect([a.expanded, b.expanded, live.expanded]).toEqual([false, false, false]);
-    expect(live.spec).not.toBeNull();
     vm.toggleRun('run-a');
     expect(vm.shownSessions()[0].expanded).toBe(true);
   });
 
-  it('a run\'s end links the tasks it recorded', async () => {
-    const { vm, transport, lock } = setup();
-    const linkTasks = vi.spyOn(transport, 'sdlcLinkTasks');
-    await vm.start(await handoffFor(transport), CTX);
-    await drive(vm, lock, () => linkTasks.mock.calls.some(([l]) => l.some((x) => x.repo === 'commerce-core')));
-    const id = vm.groups().find((g) => g.key === 'commerce-core')!.runs[0].id;
-    expect(linkTasks).toHaveBeenCalledWith([taskLink('T1', id)]);
-  });
-
   it('a not-started change with uncommitted edits shows the files area', async () => {
-    const { vm, transport, load } = await opened({ built: false });
+    const { vm, transport, load } = await page({ built: false });
     const empty = { files: [], loc: [] };
     const listing = { files: [{ path: 'src/a.ts', oldPath: null, status: 'modified', added: 1, removed: 0, binary: false, uncommitted: true }], loc: [] };
     const read = vi.spyOn(transport, 'sdlcDiffFiles').mockImplementation((path) => Promise.resolve((path.endsWith('commerce-core') ? listing : empty) as never));
@@ -1615,7 +390,7 @@ describe('the build page shows tasks and sessions from the build log, the run li
   });
 
   it('counts the changed files for the area tabs', async () => {
-    const { vm, transport, load } = await opened({ built: false });
+    const { vm, transport, load } = await page({ built: false });
     const empty = { files: [], loc: [] };
     const file = (path: string) => ({ path, oldPath: null, status: 'modified', added: 1, removed: 0, binary: false, uncommitted: true });
     const listing = { files: [file('src/a.ts'), file('src/b.ts')], loc: [] };
@@ -1626,18 +401,59 @@ describe('the build page shows tasks and sessions from the build log, the run li
   });
 
   it('every live session stays in the view, hidden, whatever is picked', async () => {
-    const { vm, transport } = setup();
-    await vm.start(await handoffFor(transport), CTX);
+    const s = await opened(setup());
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
     await advance(500);
-    const idOf = (key: string) => vm.groups().find((g) => g.key === key)!.runs[0].id;
+    const idOf = (key: string) => s.vm.groups().find((g) => g.key === key)!.runs[0].id;
     const [core, portal] = [idOf('commerce-core'), idOf('customer-portal')];
-    const find = (id: string) => vm.view().sessions.find((x) => x.id === id);
-    vm.choose({ kind: 'repo', repo: 'commerce-core' });
+    const find = (id: string) => s.vm.view().sessions.find((x) => x.id === id);
+    s.vm.choose({ kind: 'repo', repo: 'commerce-core' });
     expect(find(core)?.shown).not.toBe(false);
     expect(find(portal)?.shown).toBe(false);
-    vm.choose({ kind: 'repo', repo: 'customer-portal' });
+    s.vm.choose({ kind: 'repo', repo: 'customer-portal' });
     expect(find(portal)?.shown).not.toBe(false);
     expect(find(core)?.shown).toBe(false);
+  });
+
+  it('a repository the backend names as waiting shows what it waits for, and its task is not running', async () => {
+    const { vm, load, transport } = await page({ built: false });
+    vi.spyOn(transport, 'sdlcBuildState').mockResolvedValue(state({ going: ['commerce-core'], waiting: [{ repo: 'customer-portal', task: 'T3', onTask: 'T1', onRepo: 'commerce-core' }] }));
+    await load();
+    await advance(50);
+    const portal = group(vm, 'customer-portal');
+    expect(portal.status.tone === 'success').toBe(false);
+    expect(portal.action).toBeNull();
+  });
+
+  const failed: RepoCheckView = { repo: 'commerce-core', view: { kind: 'failedStop', id: 'unit', output: '2 tests failed' }, summary: 'unit failed. The build stopped here.' };
+  const passed: RepoCheckView = { repo: 'customer-portal', view: { kind: 'passed', hooks: [{ id: 'lint', outcome: 'passed' }] }, summary: 'The checks passed.' };
+
+  it('a group carries the checks of its repository exactly as the plugin answered, and none for a repository it did not name', async () => {
+    const { vm, load, transport } = await page({ built: false });
+    const read = vi.spyOn(transport, 'sdlcChecksView').mockResolvedValue([failed, passed]);
+    await load();
+    await advance(100);
+    expect(read).toHaveBeenCalledWith(REF);
+    expect(group(vm, 'commerce-core').checks).toEqual(failed);
+    expect(group(vm, 'customer-portal').checks).toEqual(passed);
+    read.mockResolvedValue([passed]);
+    await load();
+    await advance(100);
+    expect(group(vm, 'commerce-core').checks).toBeNull();
+  });
+
+  it('reads them again when the host announces the build moved, so a finished run shows its result', async () => {
+    const { vm, load, transport } = await page({ built: false });
+    const read = vi.spyOn(transport, 'sdlcChecksView').mockResolvedValue([]);
+    await load();
+    await advance(100);
+    const first = read.mock.calls.length;
+    read.mockResolvedValue([failed]);
+    expect(await vm.startBuild({ timeoutSecs: 5400 })).toBe('started');
+    await advance(500);
+    expect(read.mock.calls.length).toBeGreaterThan(first);
+    expect(group(vm, 'commerce-core').checks).toEqual(failed);
   });
 });
 
@@ -1649,95 +465,71 @@ describe('what the pick is and what the activity area shows for it', () => {
     ]);
 
   it('picks the review by the stage alone: while it runs, then its findings, whatever was picked or gone to earlier (R2.1, D9)', async () => {
-    const { vm, transport, lock } = setup();
-    await vm.start(await handoffFor(transport), CTX);
+    const s = await opened(setup());
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
     await advance(300);
-    vm.goTo('customer-portal');
-    vm.choose({ kind: 'task', task: 'T2' });
-    expect(vm.pick()).toEqual({ kind: 'task', task: 'T2' });
-    await drive(vm, lock, () => vm.stage() === 'reviewing');
-    expect(vm.pick()).toEqual({ kind: 'review' });
-    expect(vm.view().review.picked).toBe(true);
-    expect(vm.shownSessions().length).toBe(1);
-    expect(vm.shownSessions()[0].live).toBe(true);
-    expect(vm.focusRequest()).toBeNull();
-    vm.choose({ kind: 'repo', repo: 'commerce-core' });
-    expect(vm.pick()).toEqual({ kind: 'repo', repo: 'commerce-core' });
-    await drive(vm, lock, finished(vm));
-    expect(vm.stage()).toBe('review-finished');
-    expect(vm.pick()).toEqual({ kind: 'review' });
-    expect(vm.view().findingsArea.review).not.toBeNull();
+    s.vm.goTo('customer-portal');
+    s.vm.choose({ kind: 'task', task: 'T2' });
+    expect(s.vm.pick()).toEqual({ kind: 'task', task: 'T2' });
+    await drive(s.vm, s.runs, () => s.vm.stage() === 'reviewing');
+    expect(s.vm.pick()).toEqual({ kind: 'review' });
+    expect(s.vm.view().review.picked).toBe(true);
+    expect(s.vm.shownSessions().length).toBe(1);
+    expect(s.vm.shownSessions()[0].live).toBe(true);
+    expect(s.vm.focusRequest()).toBeNull();
+    s.vm.choose({ kind: 'repo', repo: 'commerce-core' });
+    expect(s.vm.pick()).toEqual({ kind: 'repo', repo: 'commerce-core' });
+    await drive(s.vm, s.runs, finished(s.vm));
+    expect(s.vm.stage()).toBe('review-finished');
+    expect(s.vm.pick()).toEqual({ kind: 'review' });
+    expect(s.vm.view().findingsArea.review).not.toBeNull();
   });
 
   it('a Go to picks the repository and asks for its question to be brought into view, once per Go to', async () => {
-    const { vm, transport } = setup();
-    await vm.start(await handoffFor(transport), CTX);
+    const s = await opened(setup());
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
     await advance(300);
-    vm.choose({ kind: 'repo', repo: 'commerce-core' });
-    expect(vm.focusRequest()).toBeNull();
-    vm.goTo('customer-portal');
-    const first = vm.focusRequest();
-    expect(vm.pick()).toEqual({ kind: 'repo', repo: 'customer-portal' });
+    s.vm.choose({ kind: 'repo', repo: 'commerce-core' });
+    expect(s.vm.focusRequest()).toBeNull();
+    s.vm.goTo('customer-portal');
+    const first = s.vm.focusRequest();
+    expect(s.vm.pick()).toEqual({ kind: 'repo', repo: 'customer-portal' });
     expect(first).toMatchObject({ repo: 'customer-portal' });
-    vm.goTo('customer-portal');
-    expect(vm.focusRequest()!.n).toBeGreaterThan(first!.n);
-    vm.choose({ kind: 'repo', repo: 'commerce-core' });
-    expect(vm.focusRequest()).toBeNull();
-  });
-
-  it('links a task to the live run that recorded it at once, and a picked task then shows that session (R2 F2, R3.3)', async () => {
-    const { vm, transport } = setup();
-    const linkTasks = vi.spyOn(transport, 'sdlcLinkTasks');
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(300);
-    const id = vm.groups().find((g) => g.key === 'commerce-core')!.runs[0].id;
-    commitRows(transport);
-    await advance(2500);
-    expect(vm.groups().find((g) => g.key === 'commerce-core')!.runs[0].state).toMatch(/running|awaiting/);
-    expect(linkTasks.mock.calls.flat(2)).toContainEqual(expect.objectContaining({ repo: 'commerce-core', task: 'T1', run_id: id }));
-    vm.choose({ kind: 'task', task: 'T1' });
-    expect(vm.shownSessions().map((s) => s.id)).toEqual([id]);
-    expect(vm.sessionNote()).toBeNull();
-  });
-
-  it('does not write a task link again when the run ends', async () => {
-    const { vm, transport, lock } = setup();
-    const linkTasks = vi.spyOn(transport, 'sdlcLinkTasks');
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(300);
-    commitRows(transport);
-    await advance(2500);
-    await drive(vm, lock, finished(vm));
-    const written = linkTasks.mock.calls.flatMap(([links]) => links.map((l) => `${l.repo}/${l.task}/${l.run_id}`));
-    expect(written.length).toBeGreaterThan(0);
-    expect(new Set(written).size).toBe(written.length);
+    s.vm.goTo('customer-portal');
+    expect(s.vm.focusRequest()!.n).toBeGreaterThan(first!.n);
+    s.vm.choose({ kind: 'repo', repo: 'commerce-core' });
+    expect(s.vm.focusRequest()).toBeNull();
   });
 
   it('keeps the picked task\'s identity when the build log is read again, so the Changes view keeps its untied files shown (R5.2)', async () => {
-    const { vm, transport } = setup();
-    await vm.start(await handoffFor(transport), CTX);
+    const s = await opened(setup());
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
     await advance(300);
-    vm.choose({ kind: 'task', task: 'T2' });
-    const before = vm.pickedTask();
+    s.vm.choose({ kind: 'task', task: 'T2' });
+    const before = s.vm.pickedTask();
     expect(before).toEqual(expect.objectContaining({ id: 'T2', repo: 'customer-portal' }));
-    commitRows(transport);
+    commitRows(s.transport);
     await advance(2500);
-    expect(vm.pickedTask()).toBe(before);
+    expect(s.vm.pickedTask()).toBe(before);
   });
 
   it('a pick of the same task again is a new pick, so the Changes view starts over (T9, R5.2)', async () => {
-    const { vm, transport } = setup();
-    await vm.start(await handoffFor(transport), CTX);
+    const s = await opened(setup());
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
     await advance(300);
-    vm.choose({ kind: 'task', task: 'T2' });
-    const first = vm.pickedTask();
-    vm.choose({ kind: 'task', task: 'T2' });
-    const again = vm.pickedTask();
+    s.vm.choose({ kind: 'task', task: 'T2' });
+    const first = s.vm.pickedTask();
+    s.vm.choose({ kind: 'task', task: 'T2' });
+    const again = s.vm.pickedTask();
     expect(again).toEqual(expect.objectContaining({ id: 'T2', repo: 'customer-portal' }));
     expect(again).not.toBe(first);
-    commitRows(transport);
+    commitRows(s.transport);
     await advance(2500);
-    expect(vm.pickedTask()).toBe(again);
+    expect(s.vm.pickedTask()).toBe(again);
   });
 });
 
@@ -1820,21 +612,157 @@ describe('the findings area shows what the review knows at each stage (R4.3)', (
 @Component({ selector: 'kata-layout-host', template: '', providers: [BuildPageViewModel, RunPreviewViewModel, BuildLayoutViewModel] })
 class LayoutHost {}
 
-describe('the layout follows the real build page through a finish, whatever order the run links arrive in (R10.1, R10.2, R10.5, R16.1)', () => {
+
+describe('findings from the review document and the backend\'s rows', () => {
+  const section = (number: number, reviewed_at: string, findings: { id: string; severity: 'high' | 'medium' | 'low'; text: string }[]) => ({
+    number,
+    reviewed_at,
+    // Where each repository stands in the mock, so the review covers the work as it is.
+    commits: { 'commerce-docs': '1111111', 'commerce-core': '2222222', 'customer-portal': '3333333' },
+    findings: findings.map((f) => ({ ...f, file: 'src/a.ts', line: 4 })),
+  });
+  const document = (...reviews: ReturnType<typeof section>[]): ReviewRecord => ({ layout: 2, reviews, problems: [], master_moved: [] });
+  /** The rows the backend lists for a review: most serious first, the low ones apart; the page draws them as they come. */
+  const rowsFor = (findings: { id: string; severity: 'high' | 'medium' | 'low'; text: string }[]): ReviewRows => ({
+    counts: (['high', 'medium', 'low'] as const).map((severity) => ({ severity, n: findings.filter((f) => f.severity === severity).length })).filter((c) => c.n > 0),
+    total: findings.length,
+    groups:
+      findings.length === 0
+        ? []
+        : [
+            {
+              repo: 'commerce-core',
+              rows: findings.filter((f) => f.severity !== 'low').map((f) => ({ key: f.id, finding: { ...f, repo: 'commerce-core' }, summary: f.text })),
+              low: findings.filter((f) => f.severity === 'low').map((f) => ({ key: f.id, finding: { ...f, repo: 'commerce-core' }, summary: f.text })),
+            },
+          ],
+  });
+  async function reviewed(sections: ReturnType<typeof section>[], rows: ReviewRows, stage: OfferStage = 'build-finished') {
+    const s = setup();
+    vi.spyOn(s.transport, 'sdlcReviewView').mockResolvedValue({ rows, groups: [] });
+    const page = await opened(s, { stage, review: document(...sections) });
+    await page.load();
+    await advance(300);
+    return page;
+  }
+
+  it('findings come from review.md, not the run words (R14.2)', async () => {
+    const { vm } = await reviewed([section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'The limit is not enforced on retry.' }])], rowsFor([{ id: 'F1', severity: 'high', text: 'The limit is not enforced on retry.' }]));
+    expect(vm.findings().map((f) => [f.severity, f.text])).toEqual([['high', 'The limit is not enforced on retry.']]);
+    expect(vm.older()).toBe(false);
+  });
+
+  it('findings written out of order are shown most serious first, equal ranks in the order written (R7.1)', async () => {
+    const written = [
+      { id: 'F1', severity: 'low' as const, text: 'a nit' },
+      { id: 'F2', severity: 'medium' as const, text: 'first medium' },
+      { id: 'F3', severity: 'high' as const, text: 'the bug' },
+      { id: 'F4', severity: 'medium' as const, text: 'second medium' },
+    ];
+    const { vm } = await reviewed([section(1, '2026-10-19', written)], rowsFor(written));
+    expect(vm.findings().map((f) => f.text)).toEqual(['the bug', 'first medium', 'second medium', 'a nit']);
+  });
+
+  it('a review with no findings shows reviewed, nothing found (R14.3)', async () => {
+    const { vm } = await reviewed([section(1, '2026-10-19', [])], rowsFor([]));
+    expect(vm.findings()).toEqual([]);
+    expect(vm.view().findingsArea.review).not.toBeNull();
+    expect(vm.view().findingsArea.review!.emptyText).toBe('Reviewed, nothing found.');
+    expect(vm.view().review.nothingFound).toBe(true);
+    expect(vm.view().review.rows).toMatchObject({ total: 0, groups: [] });
+  });
+
+  it('a second review is shown with the first one available (R15.1)', async () => {
+    const first = [{ id: 'F1', severity: 'high' as const, text: 'one' }];
+    const second = [{ id: 'F1', severity: 'low' as const, text: 'two' }];
+    const { vm } = await reviewed([section(1, '2026-10-18', first), section(2, '2026-10-19', second)], rowsFor(second));
+    expect(vm.findings().map((f) => f.text)).toEqual(['two']);
+    expect(vm.view().findingsArea.review!.replaced.map((r) => r.groups.flatMap((g) => g.findings.map((f) => f.text)))).toEqual([['one']]);
+    expect(vm.latestReview()).toEqual({ number: 2, findings: vm.findings(), stale: false });
+  });
+
+  it('a review whose findings failed their schema shows its problems above the findings (F6)', async () => {
+    const s = setup();
+    vi.spyOn(s.transport, 'sdlcReviewView').mockResolvedValue({ rows: rowsFor([]), groups: [] });
+    const page = await opened(s, { stage: 'build-finished', review: { ...document(section(1, '2026-10-19', [])), problems: [{ file: 'review.md', line: 12, message: 'finding F2 has no severity' }] } });
+    await page.load();
+    await advance(300);
+    expect(page.vm.reviewNotice()?.lines.join(' ')).toContain('finding F2 has no severity');
+  });
+
+  it('R4.1: the Review group lists the findings of the finished review as the backend gives them, with its counts and its low split', async () => {
+    const found = [
+      { id: 'F1', severity: 'high' as const, text: 'The upload limit is duplicated.' },
+      { id: 'F2', severity: 'low' as const, text: 'A comment is stale.' },
+    ];
+    const { vm } = await reviewed([section(1, '2026-10-19', found)], rowsFor(found));
+    const rows = vm.view().review.rows!;
+    expect(rows.total).toBe(2);
+    expect(rows.counts).toEqual([
+      { severity: 'high', n: 1 },
+      { severity: 'low', n: 1 },
+    ]);
+    expect(rows.groups[0].rows.map((r) => r.key)).toEqual(['F1']);
+    expect(rows.groups[0].low.map((r) => r.key)).toEqual(['F2']);
+    expect(rows.groups[0].rows[0].finding).toMatchObject({ id: 'F1', severity: 'high', repo: 'commerce-core' });
+    expect(vm.view().review.stale).toBeNull();
+    expect(vm.view().review.nothingFound).toBe(false);
+  });
+
+  it('R4.7: a review that predates the latest commits keeps its rows and sets the stale notice', async () => {
+    const s = setup();
+    const found = [{ id: 'F1', severity: 'high' as const, text: 'one' }];
+    vi.spyOn(s.transport, 'sdlcReviewView').mockResolvedValue({ rows: rowsFor(found), groups: [] });
+    const page = await opened(s, { stage: 'build-finished', review: { ...document(section(1, '2026-10-19', found)), master_moved: ['src/a.ts'] } });
+    await page.load();
+    await advance(300);
+    const review = page.vm.view().review;
+    expect(review.rows?.total).toBe(1);
+    expect(review.stale).toBe('The work changed since it was reviewed.');
+    expect(page.vm.latestReview()).toMatchObject({ number: 1, stale: true });
+  });
+
+  it('the same findings, in the same order and with the same counts, after leaving the page and coming back (R18.1)', async () => {
+    const found = [
+      { id: 'F1', severity: 'low' as const, text: 'a nit' },
+      { id: 'F2', severity: 'high' as const, text: 'the bug' },
+    ];
+    const first = await reviewed([section(1, '2026-10-19', found)], rowsFor(found));
+    const before = first.vm.view().review.rows;
+    TestBed.resetTestingModule();
+    const again = await reviewed([section(1, '2026-10-19', found)], rowsFor(found));
+    expect(again.vm.view().review.rows).toEqual(before);
+  });
+
+  it('latestReview is null before any review has findings or words to read', () => {
+    const { vm } = setup();
+    expect(vm.latestReview()).toBeNull();
+    expect(vm.view().review.rows).toBeNull();
+  });
+
+  it('toggleLow opens and closes the low findings of a repository', () => {
+    const { vm } = setup();
+    vm.toggleLow('catalog-api');
+    expect(vm.view().review.openLow.has('catalog-api')).toBe(true);
+    vm.toggleLow('catalog-api');
+    expect(vm.view().review.openLow.has('catalog-api')).toBe(false);
+  });
+});
+
+
+describe('the layout follows the real build page through a finish, whatever order the backend announces it in (R10.1, R10.2, R10.5, R16.1)', () => {
   const deferred = () => {
     let release!: () => void;
     const promise = new Promise<void>((resolve) => (release = resolve));
     return { promise, release };
   };
 
-  /** The real build page and layout over a mock transport; `stages` records every value the layout stage takes, `said` everything the page announced. */
+  /** The real build page and layout over a mock transport whose announcements the test pushes; `stages` records every value the layout stage takes, `said` everything the page announced. */
   function layoutSetup() {
     const transport = new MockTransport();
     TestBed.configureTestingModule({ providers: [provideRouter([]), { provide: KataTransport, useValue: transport }] });
     const fixture = TestBed.createComponent(LayoutHost);
-    hosts.push(fixture);
-    const previewVm = fixture.debugElement.injector.get(RunPreviewViewModel);
-    vi.spyOn(previewVm, 'openBuild').mockImplementation(async (req) => ({ off: new Set(req.from.build ?? []), request: null }));
+    hosts.push(fixture as unknown as ComponentFixture<Host>);
     const vm = fixture.debugElement.injector.get(BuildPageViewModel);
     const layout = fixture.debugElement.injector.get(BuildLayoutViewModel);
     const stages: (string | null)[] = [];
@@ -1849,68 +777,85 @@ describe('the layout follows the real build page through a finish, whatever orde
       said.push(text);
       say(text);
     });
-    return { fixture, transport, vm, layout, stages, said, lock: TestBed.inject(LockStore) };
+    let push: (e: BuildEvent) => void = () => undefined;
+    vi.spyOn(transport, 'onBuildState').mockImplementation(async (cb) => {
+      push = cb;
+      return () => undefined;
+    });
+    const announce = (s: BuildState) => push({ change: keyOf(MOCK_BUILD_CHANGE), state: s, reviewWaiting: [], runs: [] });
+    return { fixture, transport, vm, layout, stages, said, announce };
   }
 
-  /** The run links wait for `gate` once it is set; the records say every linked run exited 0. */
-  function lateLinks(transport: MockTransport) {
-    const gate: { current: ReturnType<typeof deferred> | null } = { current: null };
-    const links = transport.sdlcRunLinks.bind(transport);
-    vi.spyOn(transport, 'sdlcRunLinks').mockImplementation(async () => {
-      if (gate.current !== null) await gate.current.promise;
-      return links();
-    });
-    vi.spyOn(transport, 'listRuns').mockImplementation(async () => (await links()).map((l) => ({ id: l.run_id, kata: 'build', started_at: 0, isolation: 'none', steered: false, exit: 0, turns: 1, cost_usd: 0 })));
-    return gate;
-  }
+  /** The review document the plugin left, covering the work as it stands in the mock. */
+  const REVIEWED: ReviewRecord = {
+    layout: 2,
+    problems: [],
+    master_moved: [],
+    reviews: [{ number: 1, reviewed_at: '2026-10-19', commits: { 'commerce-docs': '1111111', 'commerce-core': '2222222', 'customer-portal': '3333333' }, findings: [] }],
+  };
 
   const commitFirstTask = (transport: MockTransport) =>
     (transport as unknown as { sdlc: { commitRows(t: { id: string; name: string; repo: string; dependsOn: string[] }[]): void } }).sdlc.commitRows([
       { id: 'T1', name: '', repo: 'commerce-core', dependsOn: [] },
     ]);
 
-  it('R10.1: a review that ends before its run link is read never passes through stopped, and Changes stays on show with Review marked', async () => {
-    const { vm, transport, lock, layout, stages } = layoutSetup();
-    const gate = lateLinks(transport);
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(300);
+  const loadLayout = async (transport: MockTransport, vm: BuildPageViewModel) => {
+    const status = await transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
+    const [found] = (await readAllChanges(transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
+    await vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: found, status, done: false, review: null });
+  };
+
+  it('R10.1: a review that ends before its result is read never passes through stopped, and Changes stays on show with Review marked', async () => {
+    const { vm, transport, layout, stages, announce } = layoutSetup();
+    await loadLayout(transport, vm);
     commitFirstTask(transport);
-    await advance(2500);
+    announce(state({ going: ['commerce-core', 'customer-portal'] }));
+    await advance(300);
     expect(vm.layoutStage()).toBe('running');
     layout.pickMode('changes');
-    await drive(vm, lock, () => {
-      if (vm.phase() === 'reviewing' && gate.current === null) gate.current = deferred();
-      return vm.phase() === 'finished';
+    announce(state({ phase: 'reviewing', going: ['review'] }));
+    await advance(300);
+    // The review's document is read late: the build finishes before its result is known.
+    const gate = deferred();
+    vi.spyOn(transport, 'sdlcReviewRecord').mockImplementation(async () => {
+      await gate.promise;
+      return REVIEWED;
     });
+    announce(state({ phase: 'finished', going: [] }));
+    await advance(300);
+    // While the result is read the layout keeps the stage it had; it never passes through stopped.
+    expect(stages).not.toContain('stopped');
+    expect(vm.layoutStage()).toBe('running');
+    gate.release();
     await advance(300);
     expect(stages).not.toContain('stopped');
     expect(vm.layoutStage()).toBe('finished');
-    gate.current!.release();
-    await advance(300);
-    expect(stages).not.toContain('stopped');
     expect(layout.mode()).toBe('changes');
     expect(layout.suggested()).toBe('review');
   });
 
   it('R10.2: with the activity in focus in Watch, a finished review ends the focus and moves the page to Review', async () => {
-    const { vm, transport, lock, layout, stages } = layoutSetup();
-    const gate = lateLinks(transport);
-    await vm.start(await handoffFor(transport), CTX);
-    await advance(300);
+    const { vm, transport, layout, stages, announce } = layoutSetup();
+    await loadLayout(transport, vm);
     commitFirstTask(transport);
-    await advance(2500);
+    announce(state({ going: ['commerce-core', 'customer-portal'] }));
+    await advance(300);
     expect(layout.mode()).toBe('watch');
     layout.focusOn('activity');
-    await drive(vm, lock, () => {
-      if (vm.phase() === 'reviewing' && gate.current === null) gate.current = deferred();
-      return vm.phase() === 'finished';
+    announce(state({ phase: 'reviewing', going: ['review'] }));
+    await advance(300);
+    const gate = deferred();
+    vi.spyOn(transport, 'sdlcReviewRecord').mockImplementation(async () => {
+      await gate.promise;
+      return REVIEWED;
     });
+    announce(state({ phase: 'finished', going: [] }));
+    await advance(300);
+    expect(stages).not.toContain('stopped');
+    gate.release();
     await advance(300);
     expect(stages).not.toContain('stopped');
     expect(layout.focus()).toBeNull();
-    expect(layout.mode()).toBe('review');
-    gate.current!.release();
-    await advance(300);
     expect(layout.mode()).toBe('review');
   });
 
@@ -1926,11 +871,11 @@ describe('the layout follows the real build page through a finish, whatever orde
     vi.spyOn(transport, 'sdlcTaskLinks').mockResolvedValue([]);
     vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: 'review-1', kata: 'review', started_at: 0, isolation: 'none', steered: false, exit: 0, turns: 1, cost_usd: 0 }]);
     const status = await transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
-    const [found] = (await readAllChanges(transport, `${FOLDER}/${MOCK_MASTER}`)).filter((c) => c.change === MOCK_BUILD_CHANGE);
+    const [found] = (await readAllChanges(transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
     const loading = vm.load({
       ctx: CTX,
       master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` },
-      change: { ...found, stage: 'build-finished' },
+      change: atStage(found, 'build-finished'),
       status,
       done: false,
       review: null,
@@ -1983,7 +928,7 @@ describe('the tasks area folds, filters and shows a departure with its task', ()
     vi.spyOn(s.transport, 'sdlcTaskLinks').mockResolvedValue([]);
     vi.spyOn(s.transport, 'listRuns').mockResolvedValue([]);
     vi.spyOn(s.transport, 'sdlcBuildStatus').mockResolvedValue(status);
-    const [found] = (await readAllChanges(s.transport, `${FOLDER}/${MOCK_MASTER}`)).filter((c) => c.change === MOCK_BUILD_CHANGE);
+    const [found] = (await readAllChanges(s.transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
     await s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: found, status, done: false, review: null });
     await advance(300);
     return s;
@@ -2053,5 +998,232 @@ describe('the tasks area folds, filters and shows a departure with its task', ()
     const { vm } = await openedOn(status);
     vm.choose({ kind: 'task', task: 'T3' });
     expect(vm.view().pickedDeparture).toEqual({ task: 'T3', text: 'departure 3' });
+  });
+});
+
+
+describe('the build page reads the backend\'s build and starts it through the host\'s commands', () => {
+  const REF = { workspace: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE };
+  const keyOf = (change: string): ChangeKey => ({ workspace: { key: FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system: 'commerce', change });
+  const state = (over: Partial<BuildState> = {}): BuildState => ({ phase: 'building', going: ['commerce-core'], stopped: {}, rounds: {}, waiting: [], report: null, ...over });
+  const heldBy = (change: string) => [{ repo: 'commerce-core', holder: keyOf(change) }];
+
+  /** A page opened on the mock build change, with nothing hosted by the backend yet. */
+  async function opened() {
+    const s = setup();
+    const status = await s.transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
+    const [found] = (await readAllChanges(s.transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
+    const input = { ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: found, status, done: false, review: null };
+    const load = () => s.vm.load(input);
+    return { ...s, load, status, input };
+  }
+
+  it('the page shows the state the backend sends', async () => {
+    const { vm, transport, load } = await opened();
+    let push: (e: BuildEvent) => void = () => undefined;
+    vi.spyOn(transport, 'onBuildState').mockImplementation(async (cb) => {
+      push = cb;
+      return () => undefined;
+    });
+    vi.spyOn(transport, 'sdlcBuildState').mockResolvedValue(state());
+    await load();
+    await advance(50);
+    expect(vm.phase()).toBe('building');
+    expect(vm.view().actions).toEqual(['cancel-build']);
+    expect(group(vm, 'commerce-core')).toMatchObject({ status: { tone: 'success' }, action: 'cancel' });
+
+    const stopped = state({
+      phase: 'stopped',
+      going: [],
+      stopped: { 'commerce-core': { task: 'T1', reason: 'Stopped: the agent failed', held: false } },
+      report: { unfinished: [{ repo: 'commerce-core', tasks: ['T1'] }], waiting: [] },
+    });
+    push({ change: keyOf(MOCK_BUILD_CHANGE), state: stopped, reviewWaiting: [], runs: [] });
+    await advance(50);
+    expect(vm.phase()).toBe('stopped');
+    expect(group(vm, 'commerce-core')).toMatchObject({ status: { tone: 'error', label: 'Stopped at T1' }, action: 'continue', stopLine: 'stopped: the agent failed' });
+    expect(vm.stageMessage()?.lines).toContain('commerce-core has unfinished tasks: T1');
+
+    // Another change's announcement is not this page's.
+    push({ change: keyOf('2026-11-02-other'), state: state({ phase: 'finished', going: [] }), reviewWaiting: [], runs: [] });
+    await advance(50);
+    expect(vm.phase()).toBe('stopped');
+  });
+
+  it('a held start shows the panel with the holder and Start build again', async () => {
+    const { vm, transport, load } = await opened();
+    await load();
+    const form: StartForm = { timeoutSecs: 5400 };
+    const start = vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'held', held: heldBy('2026-11-02-other') });
+    expect(await vm.startBuild(form)).toBe('held');
+    expect(vm.view().held).toMatchObject({
+      repos: [{ repo: 'commerce-core', holder: '2026-11-02-other', link: ['/sdlc', 'commerce', '2026-11-02-other'] }],
+      action: 'Start build again',
+    });
+    expect(vm.view().findingsArea.waiting).toBeNull();
+    // Starting again is a fresh start of the same form; the panel goes once the build starts.
+    start.mockResolvedValue({ kind: 'started', uncommitted: {} });
+    await vm.startAgain();
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(start).toHaveBeenLastCalledWith(REF, form);
+    expect(vm.view().held).toBeNull();
+  });
+
+  it('a waiting review shows the panel in the review area', async () => {
+    const { vm, transport, load } = await opened();
+    vi.spyOn(transport, 'sdlcReviewWaiting').mockResolvedValue(heldBy('2026-11-02-other'));
+    await load();
+    await advance(50);
+    expect(vm.view().findingsArea.waiting).toMatchObject({
+      repos: [{ repo: 'commerce-core', holder: '2026-11-02-other', link: ['/sdlc', 'commerce', '2026-11-02-other'] }],
+      action: 'Start review again',
+    });
+    expect(vm.view().held).toBeNull();
+    const review = vi.spyOn(transport, 'sdlcReviewStart').mockResolvedValue({ kind: 'started', uncommitted: {} });
+    await vm.startReviewAgain();
+    expect(review).toHaveBeenCalledWith(REF, []);
+  });
+
+  it('a refused start lists the plugin\'s problems for every repository', async () => {
+    const { vm, transport, load } = await opened();
+    await load();
+    const problems = ['commerce-core: the plan is not accepted', 'customer-portal: uncommitted files: src/a.ts'];
+    vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'refused', problems });
+    expect(await vm.startBuild({ timeoutSecs: 60 })).toBe('refused');
+    expect(vm.refusal()).toMatchObject({ problems });
+    expect(vm.view().held).toBeNull();
+  });
+
+  it("a team hook that failed on starting shows the hook and its output, not a machine fault (F10)", async () => {
+    const { vm, transport, load } = await opened();
+    await load();
+    vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({
+      kind: 'failed',
+      problems: ['hook deps failed with exit code 1'],
+      hook: { id: 'deps', onFailure: 'stop', output: 'npm ci: lockfile out of date\n' },
+    });
+    expect(await vm.startBuild({ timeoutSecs: 60 })).toBe('failed');
+    expect(vm.refusal()).toEqual({ reason: "The team's hook deps failed", problems: ['hook deps failed with exit code 1', 'npm ci: lockfile out of date'] });
+  });
+
+  it("a step the machine could not run names the repository the plugin names (F3)", async () => {
+    const { vm, transport, load } = await opened();
+    await load();
+    vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'couldNotRun', output: 'hook prep could not run', repo: 'commerce-core' });
+    expect(await vm.startBuild({ timeoutSecs: 60 })).toBe('couldNotRun');
+    expect(vm.refusal()).toEqual({ reason: "This machine could not run the plugin's step in commerce-core", problems: ['hook prep could not run'] });
+  });
+
+  it('the round dialog shows the backend\'s plan for the picks', async () => {
+    const { vm, transport, preview, load } = await opened();
+    await load();
+    const finding = (key: string, repo: string | null) => ({ key, repo, finding: { severity: 'high' as const, text: `Finding ${key}.`, ...(repo === null ? {} : { repo }) } });
+    const offer: RoundOffer = { review: 1, repos: ['commerce-core', 'customer-portal'], findings: [finding('F1', 'commerce-core'), finding('F2', null)] };
+    const picks: RoundPicks = { picked: ['F1'], assigned: {}, notes: {} };
+    const groups = [{ repo: 'commerce-core', findings: [offer.findings[0]] }, { repo: null, findings: [offer.findings[1]] }];
+    vi.spyOn(transport, 'sdlcRoundOffer').mockResolvedValue([offer, picks]);
+    vi.spyOn(transport, 'sdlcReviewView').mockResolvedValue({ rows: { counts: [], total: 2, groups: [] }, groups });
+    const plan: RoundPlan = { blocked: null, requests: [{ repo: 'commerce-core', instructions: 'Fix F1.', summary: 'commerce-core · F1' }] };
+    const planned = vi.spyOn(transport, 'sdlcRoundPlan').mockResolvedValue(plan);
+
+    void vm.openRound();
+    await advance(100);
+    const sent = { ...picks, notes: { 'commerce-core': '', 'customer-portal': '' } };
+    expect(planned).toHaveBeenCalledWith(REF, sent);
+    expect(vm.roundGroups()).toEqual(groups);
+    expect(preview.plannedRound()).toEqual(plan);
+
+    // Picking another finding asks the backend again, and what it answers is what the dialog shows.
+    const blocked: RoundPlan = { blocked: 'Choose a repository for F2.', requests: [] };
+    planned.mockResolvedValue(blocked);
+    preview.buildForm()!.model.update((m) => ({ ...m, picked: [...m.picked, 'F2'] }));
+    await advance(100);
+    expect(planned).toHaveBeenLastCalledWith(REF, { ...sent, picked: ['F1', 'F2'] });
+    expect(preview.plannedRound()).toEqual(blocked);
+    expect(preview.canStart()).toBe(false);
+  });
+
+  it('R13.6: the round dialog starts from the picks and notes the engineer left in it, and cancelling clears them', async () => {
+    const first = await opened();
+    await first.load();
+    const finding = (key: string) => ({ key, repo: null, finding: { severity: 'high' as const, text: `Finding ${key}.` } });
+    const offer: RoundOffer = { review: 1, repos: ['commerce-core', 'customer-portal'], findings: [finding('F1'), finding('F2')] };
+    vi.spyOn(first.transport, 'sdlcRoundOffer').mockResolvedValue([offer, { picked: ['F1'], assigned: {}, notes: {} }]);
+    vi.spyOn(first.transport, 'sdlcReviewView').mockResolvedValue({ rows: { counts: [], total: 2, groups: [] }, groups: [] });
+    const planned = vi.spyOn(first.transport, 'sdlcRoundPlan').mockResolvedValue({ blocked: null, requests: [] });
+
+    void first.vm.openRound();
+    await advance(100);
+    first.preview.buildForm()!.model.update((m) => ({ ...m, picked: ['F1', 'F2'], assigned: { F2: 'commerce-core' }, notes: { ...m.notes, 'commerce-core': 'mind the tests' } }));
+    await advance(100);
+    // The engineer leaves with the dialog open: the page and its dialog go.
+    first.host.destroy();
+
+    const host = openHost();
+    const vm = host.debugElement.injector.get(BuildPageViewModel);
+    await vm.load(first.input);
+    planned.mockClear();
+    void vm.openRound();
+    await advance(100);
+    expect(planned).toHaveBeenCalledWith(REF, { picked: ['F1', 'F2'], assigned: { F2: 'commerce-core' }, notes: { 'commerce-core': 'mind the tests', 'customer-portal': '' } });
+
+    vm.cancelPreview();
+    await advance(100);
+    expect(TestBed.inject(ChangeDraftStore).round(REF)).toBeNull();
+  });
+});
+
+describe('moving the page from one change to another (F1)', () => {
+  const SECOND_CHANGE = '2026-10-12-product-photo-upload';
+  it('nothing of change A shows on change B, and A\'s transcript arriving after the move is linked to A', async () => {
+    const s = setup();
+    let push: (e: BuildEvent) => void = () => undefined;
+    vi.spyOn(s.transport, 'onBuildState').mockImplementation(async (cb) => {
+      push = cb;
+      return () => undefined;
+    });
+    vi.spyOn(s.transport, 'sdlcBuildState').mockResolvedValue(null);
+    vi.spyOn(s.transport, 'sdlcBuildRuns').mockResolvedValue([]);
+    vi.spyOn(s.runs, 'open').mockResolvedValue();
+    // Change A's run waits on a question; the run store is the one place its events come from.
+    const aRun = signal<RunSnapshot>({ ...IDLE, state: 'awaiting', asks: [{ id: 'q1', questions: [], answers: null, at: 0 }] });
+    const real = s.runs.snapshot.bind(s.runs);
+    vi.spyOn(s.runs, 'snapshot').mockImplementation((id) => (id === 'a-run' ? aRun : real(id)));
+    const linkRun = vi.spyOn(s.transport, 'sdlcLinkRun').mockResolvedValue();
+    const inputOf = async (name: string) => ({
+      ctx: { ...CTX, change: name },
+      master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` },
+      change: await s.transport.sdlcChangeState(FOLDER, 'commerce', name),
+      status: await s.transport.sdlcBuildStatus(FOLDER, 'commerce', name),
+      done: false,
+      review: null,
+    });
+
+    await s.vm.load(await inputOf(MOCK_BUILD_CHANGE));
+    push({ change: keyOf(MOCK_BUILD_CHANGE), state: state(), reviewWaiting: [], runs: [{ key: 'commerce-core', run: 'a-run' }] });
+    vi.spyOn(s.transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'held', held: [{ repo: 'customer-portal', holder: keyOf('2026-11-02-other') }] });
+    await s.vm.startBuild({ timeoutSecs: 60 });
+    s.vm.select('commerce-core');
+    await advance(100);
+    // On A: its waiting question, its session and its held start show.
+    expect(s.vm.waitingNotices().map((w) => w.repo)).toEqual(['commerce-core']);
+    expect(s.vm.view().sessions.map((x) => x.id)).toContain('a-run');
+    expect(s.vm.view().held).not.toBeNull();
+
+    await s.vm.load(await inputOf(SECOND_CHANGE));
+    s.vm.select('commerce-core');
+    await advance(100);
+    // On B: none of A.
+    expect(s.vm.waitingNotices()).toEqual([]);
+    expect(s.vm.groups()).toEqual([]);
+    expect(s.vm.view().sessions.map((x) => x.id)).not.toContain('a-run');
+    expect(s.vm.view().held).toBeNull();
+    expect(s.vm.phase()).toBe('none');
+
+    // A's transcript shows only now: it is linked to A, never to the change on show.
+    aRun.update((snap) => ({ ...snap, events: [{ type: 'log', level: 'info', message: 'transcript: C:/runs/a-transcript.jsonl' }] }));
+    await advance(100);
+    expect(linkRun).toHaveBeenCalledWith(expect.objectContaining({ change: MOCK_BUILD_CHANGE, run_id: 'a-transcript', stage: 'build:commerce-core' }));
+    expect(linkRun.mock.calls.filter(([l]) => l.change === SECOND_CHANGE)).toEqual([]);
   });
 });

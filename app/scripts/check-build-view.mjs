@@ -439,6 +439,17 @@ try {
   check(await inWindow(declare), 'Declare done is in the bar once the build and its review are finished');
   await stays('the review finished');
 
+  // R5.1: each repository shows its checks as the plugin recorded them, in its words: a pass, the checks it does not have,
+  // and a check marked to be fixed with its output. The tasks area is the one place they are listed, so read it there.
+  await enter(MODES[0]);
+  const checksOf = (repo) => page.locator('[data-group]', { hasText: repo }).locator('[data-checks]');
+  const passedText = await checksOf('commerce-core').innerText();
+  check(passedText.includes('The checks passed.') && passedText.includes('unit'), `R5.1 commerce-core shows its checks as passed (${JSON.stringify(passedText.replace(/\s+/g, ' '))})`);
+  const noneText = await checksOf('customer-portal').innerText();
+  check(noneText.includes('This repository has no checks.'), `R5.1 customer-portal shows that it has no checks (${JSON.stringify(noneText.replace(/\s+/g, ' '))})`);
+  const failedText = await checksOf('billing-api').innerText();
+  check(failedText.includes("integration failed. The agent is sent back to fix it, up to the team's retry limit.") && failedText.includes('keeps_the_upload'), `R5.1 billing-api shows its failed check marked to be fixed, with the output (${JSON.stringify(failedText.replace(/\s+/g, ' '))})`);
+
   // R15.1, the actions a finished build offers, in every mode.
   for (const mode of MODES) {
     await enter(mode);

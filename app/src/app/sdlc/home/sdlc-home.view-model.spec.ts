@@ -1,23 +1,26 @@
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
-import type { ChangeName } from '@bindings/ChangeName';
+import type { ChangeState } from '@bindings/ChangeState';
+import type { ChangeView } from '@bindings/ChangeView';
+import type { SystemView } from '@bindings/SystemView';
+import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { Readiness } from '@bindings/Readiness';
-import type { StageEvent } from '@bindings/StageEvent';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { toastState } from '@spartan-ng/brain/sonner';
-import { LockStore } from '../../core/lock/lock.store';
 import { ProgressStore } from '../../core/progress/progress.store';
 import { PROGRESS_STEPS } from '../../lib/progress-steps';
+import { LockStore } from '../../core/lock/lock.store';
+import { ChangeRunStore, changeRunKey } from '../../core/run/change-run.store';
+import { RunStore } from '../../core/run/run.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
-import { readAllChanges } from '../../../testing/read-all';
 import { MOCK_WORKSPACE_FOLDER, MOCK_MASTER } from '../../lib/sdlc-mock';
-import { seedCatalog } from '../../lib/mock';
+import { seedCatalog, seedSpec } from '../../lib/mock';
+import { documentForm } from '../../lib/build-host';
 import { SdlcHomeViewModel } from './sdlc-home.view-model';
 
 const NEW_FOLDER = 'D:/Work/new-ws';
@@ -42,7 +45,6 @@ function setup(over: { catalogHasPlugin?: boolean; preview?: 'confirm' | 'real' 
   const saveSettings = vi.spyOn(transport, 'sdlcSaveSettings');
   const preview = TestBed.inject(RunPreviewViewModel);
   if (over.preview !== 'real') vi.spyOn(preview, 'open').mockImplementation(async (req) => req.spec);
-  instantPass(transport);
   return { vm: TestBed.inject(SdlcHomeViewModel), preview, transport, lock, runAgent, runSteps, navigate, saveWorkspaces, saveSettings, runner: TestBed.inject(SdlcRunner) };
 }
 
@@ -66,8 +68,7 @@ describe('SdlcHomeViewModel init', () => {
     await vm.init();
     expect(vm.current()?.name).toBe('acme-commerce');
     expect(vm.state()).toBe('ready');
-    await settled(vm);
-    expect(vm.changes().length).toBe(7);
+    expect(vm.rows().length).toBe(7);
     expect(vm.branches()?.others.map((o) => o.change)).toEqual(['2026-10-17-product-notes']);
     expect(vm.masterBranch()).toBe('main');
     expect(vm.contexts()['customer-portal']).toEqual({ kind: 'stale', commits: 14 });
@@ -381,7 +382,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('asks to switch to the base branch first, and only then runs', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main', pending_change: null });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main' });
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
     const done = vm.runContext('customer-portal');
     await flush();
@@ -397,7 +398,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('switches to the base the backend resolves, not a stored one', async () => {
     const { vm, transport } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'develop', pending_change: null });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'develop' });
     const done = vm.runContext('customer-portal');
     await flush();
     expect(vm.switchPrompt()).toBe(`Switch ${MOCK_MASTER} to develop first?`);
@@ -408,7 +409,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('runs nothing when the switch is declined', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main', pending_change: null });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main' });
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
     const done = vm.runContext('customer-portal');
     await flush();
@@ -421,7 +422,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('shows git message and runs nothing when the switch is refused', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main', pending_change: null });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main' });
     vi.spyOn(transport, 'sdlcCheckout').mockRejectedValue('the master repo has uncommitted changes: a.md');
     const done = vm.runContext('customer-portal');
     await flush();
@@ -443,7 +444,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('aborts context with an error when the master repo is not on a branch', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main', pending_change: null });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main' });
     await vm.runContext('customer-portal');
     expect(toastText()).toContain(`${MOCK_MASTER} is not on a branch`);
     expect(runAgent).not.toHaveBeenCalled();
@@ -452,7 +453,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('aborts setup with an error when the master repo is not on a branch', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main', pending_change: null });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main' });
     await vm.addSystem();
     expect(toastText()).toContain('is not on a branch');
     expect(runAgent).not.toHaveBeenCalled();
@@ -547,12 +548,12 @@ describe('SdlcHomeViewModel runs', () => {
     });
   });
 
-  it('offers the light track only when the plugin reports it', async () => {
+  it('offers the light track only when the plugin is ready', async () => {
     const { vm, transport } = setup();
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.9.0', layouts: [1], lightTrack: false, naming: false });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.9.0.' });
     await vm.init();
     expect(vm.lightTrack()).toBe(false);
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true, naming: false });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', plugin: { dir: '/p', version: '1.1.0', layouts: [1] }, gh: 'present' });
     await vm.selectWorkspace(vm.workspaces()[0].id);
     expect(vm.lightTrack()).toBe(true);
   });
@@ -584,31 +585,40 @@ describe('SdlcHomeViewModel navigation', () => {
     const { vm, transport, navigate } = setup();
     await vm.init();
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
-    // After the checkout the change exists on the branch just checked out, so the reads can find it.
-    const found = (await readAllChanges(transport))[0];
-    vi.spyOn(transport, 'sdlcReadChange').mockResolvedValue({ ...found, change: '2026-10-17-product-notes' });
-    vi.spyOn(transport, 'sdlcChangeNames').mockResolvedValue([{ change: '2026-10-17-product-notes', title: null }]);
+    // After the checkout the change exists on the branch just checked out, so the plugin's answer lists it.
+    vi.spyOn(transport, 'sdlcState').mockResolvedValue(oneSystem({ ...systemViewOf(0), changes: [viewOf('2026-10-17-product-notes', 'Intent · awaiting acceptance', READY)] }));
     await vm.openOtherBranch('2026-10-17-product-notes');
     expect(checkout).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'change/2026-10-17-product-notes');
     expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', '2026-10-17-product-notes']);
   });
 
-  it('lists the other branches that need a name and checks out their pending branch', async () => {
+  it('checks out the branch the list read, which a record may name other than change/<change>', async () => {
     const { vm, transport } = setup();
     vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({
       current: 'main',
       default_base: 'main',
-      pending_change: null,
       others: [
-        { branch: 'change/pending-1730000000', change: '2026-11-02-password-reset', needs_name: true },
-        { branch: 'change/2026-10-17-product-notes', change: '2026-10-17-product-notes', needs_name: false },
+        { branch: 'feat/PROJ-123-password-reset', change: '2026-11-02-password-reset' },
+        { branch: 'change/2026-10-17-product-notes', change: '2026-10-17-product-notes' },
       ],
     });
     await vm.init();
-    expect(vm.otherNeedingName()).toEqual(['2026-11-02-password-reset']);
+    expect(vm.otherBranches()).toEqual(['2026-11-02-password-reset', '2026-10-17-product-notes']);
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
     await vm.openOtherBranch('2026-11-02-password-reset');
-    expect(checkout).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'change/pending-1730000000');
+    expect(checkout).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'feat/PROJ-123-password-reset');
+  });
+
+  it('openOtherBranch is refused while a change works in the master checkout, and the toast names that change (F5)', async () => {
+    const { vm, transport, navigate } = setup();
+    await vm.init();
+    // A change started before copies existed: its spec run works in the master checkout itself.
+    await transport.sdlcRunChange({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: '2026-10-12-product-photo-upload' }, 'spec', documentForm(seedSpec()));
+    await vm.openOtherBranch('2026-10-17-product-notes');
+    expect(toastText()).toContain('The change 2026-10-12-product-photo-upload has a run working in');
+    expect(navigate).not.toHaveBeenCalled();
+    // The branch the run works on is still checked out.
+    expect((await transport.sdlcBranches(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`)).current).not.toBe('change/2026-10-17-product-notes');
   });
 
   it('openOtherBranch shows git message on a dirty refusal and stays put', async () => {
@@ -684,99 +694,62 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
   });
 });
 
-describe("SdlcHomeViewModel plan notice (F20)", () => {
+describe('SdlcHomeViewModel plan notice (F20)', () => {
   const noticeOf = (vm: SdlcHomeViewModel) => vm.listNotice();
-  /** The first change reads as the callback makes it; the others read as they are. */
-  const alterFirst = (transport: MockTransport, change: (c: ChangeInfo) => ChangeInfo) => {
-    const real = transport.sdlcReadChange.bind(transport);
-    vi.spyOn(transport, "sdlcReadChange").mockImplementation(async (master, system, name) => {
-      const [first] = await transport.sdlcChangeNames(master, system);
-      const info = await real(master, system, name);
-      return name === first.change ? change(info) : info;
-    });
-  };
-  const withUnreadablePlan = (transport: MockTransport) => alterFirst(transport, (c) => ({ ...c, stage: "plan-unreadable" as never, plan_unreadable: true }));
-
-  it("says to install the plugin on the change list when a plan could not be read and the plugin is missing", async () => {
-    const { vm, transport } = setup();
-    withUnreadablePlan(transport);
-    vi.spyOn(transport, "sdlcPluginReadiness").mockResolvedValue({ kind: "missing" });
-    await vm.init();
-    await settled(vm);
-    expect(noticeOf(vm)?.text).toBe("Install the ai-sdlc plugin to read this document");
-    expect(noticeOf(vm)?.tone).toBe("warning");
-  });
-
-  it("says to update the plugin when it is too old", async () => {
-    const { vm, transport } = setup();
-    withUnreadablePlan(transport);
-    vi.spyOn(transport, "sdlcPluginReadiness").mockResolvedValue({ kind: "tooOld", have: "0.6.0", need: "0.9.0" });
-    await vm.init();
-    await settled(vm);
-    expect(noticeOf(vm)?.text).toBe("Update the ai-sdlc plugin to 0.9.0 or later");
-  });
-
-  it("says a plan could not be read when the plugin is usable but the program did not run", async () => {
-    const { vm, transport } = setup();
-    withUnreadablePlan(transport);
-    await vm.init();
-    await settled(vm);
-    expect(noticeOf(vm)?.text).toContain("could not be read");
-  });
-
-  it("shows the program's own cause on the change list instead of blaming Node.js (F26)", async () => {
-    const { vm, transport } = setup();
-    alterFirst(transport, (c) => ({ ...c, stage: "plan-unreadable", plan_unreadable: true, plan_unreadable_reason: "layout 3 is newer than this program reads" }) as never);
-    await vm.init();
-    await settled(vm);
-    expect(noticeOf(vm)?.text).toContain("layout 3 is newer than this program reads");
-    expect(noticeOf(vm)?.text).not.toContain("Node.js 20");
-  });
-
-  const withFix = (transport: MockTransport, over: Record<string, unknown>) => {
-    alterFirst(transport, (c) => ({ ...c, track: "fix", plan_unreadable: true, ...over }) as never);
+  /** The plugin's answer, with the first change's plan unreadable and the plugin's own reason, if it gave one. */
+  const withUnreadablePlan = (transport: MockTransport, reason: string | null = null) => {
+    const answer = systemViewOf(2, READY);
+    answer.changes[0].offer = { ...answer.changes[0].offer, stage: 'plan-unreadable', label: { step: 'plan', text: 'Plan · could not be read', tone: 'warning' } };
+    answer.problems = reason === null ? [] : [reason];
+    vi.spyOn(transport, 'sdlcState').mockResolvedValue(oneSystem(answer));
   };
 
-  it("shows a fix's needs-the-plugin reason as it is, without the document prefix (F5)", async () => {
+  it('says to install the plugin on the change list when a plan could not be read and the plugin is missing', async () => {
     const { vm, transport } = setup();
-    withFix(transport, { stage: "fix-needs-plugin", fix_row: null, plan_unreadable_reason: "Needs ai-sdlc 0.13.0 or later." });
+    withUnreadablePlan(transport);
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' });
     await vm.init();
-    await settled(vm);
-    expect(noticeOf(vm)?.text).toBe("Needs ai-sdlc 0.13.0 or later.");
+    expect(noticeOf(vm)?.text).toBe('Install the ai-sdlc plugin to read this document');
+    expect(noticeOf(vm)?.tone).toBe('warning');
   });
 
-  it("names the change when the program could not say where a fix stands (F5)", async () => {
+  it('says to update the plugin when it is too old', async () => {
     const { vm, transport } = setup();
-    withFix(transport, { stage: "fix-unsettled", fix_row: null, plan_unreadable_reason: "git failed" });
+    withUnreadablePlan(transport);
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.6.0.' });
     await vm.init();
-    await settled(vm);
-    const name = vm.changes()[0].change;
-    expect(noticeOf(vm)?.text).toBe(`Kata could not read where ${name} stands: git failed`);
+    expect(noticeOf(vm)?.text).toBe('The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.6.0.');
   });
 
-  it("keeps the document prefix for a row 2 fix whose plan is unreadable (F5)", async () => {
+  it('says a plan could not be read when the plugin is usable but gave no reason', async () => {
     const { vm, transport } = setup();
-    withFix(transport, { stage: "fix-unsettled", fix_row: 2, plan_unreadable_reason: "front matter is not closed" });
+    withUnreadablePlan(transport);
     await vm.init();
-    await settled(vm);
-    expect(noticeOf(vm)?.text).toBe("Could not read this document: front matter is not closed");
+    expect(noticeOf(vm)?.text).toContain('could not be read');
   });
 
-  it("shows no notice when every plan was read", async () => {
+  it("shows the plugin's own reason on the change list instead of blaming Node.js (F26)", async () => {
+    const { vm, transport } = setup();
+    withUnreadablePlan(transport, 'layout 3 is newer than this program reads');
+    await vm.init();
+    expect(noticeOf(vm)?.text).toContain('layout 3 is newer than this program reads');
+    expect(noticeOf(vm)?.text).not.toContain('Node.js 20');
+  });
+
+  it('shows no notice when every plan was read', async () => {
     const { vm } = setup();
     await vm.init();
-    await settled(vm);
     expect(noticeOf(vm)).toBeNull();
   });
 });
 
 describe('SdlcHomeViewModel workspace instructions', () => {
-  const lightReady: Readiness = { kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true, naming: false };
+  const lightReady: Readiness = { kind: 'ready', plugin: { dir: '/p', version: '1.1.0', layouts: [1] }, gh: 'present' };
 
   it('reads the instructions state only when the plugin supports the light track', async () => {
     const { vm, transport } = setup();
     const read = vi.spyOn(transport, 'sdlcInstructions');
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ ...lightReady, version: '0.9.0', lightTrack: false });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.9.0.' });
     await vm.init();
     expect(read).not.toHaveBeenCalled();
     expect(vm.instructions()).toBeNull();
@@ -818,144 +791,123 @@ describe('SdlcHomeViewModel workspace instructions', () => {
 });
 
 
-/* --- the home page in two passes: names first, stages after --- */
+/* --- R1.4: the changes list reads every change in one pass --- */
 
-/** A pass the test drives by hand: `send` plays the events the backend would send, `id()` is the latest pass id handed out. */
-function controlledPass(transport: MockTransport) {
-  const listeners = new Set<(e: StageEvent) => void>();
-  let last = 0;
-  vi.spyOn(transport, 'onStageEvent').mockImplementation(async (cb) => {
-    listeners.add(cb);
-    return () => {
-      listeners.delete(cb);
-    };
-  });
-  const reads = vi.spyOn(transport, 'sdlcReadStages').mockImplementation(async () => ++last);
-  const next = () => ++last;
-  const send = (ev: StageEvent) => {
-    for (const l of [...listeners]) l(ev);
-  };
-  const finish = (pass: number, infos: ChangeInfo[] = []) => {
-    infos.forEach((info, i) => {
-      send({ kind: 'stage', pass, change: info.change, info });
-      send({ kind: 'progress', pass, read: i + 1, total: infos.length });
-    });
-    send({ kind: 'done', pass });
-  };
-  return { reads, send, finish, next, id: () => last };
-}
+const gate = { candidate: false, stop: null, accept: [] };
+const stateOf = (change: string): ChangeState => ({
+  change,
+  master: '/m',
+  folder: `/m/intent/commerce/${change}`,
+  inCopy: false,
+  title: null,
+  track: 'full',
+  documents: {
+    intent: { exists: true, inHead: true, headStatus: 'accepted', workingStatus: 'accepted', uncommitted: false, pin: null },
+    spec: { exists: false, inHead: false, headStatus: null, workingStatus: null, uncommitted: false, pin: null },
+    plan: { exists: false, inHead: false, headStatus: null, workingStatus: null, uncommitted: false, pin: null },
+  },
+  scenarios: null,
+  tasks: null,
+  buildLogs: {},
+  review: { committed: 0, draft: 'none' },
+  fix: null,
+  ready: { spec: gate, plan: gate, build: gate, review: gate, done: gate, reject: gate },
+});
+const viewOf = (change: string, text: string, readiness: Readiness): ChangeView => ({
+  state: stateOf(change),
+  offer: { stage: 'spec-ready', label: { step: 'spec', text, tone: 'muted' }, actions: [] },
+  live: { runLive: false, buildStopped: false, buildLive: false },
+  readiness,
+});
+const READY: Readiness = { kind: 'ready', plugin: { dir: '/p', version: '1.1.0', layouts: [1, 2] }, gh: 'present' };
+const BLOCKED: Readiness = { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 1.0.0.' };
+/** The plugin's answer for a system with `n` changes, each labeled by the plugin with words of its own. */
+const systemViewOf = (n: number, readiness: Readiness = READY): SystemView => ({
+  system: 'commerce',
+  readiness,
+  canStartChange: readiness.kind === 'ready',
+  startChangeReason: readiness.kind === 'blocked' ? readiness.message : null,
+  changes: Array.from({ length: n }, (_, i) => viewOf(`2026-10-${String(10 + i).padStart(2, '0')}-change-${i}`, `The plugin says ${i}`, readiness)),
+  problems: [],
+});
 
-/** A pass that answers by itself with every stage `sdlcReadChange` gives, for the tests that are not about the pass. */
-function instantPass(transport: MockTransport) {
-  const pass = controlledPass(transport);
-  pass.reads.mockImplementation(async (master, system) => {
-    const id = pass.next();
-    setTimeout(() => void readAllChanges(transport, master, system).then((infos) => pass.finish(id, infos)), 0);
-    return id;
-  });
-}
+/** The backend's answer for a workspace of one system: the set may start a change exactly when that system may. */
+const oneSystem = (v: SystemView): WorkspaceView => ({ systems: [v], canStartChange: v.canStartChange, startChangeReason: v.startChangeReason });
 
-/** The stage pass has ended: every stage the mock reads is in. */
-const settled = (vm: SdlcHomeViewModel) => vi.waitFor(() => expect(vm.reading()).toBe(false));
-
-const twelve = (): ChangeName[] => Array.from({ length: 12 }, (_, i) => ({ change: `2026-10-${String(10 + i).padStart(2, '0')}-change-${i}`, title: null }));
-const infoFor = async (transport: MockTransport, change: string, stage: ChangeInfo['stage']): Promise<ChangeInfo> => {
-  const found = (await readAllChanges(transport))[0];
-  return { ...found, change, stage };
-};
-const stageOf = (vm: SdlcHomeViewModel, change: string) => vm.rows().find((r) => r.change === change);
-const flushAll = async () => {
-  for (let i = 0; i < 5; i++) await flush();
-};
 const second: WorkspaceEntry = { id: 'second', name: 'second', folder: '/second', last_opened: 1 };
 
-describe('SdlcHomeViewModel stage passes', () => {
-  afterEach(() => vi.useRealTimers());
-
-  it('shows the change names before any stage, each reading (R1.1)', async () => {
+describe('SdlcHomeViewModel changes list', () => {
+  it('names show at once and every stage fills in from one state read (R1.4)', async () => {
     const { vm, transport } = setup();
-    vi.spyOn(transport, 'sdlcChangeNames').mockResolvedValue(twelve());
-    const pass = controlledPass(transport);
-    await vm.init();
-    expect(vm.state()).toBe('ready');
-    expect(vm.rows().map((r) => r.change)).toEqual(twelve().map((n) => n.change));
-    expect(vm.rows().every((r) => r.info === null && r.error === null)).toBe(true);
-    expect(pass.reads).toHaveBeenCalledTimes(1);
-    expect(vm.reading()).toBe(true);
+    const answer = systemViewOf(20);
+    const read = vi.spyOn(transport, 'sdlcState').mockResolvedValue(oneSystem(answer));
+    // The slow reads never finish: the names must be on screen without them.
+    const health = vi.spyOn(transport, 'sdlcContextHealth').mockImplementation(() => new Promise(() => undefined));
+    void vm.init();
+    await vi.waitFor(() => expect(vm.rows().length).toBe(20));
+    expect(health).toHaveBeenCalled();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(vm.rows().map((r) => r.change)).toEqual(answer.changes.map((c) => c.state.change));
+    expect(vm.rows().map((r) => r.offer?.label.text)).toEqual(answer.changes.map((c) => c.offer.label.text));
   });
 
-  it('reads the context health after the names, not before the page shows (R1.1)', async () => {
+  it('a blocked readiness offers no new change (R10.1)', async () => {
     const { vm, transport } = setup();
-    const names = vi.spyOn(transport, 'sdlcChangeNames');
+    vi.spyOn(transport, 'sdlcState').mockResolvedValue(oneSystem(systemViewOf(2, BLOCKED)));
+    await vm.init();
+    await vi.waitFor(() => expect(vm.rows().length).toBe(2));
+    expect(vm.canStartChange()).toBe(false);
+    expect(vm.startChangeReason()).toBe(BLOCKED.message);
+    vm.openNewChange();
+    expect(vm.newChangeOpen()).toBe(false);
+    expect(toastText()).toContain('1.1.0');
+  });
+
+  it('reads every system in one call and shows whether a change may start as the backend decided for the set (F11)', async () => {
+    const { vm, transport } = setup();
+    // Each system says it may, yet the backend refuses for the set: the page follows the backend, it merges nothing itself.
+    const read = vi.spyOn(transport, 'sdlcState').mockResolvedValue({ systems: [systemViewOf(1), { ...systemViewOf(1), system: 'other' }], canStartChange: false, startChangeReason: 'other: refused' });
+    await vm.init();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read.mock.calls[0][1]).toEqual(['commerce']);
+    expect(vm.canStartChange()).toBe(false);
+    expect(vm.startChangeReason()).toBe('other: refused');
+  });
+
+  it('a ready readiness offers a new change (R10.1)', async () => {
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'sdlcState').mockResolvedValue(oneSystem(systemViewOf(1)));
+    await vm.init();
+    expect(vm.canStartChange()).toBe(true);
+    expect(vm.startChangeReason()).toBeNull();
+    vm.openNewChange();
+    expect(vm.newChangeOpen()).toBe(true);
+  });
+
+  it('reads the context health and the instructions after the change list (R1.1)', async () => {
+    const { vm, transport } = setup();
+    const state = vi.spyOn(transport, 'sdlcState');
     const health = vi.spyOn(transport, 'sdlcContextHealth');
     const instructions = vi.spyOn(transport, 'sdlcInstructions');
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true, naming: false });
-    controlledPass(transport);
     await vm.init();
     expect(health).toHaveBeenCalled();
-    expect(names.mock.invocationCallOrder[0]).toBeLessThan(health.mock.invocationCallOrder[0]);
-    expect(names.mock.invocationCallOrder[0]).toBeLessThan(instructions.mock.invocationCallOrder[0]);
+    expect(instructions).toHaveBeenCalled();
+    expect(state.mock.invocationCallOrder[0]).toBeLessThan(health.mock.invocationCallOrder[0]);
+    expect(state.mock.invocationCallOrder[0]).toBeLessThan(instructions.mock.invocationCallOrder[0]);
   });
 
-  it('opens a change and starts a new change while stages are still read (R1.2)', async () => {
+  it('opens a change and starts a new change while the slow reads are still going (R1.2)', async () => {
     const { vm, transport, navigate, runner } = setup();
-    controlledPass(transport);
+    vi.spyOn(transport, 'sdlcContextHealth').mockImplementation(() => new Promise(() => undefined));
     const start = vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened', change: '2026-10-30-new', branch: 'change/2026-10-30-new' });
-    await vm.init();
-    expect(vm.reading()).toBe(true);
+    void vm.init();
+    await vi.waitFor(() => expect(vm.rows().length).toBeGreaterThan(0));
+    expect(vm.state()).toBe('ready');
     await vm.openChange('commerce', '2026-10-12-product-photo-upload');
     expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', '2026-10-12-product-photo-upload']);
-    await vm.newChange('commerce', 'flag prices', 'full');
+    // The reload after the run waits for the slow reads, so the call is not awaited.
+    void vm.newChange('commerce', 'flag prices', 'full');
     expect(start).toHaveBeenCalledTimes(1);
-    expect(vm.reading()).toBe(true);
-  });
-
-  it('says how many of the changes are read, and drops the line after the last (R2.1)', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
-    const { vm, transport } = setup();
-    vi.spyOn(transport, 'sdlcChangeNames').mockResolvedValue(twelve());
-    const pass = controlledPass(transport);
-    const line = TestBed.inject(ProgressStore).view('home');
-    await vm.init();
-    vi.advanceTimersByTime(500);
-    expect(line()?.label).toBe('0 of 12 changes read');
-    pass.send({ kind: 'progress', pass: pass.id(), read: 5, total: 12 });
-    expect(line()?.label).toBe('5 of 12 changes read');
-    pass.send({ kind: 'progress', pass: pass.id(), read: 12, total: 12 });
-    pass.send({ kind: 'done', pass: pass.id() });
-    await vi.waitFor(() => expect(line()).toBeNull());
-    expect(vm.reading()).toBe(false);
-  });
-
-  it('shows the reading-stages progress line (R7.1)', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
-    const { vm, transport } = setup();
-    const pass = controlledPass(transport);
-    const line = TestBed.inject(ProgressStore).view('home');
-    await vm.init();
-    expect(line()).toBeNull();
-    vi.advanceTimersByTime(500);
-    expect(PROGRESS_STEPS['reading-stages'].lines).toContain(line()!.line);
-    expect(line()!.label).toMatch(/^0 of \d+ changes read$/);
-    pass.send({ kind: 'done', pass: pass.id() });
-    await vi.waitFor(() => expect(line()).toBeNull());
-  });
-
-  it('never shows a stage from before this session (R2.3)', async () => {
-    const first = setup();
-    const before = controlledPass(first.transport);
-    await first.vm.init();
-    const c = first.vm.rows()[0].change;
-    before.finish(before.id(), [await infoFor(first.transport, c, 'plan-ready')]);
-    expect(stageOf(first.vm, c)?.info?.stage).toBe('plan-ready');
-
-    TestBed.resetTestingModule();
-    const next = setup();
-    const after = controlledPass(next.transport);
-    await next.vm.init();
-    expect(stageOf(next.vm, c)).toMatchObject({ info: null, error: null });
-    after.finish(after.id(), [await infoFor(next.transport, c, 'plan-awaiting')]);
-    expect(stageOf(next.vm, c)?.info?.stage).toBe('plan-awaiting');
   });
 
   it('reads only the current workspace; the switcher has no counts (R3.1)', async () => {
@@ -968,142 +920,113 @@ describe('SdlcHomeViewModel stage passes', () => {
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue(three);
     const missing = vi.spyOn(transport, 'sdlcMissingFolders').mockResolvedValue(['/c']);
     const scan = vi.spyOn(transport, 'sdlcScan');
-    const names = vi.spyOn(transport, 'sdlcChangeNames');
-    const pass = controlledPass(transport);
+    const state = vi.spyOn(transport, 'sdlcState');
     await vm.init();
     expect(scan.mock.calls.map((c) => c[0])).toEqual(['/a']);
-    expect(names.mock.calls.every((c) => c[0].startsWith('/a/'))).toBe(true);
-    expect(pass.reads.mock.calls.every((c) => c[0].startsWith('/a/'))).toBe(true);
+    expect(state.mock.calls.every((c) => c[0] === '/a')).toBe(true);
     expect(missing).toHaveBeenCalledWith(['/a', '/b', '/c']);
     expect(vm.missing()).toEqual(['c']);
     expect('counts' in vm).toBe(false);
   });
 
-  it('picking a workspace runs both passes for it, and the pass before reports nothing more (R3.2)', async () => {
+  it('picking a workspace reads the state for it (R3.2)', async () => {
     const { vm, transport } = setup();
-    const names = vi.spyOn(transport, 'sdlcChangeNames');
-    const pass = controlledPass(transport);
+    const state = vi.spyOn(transport, 'sdlcState');
     await vm.init();
-    const old = pass.id();
-    const c = vm.rows()[0].change;
     vm.workspaces.set([...vm.workspaces(), second]);
     await vm.selectWorkspace('second');
-    expect(names.mock.calls.at(-1)![0].startsWith('/second/')).toBe(true);
-    expect(pass.reads.mock.calls.at(-1)![0].startsWith('/second/')).toBe(true);
-    expect(pass.id()).toBeGreaterThan(old);
-    pass.send({ kind: 'stage', pass: old, change: c, info: await infoFor(transport, c, 'plan-ready') });
-    expect(stageOf(vm, c)?.info).toBeNull();
-    pass.finish(pass.id(), [await infoFor(transport, c, 'plan-awaiting')]);
-    expect(stageOf(vm, c)?.info?.stage).toBe('plan-awaiting');
-    await settled(vm);
+    expect(state.mock.calls.at(-1)![0]).toBe('/second');
   });
 
-  describe('marks rows as checked and reads again on each trigger (R5.1)', () => {
+  describe('progress while the plugin is asked', () => {
+    afterEach(() => vi.useRealTimers());
+
+    it('a slow state read shows a progress line naming the step', async () => {
+      vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+      const { vm, transport } = setup();
+      const state = vi.spyOn(transport, 'sdlcState');
+      const line = TestBed.inject(ProgressStore).view('home');
+      await vm.init();
+      expect(line()).toBeNull();
+      let answer: (v: WorkspaceView) => void = () => undefined;
+      state.mockImplementation(() => new Promise<WorkspaceView>((ok) => (answer = ok)));
+      vm.windowFocused();
+      vi.advanceTimersByTime(300);
+      expect(line()).toBeNull();
+      vi.advanceTimersByTime(200);
+      expect(line()?.label).toBe('Reading changes');
+      expect(PROGRESS_STEPS['reading-stages'].lines).toContain(line()!.line);
+      answer(oneSystem(systemViewOf(1)));
+      await vi.waitFor(() => expect(line()).toBeNull());
+    });
+  });
+
+  describe('reads the state again on each trigger (R5.1)', () => {
     const C = '2026-10-12-product-photo-upload';
-    type Over = ReturnType<typeof setup>;
-    type Case = { event: string; before: ChangeInfo['stage']; after: ChangeInfo['stage']; first: string | null; again: (vm: SdlcHomeViewModel, over: Over) => Promise<SdlcHomeViewModel> };
-    const reopened = () => TestBed.runInInjectionContext(() => new SdlcHomeViewModel());
-    const cases: Case[] = [
-      {
-        event: 'a document run for change C ends', before: 'intent-awaiting', after: 'intent-accepted-uncommitted', first: C,
-        again: async (vm, { runner }) => {
-          vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened', change: C, branch: `change/${C}` });
-          await vm.newChange('commerce', 'idea', 'full');
-          return vm;
-        },
-      },
-      { event: 'a build run for change C ends and the page is reopened', before: 'build-stopped', after: 'build-finished', first: null, again: async () => reopened() },
-      { event: 'the engineer returns to the home page from change C', before: 'spec-accepted-uncommitted', after: 'plan-ready', first: null, again: async () => reopened() },
-      { event: 'the Workbench window regains focus after an outside edit', before: 'plan-accepted-uncommitted', after: 'plan-superseded', first: null, again: async (vm) => { vm.windowFocused(); return vm; } },
-    ];
+    const relabeled = (text: string): WorkspaceView => {
+      const answer = systemViewOf(0);
+      answer.changes = [viewOf(C, text, READY)];
+      return oneSystem(answer);
+    };
+    const labelOf = (vm: SdlcHomeViewModel) => vm.rows().find((r) => r.change === C)?.offer.label.text;
 
-    it.each(cases)('$event', async (c) => {
-      const over = setup();
-      const { vm, transport } = over;
-      const pass = controlledPass(transport);
-      await vm.init();
-      pass.finish(pass.id(), [await infoFor(transport, C, c.before)]);
-      expect(stageOf(vm, C)).toMatchObject({ checking: false });
-      expect(stageOf(vm, C)?.info?.stage).toBe(c.before);
-
-      const reads = pass.reads.mock.calls.length;
-      const shown = await c.again(vm, over);
-      if (shown !== vm) await shown.init();
-      await vi.waitFor(() => expect(pass.reads.mock.calls.length).toBe(reads + 1));
-      expect(pass.reads.mock.calls.at(-1)![2] ?? null).toBe(c.first);
-      expect(stageOf(shown, C)).toMatchObject({ checking: true });
-      expect(stageOf(shown, C)?.info?.stage).toBe(c.before);
-
-      pass.finish(pass.id(), [await infoFor(transport, C, c.after)]);
-      expect(stageOf(shown, C)).toMatchObject({ checking: false });
-      expect(stageOf(shown, C)?.info?.stage).toBe(c.after);
-    });
-
-    it('trigger table row 1: nothing running, nothing queued, a trigger starts a pass now', async () => {
+    it('the window regaining focus asks the plugin again and the row follows its new answer', async () => {
       const { vm, transport } = setup();
-      const pass = controlledPass(transport);
+      const state = vi.spyOn(transport, 'sdlcState').mockResolvedValue(relabeled('Plan · ready to start'));
       await vm.init();
-      pass.finish(pass.id());
+      expect(labelOf(vm)).toBe('Plan · ready to start');
+      state.mockResolvedValue(relabeled('Plan · superseded'));
       vm.windowFocused();
-      await vi.waitFor(() => expect(pass.reads).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(labelOf(vm)).toBe('Plan · superseded'));
+      expect(state).toHaveBeenCalledTimes(2);
     });
 
-    it('trigger table row 2: a pass running, a trigger queues one pass that starts when the running one ends', async () => {
+    it('a document run that ends reads the state again', async () => {
+      const { vm, transport, runner } = setup();
+      const state = vi.spyOn(transport, 'sdlcState');
+      vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened', change: C, branch: `change/${C}` });
+      await vm.init();
+      const reads = state.mock.calls.length;
+      await vm.newChange('commerce', 'idea', 'full');
+      expect(state.mock.calls.length).toBe(reads + 1);
+    });
+
+    it('does nothing while a task holds the page', async () => {
+      const { vm, transport, lock } = setup();
+      const state = vi.spyOn(transport, 'sdlcState');
+      await vm.init();
+      void lock.runSteps('Busy', [{ label: 'x', run: () => new Promise<null>(() => undefined) }]);
+      await flush();
+      const reads = state.mock.calls.length;
+      vm.windowFocused();
+      expect(state.mock.calls.length).toBe(reads);
+    });
+
+    it('an older read that answers after a newer one is ignored', async () => {
       const { vm, transport } = setup();
-      const pass = controlledPass(transport);
+      const state = vi.spyOn(transport, 'sdlcState').mockResolvedValue(relabeled('Plan · ready to start'));
       await vm.init();
+      let release: (v: WorkspaceView) => void = () => undefined;
+      state.mockImplementationOnce(() => new Promise<WorkspaceView>((ok) => (release = ok)));
       vm.windowFocused();
-      await flushAll();
-      expect(pass.reads).toHaveBeenCalledTimes(1);
-      pass.finish(pass.id());
-      await vi.waitFor(() => expect(pass.reads).toHaveBeenCalledTimes(2));
+      state.mockResolvedValueOnce(relabeled('Plan · superseded'));
+      vm.windowFocused();
+      await vi.waitFor(() => expect(labelOf(vm)).toBe('Plan · superseded'));
+      release(relabeled('Spec · ready to start'));
+      await flush();
+      expect(labelOf(vm)).toBe('Plan · superseded');
     });
 
-    it('trigger table row 3: a pass running and one queued, more triggers add nothing', async () => {
+    it('a state read that fails says so and keeps the rows it had', async () => {
       const { vm, transport } = setup();
-      const pass = controlledPass(transport);
+      const state = vi.spyOn(transport, 'sdlcState');
       await vm.init();
+      const before = vm.rows().length;
+      state.mockRejectedValue('the program did not run');
       vm.windowFocused();
-      vm.windowFocused();
-      vm.windowFocused();
-      pass.finish(pass.id());
-      await vi.waitFor(() => expect(pass.reads).toHaveBeenCalledTimes(2));
-      pass.finish(pass.id());
-      await flushAll();
-      expect(pass.reads).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => expect(toastText()).toContain('the program did not run'));
+      expect(vm.rows().length).toBe(before);
     });
-  });
-
-  it('follows the row display table', async () => {
-    const { vm, transport } = setup();
-    const pass = controlledPass(transport);
-    await vm.init();
-    const c = vm.rows()[0].change;
-    // Row 1: no value from this session, a pass running: Reading in place of the stage.
-    expect(stageOf(vm, c)).toMatchObject({ info: null, error: null, checking: false });
-    expect(vm.reading()).toBe(true);
-    // Row 3: a value, no pass running: the stored stage.
-    pass.finish(pass.id(), [await infoFor(transport, c, 'plan-ready')]);
-    expect(stageOf(vm, c)).toMatchObject({ checking: false });
-    expect(stageOf(vm, c)?.info?.stage).toBe('plan-ready');
-    await settled(vm);
-    // Row 2: a value, a pass running that has not sent this row yet: the stored stage, marked as being checked.
-    vm.windowFocused();
-    await vi.waitFor(() => expect(stageOf(vm, c)?.checking).toBe(true));
-    expect(stageOf(vm, c)?.info?.stage).toBe('plan-ready');
-    expect(vm.reading()).toBe(true);
-    // Row 4 (no value and no pass) cannot happen: a name enters the rows only from a names read, and every names read starts a pass.
-  });
-
-  it('shows a change that could not be read with its reason, and goes on with the others', async () => {
-    const { vm, transport } = setup();
-    const pass = controlledPass(transport);
-    await vm.init();
-    const [a, b] = vm.rows().map((r) => r.change);
-    pass.send({ kind: 'failed', pass: pass.id(), change: a, error: 'worker panicked' });
-    pass.finish(pass.id(), [await infoFor(transport, b, 'plan-ready')]);
-    expect(stageOf(vm, a)).toMatchObject({ info: null, error: 'worker panicked' });
-    expect(stageOf(vm, b)?.info?.stage).toBe('plan-ready');
   });
 });
 
@@ -1151,7 +1074,7 @@ describe('SdlcHomeViewModel naming at the start of a change', () => {
 
   it('a refusal names the base branch the backend resolves, not a stored one', async () => {
     const { vm, transport } = await opened({ kind: 'error', reason: 'unusable', message: 'no {slug}' });
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'main', others: [], default_base: 'develop', pending_change: null });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'main', others: [], default_base: 'develop' });
     await vm.selectWorkspace(vm.workspaces()[0].id);
     vm.openNewChange();
     await vi.waitFor(() => expect(vm.namingError()).toContain('committed to develop;'));
@@ -1212,4 +1135,159 @@ describe('SdlcHomeViewModel naming at the start of a change', () => {
     expect(spy).toHaveBeenCalledWith(expect.anything(), 'commerce', 'flag prices', 'full', expect.any(Function), { workType: 'refactor', scope: 'PROJ-123' });
     expect(start).not.toHaveBeenCalled();
   });
+});
+
+describe('SdlcHomeViewModel a refused start (R2.2)', () => {
+  async function opened() {
+    const ctx = setup();
+    await ctx.vm.init();
+    ctx.vm.openNewChange();
+    await vi.waitFor(() => expect(ctx.vm.newChangeNaming()).not.toBeNull());
+    ctx.vm.pickTrack('full');
+    ctx.vm.pickWorkType('refactor');
+    ctx.vm.setScope('PROJ-123');
+    await vi.waitFor(() => expect(ctx.vm.namingReady()).toBe(true));
+    return ctx;
+  }
+
+  it.each([
+    ['taken', 'feat/x is taken in master by the branch feat/x'],
+    ['invalid', 'feat/x: a branch name cannot contain a space'],
+  ])('a %s branch name: the dialog opens again on the same description with the reason and asks for another name', async (_row, problem) => {
+    const { vm, runner } = await opened();
+    vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'retry', ask: 'branch', problems: [problem] });
+    await vm.newChange('commerce', 'flag prices', 'full');
+    expect(vm.newChangeOpen()).toBe(true);
+    expect(vm.newChangeIdea()).toBe('flag prices');
+    expect(vm.newChangeTrack()).toBe('full');
+    expect(vm.newChangeSystem()).toBe('commerce');
+    expect(vm.branchProblems()).toEqual([problem]);
+    // What the engineer picked is still picked.
+    expect(vm.workType()).toBe('refactor');
+    expect(vm.scope()).toBe('PROJ-123');
+  });
+
+  it('starts again with the branch name the engineer gave, and asks for no branch once it works', async () => {
+    const { vm, runner } = await opened();
+    const spy = vi.spyOn(runner, 'newChange').mockResolvedValueOnce({ kind: 'retry', ask: 'branch', problems: ['taken'] }).mockResolvedValue({ kind: 'stopped' });
+    await vm.newChange('commerce', 'flag prices', 'full');
+    await vm.newChange('commerce', 'flag prices', 'full', 'feat/y');
+    expect(spy.mock.calls[1][6]).toBe('feat/y');
+    expect(spy.mock.calls[1][5]).toEqual({ workType: 'refactor', scope: 'PROJ-123' });
+    expect(vm.newChangeOpen()).toBe(false);
+    expect(vm.branchProblems()).toEqual([]);
+  });
+
+  it('a scope the plugin refuses: the dialog opens again with the reason on the scope and Start off until it is changed', async () => {
+    const { vm, runner } = await opened();
+    vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'retry', ask: 'scope', problems: ['the scope: a scope cannot contain a space'] });
+    await vm.newChange('commerce', 'flag prices', 'full');
+    expect(vm.newChangeOpen()).toBe(true);
+    expect(vm.scopeProblems()).toEqual(['the scope: a scope cannot contain a space']);
+    expect(vm.namingReady()).toBe(false);
+    expect(vm.branchProblems()).toEqual([]);
+  });
+
+  it('a start that went through leaves the dialog closed', async () => {
+    const { vm, runner } = await opened();
+    vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened', change: '2026-10-18-x', branch: 'change/2026-10-18-x' });
+    await vm.newChange('commerce', 'flag prices', 'full');
+    expect(vm.newChangeOpen()).toBe(false);
+  });
+});
+
+describe('SdlcHomeViewModel old per-machine checks', () => {
+  const demoAt = (demo: string | null) => history.replaceState({}, '', demo ? `/?demo=${demo}` : '/');
+  afterEach(() => demoAt(null));
+
+  it('shows the old checks file with its text the first time the system is opened, and converts or commits nothing (R6.1)', async () => {
+    demoAt('old-checks');
+    const { vm, transport, saveSettings, runAgent } = setup();
+    const seen = vi.spyOn(transport, 'sdlcOldChecksSeen');
+    await vm.init();
+    await flush();
+    const [shown] = vm.oldChecks();
+    expect(vm.oldChecks().length).toBe(1);
+    expect(shown.system).toBe('commerce');
+    expect(shown.path).toMatch(/workbench.checks.commerce\.toml$/);
+    expect(shown.text).toContain('command');
+    // Told once: the backend is asked to remember it, and nothing else is written or run.
+    expect(seen).toHaveBeenCalledWith(['commerce']);
+    expect(saveSettings).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not show it again once the engineer has been told, in this session or the next (R6.2)', async () => {
+    demoAt('old-checks');
+    const { vm, transport } = setup();
+    await vm.init();
+    await flush();
+    expect(vm.oldChecks().length).toBe(1);
+    vm.dismissOldChecks('commerce');
+    expect(vm.oldChecks()).toEqual([]);
+    // Opening the system again: the backend has it as told.
+    expect(await transport.sdlcOldChecks('D:/Work/acme-commerce', ['commerce'])).toEqual([]);
+    await vm.init();
+    await flush();
+    expect(vm.oldChecks()).toEqual([]);
+  });
+
+  it('shows nothing when there is no old checks file', async () => {
+    const { vm, transport } = setup();
+    const seen = vi.spyOn(transport, 'sdlcOldChecksSeen');
+    await vm.init();
+    await flush();
+    expect(vm.oldChecks()).toEqual([]);
+    expect(seen).not.toHaveBeenCalled();
+  });
+});
+
+describe("SdlcHomeViewModel: Close waits on the settling of the run on show, tracked per run (F32)", () => {
+  const LIVE = ['running', 'awaiting'];
+  /** Hold the engine's exit of the next run that waits on it, so its after-run work stays going. */
+  const holdExit = (transport: MockTransport) => {
+    let exit!: (v: boolean) => void;
+    const wait = vi.spyOn(transport, 'sdlcWaitRunExit').mockImplementationOnce(() => new Promise<boolean>((r) => (exit = r)));
+    return { wait, release: () => exit(true) };
+  };
+  /** A new change's intent run, started from the home and cancelled: a change run, which the home never shows, held in its after-run work. */
+  const intentSettling = async (transport: MockTransport, runner: SdlcRunner) => {
+    const workspace = (await transport.sdlcWorkspaces())[0];
+    const held = holdExit(transport);
+    void runner.newChange({ workspace, master: MOCK_MASTER, productRepos: [] }, 'commerce', 'flag prices', 'full');
+    const key = changeRunKey({ workspace: workspace.folder, system: 'commerce', change: await transport.sdlcChangeName('flag prices') });
+    const runs = TestBed.inject(ChangeRunStore);
+    await vi.waitFor(() => expect(runs.session(key)?.runId).toBeTruthy());
+    runs.cancel(key);
+    await vi.waitFor(() => expect(held.wait).toHaveBeenCalled());
+  };
+  /** A run of no change that takes the screen, cancelled; it has no master, so it leaves nothing to decide. */
+  const lockRun = async (transport: MockTransport, runner: SdlcRunner, settling: boolean) => {
+    const lock = TestBed.inject(LockStore);
+    void runner.run('Context', { ...seedSpec(), name: 'sdlc-context' }, { workspaceId: 'w', master: null, productRepos: [], link: null });
+    await vi.waitFor(() => expect(LIVE).toContain(TestBed.inject(RunStore).state()));
+    const held = settling ? holdExit(transport) : null;
+    lock.cancel();
+    await vi.waitFor(() => expect(lock.active()).toMatchObject({ kind: 'run', finished: expect.anything() }));
+    if (held) await vi.waitFor(() => expect(held.wait).toHaveBeenCalled());
+    else await flush();
+  };
+
+  const cases: { name: string; shown: 'lock' | 'none'; settling: boolean; other: boolean; blocked: boolean }[] = [
+    { name: 'a lock run on show settling', shown: 'lock', settling: true, other: false, blocked: true },
+    { name: "a lock run on show settled, a new change's intent run settling", shown: 'lock', settling: false, other: true, blocked: false },
+    { name: "no run on show, a new change's intent run settling", shown: 'none', settling: false, other: true, blocked: false },
+  ];
+
+  for (const c of cases) {
+    it(`${c.name}: Close ${c.blocked ? 'is' : 'is not'} blocked`, async () => {
+      const { vm, transport, runAgent, runner } = setup();
+      runAgent.mockRestore();
+      // The intent run comes first: a new change cannot start while a run holds the screen.
+      if (c.other) await intentSettling(transport, runner);
+      if (c.shown === 'lock') await lockRun(transport, runner, c.settling);
+      expect(vm.session() === null).toBe(c.shown === 'none');
+      expect(vm.closeBlocked()).toBe(c.blocked);
+    });
+  }
 });

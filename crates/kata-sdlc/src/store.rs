@@ -40,6 +40,9 @@ pub struct Settings {
     pub mode: Option<Mode>,
     pub remember: bool,
     pub permission_mode: SdlcPermissionMode,
+    /// Systems whose old per-machine checks file the engineer has been told about. Not on the wire to the screens.
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub old_checks_shown: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -162,26 +165,6 @@ pub fn load_pr_records() -> Vec<PrRecord> {
     records
 }
 
-/// Save `record`, replacing the entry of the same workspace, system and change.
-pub fn save_pr_record(record: &PrRecord) -> Result<(), StoreError> {
-    let mut all = load_pr_records();
-    let same = |r: &PrRecord| {
-        r.workspace_id == record.workspace_id
-            && r.system == record.system
-            && r.change == record.change
-    };
-    match all.iter_mut().find(|r| same(r)) {
-        Some(old) => *old = record.clone(),
-        None => all.push(record.clone()),
-    }
-    let dir = workbench_dir().ok_or(StoreError::NoHome)?;
-    std::fs::create_dir_all(&dir)?;
-    let temp = dir.join("pull-requests.json.tmp");
-    std::fs::write(&temp, serde_json::to_string_pretty(&all)?)?;
-    std::fs::rename(&temp, dir.join("pull-requests.json"))?;
-    Ok(())
-}
-
 /// The engineer's arrangement of the build page, kept beside `settings.json`
 /// and never inside a workspace. The backend never looks inside the value.
 pub fn load_build_layout() -> serde_json::Value {
@@ -241,6 +224,7 @@ mod tests {
             mode: Some(Mode::Sdlc),
             remember: true,
             permission_mode: SdlcPermissionMode::Prompt,
+            ..Settings::default()
         };
         save_settings(&s).unwrap();
         assert_eq!(load_settings(), s);
@@ -388,12 +372,6 @@ mod tests {
         assert_eq!(load_run_links(), vec![link("a"), link("b")]);
     }
 
-    fn pr_record(change: &str, declared_at: Option<u64>) -> PrRecord {
-        let mut r = PrRecord::new("w1", "billing", change);
-        r.declared_at = declared_at;
-        r
-    }
-
     #[test]
     #[serial]
     fn old_records_load_with_the_change_branch() {
@@ -406,22 +384,6 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].repos[0].branch, "change/0001-x");
         assert!(loaded[0].left_behind.is_empty());
-    }
-
-    #[test]
-    #[serial]
-    fn pr_records_replace_the_same_change_and_keep_the_rest() {
-        let home = with_home();
-        assert!(load_pr_records().is_empty());
-        save_pr_record(&pr_record("a", None)).unwrap();
-        save_pr_record(&pr_record("b", None)).unwrap();
-        save_pr_record(&pr_record("a", Some(5))).unwrap();
-        assert_eq!(
-            load_pr_records(),
-            vec![pr_record("a", Some(5)), pr_record("b", None)]
-        );
-        let dir = home.temp.path().join("workbench");
-        assert!(!dir.join("pull-requests.json.tmp").exists());
     }
 
     fn task_link(task: &str, run_id: &str) -> TaskLink {

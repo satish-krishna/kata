@@ -79,11 +79,6 @@ pub(crate) fn status_entries(dir: &Path) -> Result<Vec<Entry>, GitError> {
     Ok(entries)
 }
 
-/// The repo-relative paths `git status` lists as uncommitted in `dir`.
-pub(crate) fn dirty_files(dir: &Path) -> Result<Vec<String>, GitError> {
-    Ok(status_entries(dir)?.into_iter().map(|e| e.path).collect())
-}
-
 /// The repository that owns a build log row (`intent/<system>/<change>/build/<repo>.md`) of this
 /// change, or `None` for any other path. Rows are R6.6 data of the build they belong to: nothing
 /// here may delete them, and no working tree's leftovers include one. `participants` reports a row

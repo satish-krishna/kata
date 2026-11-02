@@ -212,55 +212,55 @@ for (const [path, selectors] of Object.entries(EXPECTED_TRIGGERS)) {
 
 // A dialog the page opens from a button of its own, not from a dialog trigger, is never clicked by the loop above. A route listed
 // here is visited with the demo it names, each step leads to a dialog that must show the text, and Escape must close that dialog.
-const reviewed = async (page) => {
-  await page.getByRole('button', { name: 'Run review' }).first().click();
-  await page.getByRole('button', { name: 'Start run' }).click();
-  // The scripted review takes a few seconds; declaring done again offers the pull requests once it has been recorded.
-  for (let i = 0; i < 20; i++) {
-    await page.waitForTimeout(1000);
-    await page.getByRole('button', { name: 'Declare done' }).click();
-    await page.locator('hlm-dialog-content:visible').first().waitFor();
-    if (await page.getByRole('button', { name: 'Open pull requests' }).isEnabled()) return;
-    await page.keyboard.press('Escape');
-  }
-  throw new Error('the scripted review never made declaring done offer the pull requests');
-};
 const declare = async (page) => {
   await page.getByRole('button', { name: 'Declare done' }).click();
   await page.locator('hlm-dialog-content:visible').first().waitFor();
+  await page.getByRole('button', { name: 'Open pull requests' }).click();
 };
 const DONE = 'sdlc/commerce/2026-10-18-photo-limits-shipped';
 const DIALOG_STEPS = {
-  'sdlc/commerce/2026-10-19-build-demo?demo=naming': [
-    { label: 'branch name dialog, name mode', text: 'Work type', run: (page) => page.getByRole('button', { name: 'Name the branch' }).click() },
-  ],
-  [`${DONE}?demo=clash`]: [
-    { label: 'done dialog, clash row', text: 'Branch is taken on GitHub', run: declare },
+  ['sdlc/commerce/2026-10-19-build-demo']: [
     {
       label: 'branch name dialog, rename mode',
       text: 'The change moves to this branch',
       run: async (page) => {
-        await declare(page);
-        await page.getByRole('button', { name: 'Pick a new branch name' }).click();
+        await page.getByRole('button', { name: 'Rename branch' }).click();
       },
     },
   ],
-  [`${DONE}?demo=clash-push`]: [
+  [`${DONE}?demo=done-refused`]: [
     {
-      label: 'pull request list, clash row',
-      text: 'branch taken',
-      run: async (page) => {
-        await reviewed(page);
-        await page.getByRole('button', { name: 'Open pull requests' }).click();
-      },
+      label: "the plugin's refusal, every problem as it wrote it",
+      text: 'Declaring done was refused',
+      run: declare,
+    },
+  ],
+  [`${DONE}?demo=done-gh`]: [
+    {
+      label: 'gh missing, refused with how to install it',
+      text: "needs GitHub's command-line tool",
+      run: declare,
+    },
+  ],
+  [`${DONE}?demo=done-cannot`]: [
+    {
+      label: 'a machine that cannot run the step',
+      text: 'Nothing is claimed as pushed.',
+      run: declare,
+    },
+  ],
+  [`${DONE}?demo=done-partial`]: [
+    {
+      label: 'a part-way failure, with what was pushed',
+      text: 'Declaring done stopped part way',
+      run: declare,
     },
     {
-      label: 'branch name dialog, rename mode, from the pull request list',
-      text: 'The change moves to this branch',
+      label: 'declaring done again carries on to the pull requests',
+      text: 'Pull requests',
       run: async (page) => {
-        await reviewed(page);
-        await page.getByRole('button', { name: 'Open pull requests' }).click();
-        await page.getByRole('button', { name: 'Pick a new branch name' }).click();
+        await declare(page);
+        await page.getByRole('button', { name: 'Declare done again' }).click();
       },
     },
   ],
@@ -286,6 +286,47 @@ for (const [path, steps] of Object.entries(DIALOG_STEPS)) {
     if ((await shown.count()) > 0) findings.push({ route: path, kind: 'dialog', detail: `${label}: the dialog did not close on Escape` });
     if (consoleErrors.length) findings.push({ route: path, kind: 'dialog', detail: `${label}: console error: ${consoleErrors[0]}` });
   }
+}
+
+// The close question is asked by the window, not by a button: `?demo=close` makes the mock ask it. It must name each running change,
+// keep the page open on Escape, and leave the page open and quiet after Keep working.
+if (targetRoutes.includes('?demo=close')) {
+  consoleErrors = [];
+  await page.goto(`http://localhost:${port}/?demo=close`, { waitUntil: 'networkidle' });
+  const asked = page.locator('[role="alertdialog"]:visible', { hasText: 'building in kata' });
+  try {
+    await asked.first().waitFor({ timeout: 5000 });
+    if (!(await asked.first().textContent()).includes('writing its spec')) throw new Error('the second change is not named');
+    checks.push({ label: 'close dialog', opened: true });
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(350);
+    if ((await asked.count()) > 0) findings.push({ route: '?demo=close', kind: 'dialog', detail: 'the close dialog did not close on Escape' });
+  } catch (e) {
+    findings.push({ route: '?demo=close', kind: 'dialog', detail: `no visible close dialog naming both changes (${String(e.message).split('\n')[0]})` });
+  }
+  if (consoleErrors.length) findings.push({ route: '?demo=close', kind: 'dialog', detail: `console error: ${consoleErrors[0]}` });
+}
+
+// The finished change keeps its own copy in the mock: its page shows the copy line, and Remove this copy asks before anything is removed.
+// The question is an alert dialog opened by a button of the page, so the loop above never clicks it. Escape must close it, and the copy line must stay.
+if (targetRoutes.includes(DONE)) {
+  consoleErrors = [];
+  await page.goto(`http://localhost:${port}/${DONE}`, { waitUntil: 'networkidle' });
+  const asked = page.locator('[role="alertdialog"]:visible', { hasText: "Remove this change's copy" });
+  try {
+    await page.locator('[data-testid="copy-line"]').waitFor({ timeout: 5000 });
+    await page.getByRole('button', { name: 'Open folder' }).waitFor({ timeout: 5000 });
+    await page.getByRole('button', { name: 'Remove this copy' }).click({ timeout: 5000 });
+    await asked.first().waitFor({ timeout: 5000 });
+    checks.push({ label: 'remove copy dialog', opened: true });
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(350);
+    if ((await asked.count()) > 0) findings.push({ route: DONE, kind: 'dialog', detail: 'the remove copy question did not close on Escape' });
+    if ((await page.locator('[data-testid="copy-line"]').count()) !== 1) findings.push({ route: DONE, kind: 'dialog', detail: 'declining the removal took the copy line away' });
+  } catch (e) {
+    findings.push({ route: DONE, kind: 'dialog', detail: `no copy line with a remove copy question (${String(e.message).split('\n')[0]})` });
+  }
+  if (consoleErrors.length) findings.push({ route: DONE, kind: 'dialog', detail: `console error: ${consoleErrors[0]}` });
 }
 
 await browser.close();

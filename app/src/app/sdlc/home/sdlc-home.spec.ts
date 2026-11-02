@@ -31,10 +31,9 @@ describe('SdlcHome', () => {
   it('renders the changes and repositories of the open workspace with the New change action', async () => {
     const { container } = await mount();
     const read = () => container.textContent!.replace(/\s+/g, ' ');
-    // The names come first, each reading; each stage fills in when the scripted pass reads it.
+    // The names and their stage labels come from one answer of the plugin, so they show together.
     expect(read()).toContain('2026-10-12-product-photo-upload');
-    expect(read()).toContain('Reading');
-    await vi.waitFor(async () => { await settle(); expect(read()).toContain('Spec · awaiting acceptance'); }, { timeout: 4000, interval: 100 });
+    expect(read()).toContain('Spec · awaiting acceptance');
     const text = read();
     expect(text).toContain('In progress on other branches');
     expect(text).toContain('2026-10-17-product-notes');
@@ -58,7 +57,7 @@ describe('SdlcHome', () => {
     expect(run.mock.calls[0][0].name).toBe('sdlc-commerce-context');
   });
 
-  it('crosses the seam: a running agent takes the page with the session view and locks every control outside it', async () => {
+  it('crosses the seam: a running agent takes the page with the session view and leaves only the toolbar enabled outside it (R11.6)', async () => {
     const { container } = await mount();
     vi.spyOn(TestBed.inject(KataTransport), 'runSpec').mockResolvedValue('1');
     container.querySelector<HTMLButtonElement>('[aria-label="Refresh context for customer-portal"]')!.click();
@@ -70,7 +69,7 @@ describe('SdlcHome', () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull();
     const outside = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter((b) => !b.closest('app-sdlc-session'));
     expect(outside.length).toBeGreaterThan(0);
-    expect(outside.filter((b) => !b.disabled).map((b) => b.textContent!.trim() || b.getAttribute('aria-label'))).toEqual([]);
+    expect(outside.filter((b) => !b.disabled).map((b) => b.textContent!.trim() || b.getAttribute('aria-label'))).toEqual(['ai-sdlc', 'acme-commerce', 'AI-SDLC settings']);
   });
 
   it('is a blocking empty state naming where kata looked, with every workspace action withheld, when the plugin is missing', async () => {
@@ -179,5 +178,33 @@ describe('SdlcHome', () => {
     expect(started.mock.calls[0][0].name).toMatch(/-triage$/);
     expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith(runId, expect.any(String), 'look at import only');
+  });
+});
+
+describe('SdlcHome old per-machine checks', () => {
+  afterEach(() => history.replaceState({}, '', '/'));
+
+  it('tells the engineer once that the old checks no longer run, shows the file in mono, and is gone once dismissed (R6.1, R6.2)', async () => {
+    history.replaceState({}, '', '/?demo=old-checks');
+    const { container, transport } = await mount();
+    const notice = container.querySelector('[data-testid="old-checks"]')!;
+    expect(notice).not.toBeNull();
+    const text = notice.textContent!.replace(/\s+/g, ' ');
+    expect(text).toContain('These checks no longer run.');
+    expect(text).toContain('Checks are now team settings in the master repository');
+    expect(text).toContain('--hooks');
+    const file = notice.querySelector<HTMLElement>('[data-testid="old-checks-text"]')!;
+    expect(file.classList.contains('k-mono')).toBe(true);
+    expect(file.textContent).toContain('command');
+    Array.from(notice.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'Dismiss')!.click();
+    await settle();
+    expect(container.querySelector('[data-testid="old-checks"]')).toBeNull();
+    // A later visit: the backend no longer offers it.
+    expect(await transport.sdlcOldChecks('D:/Work/acme-commerce', ['commerce'])).toEqual([]);
+  });
+
+  it('shows no notice when the system has no old checks file', async () => {
+    const { container } = await mount();
+    expect(container.querySelector('[data-testid="old-checks"]')).toBeNull();
   });
 });

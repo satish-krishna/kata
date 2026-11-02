@@ -1,5 +1,4 @@
 import { Component, input, output } from '@angular/core';
-import type { Problem } from '@bindings/Problem';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideTriangleAlert } from '@ng-icons/lucide';
 import type { BrnDialogState } from '@spartan-ng/brain/dialog';
@@ -18,11 +17,8 @@ import { HlmButtonImports } from '@spartan-ng/helm/button';
 export class BuildRefusalDialog {
   /** The refusal text; the dialog is open exactly while this is set. */
   readonly reason = input.required<string | null>();
-  /** What the check found in the plan or a build log, one line each; empty when the reason says it all. */
-  readonly problems = input<Problem[]>([]);
-  /** The branch that holds other work, when that is why the build did not start. */
-  readonly taken = input<{ repo: string; branch: string } | null>(null);
-  readonly rename = output<void>();
+  /** What the plugin found, one line each (every repository's problems together); empty when the reason says it all. */
+  readonly problems = input<string[]>([]);
   readonly close = output<void>();
 
   /** Close and Escape both close the overlay from inside; surface that as close. */

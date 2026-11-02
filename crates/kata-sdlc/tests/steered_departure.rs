@@ -1,7 +1,7 @@
 //! R6.3: off-plan work an operator message causes in a build surfaces through the existing departure
 //! path. The build skill, the plan and the build log format are unchanged, so this pins that path.
 //!
-//! These tests run the vendored copy of the plugin's format program in `tests/ai-sdlc-format/`.
+//! These tests run the vendored copy of the plugin's format program in `tests/ai-sdlc-tools/`.
 #![allow(clippy::disallowed_methods)]
 use kata_sdlc::build::{self, Departure};
 use kata_sdlc::format;
@@ -29,8 +29,8 @@ fn copy_dir(from: &Path, to: &Path) {
 fn plugin(tmp: &Path) -> PathBuf {
     let dir = tmp.join("plugin");
     copy_dir(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format"),
-        &dir.join("format"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools"),
+        &dir.join("tools"),
     );
     dir
 }
@@ -100,7 +100,7 @@ fn operator_caused_departure_reads_like_any_other() {
 
     // The format program reports no problem, neither in the read nor in its own check.
     assert!(steered.problems.is_empty(), "{:?}", steered.problems);
-    let program = plugin.join("format/check.mjs");
+    let program = plugin.join("tools/ai-sdlc.ts");
     let problems =
         format::check_change(&program, &change, &["spec.md", "plan.md", "build/kata.md"]).unwrap();
     assert!(problems.is_empty(), "{problems:?}");

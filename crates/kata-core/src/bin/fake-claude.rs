@@ -1,7 +1,7 @@
 //! Test stand-in for the real `claude` CLI. Ignores all args except behavior
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
-//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho" | "argsfiles" | "subagent" | "hooks" | "noinit" | "consoleprobe" | "consoleprobe-relay" | "hook-relay" | "steer"
+//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho" | "argsfiles" | "subagent" | "hooks" | "noinit" | "consoleprobe" | "consoleprobe-relay" | "hook-relay" | "steer" | "console-report"
 #![allow(clippy::disallowed_methods)]
 use std::io::Write;
 use std::{thread, time::Duration};
@@ -21,6 +21,11 @@ fn main() {
     }
     let mode = std::env::var("KATA_FAKE_MODE").unwrap_or_else(|_| "ok".into());
     let mut out = std::io::stdout();
+    // Prints `visible` or `hidden` alone, before any stream-json, so a test can compare it whole.
+    if mode == "console-report" {
+        let _ = writeln!(out, "{}", console_visibility());
+        return;
+    }
     // The start report, in the shape of tests/fixtures/claude-init.json (fields
     // the engine does not read are left out). Its model differs from any spec's.
     if mode != "noinit" {
@@ -528,6 +533,28 @@ fn main() {
 fn console_window() -> u8 {
     // SAFETY: GetConsoleWindow takes no arguments and only reads process state.
     u8::from(!unsafe { windows_sys::Win32::System::Console::GetConsoleWindow() }.is_null())
+}
+
+/// `visible` when this process has a console window that is shown, else `hidden`.
+#[cfg(windows)]
+fn console_visibility() -> &'static str {
+    use windows_sys::Win32::System::Console::GetConsoleWindow;
+    use windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible;
+    // SAFETY: GetConsoleWindow takes no arguments; IsWindowVisible accepts any handle value.
+    let shown = unsafe {
+        let window = GetConsoleWindow();
+        !window.is_null() && IsWindowVisible(window) != 0
+    };
+    if shown {
+        "visible"
+    } else {
+        "hidden"
+    }
+}
+
+#[cfg(not(windows))]
+fn console_visibility() -> &'static str {
+    "hidden"
 }
 
 #[cfg(not(windows))]

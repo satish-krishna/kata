@@ -8,8 +8,8 @@ use std::path::PathBuf;
 #[test]
 #[serial]
 fn the_same_bytes_read_from_two_paths_start_the_program_once() {
-    let program = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format/check.mjs");
-    let plan = include_str!("ai-sdlc-format/examples/plan/2/valid.md");
+    let program = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts");
+    let plan = include_str!("ai-sdlc-tools/examples/plan/2/valid.md");
     let tmp = tempfile::tempdir().unwrap();
     let mut files = Vec::new();
     for change in ["first-change", "second-change"] {
@@ -56,7 +56,7 @@ impl Drop for Home {
 }
 
 fn program() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format/check.mjs")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts")
 }
 
 /// A change folder holding the valid plan, and the plan's path. Each call ends the plan with a line of its
@@ -66,7 +66,7 @@ fn plan_in(root: &std::path::Path) -> PathBuf {
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let file = root.join("a-change").join("plan.md");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-    let text = include_str!("ai-sdlc-format/examples/plan/2/valid.md");
+    let text = include_str!("ai-sdlc-tools/examples/plan/2/valid.md");
     std::fs::write(
         &file,
         format!(
@@ -189,10 +189,12 @@ fn a_changed_program_or_marker_misses() {
     assert_eq!(format::runs_started(), before + 1);
 
     // A program with other bytes is a miss.
-    let other = tmp.path().join("other-check.mjs");
-    let mut text = std::fs::read_to_string(program()).unwrap();
-    text.push_str("\n// another version\n");
-    std::fs::write(&other, text).unwrap();
+    // The entry of this program is a file that imports the rest, so a stand-in entry with other bytes
+    // that imports the real one reads the same and is a different program to the cache.
+    let other = tmp.path().join("other").join("ai-sdlc.ts");
+    std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+    let real = program().display().to_string().replace('\\', "/");
+    std::fs::write(&other, format!("await import('file:///{real}');\n")).unwrap();
     format::forget_memory_cache();
     format::read_with(&other, &plan, Reads::Shown).unwrap();
     assert_eq!(format::runs_started(), before + 2);

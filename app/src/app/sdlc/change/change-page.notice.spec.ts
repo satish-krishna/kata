@@ -1,4 +1,3 @@
-import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { Problem } from '@bindings/Problem';
 import type { ReadResult } from '@bindings/ReadResult';
 import type { Readiness } from '@bindings/Readiness';
@@ -21,7 +20,7 @@ const settle = async () => {
 };
 const text = (e: Element | null) => e?.textContent?.replace(/\s+/g, ' ').trim() ?? null;
 const PROSE = (title: string) => `---\nstatus: accepted\n---\n# ${title}\n\nWords only.\n`;
-const READY: Readiness = { kind: 'ready', dir: '~/.claude/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2], lightTrack: false, naming: false };
+const READY: Readiness = { kind: 'ready', plugin: { dir: '~/.claude/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2] }, gh: 'present' };
 
 type Setup = {
   readiness?: Readiness;
@@ -36,10 +35,7 @@ type Setup = {
 
 async function open(setup: Setup) {
   const transport = new MockTransport();
-  const real = transport.sdlcReadChange.bind(transport);
-  vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-    [await real(m, s, n)].map((c): ChangeInfo => (c.change === MOCK_BUILD_CHANGE && !setup.logLayouts ? { ...c, stage: 'plan-awaiting' } : c))[0],
-  );
+  if (!setup.logLayouts) transport.patchChange(MOCK_BUILD_CHANGE, { stage: 'plan-awaiting' });
   vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_m, _s, _c, stem) => PROSE(stem));
   vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(setup.readiness ?? READY);
   if (setup.logLayouts) {
@@ -110,9 +106,9 @@ describe('ChangePage document notices', () => {
     expect(newer.tasks()).toBe(NUMBERS.tasks);
     TestBed.resetTestingModule();
 
-    const old = await open({ readiness: { kind: 'tooOld', have: '0.6.0', need: '0.9.0' } });
+    const old = await open({ readiness: { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.6.0.' } });
     await old.tab('Spec');
-    expect(text(old.notice())).toContain('Update the ai-sdlc plugin to 0.9.0 or later');
+    expect(text(old.notice())).toContain('The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.6.0.');
     expect(old.requirements()).toBe(0);
   });
 

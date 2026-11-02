@@ -5,24 +5,49 @@
 //! changed on one machine. The ai-sdlc plugin's format program holds every rule about what a usable
 //! setting is and how the patterns are filled; this module only asks it.
 use crate::format::{self, NamingAnswer, NamingPatterns, NamingValues};
-use crate::plugin::{Readiness, NAMING_VERSION};
-use crate::workspace::MARKER;
-use crate::{base, build, decide, frontmatter, git};
+use crate::plugin::{BlockReason, Readiness, MIN_VERSION};
+use crate::workspace::{Marker, MARKER};
+use crate::{build, diff, frontmatter, git};
 use std::path::{Path, PathBuf};
+
+/// Lowercase kebab-case, the only scope shape a commitlint header accepts.
+fn is_scope(s: &str) -> bool {
+    !s.is_empty()
+        && !s.starts_with('-')
+        && !s.ends_with('-')
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// What a commit header's scope group takes: non-empty, no whitespace, no parentheses. Capitals stay, so
+/// a ticket ID such as `PROJ-123` can be a scope.
+fn fits_header(s: &str) -> bool {
+    !s.is_empty() && !s.contains(|c: char| c.is_whitespace() || c == '(' || c == ')')
+}
+
+/// The scope a change starts with when its intent names none, as the ai-sdlc plugin resolves it: the intent's
+/// `scope`, then the marker's `systems.<system>.commitScope`, then the system name. A malformed value is
+/// skipped: the intent's must fit a commit header's scope group, the marker's must be lowercase kebab-case.
+pub fn change_scope(master: &Path, system: &str, change: &str) -> String {
+    let intent =
+        std::fs::read_to_string(master.join(format!("intent/{system}/{change}/intent.md")))
+            .ok()
+            .and_then(|t| frontmatter::field(&t, "scope"));
+    let marker = std::fs::read_to_string(master.join(MARKER))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Marker>(&t).ok())
+        .and_then(|m| m.systems.get(system)?.commit_scope.clone());
+    intent
+        .filter(|s| fits_header(s))
+        .or_else(|| marker.filter(|s| is_scope(s)))
+        .unwrap_or_else(|| system.to_string())
+}
 
 /// The patterns of a usable naming setting.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Naming {
     pub branch: String,
     pub pull_request_title: String,
-}
-
-/// The names a change gets from the patterns.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Names {
-    pub branch: String,
-    /// `None` when the intent names no title.
-    pub pull_request_title: Option<String>,
 }
 
 /// Why a name or a setting cannot be used.
@@ -45,10 +70,10 @@ pub enum NamingError {
 /// The marker as committed at the master's base branch; `None` when there is no such commit or file.
 ///
 /// The base is the ai-sdlc skills' default branch: `origin/HEAD`'s target, else `main`, else `master`
-/// (`base::base_branch`). It is never the current branch, so an edit on a pending or change branch cannot
+/// (`diff::base_branch`). It is never the current branch, so an edit on a pending or change branch cannot
 /// change the setting. A local branch is read when it exists, else its `origin/` copy.
 fn committed_marker(master: &Path) -> Option<Vec<u8>> {
-    let base = base::base_branch(master)?;
+    let base = diff::base_branch(master)?;
     let repo = git::Repo::open(master).ok()?;
     let local = format!("refs/heads/{base}");
     let rev = if repo.rev_exists(&local) {
@@ -84,20 +109,15 @@ pub fn declared(master: &Path, system: &str) -> bool {
 /// The plugin folder, when it can run the naming commands.
 fn naming_program(plugin: &Readiness) -> Result<PathBuf, NamingError> {
     match plugin {
-        Readiness::Missing => Err(NamingError::PluginMissing),
-        Readiness::TooOld { have, .. } => Err(NamingError::PluginTooOld {
-            have: have.clone(),
-            need: NAMING_VERSION.to_string(),
-        }),
-        Readiness::Ready {
-            version,
-            naming: false,
+        Readiness::Blocked {
+            reason: BlockReason::PluginTooOld,
             ..
         } => Err(NamingError::PluginTooOld {
-            have: version.clone(),
-            need: NAMING_VERSION.to_string(),
+            have: "an older version".to_string(),
+            need: MIN_VERSION.to_string(),
         }),
-        Readiness::Ready { dir, .. } => Ok(build::program(dir)),
+        Readiness::Blocked { .. } => Err(NamingError::PluginMissing),
+        Readiness::Ready { plugin, .. } => Ok(build::program(&plugin.dir)),
     }
 }
 
@@ -154,48 +174,24 @@ pub fn setting(
     }
 }
 
-/// The branch name and pull request title the setting gives `change`. `Ok(None)` when none is declared.
-pub fn names(
-    plugin: &Readiness,
-    master: &Path,
-    system: &str,
-    change: &str,
-    work_type: &str,
-) -> Result<Option<Names>, NamingError> {
-    let title = std::fs::read_to_string(master.join(format!("intent/{system}/{change}/intent.md")))
-        .ok()
-        .and_then(|t| frontmatter::field(&t, "title"))
-        .filter(|t| !t.is_empty());
-    let values = NamingValues {
-        work_type: work_type.to_string(),
-        scope: decide::change_scope(master, system, change),
-        change: change.to_string(),
-        title,
-    };
-    let Some(answer) = read(plugin, master, system, Some(&values))? else {
-        return Ok(None);
-    };
-    answer
-        .names
-        .map(|n| {
-            Some(Names {
-                branch: n.branch,
-                pull_request_title: n.pull_request_title,
-            })
+/// The name of a new change: `date` (`YYYY-MM-DD`) and the title's first words, at most five, in lowercase
+/// kebab-case. Only ASCII letters and digits are kept; a title with no usable word gives `change`.
+pub fn change_name(date: &str, title: &str) -> String {
+    let words: Vec<String> = title
+        .split(|c: char| c.is_whitespace() || matches!(c, '-' | '_' | '/'))
+        .map(|w| {
+            w.chars()
+                .filter(char::is_ascii_alphanumeric)
+                .collect::<String>()
+                .to_ascii_lowercase()
         })
-        .ok_or_else(|| NamingError::Unreadable("the program rendered no names".into()))
-}
-
-/// Refuses a branch name git or Kata would not accept. Called before any branch is created or renamed
-/// from a name Kata did not build itself.
-pub fn check_branch_name(plugin: &Readiness, name: &str) -> Result<(), NamingError> {
-    let program = naming_program(plugin)?;
-    let problems =
-        format::branch_name(&program, name).map_err(|e| NamingError::Unreadable(e.to_string()))?;
-    if problems.is_empty() {
-        Ok(())
+        .filter(|w| !w.is_empty())
+        .take(5)
+        .collect();
+    if words.is_empty() {
+        format!("{date}-change")
     } else {
-        Err(NamingError::Name(problems.join("; ")))
+        format!("{date}-{}", words.join("-"))
     }
 }
 
@@ -210,21 +206,69 @@ mod tests {
     use super::*;
     use crate::{plugin, testutil};
 
+    #[test]
+    fn change_scope_reads_the_intent_then_the_marker_then_the_system() {
+        const INTENT: &str = "intent/claims/2026-10-12-fnol/intent.md";
+        const CHANGE: &str = "2026-10-12-fnol";
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        // No marker and no intent: the system.
+        assert_eq!(change_scope(&repo, "claims", CHANGE), "claims");
+        testutil::commit_file(
+            &repo,
+            ".ai-sdlc.json",
+            r#"{"version":1,"systems":{"claims":{"commitScope":"claims-sys"}}}"#,
+            "marker",
+        );
+        assert_eq!(change_scope(&repo, "claims", CHANGE), "claims-sys");
+        // The intent's scope wins when it fits a header; a malformed one is skipped; capitals stay.
+        for (scope, expect) in [
+            ("fnol", "fnol"),
+            ("PROJ-123", "PROJ-123"),
+            ("proj 123", "claims-sys"),
+            ("a(b)", "claims-sys"),
+        ] {
+            testutil::commit_file(
+                &repo,
+                INTENT,
+                &format!("---\nstatus: draft\nscope: \"{scope}\"\n---\n"),
+                "i",
+            );
+            assert_eq!(change_scope(&repo, "claims", CHANGE), expect, "{scope}");
+        }
+        // A marker scope that is not lowercase kebab-case is skipped too.
+        testutil::commit_file(
+            &repo,
+            ".ai-sdlc.json",
+            r#"{"version":1,"systems":{"claims":{"commitScope":"Claims Sys"}}}"#,
+            "marker",
+        );
+        testutil::commit_file(&repo, INTENT, "---\nstatus: draft\n---\n", "i");
+        assert_eq!(change_scope(&repo, "claims", CHANGE), "claims");
+    }
+
     const SETTING: &str = r#"{"version":1,"systems":{"kata":{"repos":["kata"],"naming":{"branch":"{type}/{scope}-{slug}","pullRequestTitle":"{type}({scope}): {title}"}}}}"#;
     const NO_NAMING: &str = r#"{"version":1,"systems":{"kata":{"repos":["kata"]}}}"#;
 
     fn ready(version: &str) -> Readiness {
+        if !plugin::at_least(version, plugin::MIN_VERSION) {
+            return Readiness::Blocked {
+                reason: BlockReason::PluginTooOld,
+                message: String::new(),
+            };
+        }
         Readiness::Ready {
-            dir: testutil::plugin_dir().to_path_buf(),
-            version: version.to_string(),
-            layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
-            light_track: true,
-            naming: plugin::naming(version),
+            plugin: crate::plugin::Plugin {
+                dir: testutil::plugin_dir().to_path_buf(),
+                version: version.to_string(),
+                layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
+            },
+            gh: crate::plugin::GhPresence::Present,
         }
     }
 
     fn current() -> Readiness {
-        ready(plugin::NAMING_VERSION)
+        ready(plugin::MIN_VERSION)
     }
 
     fn master_with(marker: &str) -> (tempfile::TempDir, std::path::PathBuf) {
@@ -267,10 +311,10 @@ mod tests {
         let bad_branch = r#"{"version":1,"systems":{"kata":{"naming":{"branch":"{type}/{ticket}-{slug}","pullRequestTitle":"{title}"}}}}"#;
         // marker, plugin version, declared, what `setting` gives
         let rows: [(&str, &str, bool, &str); 4] = [
-            (NO_NAMING, "0.14.0", false, "none"),
-            (bad_branch, "0.14.0", true, "unusable"),
-            ("this is not json", "0.14.0", true, "unreadable"),
-            (SETTING, "0.13.3", true, "too old"),
+            (NO_NAMING, "1.1.0", false, "none"),
+            (bad_branch, "1.1.0", true, "unusable"),
+            ("this is not json", "1.1.0", true, "unreadable"),
+            (SETTING, "1.0.0", true, "too old"),
         ];
         for (marker, version, is_declared, expect) in rows {
             let (_tmp, repo) = master_with(marker);
@@ -351,38 +395,6 @@ mod tests {
     }
 
     #[test]
-    fn names_fill_the_patterns_for_a_change() {
-        let (_tmp, repo) = master_with(SETTING);
-        testutil::commit_file(
-            &repo,
-            "intent/kata/2026-11-02-reset/intent.md",
-            "---\nstatus: draft\nscope: PROJ-123\ntitle: Customer can reset password\n---\n",
-            "intent",
-        );
-        assert_eq!(
-            names(&current(), &repo, "kata", "2026-11-02-reset", "feat"),
-            Ok(Some(Names {
-                branch: "feat/PROJ-123-reset".into(),
-                pull_request_title: Some("feat(PROJ-123): Customer can reset password".into()),
-            }))
-        );
-    }
-
-    #[test]
-    fn a_name_that_git_or_kata_would_refuse_is_refused_r12_1() {
-        for name in ["-D", "feat/../main", "feat/@{1}", "change/pending-x"] {
-            assert!(
-                matches!(
-                    check_branch_name(&current(), name),
-                    Err(NamingError::Name(_))
-                ),
-                "{name}"
-            );
-        }
-        assert_eq!(check_branch_name(&current(), "feat/PROJ-123-reset"), Ok(()));
-    }
-
-    #[test]
     fn a_scope_is_accepted_or_refused_with_the_reason_r5_2() {
         for scope in ["PROJ-123", "proj_123", "v2.1", "kata"] {
             assert_eq!(check_scope(&current(), scope), Ok(Vec::new()), "{scope}");
@@ -403,11 +415,36 @@ mod tests {
     }
 
     #[test]
-    fn head_is_refused_as_a_branch_name_r12_1() {
-        assert!(matches!(
-            check_branch_name(&current(), "HEAD"),
-            Err(NamingError::Name(_))
-        ));
+    fn change_name_rows() {
+        let rows = [
+            ("two words", "Password reset", "2026-11-01-password-reset"),
+            (
+                "six words are cut to five",
+                "Let customers reset their own password",
+                "2026-11-01-let-customers-reset-their-own",
+            ),
+            (
+                "punctuation is dropped",
+                "Don't flag prices, please!",
+                "2026-11-01-dont-flag-prices-please",
+            ),
+            ("one word", "Photos", "2026-11-01-photos"),
+            (
+                "hyphens and capitals",
+                "Add Login-Page (v2)",
+                "2026-11-01-add-login-page-v2",
+            ),
+            ("no usable word", "!!! ... ???", "2026-11-01-change"),
+            ("an empty title", "   ", "2026-11-01-change"),
+            (
+                "letters outside ASCII are dropped",
+                "café 日本",
+                "2026-11-01-caf",
+            ),
+        ];
+        for (label, title, want) in rows {
+            assert_eq!(change_name("2026-11-01", title), want, "{label}");
+        }
     }
 
     #[test]
@@ -421,7 +458,7 @@ mod tests {
     #[test]
     fn a_scope_cannot_be_checked_without_a_plugin_that_can_name_branches() {
         assert_eq!(
-            check_scope(&Readiness::Missing, "kata"),
+            check_scope(&Readiness::missing(), "kata"),
             Err(NamingError::PluginMissing)
         );
     }

@@ -1,9 +1,8 @@
-import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
-import type { StageEvent } from '@bindings/StageEvent';
+import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { Readiness } from '@bindings/Readiness';
@@ -13,18 +12,17 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { RunSpec } from '@bindings/RunSpec';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
-import { LockStore } from '../../core/lock/lock.store';
 import { ProgressStore } from '../../core/progress/progress.store';
+import { LockStore } from '../../core/lock/lock.store';
 import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner, type DiscardChoice, type PickedNaming } from '../../core/sdlc/sdlc-runner';
-import { SdlcStagesStore, stageKey, type ChangeRow } from '../../core/sdlc/sdlc-stages.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
 import { defaultWorkType, namingRefusal, orderedWorkTypes, type WorkType } from '../../lib/sdlc-naming';
 import { inTauri } from '../../lib/mock';
 import { shownChangeList } from '../../lib/doc-notice';
-import { fixProgramFailed, hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
+import { hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
 import { DEMO_SETUP_FOLDER, DEMO_START_IDEA, DEMO_START_SYSTEM } from '../../lib/demo';
 import {
   folderName,
@@ -39,6 +37,7 @@ import {
   systemOf,
   type WorkspaceCandidate,
 } from '../../lib/sdlc-workspace';
+import type { ChangeRow } from '../../ui/changes-table';
 import type { SettingsSave } from '../../ui/sdlc-settings-dialog';
 
 export type HomeState =
@@ -51,9 +50,6 @@ export type HomeState =
   | 'marker-error'
   | 'not-set-up'
   | 'ready';
-
-/** One change folder of the current workspace, before any stage is read. */
-type NameRow = { system: string; change: string; title: string | null };
 
 /** The home page's progress entry, kept apart from the change page's. */
 const PROGRESS_OWNER = 'home';
@@ -83,9 +79,7 @@ export class SdlcHomeViewModel {
   private readonly modes = inject(ModeStore);
   private readonly toasts = inject(ToastStore);
   private readonly router = inject(Router);
-  private readonly stages = inject(SdlcStagesStore);
   private readonly progress = inject(ProgressStore);
-  private readonly destroyRef = inject(DestroyRef);
 
   // --- workspaces
   readonly workspaces = signal<WorkspaceEntry[]>([]);
@@ -103,50 +97,43 @@ export class SdlcHomeViewModel {
   readonly scan = signal<WorkspaceScan | null>(null);
   readonly scanError = signal<string | null>(null);
   readonly branches = signal<BranchInfo | null>(null);
-  /** Every change folder of the workspace, by system, in the order the names read gave. */
-  private readonly names = signal<NameRow[]>([]);
-  /** The list the page shows: each name with the stage this session has read for it, if any. */
-  readonly rows = computed<ChangeRow[]>(() => {
-    const id = this.currentId();
-    const stored = id === null ? {} : this.stages.rows(id);
-    return this.names().map((n) => {
-      const row = stored[stageKey(n.system, n.change)];
-      return { ...n, info: row?.info ?? null, error: row?.error ?? null, checking: row?.checking ?? false };
-    });
-  });
-  /** The stages read so far. */
-  readonly changes = computed(() => this.rows().flatMap((r) => (r.info === null ? [] : [r.info])));
-  private readonly passRunning = signal(false);
-  /** Whether a stage pass is running: the names are being read or some stage has not arrived yet. */
-  readonly reading = this.passRunning.asReadonly();
-  /** The reading-stages progress line, or null while nothing should show. */
+  /** The backend's answer for every system of the workspace, from one read; null until it is in. */
+  private readonly workspace = signal<WorkspaceView | null>(null);
+  private readonly views = computed(() => this.workspace()?.systems ?? []);
+  /** The reading-changes progress line while the plugin is being asked, or null while nothing should show. */
   readonly readingProgress = this.progress.view(PROGRESS_OWNER);
+  /** How many plugin reads are in flight; the line shows from the first start to the last end. */
+  private reads = 0;
+  /** The list the page shows: every change of every system, each with the label the plugin's answer gave it. */
+  readonly rows = computed<ChangeRow[]>(() =>
+    this.views().flatMap((v) => v.changes.map((c) => ({ system: v.system, change: c.state.change, title: c.state.title, offer: c.offer }))),
+  );
   readonly contexts = signal<Record<string, ContextState>>({});
   readonly lastRuns = signal<Record<string, number>>({});
-  private readonly readiness = signal<Readiness>({ kind: 'missing' });
-  /** Above the change list when a plan could not be read; null when every plan was. */
+  private readonly readiness = signal<Readiness>({ kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' });
+  /** Above the change list when a plan could not be read; null when every plan was. The plugin's own words come from the answer's problems. */
   readonly listNotice = computed(() => {
-    const unreadable = this.changes().filter((c) => c.plan_unreadable);
-    // A fix's own reason is worded for the fix and shown as it is; only a plan's goes behind "Could not read this document".
-    const fixReason = (c: ChangeInfo) =>
-      c.stage === 'fix-needs-plugin'
-        ? (c.plan_unreadable_reason ?? 'Needs ai-sdlc 0.13.0 or later.')
-        : fixProgramFailed(c)
-          ? `Kata could not read where ${c.change} stands: ${c.plan_unreadable_reason ?? 'the program gave no message'}`
-          : null;
+    const unreadable = this.rows().filter((r) => r.offer.stage === 'plan-unreadable');
+    const problems = this.views().flatMap((v) => v.problems);
     return shownChangeList(
       this.readiness(),
-      unreadable.filter((c) => fixReason(c) === null).map((c) => c.plan_unreadable_reason),
-      unreadable.map(fixReason).filter((r): r is string => r !== null),
+      problems.length > 0 ? problems : unreadable.map(() => null),
     );
   });
+  /** Whether a new change may be started across the workspace's systems, as the backend decided; false until the answer is in. */
+  readonly canStartChange = computed(() => this.workspace()?.canStartChange ?? false);
+  /** Why a new change may not be started, as the backend gave it; null when it may. */
+  readonly startChangeReason = computed(() => this.workspace()?.startChangeReason ?? null);
   /** This machine's workspace instructions against the master's; null when the plugin cannot report it. */
   readonly instructions = signal<InstructionsState | null>(null);
+  /** Old per-machine checks files the backend says the engineer has not been told about, shown until dismissed. */
+  readonly oldChecks = signal<{ system: string; path: string; text: string }[]>([]);
   private readonly catalogRead = signal(false);
   private readonly currentRead = signal(false);
-  /** The page can show a state once the catalog and the current workspace's names are in; it never waits for the stages. */
+  /** The page can show a state once the catalog and the current workspace's change list are in. */
   private readonly loaded = computed(() => this.catalogRead() && this.currentRead());
   private loadSeq = 0;
+  private viewSeq = 0;
 
   readonly masters = computed(() => {
     const m = this.scan()?.master;
@@ -154,8 +141,6 @@ export class SdlcHomeViewModel {
   });
   readonly masterBranch = computed(() => this.branches()?.current ?? null);
   readonly otherBranches = computed(() => (this.branches()?.others ?? []).map((o) => o.change));
-  /** The other branches that are pending branches of a change waiting for its name. */
-  readonly otherNeedingName = computed(() => (this.branches()?.others ?? []).filter((o) => o.needs_name).map((o) => o.change));
   readonly systems = computed(() => {
     const s = this.scan();
     return s ? systemNames(s) : [];
@@ -195,10 +180,14 @@ export class SdlcHomeViewModel {
   readonly newChangeIdea = signal('');
   readonly newChangeTrack = signal<StartTrack>('decide');
   readonly newChangeNote = signal<string | null>(null);
+  /** The system the dialog reopens on after a refused start; null opens on the first. */
+  readonly newChangeSystem = signal<string | null>(null);
+  /** Why the plugin refused the branch name of the last start; empty when it did not. */
+  readonly branchProblems = signal<string[]>([]);
   /** Whether the plugin on this machine can triage a change. */
   readonly lightTrack = computed(() => {
     const r = this.readiness();
-    return r.kind === 'ready' && r.lightTrack;
+    return r.kind === 'ready';
   });
   readonly settingsOpen = signal(false);
 
@@ -314,8 +303,13 @@ export class SdlcHomeViewModel {
     return w ? `Remove ${w.name} from the list? Nothing on disk is touched.` : null;
   });
   readonly leftovers = this.runner.leftovers;
-  /** The session view's Close waits for the run's after-run work and for any leftover decision. */
-  readonly closeBlocked = computed(() => this.runner.settling() || this.runner.leftovers() !== null);
+  /**
+   * The session view's Close waits for the after-run work of the run it shows (the solo run that holds the screen, read by its id) and for
+   * any leftover decision of a run started here. A change run started here, such as a new change's intent run, is never on show here.
+   */
+  readonly closeBlocked = computed(
+    () => (this.session() !== null && this.runner.settlingRun(this.runs.lastRunId())) || this.runner.leftovers() !== null,
+  );
 
   // --- the lock: Kata's own checks in the overlay, an agent run as the session view
   readonly locked = computed(() => this.lock.active() !== null);
@@ -348,8 +342,6 @@ export class SdlcHomeViewModel {
 
   /** `demo` is the `?demo=` query value: `sdlc-setup` opens the add-workspace flow on a folder that needs setup, and `start` triages a described change with a scripted run. Browser only. `context` is the `?context=` query value, a repo the context screen handed over to run or refresh its context. */
   async init(demo: string | null = null, context: string | null = null): Promise<void> {
-    this.destroyRef.onDestroy(() => this.stop());
-    await this.listen();
     try {
       await this.modes.load();
     } catch (e) {
@@ -383,8 +375,6 @@ export class SdlcHomeViewModel {
     this.workspaces.set(next);
     this.currentId.set(id);
     this.triageNotice.set(null);
-    // The pass for the workspace being left stops at once; the new one reads its names and stages.
-    this.cancelPass();
     this.clearDetail();
     await this.saveList(next);
     await Promise.all([this.loadCatalog(), this.loadCurrent()]);
@@ -408,12 +398,10 @@ export class SdlcHomeViewModel {
   async removeWorkspace(id: string): Promise<void> {
     const next = this.workspaces().filter((w) => w.id !== id);
     this.workspaces.set(next);
-    this.stages.clear(id);
     this.foldersGone.update((l) => l.filter((x) => x !== id));
     this.scanFailed.update((l) => l.filter((x) => x !== id));
     await this.saveList(next);
     if (this.currentId() === id) {
-      this.cancelPass();
       this.currentId.set([...next].sort((a, b) => b.last_opened - a.last_opened)[0]?.id ?? null);
       await Promise.all([this.loadCatalog(), this.loadCurrent()]);
     }
@@ -475,7 +463,7 @@ export class SdlcHomeViewModel {
         label: 'List changes',
         run: async () => {
           if (!found.scan || !isSetUp(found.scan)) return 'skipped';
-          return plural((await this.readNameRows(dir, found.scan)).length, 'change', 'changes');
+          return plural((await this.readViews(dir, found.scan)).systems.flatMap((v) => v.changes).length, 'change', 'changes');
         },
       },
     ]);
@@ -523,7 +511,6 @@ export class SdlcHomeViewModel {
     const next = [...this.workspaces(), entry];
     this.workspaces.set(next);
     this.currentId.set(id);
-    this.cancelPass();
     this.clearDetail();
     await this.saveList(next);
     await Promise.all([this.loadCatalog(), this.loadCurrent(), this.refreshMissing()]);
@@ -561,7 +548,7 @@ export class SdlcHomeViewModel {
     await this.runOnBase('Refreshing workspace instructions', 'Instructions', 'setup', { system: '', instructions: true });
   }
 
-  async newChange(system: string, idea: string, track: StartTrack): Promise<void> {
+  async newChange(system: string, idea: string, track: StartTrack, branch?: string): Promise<void> {
     const answer = this.naming();
     // A broken setting never falls back to `change/` naming (R3.2), and a setting needs its checked scope.
     if (answer?.kind === 'error' || (answer?.kind === 'setting' && !this.namingReady())) {
@@ -569,33 +556,52 @@ export class SdlcHomeViewModel {
       return;
     }
     const picked: PickedNaming | null = answer?.kind === 'setting' ? { workType: this.workType(), scope: this.scope().trim() } : null;
-    this.clearNaming();
     this.newChangeOpen.set(false);
     this.triageNotice.set(null);
+    this.branchProblems.set([]);
     const workspace = this.current();
     const scan = this.scan();
     const master = this.masterDir();
-    if (!workspace || !scan || !master) return;
-    let first: string | null = null;
+    if (!workspace || !scan || !master) {
+      this.clearNaming();
+      return;
+    }
     try {
       const target = { workspace, master, productRepos: productRepos(scan) };
       const confirm = (spec: RunSpec) => this.confirm(spec);
-      const outcome = picked
-        ? await this.runner.newChange(target, system, idea, track, confirm, picked)
-        : await this.runner.newChange(target, system, idea, track, confirm);
+      const more: [PickedNaming?, string?] = branch ? [picked ?? undefined, branch] : picked ? [picked] : [];
+      const outcome = await this.runner.newChange(target, system, idea, track, confirm, ...more);
       if (outcome.kind === 'none' && track === 'decide') this.triageNotice.set({ idea: outcome.idea, runId: outcome.runId });
-      first = outcome.kind === 'opened' ? outcome.change : null;
+      if (outcome.kind === 'retry') this.askAgain(system, idea, track, outcome);
     } catch (e) {
       this.toasts.error(`Could not start the change: ${message(e)}`);
     }
-    await this.loadCurrent(first);
+    if (!this.newChangeOpen()) this.clearNaming();
+    await this.loadCurrent();
+  }
+
+  /** The plugin refused the branch name or the scope: the dialog opens again on the same description, with what the engineer picked, and shows the plugin's reasons. */
+  private askAgain(system: string, idea: string, track: StartTrack, retry: { ask: 'branch' | 'scope'; problems: string[] }): void {
+    this.newChangeIdea.set(idea);
+    this.newChangeTrack.set(track);
+    this.newChangeSystem.set(system);
+    this.newChangeNote.set(null);
+    if (retry.ask === 'branch') this.branchProblems.set(retry.problems);
+    else this.scopeProblems.set(retry.problems);
+    this.newChangeOpen.set(true);
   }
 
   openNewChange(): void {
     if (this.refuseWhileLocked()) return;
+    if (!this.canStartChange()) {
+      this.toasts.error(this.startChangeReason() ?? 'A new change cannot be started yet.');
+      return;
+    }
     this.newChangeIdea.set('');
     this.newChangeTrack.set('decide');
     this.newChangeNote.set(null);
+    this.newChangeSystem.set(null);
+    this.branchProblems.set([]);
     this.beginNaming();
     this.newChangeOpen.set(true);
   }
@@ -607,6 +613,8 @@ export class SdlcHomeViewModel {
     this.newChangeIdea.set(notice.idea);
     this.newChangeTrack.set('decide');
     this.newChangeNote.set('The last triage created no change. Change the description and start again.');
+    this.newChangeSystem.set(null);
+    this.branchProblems.set([]);
     this.beginNaming();
     this.newChangeOpen.set(true);
   }
@@ -623,6 +631,7 @@ export class SdlcHomeViewModel {
   }
 
   closeNewChange(): void {
+    this.branchProblems.set([]);
     this.clearNaming();
     this.newChangeOpen.set(false);
   }
@@ -664,7 +673,7 @@ export class SdlcHomeViewModel {
     const master = this.masterDir();
     if (!master || this.refuseWhileLocked()) return;
     try {
-      // The branch is the one the list read: a pending branch is not named after its change.
+      // The branch is the one the list read: a recorded branch is not named after its change.
       const branch = this.branches()?.others.find((o) => o.change === change)?.branch ?? `change/${change}`;
       await this.transport.sdlcCheckout(master, branch);
     } catch (e) {
@@ -672,7 +681,7 @@ export class SdlcHomeViewModel {
       return;
     }
     await this.loadCurrent();
-    const found = this.names().find((n) => n.change === change);
+    const found = this.rows().find((r) => r.change === change);
     if (!found) {
       this.toasts.error(`Could not find ${change} on that branch.`);
       return;
@@ -680,10 +689,10 @@ export class SdlcHomeViewModel {
     await this.openChange(found.system, found.change);
   }
 
-  /** The window regained focus: documents may have changed outside the Workbench, so read the stages again. */
+  /** The window regained focus: documents may have changed outside the Workbench, so ask the plugin again. */
   windowFocused(): void {
     if (!this.canWork() || this.locked()) return;
-    this.trigger(null, false);
+    void this.refreshViews();
   }
 
   switchMode(): Promise<void> {
@@ -883,15 +892,33 @@ export class SdlcHomeViewModel {
     return readContextStates(scan, (master, system, repo) => this.transport.sdlcContextHealth(folder, master, system, repo));
   }
 
-  /** The change folders of every system, from the folders alone: no stage is read and no program is started. */
-  private async readNameRows(folder: string, scan: WorkspaceScan): Promise<NameRow[]> {
-    const repo = masterRepo(scan);
-    if (repo === null) return [];
-    const master = masterPath(folder, repo);
-    const lists = await Promise.all(
-      systemNames(scan).map(async (system) => (await this.transport.sdlcChangeNames(master, system)).map((n) => ({ system, change: n.change, title: n.title }))),
-    );
-    return lists.flat();
+  /** The backend's answer for every system of the workspace, in one call, none of it started by a change. */
+  private readViews(folder: string, scan: WorkspaceScan): Promise<WorkspaceView> {
+    return this.transport.sdlcState(folder, systemNames(scan));
+  }
+
+  /** `readViews` with the progress line shown while it runs. */
+  private async readViewsShown(folder: string, scan: WorkspaceScan): Promise<WorkspaceView> {
+    if (this.reads++ === 0) this.progress.begin('reading-stages', 'Reading changes', PROGRESS_OWNER);
+    try {
+      return await this.readViews(folder, scan);
+    } finally {
+      if (--this.reads === 0) this.progress.end(PROGRESS_OWNER);
+    }
+  }
+
+  /** Read the change list again for the current workspace. A newer read, or a reload of the workspace, supersedes it. */
+  private async refreshViews(): Promise<void> {
+    const seq = ++this.viewSeq;
+    const w = this.current();
+    const scan = this.scan();
+    if (!w || !scan) return;
+    try {
+      const views = await this.readViewsShown(w.folder, scan);
+      if (seq === this.viewSeq) this.workspace.set(views);
+    } catch (e) {
+      if (seq === this.viewSeq) this.toasts.error(`Could not read the changes: ${message(e)}`);
+    }
   }
 
   /** Which workspace folders no longer exist, for every workspace in the list: an existence check, nothing is scanned. */
@@ -909,22 +936,40 @@ export class SdlcHomeViewModel {
     }
   }
 
+  /** The notice was read: drop it. The backend recorded it as told when it was first shown, so it does not come back. */
+  dismissOldChecks(system: string): void {
+    this.oldChecks.update((l) => l.filter((n) => n.system !== system));
+  }
+
+  /** Ask the backend, in one call, which systems have an old checks file the engineer has not been told about, and say so once. */
+  private async readOldChecks(folder: string, systems: string[]): Promise<void> {
+    try {
+      const found = await this.transport.sdlcOldChecks(folder, systems);
+      if (found.length === 0) return;
+      // Shown from here on, so it is recorded as told now: closing the app without a click does not bring it back.
+      await this.transport.sdlcOldChecksSeen(found.map((n) => n.system));
+      this.oldChecks.update((l) => [...l, ...found.filter((n) => !l.some((o) => o.system === n.system))]);
+    } catch (e) {
+      this.toasts.error(`Could not check for old checks: ${message(e)}`);
+    }
+  }
+
   private clearDetail(): void {
     this.scan.set(null);
     this.branches.set(null);
-    this.names.set([]);
+    this.workspace.set(null);
     this.contexts.set({});
     this.lastRuns.set({});
     this.instructions.set(null);
   }
 
-  /** Read the current workspace from disk. A newer call supersedes an older one still in flight. `first` is the change a run just touched, read before the others. */
-  private async loadCurrent(first: string | null = null): Promise<void> {
+  /** Read the current workspace from disk. A newer call supersedes an older one still in flight. */
+  private async loadCurrent(): Promise<void> {
     const seq = ++this.loadSeq;
+    ++this.viewSeq;
     const w = this.current();
     this.scanError.set(null);
     if (!w) {
-      this.cancelPass();
       this.clearDetail();
       this.currentRead.set(true);
       return;
@@ -934,7 +979,6 @@ export class SdlcHomeViewModel {
       scan = await this.transport.sdlcScan(w.folder);
     } catch (e) {
       if (seq !== this.loadSeq) return;
-      this.cancelPass();
       this.clearDetail();
       this.scanError.set(message(e));
       this.scanFailed.update((l) => (l.includes(w.id) ? l : [...l, w.id]));
@@ -942,25 +986,23 @@ export class SdlcHomeViewModel {
       return;
     }
     let branches: BranchInfo | null = null;
-    let names: NameRow[] = [];
+    let views: WorkspaceView | null = null;
     let lastRuns: Record<string, number> = {};
     const repo = masterRepo(scan);
-    let readiness: Readiness = { kind: 'missing' };
+    let readiness: Readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
     try {
       readiness = await this.transport.sdlcPluginReadiness(w.folder);
     } catch {
       // Nothing decided the plugin is usable, so the notice says to install it.
     }
-    let namesRead = false;
     if (isSetUp(scan) && repo !== null) {
       try {
         const master = masterPath(w.folder, repo);
-        [branches, names, lastRuns] = await Promise.all([
+        [branches, views, lastRuns] = await Promise.all([
           this.transport.sdlcBranches(master),
-          this.readNameRows(w.folder, scan),
+          this.readViewsShown(w.folder, scan),
           this.transport.sdlcRunLinks().then((links) => lastRunTimes(links, w.id)),
         ]);
-        namesRead = true;
       } catch (e) {
         this.toasts.error(`Could not read the workspace: ${message(e)}`);
       }
@@ -969,12 +1011,11 @@ export class SdlcHomeViewModel {
     this.scanFailed.update((l) => l.filter((x) => x !== w.id));
     this.scan.set(scan);
     this.branches.set(branches);
-    this.names.set(names);
+    this.workspace.set(views);
     this.readiness.set(readiness);
     this.lastRuns.set(lastRuns);
     this.currentRead.set(true);
-    // The names are on screen: the stages are read behind them, and the slower reads below do not hold them up.
-    if (namesRead) this.trigger(first, true);
+    // The change list is on screen with its labels; the slower reads below do not hold it up.
     let contexts: Record<string, ContextState> = {};
     let instructions: InstructionsState | null = null;
     if (isSetUp(scan) && repo !== null) {
@@ -983,7 +1024,7 @@ export class SdlcHomeViewModel {
       } catch (e) {
         this.toasts.error(`Could not read the workspace: ${message(e)}`);
       }
-      if (readiness.kind === 'ready' && readiness.lightTrack) {
+      if (readiness.kind === 'ready') {
         try {
           instructions = await this.transport.sdlcInstructions(w.folder, repo);
         } catch (e) {
@@ -994,163 +1035,6 @@ export class SdlcHomeViewModel {
     if (seq !== this.loadSeq) return;
     this.contexts.set(contexts);
     this.instructions.set(instructions);
-  }
-
-  // --- the stage pass
-
-  /** Stage events of the pass being read: only that pass's own events count. */
-  private livePass: number | null = null;
-  /** Events that arrive before the command has handed back the pass id are held here and replayed once it has. */
-  private early: StageEvent[] = [];
-  private awaitingId = false;
-  private passGen = 0;
-  private passWorkspace: string | null = null;
-  private passSystem = '';
-  /** How many changes the systems read before this one hold, so "<read> of <total>" counts across all of them. */
-  private passBefore = 0;
-  private passDone: (() => void) | null = null;
-  private queued: { first: string | null } | null = null;
-  private unlisten: (() => void) | null = null;
-  private stopped = false;
-
-  private async listen(): Promise<void> {
-    if (this.unlisten !== null) return;
-    const off = await this.transport.onStageEvent((ev) => this.onStage(ev));
-    if (this.stopped) off();
-    else this.unlisten = off;
-  }
-
-  /** The page is gone: stop listening and stop the pass, so no progress line is left behind. */
-  private stop(): void {
-    this.stopped = true;
-    this.cancelPass();
-    this.unlisten?.();
-    this.unlisten = null;
-  }
-
-  /**
-   * Something may have moved the stages. A pass that is not running starts now (names, then stages); one that is
-   * running queues exactly one more, which starts as soon as it ends and covers every trigger meanwhile.
-   * `namesFresh` is set when the names were read a moment ago and need no second read.
-   */
-  private trigger(first: string | null, namesFresh = false): void {
-    if (this.passRunning()) {
-      this.queued = { first: this.queued?.first ?? first };
-      return;
-    }
-    void this.runPass(first, namesFresh);
-  }
-
-  private async runPass(first: string | null, namesFresh: boolean): Promise<void> {
-    const gen = ++this.passGen;
-    const w = this.current();
-    const scan = this.scan();
-    if (!w || !scan) return;
-    this.passWorkspace = w.id;
-    this.passRunning.set(true);
-    try {
-      if (!namesFresh) {
-        const names = await this.readNameRows(w.folder, scan);
-        if (gen !== this.passGen) return;
-        this.names.set(names);
-      }
-      await this.readStages(gen, w.id, w.folder, scan, first);
-    } catch (e) {
-      if (gen !== this.passGen) return;
-      this.toasts.error(`Could not read the stages: ${message(e)}`);
-      this.progress.fail(PROGRESS_OWNER);
-    }
-    if (gen === this.passGen) this.endPass();
-  }
-
-  private async readStages(gen: number, workspaceId: string, folder: string, scan: WorkspaceScan, first: string | null): Promise<void> {
-    const repo = masterRepo(scan);
-    const total = this.names().length;
-    if (repo === null || total === 0) return;
-    const master = masterPath(folder, repo);
-    this.stages.markChecking(workspaceId);
-    this.progress.begin('reading-stages', readLabel(0, total), PROGRESS_OWNER);
-    let before = 0;
-    for (const system of systemNames(scan)) {
-      const inSystem = this.names().filter((n) => n.system === system).length;
-      if (inSystem === 0) continue;
-      this.passSystem = system;
-      this.early = [];
-      this.awaitingId = true;
-      const ended = new Promise<void>((resolve) => (this.passDone = resolve));
-      let id: number;
-      try {
-        id = await this.transport.sdlcReadStages(master, system, first);
-      } finally {
-        this.awaitingId = false;
-      }
-      if (gen !== this.passGen) return;
-      this.livePass = id;
-      this.passBefore = before;
-      const held = this.early;
-      this.early = [];
-      for (const ev of held) this.applyStage(ev, before, total);
-      await ended;
-      if (gen !== this.passGen) return;
-      before += inSystem;
-    }
-  }
-
-  private onStage(ev: StageEvent): void {
-    if (this.awaitingId) {
-      this.early.push(ev);
-      return;
-    }
-    this.applyStage(ev, this.passBefore, this.names().length);
-  }
-
-  private applyStage(ev: StageEvent, before: number, total: number): void {
-    const workspace = this.passWorkspace;
-    if (workspace === null || ev.pass !== this.livePass) return;
-    switch (ev.kind) {
-      case 'stage':
-        this.stages.put(workspace, ev.info);
-        break;
-      case 'failed':
-        this.stages.putError(workspace, this.passSystem, ev.change, ev.error);
-        break;
-      case 'progress':
-        this.progress.update(readLabel(before + ev.read, total), PROGRESS_OWNER);
-        break;
-      case 'done':
-        this.passDone?.();
-        break;
-    }
-  }
-
-  /** The pass is over, whatever the way: nothing is checked any more, the progress line goes, and a queued pass starts. */
-  private endPass(): void {
-    const workspace = this.passWorkspace;
-    this.livePass = null;
-    this.passDone = null;
-    if (workspace !== null) this.stages.settle(workspace);
-    this.progress.end(PROGRESS_OWNER);
-    this.passRunning.set(false);
-    const next = this.queued;
-    this.queued = null;
-    if (next !== null) this.trigger(next.first);
-  }
-
-  /** Stop the running pass and forget the queued one. The backend drops a superseded pass's events; a late one is ignored here by its id. */
-  private cancelPass(): void {
-    this.passGen++;
-    this.livePass = null;
-    this.awaitingId = false;
-    this.early = [];
-    this.queued = null;
-    const wake = this.passDone;
-    this.passDone = null;
-    wake?.();
-    if (!this.passRunning()) return;
-    if (this.passWorkspace !== null) this.stages.settle(this.passWorkspace);
-    this.progress.end(PROGRESS_OWNER);
-    this.passRunning.set(false);
+    if (isSetUp(scan)) await this.readOldChecks(w.folder, systemNames(scan));
   }
 }
-
-const readLabel = (read: number, total: number): string => `${read} of ${total} changes read`;

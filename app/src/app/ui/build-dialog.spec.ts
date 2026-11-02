@@ -1,11 +1,11 @@
 import { Injector } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
-import type { Finding } from '../lib/sdlc';
-import { roundOffer, type RoundOffer } from '../lib/build-round';
-import { roundGroups } from '../lib/build-task-list';
-import { groupFindings } from '../lib/sdlc-findings';
-import { BuildDialog, buildRequest, createBuildForm, type BuildDialogMode, type BuildFormState } from './build-dialog';
+import type { RoundGroup } from '@bindings/RoundGroup';
+import type { RoundOffer } from '@bindings/RoundOffer';
+import type { RoundPicks } from '@bindings/RoundPicks';
+import type { RoundPlan } from '@bindings/RoundPlan';
+import { BuildDialog, buildRequest, createBuildForm, picksOf, type BuildDialogMode, type BuildFormState } from './build-dialog';
 
 let host: HTMLElement;
 const root = () => host;
@@ -34,7 +34,7 @@ const pickRepo = async (fixture: ComponentFixture<BuildDialog>, repo: string) =>
 };
 
 const REPOS = ['ai-sdlc', 'catalog-api', 'storefront-web'];
-const finding = (id: string, severity: Finding['severity'], repo?: string): RoundOffer['findings'][number] => ({
+const finding = (id: string, severity: 'high' | 'medium' | 'low', repo?: string): RoundOffer['findings'][number] => ({
   key: id,
   finding: { id, severity, text: `${id} is wrong. It needs a fix.`, file: `src/${id}.cs`, ...(repo === undefined ? {} : { repo }) },
   repo: repo ?? null,
@@ -56,25 +56,30 @@ const OFFER: RoundOffer = {
 };
 const NO_REVIEW: RoundOffer = { review: null, repos: REPOS, findings: [] };
 
-/** The groups the preview's owner hands the dialog: the Review group's own, from the same owners. */
-const groupsOf = (offer: RoundOffer) => {
-  const all = offer.findings.map((f) => f.finding);
-  return roundGroups(offer, groupFindings(all, offer.repos), all);
+/** The picks the backend starts the dialog with: every finding but the low ones. */
+const picksFor = (offer: RoundOffer): RoundPicks => ({ picked: offer.findings.filter((f) => f.finding.severity !== 'low').map((f) => f.key), assigned: {}, notes: {} });
+
+/** The groups the backend hands the dialog: one per repository the findings name, then those naming none. */
+const groupsOf = (offer: RoundOffer): RoundGroup[] => {
+  const named = [...new Set(offer.findings.flatMap((f) => (f.finding.repo === undefined ? [] : [f.finding.repo])))];
+  const none = offer.findings.filter((f) => f.finding.repo === undefined);
+  return [...named.map((repo) => ({ repo, findings: offer.findings.filter((f) => f.finding.repo === repo) })), ...(none.length === 0 ? [] : [{ repo: null, findings: none }])];
 };
 
 /** The form is made by whoever owns the preview; the component only draws it. */
-async function open(mode: BuildDialogMode, offer: RoundOffer | null = null) {
+async function open(mode: BuildDialogMode, offer: RoundOffer | null = null, plan: RoundPlan | null = null, groups: RoundGroup[] | null = null) {
   TestBed.configureTestingModule({ imports: [BuildDialog] });
-  const state: BuildFormState = createBuildForm(TestBed.inject(Injector), mode === 'round', offer ?? undefined);
+  const state: BuildFormState = createBuildForm(TestBed.inject(Injector), offer ?? undefined, offer === null ? undefined : picksFor(offer));
   const fixture = TestBed.createComponent(BuildDialog);
   host = fixture.nativeElement as HTMLElement;
   fixture.componentRef.setInput('mode', mode);
   fixture.componentRef.setInput('offer', offer);
-  fixture.componentRef.setInput('groups', offer === null ? [] : groupsOf(offer));
+  fixture.componentRef.setInput('groups', groups ?? (offer === null ? [] : groupsOf(offer)));
+  fixture.componentRef.setInput('plan', plan);
   fixture.componentRef.setInput('state', state);
   await fixture.whenStable();
   await settle();
-  return { fixture, state, request: () => buildRequest(state, mode === 'round', offer ?? undefined), valid: () => state.form().valid() };
+  return { fixture, state, request: () => buildRequest(state), picks: () => picksOf(state.model()), valid: () => state.form().valid() };
 }
 
 describe('BuildDialog', () => {
@@ -92,7 +97,7 @@ describe('BuildDialog', () => {
     expect(text(root())).toContain("Time limit for each repository's run. Time spent waiting for your answers does not count. There is no spending ceiling.");
     expect(root().querySelector('textarea')).toBeNull();
     expect(root().querySelector('hlm-select')).toBeNull();
-    expect(request()).toEqual({ timeoutSecs: 7200, rounds: null });
+    expect(request()).toEqual({ timeoutSecs: 7200 });
   });
 
   it('zero time limit is invalid', async () => {
@@ -122,22 +127,14 @@ describe('BuildDialog', () => {
     expect(hours()).not.toBeNull();
   });
 
-  it('a round cannot start on nothing: it says to pick a finding or write a note (R5.5)', async () => {
-    const { valid } = await open('round', NO_REVIEW);
-    expect(valid()).toBe(false);
-    expect(summary()).toContain('Pick a finding or write a note.');
-  });
-
-  it('a note in one repository starts an agent there (R6.1)', async () => {
-    const { valid, request } = await open('round', NO_REVIEW);
+  it('a note in one repository goes into the picks the backend is asked about (R6.1)', async () => {
+    const { picks } = await open('round', NO_REVIEW);
     await typeInto(notes()[2], '  Rename the upload button to Add photos  ');
-    expect(valid()).toBe(true);
-    expect(summary()).toContain('Starts 1 agent');
-    expect(request().rounds!.map((r) => r.repo)).toEqual(['storefront-web']);
-    expect(request().rounds![0].instructions).toContain('Rename the upload button to Add photos');
+    expect(picks().notes['storefront-web']).toBe('  Rename the upload button to Add photos  ');
+    expect(picks().picked).toEqual([]);
   });
 
-  it('lists each finding under its repository, high and medium picked, low not, and F8 with no repository beside a Fixed in select (R5.1)', async () => {
+  it('lists each finding under its repository, the backend\'s picks ticked, and F8 with no repository beside a Fixed in select (R5.1)', async () => {
     await open('round', OFFER);
     for (const key of ['F1', 'F2', 'F3', 'F5', 'F6', 'F8']) expect(checked(key), key).toBe(true);
     for (const key of ['F4', 'F7']) expect(checked(key), key).toBe(false);
@@ -170,50 +167,49 @@ describe('BuildDialog', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('picking and unpicking changes what the round fixes (R5.2)', async () => {
-    const { fixture, request } = await open('round', OFFER);
-    await pickRepo(fixture, 'catalog-api');
+  it('picking and unpicking changes the picks the backend is asked about (R5.2)', async () => {
+    const { picks } = await open('round', OFFER);
     box('F2').click();
     box('F4').click();
     await settle();
     expect(checked('F2')).toBe(false);
     expect(checked('F4')).toBe(true);
-    const catalog = request().rounds!.find((r) => r.repo === 'catalog-api')!;
-    expect(catalog.summary).toContain('F1, F3, F4');
+    expect(picks().picked).toContain('F4');
+    expect(picks().picked).not.toContain('F2');
   });
 
-  it('a picked finding with no repository blocks the round until one is chosen (R5.3)', async () => {
-    const { fixture, valid, request } = await open('round', OFFER);
-    expect(valid()).toBe(false);
-    expect(summary()).toContain('Choose a repository for F8.');
+  it('the repository chosen for a finding that names none goes into the picks (R5.3)', async () => {
+    const { fixture, picks } = await open('round', OFFER);
     await pickRepo(fixture, 'storefront-web');
-    expect(valid()).toBe(true);
-    expect(request().rounds!.find((r) => r.repo === 'storefront-web')!.summary).toContain('F5, F6, F8');
+    expect(picks().assigned).toEqual({ F8: 'storefront-web' });
   });
 
-  it('pairs the blocked reason with a status dot, so the warning is not colour alone', async () => {
-    await open('round', OFFER);
+  it('pairs the blocked reason the backend gives with a status dot, so the warning is not colour alone', async () => {
+    await open('round', OFFER, { blocked: 'Choose a repository for F8.', requests: [] });
+    expect(summary()).toContain('Choose a repository for F8.');
     expect(root().querySelector('.k-round__blocked')!.querySelector('.k-status__dot')).not.toBeNull();
   });
 
-  it('says exactly which agents will start and what each will fix (R5.4)', async () => {
-    const { fixture } = await open('round', OFFER);
-    await pickRepo(fixture, 'storefront-web');
+  it('says exactly which agents will start and what each will fix, as the backend\'s plan has it (R5.4)', async () => {
+    await open('round', OFFER, {
+      blocked: null,
+      requests: [
+        { repo: 'catalog-api', instructions: 'x', summary: 'catalog-api · F1, F2, F3' },
+        { repo: 'storefront-web', instructions: 'y', summary: 'storefront-web · F5, F6, F8' },
+      ],
+    });
     expect(summary()).toContain('Starts 2 agents');
     expect(summary()).toContain('catalog-api · F1, F2, F3');
     expect(summary()).toContain('storefront-web · F5, F6, F8');
   });
 
-  it('a note goes with the picked findings of its repository (R6.2)', async () => {
-    const { fixture, request } = await open('round', OFFER);
-    await pickRepo(fixture, 'storefront-web');
+  it('a note is kept for its repository in the picks (R6.2)', async () => {
+    const { picks } = await open('round', OFFER);
     await typeInto(notes()[1], 'Keep the 8 MB limit');
-    const catalog = request().rounds!.find((r) => r.repo === 'catalog-api')!;
-    expect(catalog.instructions).toContain('F1');
-    expect(catalog.instructions).toContain('Keep the 8 MB limit');
+    expect(picks().notes['catalog-api']).toBe('Keep the 8 MB limit');
   });
 
-  it('a fresh form starts with the defaults: nothing from an earlier open is shown', async () => {
+  it('a fresh form starts with the picks it is given: nothing from an earlier open is shown', async () => {
     const first = await open('round', OFFER);
     box('F1').click();
     await typeInto(notes()[0], 'something');
@@ -227,8 +223,8 @@ describe('BuildDialog', () => {
   });
 
   it('lists a finding of a repository outside the build under that repository, with a Fixed in select (F9)', async () => {
-    const outside = { id: 'F9', severity: 'high' as const, text: 'F9 is wrong. It needs a fix.', repo: 'legacy-api' };
-    const { fixture, valid, request } = await open('round', roundOffer({ number: 1, findings: [outside] }, REPOS));
+    const outside: RoundOffer = { review: 1, repos: REPOS, findings: [{ key: 'F9', repo: null, finding: { id: 'F9', severity: 'high', text: 'F9 is wrong. It needs a fix.', repo: 'legacy-api' } }] };
+    await open('round', outside);
     const row = root().querySelector('[data-finding="F9"]')!;
     expect(row).not.toBeNull();
     expect(checked('F9')).toBe(true);
@@ -236,17 +232,33 @@ describe('BuildDialog', () => {
     expect(row.querySelector('hlm-select')).not.toBeNull();
     expect(text(row)).toContain('Fixed in');
     expect(notes()).toHaveLength(3);
-    expect(valid()).toBe(false);
-    expect(summary()).toContain('Choose a repository for F9.');
-    await pickRepo(fixture, 'catalog-api');
-    expect(valid()).toBe(true);
-    expect(request().rounds!.map((r) => r.repo)).toEqual(['catalog-api']);
   });
 
-  it('lists the findings of a repository in severity order, the way the Review group does', async () => {
-    const mk = (id: string, severity: Finding['severity']) => ({ id, severity, text: `${id} is wrong. It needs a fix.`, repo: 'catalog-api' });
-    await open('round', roundOffer({ number: 1, findings: [mk('F1', 'medium'), mk('F2', 'low'), mk('F3', 'high')] }, REPOS));
+  it('lists the findings of a repository in the order of the groups it is given, the way the Review group does', async () => {
+    const mk = (key: string) => finding(key, 'medium', 'catalog-api');
+    const offer: RoundOffer = { review: 1, repos: REPOS, findings: [mk('F1'), mk('F2'), mk('F3')] };
+    await open('round', offer, null, [{ repo: 'catalog-api', findings: [offer.findings[2], offer.findings[0], offer.findings[1]] }]);
     const keys = Array.from(root().querySelectorAll('[data-finding]')).map((e) => e.getAttribute('data-finding'));
     expect(keys).toEqual(['F3', 'F1', 'F2']);
+  });
+});
+
+describe('BuildDialog shows the backend\'s plan', () => {
+  it('draws the plan it is given instead of making one', async () => {
+    const offer: RoundOffer = { review: 1, repos: ['api'], findings: [] };
+    const plan: RoundPlan = { blocked: null, requests: [{ repo: 'api', instructions: 'Fix F1.', summary: 'api · F1' }] };
+    TestBed.configureTestingModule({ imports: [BuildDialog] });
+    const fixture = TestBed.createComponent(BuildDialog);
+    fixture.componentRef.setInput('mode', 'round');
+    fixture.componentRef.setInput('offer', offer);
+    fixture.componentRef.setInput('state', createBuildForm(TestBed.inject(Injector), offer));
+    fixture.componentRef.setInput('plan', plan);
+    await fixture.whenStable();
+    const summary = fixture.nativeElement.querySelector('[data-round-summary]') as HTMLElement;
+    expect(summary.textContent).toContain('Starts 1 agent');
+    expect(summary.textContent).toContain('api · F1');
+    fixture.componentRef.setInput('plan', { blocked: 'Pick a finding or write a note.', requests: [] });
+    await fixture.whenStable();
+    expect(summary.textContent).toContain('Pick a finding or write a note.');
   });
 });

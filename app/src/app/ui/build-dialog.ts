@@ -7,14 +7,18 @@ import { HlmInput } from '@spartan-ng/helm/input';
 import { HlmLabel } from '@spartan-ng/helm/label';
 import { HlmSelectImports } from '@spartan-ng/helm/select';
 import { HlmTextareaImports } from '@spartan-ng/helm/textarea';
-import { defaultPicks, roundPlan, type RoundFinding, type RoundGroup, type RoundOffer, type RoundPicks, type RoundPlan, type RoundRequest } from '../lib/build-round';
+import type { RoundFinding } from '@bindings/RoundFinding';
+import type { RoundGroup } from '@bindings/RoundGroup';
+import type { RoundOffer } from '@bindings/RoundOffer';
+import type { RoundPicks } from '@bindings/RoundPicks';
+import type { RoundPlan } from '@bindings/RoundPlan';
 import { summaryOf } from '../lib/build-task-list';
 import type { Severity } from '../lib/sdlc';
 import { Field } from './field';
 
 export type BuildDialogMode = 'start' | 'continue' | 'round';
-/** `rounds` is set in round mode only: one request per repository that gets an agent. */
-export type BuildStartRequest = { timeoutSecs: number; rounds: RoundRequest[] | null };
+/** What the fields ask for: the time limit. A round's requests are the backend's plan, not the form's. */
+export type BuildStartRequest = { timeoutSecs: number };
 
 /** The time limit and, in round mode, the keys of the picked findings, the repository chosen for each finding that names none, and a note for each repository. */
 export type BuildModel = { hours: number | null; minutes: number | null; picked: string[]; assigned: Record<string, string>; notes: Record<string, string> };
@@ -24,20 +28,24 @@ export type BuildFormState = { model: WritableSignal<BuildModel>; form: FieldTre
 const DEFAULT_HOURS = 2;
 const NO_OFFER: RoundOffer = { review: null, repos: [], findings: [] };
 
-/** The picks the form holds, as the round plan reads them. */
+/** The entries of a picks record that hold a value. */
+const definedOnly = (record: Partial<Record<string, string>> | undefined): Record<string, string> =>
+  Object.fromEntries(Object.entries(record ?? {}).flatMap(([k, v]) => (v === undefined ? [] : [[k, v]])));
+
+/** The picks the form holds, as the backend's round plan reads them. */
 export function picksOf(model: BuildModel): RoundPicks {
-  return { picked: new Set(model.picked), assigned: model.assigned, notes: model.notes };
+  return { picked: model.picked, assigned: model.assigned, notes: model.notes };
 }
 
-/** A fresh form for the build's time limit and, for another round, what to do and where. */
-export function createBuildForm(injector: Injector, round: boolean, offer?: RoundOffer): BuildFormState {
+/** A fresh form for the build's time limit and, for another round, what to do and where. The findings picked to start with are the backend's `picks`. */
+export function createBuildForm(injector: Injector, offer?: RoundOffer, picks?: RoundPicks): BuildFormState {
   const seen = offer ?? NO_OFFER;
   const model = signal<BuildModel>({
     hours: DEFAULT_HOURS,
     minutes: 0,
-    picked: [...defaultPicks(seen).picked],
-    assigned: {},
-    notes: Object.fromEntries(seen.repos.map((r) => [r, ''])),
+    picked: [...(picks?.picked ?? [])],
+    assigned: definedOnly(picks?.assigned),
+    notes: { ...Object.fromEntries(seen.repos.map((r) => [r, ''])), ...definedOnly(picks?.notes) },
   });
   const f = form(
     model,
@@ -48,11 +56,6 @@ export function createBuildForm(injector: Injector, round: boolean, offer?: Roun
         validate(field, ({ value }) => (value() === null ? { kind: 'required' } : undefined));
         validate(field, ({ value }) => ((value() ?? 0) < 0 ? { kind: 'min' } : undefined));
       }
-      // A round that cannot start reports why as the form's own error, so the preview's Start run stays off with the reason shown beside the picks.
-      validate(p, ({ value }) => {
-        const blocked = round ? roundPlan(seen, picksOf(value())).blocked : null;
-        return blocked === null ? undefined : { kind: 'round', message: blocked };
-      });
       validate(p.minutes, ({ valueOf }) => ((valueOf(p.hours) ?? 0) * 60 + (valueOf(p.minutes) ?? 0) > 0 ? undefined : { kind: 'zero-limit' }));
     },
     { injector },
@@ -67,8 +70,8 @@ export function limitSecs(state: BuildFormState): number {
 }
 
 /** What the form asks for. */
-export function buildRequest(state: BuildFormState, round: boolean, offer?: RoundOffer): BuildStartRequest {
-  return { timeoutSecs: limitSecs(state), rounds: round ? roundPlan(offer ?? NO_OFFER, picksOf(state.model())).requests : null };
+export function buildRequest(state: BuildFormState): BuildStartRequest {
+  return { timeoutSecs: limitSecs(state) };
 }
 
 /* The build's fields: the time limit for each repository's run and, for another round, what to do and where.
@@ -83,15 +86,15 @@ export class BuildDialog {
   readonly mode = input.required<BuildDialogMode>();
   /** What a round may fix, from the latest review; null outside round mode. */
   readonly offer = input<RoundOffer | null>(null);
-  /** The offer's findings in the Review group's groups and order, built by whoever owns the offer. */
+  /** The offer's findings in the Review group's groups and order, as the backend lists them. */
   readonly groups = input<RoundGroup[]>([]);
+  /** What the round would start for the picks now made, as the backend answers; null until it has. */
+  readonly plan = input<RoundPlan | null>(null);
   readonly state = input.required<BuildFormState>();
 
   protected readonly round = computed(() => this.mode() === 'round');
   private readonly seen = computed(() => this.offer() ?? NO_OFFER);
   protected readonly repos = computed(() => this.seen().repos);
-  /** What the round asks of each repository, or why it cannot start. */
-  protected readonly plan = computed<RoundPlan>(() => roundPlan(this.seen(), picksOf(this.state().model())));
   /** The build's repositories first, each with its findings and a note box, then the groups the build has no agent for (no note box). */
   protected readonly sections = computed<{ repo: string | null; findings: RoundFinding[]; note: boolean }[]>(() => {
     const groups = this.groups();

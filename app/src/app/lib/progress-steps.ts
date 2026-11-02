@@ -18,7 +18,7 @@ export type ProgressStepId = (typeof PROGRESS_STEP_IDS)[number];
  */
 export const PROGRESS_STEPS: Record<ProgressStepId, { usualMs: number; lines: readonly string[] }> = {
   'reading-stages': {
-    usualMs: 2_000,
+    usualMs: 8_000,
     lines: [
       'Reading every change on the shelf…',
       'Reading how far each change has come…',
@@ -103,7 +103,5 @@ export const progressLabels = {
   findingRepos: (): string => 'Finding the repositories with changes',
   readingDiff: (repo: string): string => `Reading the changes in ${repo}`,
   preparingBuild: (): string => 'Checking the repositories before building',
-  runningChecks: (repo: string): string => `Running the checks in ${repo}`,
-  pushing: (change: string, repo: string, branch: string | null = null): string => `Pushing ${branch ?? `change/${change}`} in ${repo}`,
-  openingPr: (repo: string): string => `Opening a pull request in ${repo}`,
+  preparingReview: (): string => 'Checking the repositories before the review',
 };

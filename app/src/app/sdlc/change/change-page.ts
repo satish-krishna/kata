@@ -11,9 +11,9 @@ import { BuildLayoutViewModel } from '../build/build-layout.view-model';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { BuildPage } from '../build/build-page';
 import { BuildDialog } from '../../ui/build-dialog';
+import { ConfirmDialog } from '../../ui/confirm-dialog';
 import { BranchNameDialog } from '../../ui/branch-name-dialog';
 import { BuildRefusalDialog } from '../../ui/build-refusal-dialog';
-import { ConfirmDialog } from '../../ui/confirm-dialog';
 import { NewChangeDialog } from '../../ui/new-change-dialog';
 import { DocLayout } from '../../ui/doc-layout';
 import { DoneDialog } from '../../ui/done-dialog';
@@ -25,6 +25,7 @@ import { RequirementsView } from '../../ui/requirements-view';
 import { Segmented } from '../../ui/segmented';
 import { SdlcSession } from '../../ui/sdlc-session';
 import { SdlcToolbar } from '../../ui/sdlc-toolbar';
+import { RunningChanges } from '../running-changes';
 import { StagePills } from '../../ui/stage-pills';
 import { TasksView } from '../../ui/tasks-view';
 import { RunPreviewDialog } from '../../ui/run-preview-dialog';
@@ -35,7 +36,7 @@ import { ChangePageViewModel } from './change-page.view-model';
 @Component({
   selector: 'app-change-page',
   providers: [ChangePageViewModel, BuildPageViewModel, BuildLayoutViewModel,RunPreviewViewModel, provideIcons({ lucideChevronDown, lucideTriangleAlert })],
-  imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, HlmTabsImports, SdlcToolbar, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, ConfirmDialog, BranchNameDialog, NewChangeDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildPage, RunPreviewDialog, ProgressLine],
+  imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, HlmTabsImports, SdlcToolbar, RunningChanges, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, BranchNameDialog, ConfirmDialog, NewChangeDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildPage, RunPreviewDialog, ProgressLine],
   templateUrl: './change-page.html',
 })
 export class ChangePage {

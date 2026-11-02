@@ -210,6 +210,29 @@ mod tests {
         assert!(Path::new(&wt.path).join("tracked.txt").exists());
     }
 
+    /// R21.2: the isolated copy of a Workbench run still refuses a repository that signs every commit.
+    #[test]
+    fn refuses_a_repository_that_signs_every_commit() {
+        let repo = init_repo();
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(repo.path())
+            .args(["config", "commit.gpgsign", "true"])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let root = tempfile::tempdir().unwrap();
+        let err = create_in(&repo.path().to_string_lossy(), "signed", root.path()).unwrap_err();
+        assert!(
+            matches!(&err, WorktreeError::External(reason) if reason.contains("signs every commit")),
+            "got {err:?}"
+        );
+        assert!(
+            std::fs::read_dir(root.path()).unwrap().next().is_none(),
+            "nothing was created"
+        );
+    }
+
     #[test]
     fn runs_post_checkout_and_ignores_its_failure() {
         let repo = init_repo();

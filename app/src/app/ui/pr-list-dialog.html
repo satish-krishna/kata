@@ -1,45 +1,90 @@
-<hlm-dialog [state]="results() ? 'open' : 'closed'" (stateChanged)="onState($event)">
+<hlm-dialog [state]="open() ? 'open' : 'closed'" (stateChanged)="onState($event)">
   <hlm-dialog-content *hlmDialogPortal="let ctx" class="[--dialog-w:40rem]">
-    @if (results()) {
-      <h2 hlmDialogTitle>Pull requests</h2>
-      <ul class="k-left__list max-h-[65vh] overflow-y-auto">
-        @for (row of rows(); track row.repo) {
-          <li class="k-left__row">
-            <span class="k-mono">{{ row.repo }}</span>
-            <span [class]="'k-status k-status--' + row.tone"><span class="k-status__dot"></span>{{ row.label }}</span>
-            @if (row.url !== null) {
-              <a class="k-mono" [href]="row.url" rel="noopener noreferrer" (click)="$event.preventDefault(); openLink.emit(row.url)">{{ row.url }}</a>
+    @if (open()) {
+      <h2 hlmDialogTitle>{{ title() }}</h2>
+      <div class="max-h-[65vh] overflow-y-auto">
+        @if (view(); as v) {
+          @switch (v.kind) {
+            @case ('done') {
+              @if (v.warnings.length > 0) {
+                <ul class="k-left__list" aria-label="Warnings from the plugin">
+                  @for (warning of v.warnings; track $index) {
+                    <li class="k-left__row">
+                      <span class="k-status k-status--warning"><span class="k-status__dot"></span>{{ warning }}</span>
+                    </li>
+                  }
+                </ul>
+              }
             }
-            @if (row.error !== null) {
-              <span class="k-left__tag">{{ row.error }}</span>
+            @case ('notReady') {
+              <ul class="k-left__list">
+                @for (problem of v.problems; track $index) {
+                  <li class="k-left__row">
+                    <span class="k-status k-status--error"><span class="k-status__dot"></span>{{ problem }}</span>
+                  </li>
+                }
+              </ul>
+              <p class="k-left__note">Nothing was pushed.</p>
             }
-          </li>
+            @case ('partial') {
+              <p class="k-left__note">Pushed: <span class="k-mono">{{ v.pushed.length > 0 ? v.pushed.join(', ') : 'nothing' }}</span></p>
+              @if (v.failed.length > 0) {
+                <ul class="k-left__list">
+                  @for (why of v.failed; track $index) {
+                    <li class="k-left__row">
+                      <span class="k-status k-status--error"><span class="k-status__dot"></span>{{ why }}</span>
+                    </li>
+                  }
+                </ul>
+              }
+            }
+            @case ('couldNotRun') {
+              <p class="k-status k-status--error" role="alert"><span class="k-status__dot"></span>{{ v.message }}</p>
+              <p class="k-left__note">Nothing is claimed as pushed.</p>
+            }
+          }
         }
-      </ul>
-      @if (leftBehind().length > 0) {
-        <section class="k-left__group" aria-labelledby="pr-left-behind">
-          <h3 id="pr-left-behind" class="k-left__head">Left behind under an earlier name</h3>
+        @if (links().length > 0) {
           <ul class="k-left__list">
-            @for (e of leftBehind(); track e.url) {
+            @for (pr of links(); track pr.repo) {
               <li class="k-left__row">
-                <span class="k-status k-status--warning">
-                  <span class="k-status__dot"></span><span class="k-mono">{{ e.repo }}</span> is still on GitHub under <span class="k-mono">{{ e.branch }}</span>, close by hand
-                </span>
-                <a class="k-mono" [href]="e.url" rel="noopener noreferrer" (click)="$event.preventDefault(); openLink.emit(e.url)">{{ e.url }}</a>
+                <span class="k-mono">{{ pr.repo }}</span>
+                <span class="k-status k-status--success"><span class="k-status__dot"></span>opened</span>
+                <a class="k-mono" [href]="pr.url" rel="noopener noreferrer" (click)="$event.preventDefault(); openLink.emit(pr.url)">{{ pr.url }}</a>
               </li>
             }
           </ul>
-        </section>
-      }
+        }
+        @if (leftBehind().length > 0) {
+          <section class="k-left__group" aria-labelledby="pr-left-behind">
+            <h3 id="pr-left-behind" class="k-left__head">Left behind under an earlier name</h3>
+            <ul class="k-left__list">
+              @for (e of leftBehind(); track e.url) {
+                <li class="k-left__row">
+                  <span class="k-status k-status--warning">
+                    <span class="k-status__dot"></span><span class="k-mono">{{ e.repo }}</span> is still on GitHub under <span class="k-mono">{{ e.branch }}</span>, close by hand
+                  </span>
+                  <a class="k-mono" [href]="e.url" rel="noopener noreferrer" (click)="$event.preventDefault(); openLink.emit(e.url)">{{ e.url }}</a>
+                </li>
+              }
+            </ul>
+          </section>
+        }
+      </div>
       <hlm-dialog-footer>
-        @if (clash(); as branch) {
-          <button hlmBtn variant="ghost" size="sm" type="button" (click)="close.emit()">Close</button>
-          <button hlmBtn variant="primary" size="sm" type="button" (click)="renameBranch.emit(branch)">Pick a new branch name</button>
-        } @else if (anyFailed()) {
-          <button hlmBtn variant="ghost" size="sm" type="button" (click)="close.emit()">Close</button>
-          <button hlmBtn variant="primary" size="sm" type="button" (click)="retry.emit()">Retry</button>
-        } @else {
-          <button hlmBtn variant="primary" size="sm" type="button" (click)="close.emit()">Close</button>
+        @switch (view()?.kind) {
+          @case ('notReady') {
+            <button hlmBtn variant="ghost" size="sm" type="button" (click)="close.emit()">Close</button>
+            <button hlmBtn variant="secondary" size="sm" type="button" (click)="anotherRound.emit()">Another round</button>
+            <button hlmBtn variant="primary" size="sm" type="button" (click)="runReview.emit()">Run review</button>
+          }
+          @case ('partial') {
+            <button hlmBtn variant="ghost" size="sm" type="button" (click)="close.emit()">Close</button>
+            <button hlmBtn variant="primary" size="sm" type="button" (click)="retry.emit()">Declare done again</button>
+          }
+          @default {
+            <button hlmBtn variant="primary" size="sm" type="button" (click)="close.emit()">Close</button>
+          }
         }
       </hlm-dialog-footer>
     }

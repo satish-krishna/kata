@@ -8,13 +8,14 @@ import { ChangesTable } from '../../ui/changes-table';
 import { ConfirmDialog } from '../../ui/confirm-dialog';
 import { LeftoverDialog } from '../../ui/leftover-dialog';
 import { LockOverlay } from '../../ui/lock-overlay';
-import { ProgressLine } from '../../ui/progress-line';
 import { SdlcSession } from '../../ui/sdlc-session';
 import { NewChangeDialog } from '../../ui/new-change-dialog';
 import { InstructionsRow } from '../../ui/instructions-row';
 import { ReposTable } from '../../ui/repos-table';
 import { SdlcSettingsDialog } from '../../ui/sdlc-settings-dialog';
+import { ProgressLine } from '../../ui/progress-line';
 import { SdlcToolbar } from '../../ui/sdlc-toolbar';
+import { RunningChanges } from '../running-changes';
 import { RunPreviewDialog } from '../../ui/run-preview-dialog';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { SdlcHomeViewModel } from './sdlc-home.view-model';
@@ -26,9 +27,10 @@ import { SdlcHomeViewModel } from './sdlc-home.view-model';
     NgIcon,
     HlmButtonImports,
     SdlcToolbar,
-    ProgressLine,
+    RunningChanges,
     SdlcSession,
     ChangesTable,
+    ProgressLine,
     InstructionsRow,
     ReposTable,
     AddWorkspaceDialog,

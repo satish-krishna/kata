@@ -2,8 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { of } from 'rxjs';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
-import type { Stage } from '@bindings/Stage';
+import type { ChangeInfo, Stage } from '../../lib/sdlc-mock-types';
 import { render } from '../../../testing/render';
 import { LockStore } from '../../core/lock/lock.store';
 import { KataTransport } from '../../core/transport/kata-transport';
@@ -12,8 +11,11 @@ import type { StageAction } from '../../lib/sdlc';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
+/** Hold the lock the way Kata's own checks do, and never finish: the screen stays locked for the rest of the test. */
+const holdLock = (lock: LockStore): void => void lock.runSteps('Checking', [{ label: 'Check', run: () => new Promise<string | null>(() => undefined) }]);
+
 const FIX = '2026-10-12-product-photo-upload';
-const NEEDS = 'Needs ai-sdlc 0.13.0 or later.';
+const NEEDS = 'Needs ai-sdlc 1.1.0 or later.';
 const BUSY = 'Another task is already running.';
 const FIX_ACTIONS: StageAction[] = ['finish-fix-draft', 'accept-fix', 'change-fix', 'reopen-fix'];
 
@@ -35,13 +37,10 @@ const confirmPreview = async () => {
 /** A fix at a stage, with the plugin supporting the light track or not, until the mock has its own fixture. */
 async function mountFix(stage: Stage, lightTrack = true, track: 'fix' | 'full' = 'fix', docs: Partial<ChangeInfo> = {}) {
   const transport = new MockTransport();
-  const real = transport.sdlcReadChange.bind(transport);
-  vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-    [await real(m, s, n)].map((c) => (c.change === FIX ? { ...c, stage, track, ...docs } : c))[0],
-  );
+  transport.patchChange(FIX, { stage, track, ...docs });
   const ready = await transport.sdlcPluginReadiness(null);
-  vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(ready.kind === 'ready' ? { ...ready, lightTrack } : ready);
-  const run = vi.spyOn(transport, 'runSpec').mockResolvedValue('1');
+  vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(lightTrack ? ready : { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 1.0.0.' });
+  const run = vi.spyOn(transport, 'sdlcRunChange').mockResolvedValue('1');
   const out = await render(ChangePage, {}, [
     provideRouter([]),
     { provide: KataTransport, useValue: transport },
@@ -63,8 +62,10 @@ describe('ChangePage: the fix runs', () => {
     expect(document.body.querySelector('[role="dialog"] textarea')).toBeNull();
     await confirmPreview();
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-    expect(run.mock.calls[0][0].task).toContain(`--accept ${FIX}`);
-    expect(run.mock.calls[0][0].permissions.mode).toBe('auto');
+    expect(run.mock.calls[0][0]).toEqual({ workspace: expect.any(String), system: 'commerce', change: FIX });
+    expect(run.mock.calls[0][1]).toBe('fix');
+    expect(run.mock.calls[0][2].task).toContain(`--accept ${FIX}`);
+    expect(run.mock.calls[0][2].permissionMode).toBe('auto');
   });
 
   it('a fix whose acceptance stopped reads Finish acceptance', async () => {
@@ -86,7 +87,7 @@ describe('ChangePage: the fix runs', () => {
     button(dialog, 'Run').click();
     await confirmPreview();
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-    expect(run.mock.calls[0][0].task).toContain('Operator feedback:\nAlso cover the retry button.');
+    expect(run.mock.calls[0][2].task).toContain('Operator feedback:\nAlso cover the retry button.');
   });
 
   it('Change the fix with an empty box runs nothing and shows the error', async () => {
@@ -147,38 +148,16 @@ describe('ChangePage: the fix runs', () => {
     expect(text).not.toContain('plan: missing (HEAD');
   });
 
-  it('shows the format program message when the program could not run', async () => {
-    const { container } = await mountFix('fix-unsettled', true, 'fix', {
-      fix_row: null,
-      plan_unreadable: true,
-      plan_unreadable_reason: 'Node.js 20 or later is required to read the documents.',
-    });
-    const text = container.querySelector('[data-testid="doc-notice"]')!.textContent!;
-    expect(text).toContain('Node.js 20 or later is required to read the documents.');
-  });
-
-  it('a program failure shows its message alone, with no status lines', async () => {
-    const { container } = await mountFix('fix-unsettled', true, 'fix', {
-      fix_row: null,
-      plan_unreadable: true,
-      plan_unreadable_reason: 'Node.js 20 or later is required to read the documents.',
-    });
-    const text = container.querySelector('[data-testid="doc-notice"]')!.textContent!;
-    expect(text).toContain('Node.js 20 or later is required to read the documents.');
-    expect(text).not.toContain('HEAD:');
-    expect(text).not.toContain('intent:');
-  });
-
   it('a program failure says it could not read the fix, not that the statuses are unsettled', async () => {
     const { container } = await mountFix('fix-unsettled', true, 'fix', {
       fix_row: null,
       plan_unreadable: true,
-      plan_unreadable_reason: 'Node.js 20 or later is required to read the documents.',
     });
     const text = container.querySelector('[data-testid="doc-notice"]')!.textContent!;
     expect(text).not.toContain('does not leave a fix');
     expect(text).toContain('Kata could not read where this fix stands.');
-    expect(text).toContain('Node.js 20 or later is required to read the documents.');
+    expect(text).not.toContain('HEAD:');
+    expect(text).not.toContain('intent:');
   });
 
   it('a program that ran keeps the headline and the status lines at row 2', async () => {
@@ -216,18 +195,6 @@ describe('ChangePage: the fix runs', () => {
     expect(container.textContent).toContain('Fix · statuses not settled');
   });
 
-  it('a fix that needs the plugin shows the reason and offers nothing', async () => {
-    const { container } = await mountFix('fix-needs-plugin', true, 'fix', {
-      plan_unreadable: true,
-      plan_unreadable_reason: NEEDS,
-    });
-    const text = container.querySelector('[data-testid="doc-notice"]')!.textContent!;
-    expect(text).toContain(NEEDS);
-    expect(text).not.toContain('HEAD:');
-    expect(button(container, 'Accept fix')).toBeUndefined();
-    expect(button(container, 'Change the fix')).toBeUndefined();
-  });
-
   it('a fix whose acceptance stopped offers Change the fix after Finish acceptance', async () => {
     const { container } = await mountFix('fix-accepting');
     const labels = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).map((b) => b.textContent!.trim());
@@ -242,7 +209,7 @@ describe('ChangePage: the fix runs', () => {
     await settle();
     expect(button(container, 'Reopen the fix')).toBeDefined();
     expect(button(container, 'Reopen the fix').disabled).toBe(false);
-    expect(TestBed.inject(LockStore).beginBuild('Building')).toBe(true);
+    holdLock(TestBed.inject(LockStore));
     await settle();
     expect(button(container, 'Reopen the fix').disabled).toBe(true);
     toastState.reset();
@@ -273,7 +240,7 @@ describe('ChangePage: the fix runs', () => {
     it('is disabled while the lock is held', async () => {
       const { container } = await mountFix('build-finished');
       expect(button(bar(container), 'Reopen the fix').disabled).toBe(false);
-      expect(TestBed.inject(LockStore).beginBuild('Building')).toBe(true);
+      holdLock(TestBed.inject(LockStore));
       await settle();
       expect(button(bar(container), 'Reopen the fix').disabled).toBe(true);
     });
@@ -304,7 +271,7 @@ describe('ChangePage: the fix runs', () => {
 
   it('every fix run is refused while another task runs, with no run started (R11.2)', async () => {
     const { vm, run } = await mountFix('fix-awaiting');
-    expect(TestBed.inject(LockStore).beginBuild('Building')).toBe(true);
+    holdLock(TestBed.inject(LockStore));
     for (const action of FIX_ACTIONS) {
       toastState.reset();
       await vm.act(action);

@@ -1,6 +1,7 @@
 import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { AskRecord, PermissionRecord, RunState } from '../../lib/events';
+import { ChangeRunStore } from '../run/change-run.store';
 import { RunStore } from '../run/run.store';
 import { ToastStore } from '../toast/toast.store';
 
@@ -8,11 +9,7 @@ export type StepState = 'pending' | 'running' | 'done' | 'failed';
 export type LockStep = { label: string; state: StepState; detail: string | null };
 /** A run view stays after its run ends (`finished` set) until the operator closes it. */
 export type StepsView = { kind: 'steps'; title: string; steps: LockStep[] };
-/** A build holds the lock once for all its runs and stays after the last one ends (`finished`) until the operator closes it. */
-export type BuildView = { kind: 'build'; title: string; runs: string[]; finished: boolean };
-export type LockView = StepsView | { kind: 'run'; title: string; finished: RunState | null } | BuildView;
-/** A run of the build that is paused on the operator. */
-export type Waiting = { runId: string; kind: 'answer' | 'approval' };
+export type LockView = StepsView | { kind: 'run'; title: string; finished: RunState | null };
 
 const TERMINAL: readonly RunState[] = ['success', 'warning', 'error'];
 
@@ -21,7 +18,7 @@ function lastWhere<T>(items: readonly T[], test: (item: T) => boolean): T | null
   return null;
 }
 
-const finishedRun = (v: LockView | null): boolean => (v?.kind === 'run' && v.finished !== null) || (v?.kind === 'build' && v.finished);
+const finishedRun = (v: LockView | null): boolean => v?.kind === 'run' && v.finished !== null;
 
 /**
  * The only owner of "is the app locked". Long work is either Kata's own checks (a step list with a
@@ -32,15 +29,14 @@ const finishedRun = (v: LockView | null): boolean => (v?.kind === 'run' && v.fin
 export class LockStore {
   private readonly runs = inject(RunStore);
   private readonly toasts = inject(ToastStore);
+  private readonly changeRuns = inject(ChangeRunStore);
 
   private readonly view = signal<LockView | null>(null);
   private readonly elapsed = signal(0);
   private readonly runSpec = signal<RunSpec | null>(null);
   private readonly answerTimeout = signal<number | null>(null);
-  /** When each open question or approval first showed, in elapsed seconds, keyed by run and pause id. */
+  /** When each open question or approval first showed, in elapsed seconds, keyed by pause id. */
   private readonly pendingSince = signal<Readonly<Record<string, number>>>({});
-  /** The answer deadline of each build run, by run id. */
-  private readonly runTimeouts = signal<Readonly<Record<string, number | null>>>({});
 
   private cancelRequested = false;
   private waiter: ((state: RunState) => void) | null = null;
@@ -53,69 +49,32 @@ export class LockStore {
   /** The spec of the run the lock holds, live or finished. */
   readonly spec = this.runSpec.asReadonly();
 
-  /** The question a run is waiting on, if any: the solo run's without an id (in a run view), a build run's with its id. */
-  readonly ask = (runId?: string): AskRecord | null => {
-    const asks = this.asksOf(runId);
-    return asks === null ? null : lastWhere(asks, (a) => a.answers === null);
-  };
-  /** The permission check a run is waiting on, if any: the solo run's without an id (in a run view), a build run's with its id. */
-  readonly permission = (runId?: string): PermissionRecord | null => {
-    const checks = this.permissionsOf(runId);
-    return checks === null ? null : lastWhere(checks, (p) => p.decided === null);
-  };
+  /** The question the run is waiting on, if any. */
+  readonly ask = (): AskRecord | null => (this.view()?.kind === 'run' ? lastWhere(this.runs.asks(), (a) => a.answers === null) : null);
+  /** The permission check the run is waiting on, if any. */
+  readonly permission = (): PermissionRecord | null =>
+    this.view()?.kind === 'run' ? lastWhere(this.runs.permissions(), (p) => p.decided === null) : null;
   /** Seconds until the engine reaps an unanswered run (exit 123), or null when nothing is pending or there is no deadline. */
-  readonly deadlineSecs = (runId?: string): number | null => {
-    const id = this.pendingOf(runId);
-    const timeout = runId === undefined ? this.answerTimeout() : (this.runTimeouts()[runId] ?? null);
+  readonly deadlineSecs = (): number | null => {
+    const id = this.pendingId();
+    const timeout = this.answerTimeout();
     if (id === null || timeout === null) return null;
-    return Math.max(0, timeout - (this.elapsed() - (this.pendingSince()[`${runId ?? ''}:${id}`] ?? 0)));
+    return Math.max(0, timeout - (this.elapsed() - (this.pendingSince()[id] ?? 0)));
   };
   /** Seconds the run's open question or approval has waited on the operator; null when nothing is pending. */
-  readonly waitedSecs = (runId?: string): number | null => {
-    const id = this.pendingOf(runId);
-    return id === null ? null : Math.max(0, this.elapsed() - (this.pendingSince()[`${runId ?? ''}:${id}`] ?? 0));
+  readonly waitedSecs = (): number | null => {
+    const id = this.pendingId();
+    return id === null ? null : Math.max(0, this.elapsed() - (this.pendingSince()[id] ?? 0));
   };
-  /** Every run of the build with an open question or approval, whichever view the operator is looking at. */
-  readonly waiting = computed<Waiting[]>(() => {
-    const v = this.view();
-    if (v?.kind !== 'build') return [];
-    const out: Waiting[] = [];
-    for (const runId of v.runs) {
-      if (this.ask(runId) !== null) out.push({ runId, kind: 'answer' });
-      else if (this.permission(runId) !== null) out.push({ runId, kind: 'approval' });
-    }
-    return out;
-  });
 
-  /** The pauses open right now as pendingSince keys. */
+  /** The pause open right now, as a pendingSince key. */
   private readonly pendingKeys = computed(() => {
-    const keys: string[] = [];
-    const solo = this.pendingOf(undefined);
-    if (solo !== null) keys.push(`:${solo}`);
-    for (const w of this.waiting()) keys.push(`${w.runId}:${this.pendingOf(w.runId)}`);
-    return keys;
+    const id = this.pendingId();
+    return id === null ? [] : [id];
   });
 
-  private asksOf(runId: string | undefined): readonly AskRecord[] | null {
-    const v = this.view();
-    if (runId === undefined) return v?.kind === 'run' ? this.runs.asks() : null;
-    return this.buildRun(runId) ? this.runs.snapshot(runId)().asks : null;
-  }
-
-  private permissionsOf(runId: string | undefined): readonly PermissionRecord[] | null {
-    const v = this.view();
-    if (runId === undefined) return v?.kind === 'run' ? this.runs.permissions() : null;
-    return this.buildRun(runId) ? this.runs.snapshot(runId)().permissions : null;
-  }
-
-  /** A run of the held build that is still going; a run that has stopped is no longer waiting on anyone. */
-  private buildRun(runId: string): boolean {
-    const v = this.view();
-    return v?.kind === 'build' && v.runs.includes(runId) && this.runs.snapshot(runId)().state === 'awaiting';
-  }
-
-  private pendingOf(runId: string | undefined): string | null {
-    return this.ask(runId)?.id ?? this.permission(runId)?.id ?? null;
+  private pendingId(): string | null {
+    return this.ask()?.id ?? this.permission()?.id ?? null;
   }
 
   constructor() {
@@ -169,7 +128,12 @@ export class LockStore {
     }
   }
 
-  async runAgent(title: string, spec: RunSpec): Promise<RunState> {
+  /**
+   * Run an agent. With a `key` it is a change's document run: it has a session of its own and takes no lock, so runs of
+   * different changes go at once (`via` starts it, the backend decides what conflicts). Without one it holds the lock.
+   */
+  async runAgent(title: string, spec: RunSpec, via?: (spec: RunSpec) => Promise<string>, key?: string): Promise<RunState> {
+    if (key !== undefined && via) return this.changeRuns.start(key, title, spec, via);
     const busy = this.runs.state();
     if (this.view() !== null || busy === 'running' || busy === 'awaiting') {
       this.toasts.error('Another task is already running.');
@@ -181,7 +145,7 @@ export class LockStore {
     const done = new Promise<RunState>((resolve) => (this.waiter = resolve));
     let state: RunState | null = null;
     try {
-      await this.runs.startRun(spec);
+      await (via ? this.runs.startRun(spec, undefined, via) : this.runs.startRun(spec));
       this.settle(this.runs.state());
       state = await done;
       return state;
@@ -193,7 +157,8 @@ export class LockStore {
   }
 
   /** Resolves once the operator has closed the finished run; at once when no finished run is held. */
-  dismissed(): Promise<void> {
+  dismissed(key?: string): Promise<void> {
+    if (key !== undefined) return this.changeRuns.dismissed(key);
     if (!finishedRun(this.view())) return Promise.resolve();
     return new Promise((resolve) => this.closeWaiters.push(resolve));
   }
@@ -202,7 +167,6 @@ export class LockStore {
   close(): void {
     const view = this.view();
     if (!finishedRun(view)) return;
-    if (view?.kind === 'build') for (const id of view.runs) this.runs.forget(id);
     this.end();
     const waiters = this.closeWaiters;
     this.closeWaiters = [];
@@ -216,62 +180,16 @@ export class LockStore {
     else if (view?.kind === 'run' && view.finished === null) void this.runs.cancelRun();
   }
 
-  /** Take the lock once for a whole build, refusing while anything else holds it. Its runs join with `addRun`. */
-  beginBuild(title: string): boolean {
-    const busy = this.runs.state();
-    if (this.view() !== null || busy === 'running' || busy === 'awaiting') {
-      this.toasts.error('Another task is already running.');
-      return false;
-    }
-    this.begin({ kind: 'build', title, runs: [], finished: false });
-    return true;
+  answer(askId: string, answers: string[][]): void {
+    void this.runs.submitAnswer(askId, answers);
   }
 
-  /** Add a started run to the held build; its spec sets the answer deadline of its pauses. */
-  addRun(runId: string, spec?: RunSpec): void {
-    this.view.update((v) => (v?.kind === 'build' && !v.runs.includes(runId) ? { ...v, runs: [...v.runs, runId] } : v));
-    if (spec) this.runTimeouts.update((t) => ({ ...t, [runId]: spec.interactive?.answer_timeout_secs ?? null }));
+  say(text: string): void {
+    void this.runs.sendMessage(text);
   }
 
-  /** The build is over: freeze the clock and keep its view until the operator closes it. */
-  endBuild(): void {
-    if (this.view()?.kind !== 'build') return;
-    this.stopClock();
-    this.view.update((v) => (v?.kind === 'build' ? { ...v, finished: true } : v));
-  }
-
-  /** A stopped build is continued: reopen its finished view and start the clock again from where it stopped. */
-  resumeBuild(): void {
-    const v = this.view();
-    if (v?.kind !== 'build' || !v.finished) return;
-    this.stopClock();
-    this.startedAt = Date.now() - this.elapsed() * 1000;
-    this.view.set({ ...v, finished: false });
-    this.timer = setInterval(() => this.elapsed.set(Math.floor((Date.now() - this.startedAt) / 1000)), 1000);
-  }
-
-  /** Answer a question: `(askId, answers)` for the solo run, `(runId, askId, answers)` for a build run. */
-  answer(askId: string, answers: string[][]): void;
-  answer(runId: string, askId: string, answers: string[][]): void;
-  answer(...args: [string, string[][]] | [string, string, string[][]]): void {
-    if (args.length === 2) void this.runs.submitAnswer(args[0], args[1]);
-    else void this.runs.submitAnswer(args[0], args[1], args[2]);
-  }
-
-  /** Message the agent: `(text)` for the solo run, `(runId, text)` for a build run. */
-  say(text: string): void;
-  say(runId: string, text: string): void;
-  say(...args: [string] | [string, string]): void {
-    if (args.length === 1) void this.runs.sendMessage(args[0]);
-    else void this.runs.sendMessage(args[0], args[1]);
-  }
-
-  /** Decide a permission check: `(id, allow, message)` for the solo run, `(runId, id, allow, message)` for a build run. */
-  decide(id: string, allow: boolean, message: string | null): void;
-  decide(runId: string, id: string, allow: boolean, message: string | null): void;
-  decide(...args: [string, boolean, string | null] | [string, string, boolean, string | null]): void {
-    if (args.length === 3) void this.runs.submitDecision(args[0], args[1], args[2]);
-    else void this.runs.submitDecision(args[0], args[1], args[2], args[3]);
+  decide(id: string, allow: boolean, message: string | null): void {
+    void this.runs.submitDecision(id, allow, message);
   }
 
   private settle(state: RunState): void {
@@ -312,6 +230,5 @@ export class LockStore {
     this.view.set(null);
     this.runSpec.set(null);
     this.answerTimeout.set(null);
-    this.runTimeouts.set({});
   }
 }

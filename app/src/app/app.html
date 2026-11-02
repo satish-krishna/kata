@@ -1,1 +1,1 @@
-<router-outlet /><hlm-toaster />
+<router-outlet /><hlm-toaster /><app-close-dialog [running]="vm.closeAsk()" (stopAll)="vm.answerClose(true)" (keepWorking)="vm.answerClose(false)" />

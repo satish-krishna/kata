@@ -21,7 +21,9 @@ import type { Pick } from '../../lib/build-sessions';
 import type { TaskFilter } from '../../lib/build-task-list';
 import { actionLabel, primaryAction, type Finding, type Severity, type StageAction } from '../../lib/sdlc';
 import { FindingsList } from '../../ui/findings-list';
+import { HeldPanel } from '../../ui/held-panel';
 import { ObservePane } from '../../ui/observe-pane';
+import { CheckResults } from '../../ui/check-results';
 import { Segmented } from '../../ui/segmented';
 import { WaitingNotice } from '../../ui/waiting-notice';
 import { ChangesView } from '../changes/changes-view';
@@ -72,7 +74,7 @@ const TUCK_NOTE = 'The page always shows at least one area.';
   selector: 'app-build-page',
   host: { class: 'block h-full min-h-0' },
   providers: [provideIcons({ lucideCheck, lucideChevronDown, lucideChevronRight, lucideEllipsis, lucideMaximize2, lucideMinus })],
-  imports: [HlmButtonImports, HlmDropdownMenuImports, NgIcon, NgTemplateOutlet, FindingsList, ObservePane, Segmented, WaitingNotice, ChangesView],
+  imports: [HlmButtonImports, HlmDropdownMenuImports, NgIcon, NgTemplateOutlet, CheckResults, FindingsList, HeldPanel, ObservePane, Segmented, WaitingNotice, ChangesView],
   templateUrl: './build-page.html',
   styleUrl: './build-page.css',
 })
@@ -87,7 +89,6 @@ export class BuildPage {
   readonly stopped = input<string[]>([]);
   /** Actions the host adds to the bar after the build's own, each with whether it is off and why. */
   /** The branch still needs a name: the actions that start or continue build work are off. */
-  readonly holdBuild = input(false);
   readonly extras = input<{ action: StageAction; disabled: boolean; title: string | null }[]>([]);
   /** A request to bring the picked repository's open question into view and focus it. */
   readonly focus = input<{ repo: string; n: number } | null>(null);
@@ -97,8 +98,15 @@ export class BuildPage {
   readonly act = output<StageAction>();
   /** The bar's Cancel build: stops every run, which needs no preview and no confirmation. */
   readonly cancelBuild = output<void>();
+  /** The engineer asked to start the held build again. */
+  readonly startAgain = output<void>();
+  /** The engineer asked to start the review that waited for other changes again. */
+  readonly startReviewAgain = output<void>();
   readonly answer = output<{ runId: string; id: string; answers: string[][] }>();
   readonly say = output<{ runId: string; text: string }>();
+  /** The messages typed for the runs and not sent, by run id, and the report of each change to one. */
+  readonly drafts = input<Readonly<Record<string, string>>>({});
+  readonly draft = output<{ runId: string; text: string }>();
   readonly decide = output<{ runId: string; id: string; allow: boolean; message: string | null }>();
   readonly goTo = output<string>();
   readonly toggleRun = output<string>();
@@ -140,8 +148,15 @@ export class BuildPage {
   private drag: { side: Side; from: number; size: number; px: number } | null = null;
   /** The room last told to the page, so only a change is told again. */
   private told: Room | null = null;
+  /** The size each separator's keys last asked for, until the page has drawn a layout; a press made before that steps from it, not from the stale drawn size. */
+  private asked: Partial<Record<Side, number>> = {};
 
   constructor() {
+    // A new layout is the page's answer to what was asked, so the next press starts from what is drawn.
+    effect(() => {
+      this.layout();
+      this.asked = {};
+    });
     // A Go to is asked of the view model; the DOM half (scroll and focus) waits until the picked repository's session is on show.
     effect(() => {
       const request = this.focus();
@@ -387,7 +402,7 @@ export class BuildPage {
    */
   protected nudge(event: KeyboardEvent, side: Side): void {
     const [grow, shrink] = side === 'bottom' ? ['ArrowUp', 'ArrowDown'] : side === 'left' ? ['ArrowRight', 'ArrowLeft'] : ['ArrowLeft', 'ArrowRight'];
-    const now = this.sizeOf(side);
+    const now = this.asked[side] ?? this.sizeOf(side);
     const step = event.shiftKey ? NUDGE_FAR : NUDGE;
     let px: number;
     if (event.key === grow) px = now + step;
@@ -397,7 +412,10 @@ export class BuildPage {
     else return;
     event.preventDefault();
     px = this.clampSize(side, px);
-    if (px !== now) this.arrange.emit({ kind: 'resize', side, px });
+    if (px !== now) {
+      this.asked[side] = px;
+      this.arrange.emit({ kind: 'resize', side, px });
+    }
   }
 
   // ---- the keys of the page ----

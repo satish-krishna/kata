@@ -28,8 +28,7 @@ const warning = (text: string, lines: string[] = []): DocNotice => ({ tone: 'war
 
 /** The plugin rows: nothing could be read, so the text is shown plain. Null when the plugin is ready. */
 function unusable(readiness: Readiness): Shown | null {
-  if (readiness.kind === 'missing') return { show: 'plain', notice: warning('Install the ai-sdlc plugin to read this document') };
-  if (readiness.kind === 'tooOld') return { show: 'plain', notice: warning(`Update the ai-sdlc plugin to ${readiness.need} or later`) };
+  if (readiness.kind === 'blocked') return { show: 'plain', notice: warning(readiness.reason === 'pluginMissing' ? 'Install the ai-sdlc plugin to read this document' : readiness.message) };
   return null;
 }
 
@@ -65,7 +64,7 @@ export function shownDocument(read: ReadResult | ReadError | null, readiness: Re
   if (stop !== null) return stop;
   if (readiness.kind !== 'ready' || read === null) return { show: 'plain', notice: null };
   if (read.kind === 'error') return { show: 'plain', notice: warning(`Could not read this document: ${read.message}`) };
-  return { show: 'parsed', notice: judge(readiness.layouts, [read], false) };
+  return { show: 'parsed', notice: judge(readiness.plugin.layouts, [read], false) };
 }
 
 /**
@@ -77,7 +76,7 @@ export function shownBuild(parts: readonly Part[], readiness: Readiness): Shown 
   const stop = unusable(readiness);
   if (stop !== null) return stop;
   if (readiness.kind !== 'ready') return { show: 'plain', notice: null };
-  return { show: 'parsed', notice: judge(readiness.layouts, parts, true) };
+  return { show: 'parsed', notice: judge(readiness.plugin.layouts, parts, true) };
 }
 
 /** The notice for one document that is not a spec or a plan (the review): the same rows over one part, problems bare. */
@@ -85,7 +84,7 @@ export function shownPart(part: Part, readiness: Readiness): Shown {
   const stop = unusable(readiness);
   if (stop !== null) return stop;
   if (readiness.kind !== 'ready') return { show: 'plain', notice: null };
-  return { show: 'parsed', notice: judge(readiness.layouts, [part], false) };
+  return { show: 'parsed', notice: judge(readiness.plugin.layouts, [part], false) };
 }
 
 /**

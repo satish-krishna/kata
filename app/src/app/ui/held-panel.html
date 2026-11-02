@@ -1,0 +1,15 @@
+<section class="k-held" role="status" [attr.aria-label]="title()">
+  <p class="k-status k-status--warning"><span class="k-status__dot" aria-hidden="true"></span>{{ title() }}</p>
+  <ul class="k-held__list">
+    @for (r of repos(); track r.repo) {
+      <li class="k-held__row" data-held>
+        <span class="k-mono" data-repo>{{ r.repo }}</span>
+        is held by
+        <a hlmBtn variant="primary" size="sm" class="k-mono" data-holder [routerLink]="r.link">{{ r.holder }}</a>
+      </li>
+    }
+  </ul>
+  @if (action(); as label) {
+    <button hlmBtn variant="secondary" size="sm" type="button" data-act (click)="act.emit()">{{ label }}</button>
+  }
+</section>

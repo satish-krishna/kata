@@ -36,6 +36,13 @@ export const repoSessions = (
   return out;
 };
 
+/**
+ * The task links with each run the page follows named by the id it shows live. The host links a task to the run's transcript
+ * (the id a reopened page knows the run by); `followed` maps a transcript id to the id of the live run.
+ */
+export const linksOfFollowedRuns = (links: TaskLink[], followed: ReadonlyMap<string, string>): TaskLink[] =>
+  links.map((l) => (followed.has(l.run_id) ? { ...l, run_id: followed.get(l.run_id)! } : l));
+
 /** The ids of the repository's tasks that have a row in `after` and none in `before`, in plan order. */
 export const newlyRecorded = (before: BuildStatus, after: BuildStatus, repo: string): string[] => {
   const had = new Set(before.tasks.filter((t) => t.row !== null).map((t) => t.id));

@@ -1,51 +1,88 @@
 /* In-memory AI-SDLC fixtures for the browser demo. Each MockTransport owns one
  * instance, mutated by mock decisions and branch operations, so the demo
  * reflects what the operator did. Deterministic: no clocks, no randomness. */
+import type { RepoBoard } from '@bindings/RepoBoard';
+import type { ReviewScope } from '@bindings/ReviewScope';
+import type { ReviewStanding } from '@bindings/ReviewStanding';
+import type { Situation } from '@bindings/Situation';
+import type { Stop } from '@bindings/Stop';
+import type { TaskState } from '@bindings/TaskState';
+import type { RunRecord } from '@bindings/RunRecord';
+import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { BaseInfo } from '@bindings/BaseInfo';
+import type { BuildState } from '@bindings/BuildState';
+import type { BuildPhase } from '@bindings/BuildPhase';
+import type { StopReport } from '@bindings/StopReport';
+import type { WaitingRepo } from '@bindings/WaitingRepo';
+import type { StartForm } from '@bindings/StartForm';
+import type { BuildRunRef } from '@bindings/BuildRunRef';
+import type { RoundOffer } from '@bindings/RoundOffer';
+import type { RoundPicks } from '@bindings/RoundPicks';
+import type { RoundPlan } from '@bindings/RoundPlan';
+import type { RoundRequest } from '@bindings/RoundRequest';
+import type { RoundSeverity } from '@bindings/RoundSeverity';
+import type { ReviewFinding } from '@bindings/ReviewFinding';
+import type { ReviewRow } from '@bindings/ReviewRow';
+import type { ReviewRowGroup } from '@bindings/ReviewRowGroup';
+import type { ReviewView } from '@bindings/ReviewView';
+import type { BuildEvent } from '@bindings/BuildEvent';
+import type { ChangeKey } from '@bindings/ChangeKey';
+import type { ChangeRef } from '@bindings/ChangeRef';
+import type { HeldRepo } from '@bindings/HeldRepo';
+import type { StartOutcome } from '@bindings/StartOutcome';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { CommitFiles } from '@bindings/CommitFiles';
-import type { BuildStart } from '@bindings/BuildStart';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { ChangedFile } from '@bindings/ChangedFile';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
-import type { ChecksPlan } from '@bindings/ChecksPlan';
+import type { CheckView } from '@bindings/CheckView';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { ParsedRequirement } from '@bindings/ParsedRequirement';
 import type { ParsedSection } from '@bindings/ParsedSection';
 import type { ParsedTask } from '@bindings/ParsedTask';
 import type { Part } from '@bindings/Part';
-import type { Participant } from '@bindings/Participant';
-import type { PlanTask } from '@bindings/PlanTask';
-import type { PrResult } from '@bindings/PrResult';
-import type { RemoteClash } from '@bindings/RemoteClash';
-import type { NamingState, RenameResult } from '../core/transport/kata-transport';
-import type { PrState } from '@bindings/PrState';
-import type { DoneView } from '@bindings/DoneView';
-import type { PublishRepo } from '@bindings/PublishRepo';
+import type { ChangeInfo, DocState, PlanTask, Stage, Track } from './sdlc-mock-types';
+import type { DeclareView } from '@bindings/DeclareView';
+import type { DoneStep } from '@bindings/DoneStep';
+import type { RenameOutcome } from '@bindings/RenameOutcome';
+import type { NamingState } from '../core/transport/kata-transport';
+import type { PullRequestLink } from '@bindings/PullRequestLink';
+import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { ReadResult } from '@bindings/ReadResult';
-import type { RepoChecks } from '@bindings/RepoChecks';
+import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { RepoState } from '@bindings/RepoState';
 import type { RepoStatus } from '@bindings/RepoStatus';
 import type { TaskStatus } from '@bindings/TaskStatus';
 import type { BranchInfo } from '@bindings/BranchInfo';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
-import type { ChangeName } from '@bindings/ChangeName';
+import type { ChangeView } from '@bindings/ChangeView';
+import type { CopyRemoval } from '@bindings/CopyRemoval';
+import type { RemoveOutcome } from '@bindings/RemoveOutcome';
+import type { ChangeOffer } from '@bindings/ChangeOffer';
+import type { ChangeState } from '@bindings/ChangeState';
+import type { FixFacts } from '@bindings/FixFacts';
+import type { LiveFacts } from '@bindings/LiveFacts';
+import type { StageAction } from '@bindings/StageAction';
+import type { StageLabel } from '@bindings/StageLabel';
+import type { OfferStage } from '@bindings/OfferStage';
+import type { Readiness } from '@bindings/Readiness';
+import type { ReadyGate } from '@bindings/ReadyGate';
+import type { StateDocument } from '@bindings/StateDocument';
+import type { SystemView } from '@bindings/SystemView';
+import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
-import type { DecideOutcome } from '@bindings/DecideOutcome';
-import type { Decision } from '@bindings/Decision';
-import type { DocState } from '@bindings/DocState';
-import type { FinishOutcome } from '@bindings/FinishOutcome';
+import type { AcceptOutcome } from '@bindings/AcceptOutcome';
+import type { ChangeDocument } from '@bindings/ChangeDocument';
+import type { RejectOutcome } from '@bindings/RejectOutcome';
+import type { ChangeStart } from '@bindings/ChangeStart';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { Settings } from '@bindings/Settings';
 import type { Snapshot } from '@bindings/Snapshot';
-import type { Stage } from '@bindings/Stage';
-import type { Track } from '@bindings/Track';
 import type { ParsedFinding } from '@bindings/ParsedFinding';
 import type { Severity } from '@bindings/Severity';
 import type { Concern } from '@bindings/Concern';
@@ -59,16 +96,19 @@ export const MOCK_WORKSPACE_FOLDER = DEMO_WORKSPACE_FOLDER;
 export const MOCK_SETUP_FOLDER = DEMO_SETUP_FOLDER;
 export const MOCK_MASTER = 'commerce-docs';
 export const MOCK_SYSTEM = 'commerce';
-export const MOCK_PENDING_BRANCH = 'change/pending-20261018T000000Z';
 export const MOCK_BASE = 'main';
 export const MOCK_NEW_CHANGE = '2026-10-18-new-change';
 
 /** The change the browser demo builds: three tasks across two repositories. */
 export const MOCK_BUILD_CHANGE = '2026-10-19-build-demo';
+/** A second change that builds beside the demo build, in a repository the first does not use. */
+export const MOCK_BUILD_SECOND = '2026-10-20-second-build';
+/** A change whose build needs a repository the demo build holds, so it starts held. */
+export const MOCK_HELD_CHANGE = '2026-10-21-held-build';
 /** A change whose build finished and whose three pull requests are open: the toolbar's links and its "Build · done" pill. */
 export const MOCK_DONE_CHANGE = '2026-10-18-photo-limits-shipped';
 /** The version the demo's `ai-sdlc` plugin reports. */
-export const MOCK_PLUGIN_VERSION = '0.13.0';
+export const MOCK_PLUGIN_VERSION = '1.1.0';
 /** A fix awaiting acceptance: the light track's three documents are drafted. */
 export const MOCK_FIX_CHANGE = '2026-10-22-photo-retry-fix';
 /** A fix that was rejected, so it is closed. */
@@ -134,6 +174,9 @@ export const sdlcTriageScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
     ] } },
   ],
   mid: [
+    // The fix skill starts the change through the plugin; its answer names the change, which is how the triage's change is found.
+    { delay: 300, ev: { type: 'tool.use', name: 'Bash', input_summary: `node ai-sdlc.ts change start --json --system commerce --change ${MOCK_STARTED_FIX} --type fix --scope commerce`, id: 'toolu_t1s', input: { command: `node ai-sdlc.ts change start --json --system commerce --change ${MOCK_STARTED_FIX} --type fix --scope commerce` } } },
+    { delay: 300, ev: { type: 'tool.result', name: 'Bash', ok: true, summary: 'change started', id: 'toolu_t1s', output: JSON.stringify({ event: 'change.start', system: 'commerce', change: MOCK_STARTED_FIX, outcome: 'passed', details: { branch: `fix/${MOCK_STARTED_FIX}`, created: true } }) } },
     { delay: 300, ev: { type: 'tool.use', name: 'Write', input_summary: 'commerce/2026-10-24-price-flag-fix/intent.md', id: 'toolu_t2', input: { file_path: 'commerce/2026-10-24-price-flag-fix/intent.md' } } },
     { delay: 400, ev: { type: 'tool.result', name: 'Write', ok: true, summary: 'intent.md written', id: 'toolu_t2', output: 'ok' } },
     { delay: 400, ev: { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.03, duration_ms: 18000, result: 'Triage done.' } },
@@ -413,18 +456,145 @@ const DOCS: Record<string, string> = {
   '2026-10-09-merchant-reassign/plan': '---\nstatus: draft\n---\n# Plan: reassign\n\n- [ ] Add the reassign endpoint to commerce-core.\n- [ ] Add the reassign action to customer-portal.\n',
 };
 
-/** What accepting or rejecting does to a change's documents and stage. */
-function applyDecision(c: ChangeInfo, decision: Decision): ChangeInfo {
-  switch (decision) {
-    case 'accept-intent':
+/** What accepting a document does to a change's documents and stage. */
+function applyAcceptance(c: ChangeInfo, which: ChangeDocument): ChangeInfo {
+  switch (which) {
+    case 'intent':
       return { ...c, intent: doc('accepted'), stage: 'spec-ready' };
-    case 'reject-intent':
-      return { ...c, intent: doc('rejected'), stage: 'rejected' };
-    case 'accept-spec':
+    case 'spec':
       return { ...c, spec: doc('accepted'), stage: 'plan-ready' };
-    case 'accept-plan':
+    case 'plan':
       return { ...c, plan: doc('accepted'), stage: 'build-ready' };
   }
+}
+
+const GATE: ReadyGate = { candidate: false, stop: null, accept: [] };
+const stateDocument = (d: DocState): StateDocument => ({ exists: d.exists, inHead: d.exists && d.committed, headStatus: d.head_status, workingStatus: d.status, uncommitted: d.exists && !d.committed, pin: null });
+
+/** The stage the plugin's answer would carry for a fixture stage; the fixtures still know a stage the plugin does not. */
+function offerStage(c: ChangeInfo): OfferStage {
+  switch (c.stage) {
+    case 'plan-out-of-date': return { 'plan-out-of-date': { cause: c.out_of_date === 'plan-pin' ? 'plan-pin' : 'spec-pin' } };
+    case 'fix-needs-plugin': return 'fix-unsettled';
+    default: return c.stage;
+  }
+}
+
+/** The step, words and tone of each stage's label, written out the way the plugin's answer words them. */
+const LABEL_DATA: Record<string, StageLabel> = {
+  'intent-in-progress': { step: 'intent', text: 'Intent · in progress (not committed)', tone: 'muted' },
+  'intent-awaiting': { step: 'intent', text: 'Intent · awaiting acceptance', tone: 'warning' },
+  'intent-accepted-uncommitted': { step: 'intent', text: 'Intent · accepted, not committed', tone: 'warning' },
+  rejected: { step: 'closed', text: 'Closed · rejected', tone: 'error' },
+  'spec-ready': { step: 'spec', text: 'Spec · ready to start', tone: 'muted' },
+  'spec-awaiting': { step: 'spec', text: 'Spec · awaiting acceptance', tone: 'warning' },
+  'spec-accepted-uncommitted': { step: 'spec', text: 'Spec · accepted, not committed', tone: 'warning' },
+  'plan-ready': { step: 'plan', text: 'Plan · ready to start', tone: 'muted' },
+  'plan-awaiting': { step: 'plan', text: 'Plan · awaiting acceptance', tone: 'warning' },
+  'plan-accepted-uncommitted': { step: 'plan', text: 'Plan · accepted, not committed', tone: 'warning' },
+  'plan-out-of-date': { step: 'plan', text: 'Plan · out of date', tone: 'warning' },
+  'plan-unreadable': { step: 'plan', text: 'Plan · could not be read', tone: 'warning' },
+  'plan-superseded': { step: 'plan', text: 'Plan · superseded', tone: 'warning' },
+  'build-ready': { step: 'build', text: 'Build · ready to start', tone: 'muted' },
+  'build-stopped': { step: 'build', text: 'Build · in progress (stopped)', tone: 'warning' },
+  'build-finished': { step: 'build', text: 'Build · finished, not yet done', tone: 'success' },
+  'fix-in-progress': { step: 'intent', text: 'Fix · changes not recorded', tone: 'warning' },
+  'fix-unsettled': { step: 'intent', text: 'Fix · statuses not settled', tone: 'warning' },
+  'fix-awaiting': { step: 'intent', text: 'Fix · awaiting acceptance', tone: 'warning' },
+  'fix-accepting': { step: 'plan', text: 'Fix · acceptance stopped', tone: 'warning' },
+};
+/** What a full-pipeline change at each stage offers, in order, written out as the plugin's answer lists it. */
+const FULL_OFFERS: Record<string, StageAction[]> = {
+  'intent-in-progress': ['continue-intent'],
+  'intent-awaiting': ['continue-intent', 'accept-intent', 'reject-intent'],
+  'intent-accepted-uncommitted': ['commit-acceptance', 'continue-intent'],
+  rejected: [],
+  'spec-ready': ['start-spec', 'reopen-intent'],
+  'spec-awaiting': ['continue-spec', 'accept-spec', 'reopen-intent'],
+  'spec-accepted-uncommitted': ['commit-acceptance', 'continue-spec'],
+  'plan-ready': ['start-plan', 'reopen-spec', 'reopen-intent'],
+  'plan-awaiting': ['accept-plan', 'rerun-plan', 'reopen-intent'],
+  'plan-accepted-uncommitted': ['commit-acceptance', 'rerun-plan'],
+  // A broken spec pin means the spec is reopened; any other cause means the plan is rewritten.
+  'plan-out-of-date': ['rerun-plan'],
+  'plan-unreadable': [],
+  'plan-superseded': ['rerun-plan'],
+  'build-ready': ['start-build', 'reopen-spec', 'reopen-intent'],
+  'build-stopped': ['continue-build', 'another-round', 'reopen-spec', 'reopen-intent'],
+  'build-finished': ['declare-done', 'another-round', 'run-review', 'reopen-spec', 'reopen-intent'],
+};
+/** What a change on the light track offers at each stage; a stage not listed offers nothing. */
+const FIX_OFFERS: Record<string, StageAction[]> = {
+  'fix-in-progress': ['finish-fix-draft'],
+  'fix-awaiting': ['accept-fix', 'change-fix', 'reject-fix'],
+  'fix-accepting': ['accept-fix', 'change-fix', 'reject-fix'],
+  'build-ready': ['start-build', 'reopen-fix'],
+  'build-stopped': ['continue-build', 'another-round', 'reopen-fix'],
+  'build-finished': ['declare-done', 'another-round', 'run-review', 'reopen-fix'],
+  'plan-out-of-date': ['reopen-fix'],
+};
+/** The actions the plugin's answer marks as regenerating a document that already exists. */
+const REVISITING: readonly StageAction[] = ['continue-intent', 'reopen-intent', 'continue-spec', 'reopen-spec', 'rerun-plan', 'finish-fix-draft', 'change-fix', 'reopen-fix'];
+
+/** The change a test or a demo reaches by name only: it is not in the list, and its start of the build is refused with the plugin's message. */
+/** The commit of the finished change that names no task. */
+export const MOCK_UNTASKED_COMMIT = '5a1ad0c5e7f3b9246d8c0e1a3b5f79d2c4e6a8b0';
+export const MOCK_REFUSED_CHANGE = '2026-10-23-refused-build';
+/** The plugin's stop for the build skill: the grammar's uncommitted-acceptance message with the file filled in. */
+export const MOCK_BUILD_STOP = '`plan.md` has uncommitted changes. Commit the acceptance first, so history shows what was accepted.';
+
+/** What a fixture change offers, as the plugin's answer words it. `refused` holds the plugin's stop text for each action it refuses. */
+function offerOf(c: ChangeInfo, refused: Partial<Record<StageAction, string>> = {}): ChangeOffer {
+  const stage = offerStage(c);
+  const name = typeof stage === 'string' ? stage : 'plan-out-of-date';
+  const unreadableFix = c.track === 'fix' && c.fix_row === null && name === 'fix-unsettled';
+  const label = unreadableFix ? { ...LABEL_DATA[name], text: 'Fix · could not be read' } : LABEL_DATA[name];
+  const specPin = typeof stage !== 'string' && stage['plan-out-of-date'].cause === 'spec-pin';
+  const listed = c.track === 'fix' ? (FIX_OFFERS[name] ?? []) : specPin ? (['reopen-spec'] as StageAction[]) : (FULL_OFFERS[name] ?? []);
+  // A fix awaiting acceptance may be closed by the full pipeline only at row 6 of the fix-state table.
+  const staged: StageAction[] = c.track === 'fix' && name === 'fix-awaiting' && c.fix_row === 6 ? [...listed, 'full-pipeline-instead'] : listed;
+  // Like offer.rs: every stage after the intent is accepted offers Rename branch, last; nothing here is refused for a live run.
+  const actions: StageAction[] = ['intent-in-progress', 'intent-awaiting', 'rejected'].includes(name) ? staged : [...staged, 'rename'];
+  // A fix is reopened without feedback only when its plan is out of date.
+  const feedback = (a: StageAction) => a === 'change-fix' || (a === 'reopen-fix' && name !== 'plan-out-of-date');
+  return {
+    stage,
+    label,
+    actions: actions.map((action) => ({ action, enabled: refused[action] === undefined, reason: refused[action] ?? null, feedbackRequired: feedback(action), revisits: REVISITING.includes(action) })),
+  };
+}
+
+const FIX_FACTS: FixFacts = {
+  intent: { inHead: true, headStatus: 'draft', workingStatus: 'draft' },
+  spec: { inHead: true, headStatus: 'draft', workingStatus: 'draft' },
+  plan: { inHead: true, headStatus: 'draft', workingStatus: 'draft' },
+  unrecorded: [], ownLinesOnly: false, accepted: 'none', acceptanceLast: false, built: false,
+};
+
+/** One fixture change as the backend's `sdlc_change_state` shows it: the plugin's state, what it offers and its live facts. */
+export function changeViewOf(
+  c: ChangeInfo,
+  readiness: Readiness,
+  tasks: ChangeState['tasks'] = null,
+  refused: Partial<Record<StageAction, string>> = {},
+  copy: string | null = null,
+): ChangeView {
+  const live: LiveFacts = { runLive: false, buildStopped: false, buildLive: false };
+  // A fix stands at the row of its own table whatever its plan reads as; only the full pipeline has a stage for an unreadable plan.
+  const shown: ChangeInfo = c.plan_unreadable && c.track !== 'fix' ? { ...c, stage: 'plan-unreadable' } : c;
+  const stop = refused['start-build'] ?? refused['continue-build'] ?? null;
+  return {
+    state: {
+      change: c.change, master: copy ?? '/m', folder: `${copy ?? '/m'}/intent/${c.system}/${c.change}`, inCopy: copy !== null, title: null, track: c.track,
+      documents: { intent: stateDocument(c.intent), spec: stateDocument(c.spec), plan: stateDocument(c.plan) },
+      scenarios: null, tasks, buildLogs: {}, review: { committed: 0, draft: 'none' },
+      fix: shown.track === 'fix' && shown.fix_row !== null ? { row: shown.fix_row, facts: FIX_FACTS } : null,
+      ready: { spec: GATE, plan: GATE, build: stop === null ? GATE : { candidate: false, stop, accept: [] }, review: GATE, done: GATE, reject: GATE },
+    },
+    offer: offerOf(shown, refused),
+    live,
+    readiness,
+  };
 }
 
 export class SdlcMock {
@@ -440,12 +610,11 @@ export class SdlcMock {
   /** The long demo's change whose plan the format program cannot read, so the reading rows show a reason. */
   private readonly unreadable: string | null;
 
-  /** `?demo=naming` puts the build demo change on a pending branch that waits for a name; `?demo=clash` and `?demo=clash-push` leave the finished change undeclared with its branch taken on GitHub, found by the readiness check or only by the push. */
+  /** `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` leave the finished change undeclared and give each answer of the plugin to declaring it done. */
   private readonly demo: string | null;
 
   constructor(long = false, demo: string | null = null) {
     this.demo = demo;
-    if (demo === 'naming') this.current = MOCK_PENDING_BRANCH;
     this.unreadable = long ? '2026-10-09-merchant-reassign' : null;
     this.plan = long ? [...BUILD_PLAN, ...LONG_PLAN] : BUILD_PLAN;
     this.repos = long ? [...BUILD_REPOS, 'billing-api'] : BUILD_REPOS;
@@ -455,6 +624,15 @@ export class SdlcMock {
     this.pairs = long ? LONG_DIFF_PAIRS : DIFF_PAIRS;
     this.reviewFindings = long ? LONG_REVIEW_FINDINGS : REVIEW_FINDINGS;
   }
+
+  /** Systems whose old checks file the mock engineer has been told about. */
+  private readonly oldChecksTold = new Set<string>();
+  /** `?demo=old-checks`: the demo system has an old per-machine checks file until the engineer has been told; no other system has one. Like `old_checks::notices`. */
+  oldChecks(systems: string[]): OldChecksNotice[] {
+    if (this.demo !== 'old-checks' || !systems.includes(MOCK_SYSTEM) || this.oldChecksTold.has(MOCK_SYSTEM)) return [];
+    return [{ system: MOCK_SYSTEM, path: `C:/Users/demo/.kata/workbench/checks/${MOCK_SYSTEM}.toml`, text: ['[[check]]', 'name = "tests"', 'command = "npm test"', ''].join(String.fromCharCode(10)) }];
+  }
+  oldChecksSeen(systems: string[]): void { for (const s of systems) this.oldChecksTold.add(s); }
 
   private settings: Settings = { mode: 'workbench', remember: true, permission_mode: 'auto' };
   private workspaces: WorkspaceEntry[] = [{
@@ -484,8 +662,6 @@ export class SdlcMock {
   private docs: Record<string, string> = { ...DOCS };
   private setupDone = false;
   private instructionsWritten = false;
-  /** Set when the scripted triage's light track has created its fix folder. */
-  private fixCreated = false;
   private cancelledRun = false;
   private discarded = new Set<string>();
   /** Review runs that finished: the scripted plugin records one review in the review document at the end of each. */
@@ -536,23 +712,94 @@ export class SdlcMock {
       return { ...c };
     });
   }
-  /** Like the backend's `names`: every change folder, before any stage is read. The demo's intents carry no title. */
-  changeNames(): ChangeName[] {
-    return this.changes.map((c) => ({ change: c.change, title: null }));
-  }
-  /** Like the backend's `read_change`; refuses a change the workspace does not have. */
-  readChange(changeName: string): ChangeInfo {
-    const found = this.listChanges().find((c) => c.change === changeName);
-    if (!found) throw new Error(`no change folder named ${changeName}`);
-    return found;
-  }
-  /** What a stage pass reports, change by change. In the long demo one change's plan is unreadable, shown with its reason like the Workbench shows it today. */
+  /** Every change as the plugin reports it. In the long demo one change's plan is unreadable, shown with its reason like the Workbench shows it today. */
   stagePass(): ChangeInfo[] {
     return this.listChanges().map((c) => (c.change === this.unreadable
       ? { ...c, plan_unreadable: true, plan_unreadable_reason: 'the plan has a task with no id' }
       : c));
   }
-  branches(): BranchInfo { return { current: this.current, others: this.others.map((change) => ({ branch: `change/${change}`, change, needs_name: false })), default_base: MOCK_BASE, pending_change: this.demo === 'naming' ? `${MOCK_SYSTEM}/${MOCK_BUILD_CHANGE}` : null }; }
+  /** Like the backend's `sdlc_state`: every change of the system from one answer. In the long demo one change's plan is unreadable, and the answer says why. */
+  systemView(system: string, readiness: Readiness): SystemView {
+    const blocked = readiness.kind === 'blocked';
+    const found = this.stagePass();
+    return {
+      system,
+      readiness,
+      canStartChange: !blocked,
+      startChangeReason: blocked ? readiness.message : null,
+      changes: found.map((c) => changeViewOf(c, readiness, this.tasksOf(c), {}, this.copyOf(c.change))),
+      problems: found.flatMap((c) => (c.plan_unreadable && c.plan_unreadable_reason !== null ? [c.plan_unreadable_reason] : [])),
+    };
+  }
+  /** Like the backend's `sdlc_state` for several systems: every fixture system shares one readiness, so the set may start a change exactly when it is not blocked. */
+  workspaceView(systems: string[], readiness: Readiness): WorkspaceView {
+    const blocked = readiness.kind === 'blocked';
+    return {
+      systems: systems.map((system) => this.systemView(system, readiness)),
+      canStartChange: systems.length > 0 && !blocked,
+      startChangeReason: blocked ? readiness.message : null,
+    };
+  }
+  /** Like the backend's `sdlc_change_state`: one change from the plugin's answer; refuses a change the workspace does not have. */
+  changeView(changeName: string, readiness: Readiness): ChangeView {
+    if (changeName === MOCK_REFUSED_CHANGE) {
+      const refused = change(MOCK_REFUSED_CHANGE, doc('accepted'), doc('accepted'), doc('accepted'), 'build-ready');
+      return changeViewOf(refused, readiness, null, { 'start-build': MOCK_BUILD_STOP });
+    }
+    const found = this.stagePass().find((c) => c.change === changeName);
+    if (!found) throw new Error(`no change folder named ${changeName}`);
+    return changeViewOf(found, readiness, this.tasksOf(found), {}, this.copyOf(changeName));
+  }
+  // ---- the change's own copy ----
+
+  /** The finished change still has its own copy, as a change the plugin started does until it is rejected or its copy is removed. */
+  private readonly copies = new Set<string>([MOCK_DONE_CHANGE]);
+
+  /** The copy folder of a change that has one, else null. */
+  private copyOf(changeName: string): string | null {
+    return this.copies.has(changeName) ? `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${changeName}` : null;
+  }
+  /** Removal is offered for the finished change with its pull requests merged; the done demos leave it undeclared, so nothing is offered. */
+  copyRemoval(changeName: string): CopyRemoval {
+    return this.copies.has(changeName) && !this.demo?.startsWith('done-') ? { outcome: 'offer' } : { outcome: 'notOffered' };
+  }
+  copyBranch(changeName: string): string {
+    return `change/${changeName}`;
+  }
+  /** The copy is gone and the branch stays in the master repository. */
+  removeCopy(changeName: string): RemoveOutcome {
+    this.copies.delete(changeName);
+    return { outcome: 'removed', kept: [`change/${changeName}: the branch and its commits stay in the master repository`] };
+  }
+  openCopyFolder(changeName: string): void {
+    if (!this.copies.has(changeName)) throw new Error('this change is not in a copy');
+  }
+
+  /** What the plugin reports for the build and the finished change: each repository's tasks, the commits that name each, and the commits that name none. Other changes have no plan to report. */
+  private tasksOf(c: ChangeInfo): ChangeState['tasks'] {
+    if (c.change !== MOCK_BUILD_CHANGE && c.change !== MOCK_DONE_CHANGE) return null;
+    const done = c.change === MOCK_DONE_CHANGE;
+    const sha = (id: string) => `${id.toLowerCase()}c0ffee`.padEnd(40, '0');
+    const out: NonNullable<ChangeState['tasks']> = {};
+    for (const repo of new Set(this.plan.map((t) => t.repo))) {
+      const mine = this.plan.filter((t) => t.repo === repo);
+      const logged = mine.filter((t) => done || this.rows.has(t.id));
+      out[repo] = {
+        all: mine.map((t) => t.id),
+        logged: logged.map((t) => t.id),
+        unlogged: mine.filter((t) => !logged.includes(t)).map((t) => t.id),
+        commits: Object.fromEntries(mine.map((t) => [t.id, logged.includes(t) ? [sha(t.id)] : []])),
+        untasked: done && repo === 'commerce-core' ? [MOCK_UNTASKED_COMMIT] : [],
+        uncommitted: [],
+      };
+    }
+    return out;
+  }
+  /** A test or a demo changes what the workspace holds for a change: its stage and the facts the stage rests on. */
+  patch(changeName: string, patch: Partial<ChangeInfo>): void {
+    this.changes = this.changes.map((c) => (c.change === changeName ? { ...c, ...patch } : c));
+  }
+  branches(): BranchInfo { return { current: this.current, others: this.others.map((change) => ({ branch: `change/${change}`, change })), default_base: MOCK_BASE }; }
   /** Like the backend's `read_doc`: the document is named by its stem; anything else is a caller bug. */
   readDoc(changeName: string, docName: string): string | null {
     if (!DOC_STEMS.has(docName)) throw new Error(`read_doc takes a document stem (intent, spec or plan), not "${docName}"`);
@@ -588,33 +835,40 @@ export class SdlcMock {
   /** Out of date until a setup run with `--instructions` has finished. */
   instructions(): InstructionsState { return this.instructionsWritten ? 'current' : 'out-of-date'; }
 
-  /** The scripted triage ended on the light track: the fix folder exists once the run is finished. */
-  createFix(): void { this.fixCreated = true; }
-
-  startChange(): string {
-    this.current = MOCK_PENDING_BRANCH;
-    return MOCK_PENDING_BRANCH;
+  /** The scripted triage ended on the light track: its skill started the fix through the plugin, so the fix folder exists now. */
+  createFix(): void {
+    if (this.changes.some((c) => c.change === MOCK_STARTED_FIX)) return;
+    this.others = [...this.others, MOCK_STARTED_FIX];
+    this.changes = [change(MOCK_STARTED_FIX, doc('draft', false), doc('draft', false), doc('draft', false), 'fix-awaiting', 'fix'), ...this.changes];
+    Object.assign(this.docs, fixDocs(MOCK_STARTED_FIX, 'Flag suspicious prices on import'));
   }
 
-  finishChange(): FinishOutcome {
-    this.current = MOCK_BASE;
-    if (this.fixCreated) {
-      this.fixCreated = false;
-      this.others = [...this.others, MOCK_STARTED_FIX];
-      this.changes = [change(MOCK_STARTED_FIX, doc('draft', false), doc('draft', false), doc('draft', false), 'fix-awaiting', 'fix'), ...this.changes];
-      Object.assign(this.docs, fixDocs(MOCK_STARTED_FIX, 'Flag suspicious prices on import'));
-      return { renamed: { branch: `change/${MOCK_STARTED_FIX}`, change: MOCK_STARTED_FIX } };
+  /** The name the plugin gives a change described by `title`: the demo date, then the first words. */
+  changeName(title: string): string {
+    const words = title
+      .split(/[\s_/-]+/)
+      .map((w) => w.replace(/[^A-Za-z0-9]/g, '').toLowerCase())
+      .filter((w) => w !== '')
+      .slice(0, 5);
+    return `${MOCK_NEW_CHANGE.slice(0, 10)}-${words.length > 0 ? words.join('-') : 'change'}`;
+  }
+
+  /** Starting a change the way the plugin does: a taken or invalid branch name is refused and nothing is made; otherwise the change exists, on its own branch, and the master stays where it was. */
+  startChange(title: string, branch?: string): ChangeStart {
+    const name = this.changeName(title);
+    if (branch !== undefined) {
+      if (branch === MOCK_BASE || this.others.includes(branch.replace(/^change\//, ''))) {
+        return { outcome: 'refused', kind: 'branchTaken', problems: [`${branch} is taken in ${MOCK_MASTER} by the branch ${branch}`] };
+      }
+      if (/\s/.test(branch)) {
+        return { outcome: 'refused', kind: 'branchInvalid', problems: [`${branch}: a branch name cannot contain a space`] };
+      }
     }
-    // A pending branch whose run created no new change folder is deleted.
-    if (this.changes.some((c) => c.change === MOCK_NEW_CHANGE)) return 'deleted';
-    const branch = `change/${MOCK_NEW_CHANGE}`;
-    this.others = [...this.others, MOCK_NEW_CHANGE];
-    this.changes = [
-      change(MOCK_NEW_CHANGE, doc('draft', false), doc(null), doc(null), 'intent-awaiting'),
-      ...this.changes,
-    ];
-    this.docs[`${MOCK_NEW_CHANGE}/intent`] = '---\nstatus: draft\n---\n# New change\n\nDrafted from the idea you gave the agent.\n';
-    return { renamed: { branch, change: MOCK_NEW_CHANGE } };
+    const made = branch ?? `change/${name}`;
+    this.others = [...this.others, name];
+    this.changes = [change(name, doc('draft', false), doc(null), doc(null), 'intent-awaiting'), ...this.changes];
+    this.docs[`${name}/intent`] = '---\nstatus: draft\n---\n# New change\n\nDrafted from the idea you gave the agent.\n';
+    return { outcome: 'started', change: name, branch: made, copy: `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${name}` };
   }
 
   checkout(branch: string): void {
@@ -627,24 +881,27 @@ export class SdlcMock {
 
   /** The demo system declares a naming setting; the patterns are the ones the ai-sdlc plugin documents. */
   naming(): NamingState { return { kind: 'setting', branch: '{type}/{scope}-{slug}', pullRequestTitle: '{type}({scope}): {title}' }; }
-  /** The branch the pattern gives: the type, the demo scope and the change name without its date. */
-  suggestBranch(changeName: string, workType: string): string { return `${workType}/PROJ-123-${changeName.replace(/^\d{4}-\d{2}-\d{2}-/, '')}`; }
-  confirmBranch(changeName: string, name: string): FinishOutcome { return { renamed: { branch: name, change: changeName } }; }
-  renameBranch(changeName: string, newName: string): RenameResult { return { old: `change/${changeName}`, new: newName, repos: [MOCK_MASTER] }; }
-  /** Only `?demo=clash` finds the branch taken before anything is pushed: the first touched repository holds other work on the change's branch. */
-  remoteClashes(repos: PublishRepo[], changeName: string): RemoteClash[] {
-    return this.demo === 'clash' && repos.length > 0 ? [{ repo: repos[0].repo, branch: `change/${changeName}` }] : [];
+  /** The plugin renames it everywhere; a change with a pull request recorded under the old name lists it to close by hand. */
+  renameBranch(changeName: string, to: string): RenameOutcome {
+    const from = `change/${changeName}`;
+    const old = changeName === MOCK_DONE_CHANGE && !this.demo?.startsWith('clash') ? [{ repo: MOCK_MASTER, url: `https://github.com/acme/${MOCK_MASTER}/pull/7`, number: 7, source: 'plugin' as const }] : [];
+    return { outcome: 'renamed', from, to, repos: ['master', MOCK_MASTER], oldPullRequests: old };
   }
 
-  decide(changeName: string, decision: Decision): DecideOutcome {
-    this.changes = this.changes.map((c) => (c.change === changeName ? applyDecision(c, decision) : c));
-    return { kind: 'committed' };
+  accept(changeName: string, which: ChangeDocument): AcceptOutcome {
+    this.changes = this.changes.map((c) => (c.change === changeName ? applyAcceptance(c, which) : c));
+    return { outcome: 'accepted', warnings: [] };
+  }
+
+  /** The plugin commits the rejection and removes the change's copy: the change leaves the list, its branch stays. */
+  reject(changeName: string): RejectOutcome {
+    this.changes = this.changes.filter((c) => c.change !== changeName);
+    return { outcome: 'rejected', recordBranch: `change/${changeName}` };
   }
 
   runLinks(): RunLink[] { return this.links.map((l) => ({ ...l })); }
   linkRun(link: RunLink): void { this.links = [...this.links, { ...link }]; }
   taskLinks(): TaskLink[] { return this.taskLinksList.map((l) => ({ ...l })); }
-  linkTasks(links: TaskLink[]): void { this.taskLinksList = [...this.taskLinksList, ...links.map((l) => ({ ...l }))]; }
 
   // ---- the build ----
 
@@ -722,16 +979,6 @@ export class SdlcMock {
     }
   }
 
-  prepare(folder: string, changeName: string): BuildStart {
-    const at = (repo: string) => ({ repo, path: `${folder}/${repo}`, base: 'main', branch: `change/${changeName}`, created: false });
-    return { master: at(MOCK_MASTER), repos: this.repos.map(at) };
-  }
-
-  /** The master and the plan's repositories, each checked out beside the master with nothing left uncommitted. */
-  participants(folder: string): Participant[] {
-    return [MOCK_MASTER, ...this.repos].map((repo) => ({ repo, path: `${folder}/${repo}`, master: repo === MOCK_MASTER, files: [], rows: [] }));
-  }
-
   heads(repos: string[]): Record<string, string> {
     return Object.fromEntries(repos.map((r, i) => [r, `${String(i + 1).repeat(7)}`]));
   }
@@ -743,8 +990,8 @@ export class SdlcMock {
 
   diffFiles(part: Part): DiffListing {
     // Once the scripted build has logged every task, its agents have committed what they left.
-    // The clash demos declare a finished change done, so its work is all committed too.
-    const built = this.rows.size >= this.plan.length || (this.demo?.startsWith('clash') ?? false);
+    // The done demos declare a finished change done, so its work is all committed too.
+    const built = this.rows.size >= this.plan.length || (this.demo?.startsWith('done-') ?? false);
     const files = this.diff.map((f) => (built ? { ...f, uncommitted: false } : f)).filter((f) => part === 'whole' || (part === 'uncommitted') === f.uncommitted);
     const byType = new Map<string, { extension: string; files: number; added: number; removed: number }>();
     for (const f of files.filter((x) => !x.binary)) {
@@ -770,49 +1017,135 @@ export class SdlcMock {
 
   diffBase(): BaseInfo { return { base: 'main', reference: 'origin/main', mergeBase: '3f9a1c27d0b8e45a6c1f2e9b7d3a508c4e6f1b29' }; }
 
-  touchedRepos(folder: string): PublishRepo[] {
-    return [MOCK_MASTER, ...this.repos].map((repo) => ({ repo, path: `${folder}/${repo}`, base: 'main' }));
-  }
-
-  checksPlan(): ChecksPlan {
-    return {
-      path: `${MOCK_CHECKS_DIR}/commerce.toml`, exists: true,
-      checks: [{ repo: 'commerce-core', name: 'cargo test', argv: ['cargo', 'test'], timeout_secs: 600 }],
+  /**
+   * What each repository's checks came to, as the plugin's answer would read. The team's checks cover commerce-core (unit) and, in
+   * the long variant, billing-api (integration); customer-portal has none. Before the build has recorded every task nothing has run.
+   * `?demo=checks-fix`, `checks-stop`, `checks-cannot` and `checks-stale` give commerce-core each of the other results, and
+   * `?demo=checks-config` gives every repository the plugin's problems with the team's hook configuration.
+   */
+  checksView(changeName: string): RepoCheckView[] {
+    const finished = changeName === MOCK_DONE_CHANGE || this.rows.size >= this.plan.length;
+    const output = ['running 14 tests', 'test store::keeps_the_upload ... FAILED', '', 'failures:', '    store::keeps_the_upload', '', 'test result: FAILED. 13 passed; 1 failed'].join('\n');
+    const view = (repo: string, id: string): CheckView => {
+      if (this.demo === 'checks-config') return { kind: 'configBroken', output: '.ai-sdlc.json: hooks.build.finish[0]: timeout must be a whole number of seconds from 1 to 86400' };
+      if (!finished) return { kind: 'notRunYet' };
+      if (repo === 'billing-api') return { kind: 'failedFix', id, output };
+      switch (this.demo) {
+        case 'checks-fix':
+          return { kind: 'failedFix', id, output };
+        case 'checks-stop':
+          return { kind: 'failedStop', id, output };
+        case 'checks-cannot':
+          return { kind: 'couldNotRun', id, output: 'cargo: command not found' };
+        case 'checks-stale':
+          return { kind: 'stale', head: '3f9a1c2' };
+        default:
+          return { kind: 'passed', hooks: [{ id, outcome: 'passed' }] };
+      }
     };
+    const summary = (v: CheckView): string => {
+      switch (v.kind) {
+        case 'configBroken':
+          return "The team's check configuration on the base branch has problems. No check runs until it is fixed.";
+        case 'noChecks':
+          return 'This repository has no checks.';
+        case 'notRunYet':
+          return 'The checks have not run yet.';
+        case 'stale':
+          return `Checks last ran at ${v.head}.`;
+        case 'passed':
+          return 'The checks passed.';
+        case 'failedFix':
+          return `${v.id} failed. The agent is sent back to fix it, up to the team's retry limit.`;
+        case 'failedStop':
+          return `${v.id} failed. The build stopped here.`;
+        case 'couldNotRun':
+          return `${v.id} could not run on this machine. That is a fault of the machine, not of the code.`;
+      }
+    };
+    return this.repos.map((repo): RepoCheckView => {
+      const id = repo === 'billing-api' ? 'integration' : 'unit';
+      const v: CheckView = repo === 'customer-portal' ? { kind: 'noChecks' } : view(repo, id);
+      return { repo, view: v, summary: summary(v) };
+    });
   }
 
-  runChecks(repo: string): RepoChecks {
-    if (repo !== 'commerce-core') return { repo, results: [], none: true };
-    return { repo, none: false, results: [{ name: 'cargo test', argv: ['cargo', 'test'], outcome: { kind: 'Passed' }, tail: 'test result: ok. 14 passed; 0 failed' }] };
+  /** Whether `?demo=done-partial` has stopped part way already: the second time it carries on. */
+  private stoppedPartWay = false;
+
+  /**
+   * The plugin's answer to declaring `changeName` done, with the steps it reports on the way. It opens a pull request in each product
+   * repository and the master last; the demos give a refusal, a part-way stop (once), a machine that cannot run it and a missing gh.
+   */
+  declareDone(_changeName: string): { view: DeclareView; steps: DoneStep[] } {
+    const verifying: DoneStep = { kind: 'verifying', label: 'Declaring done: the plugin is verifying the change' };
+    const stepsFor = (repos: string[]): DoneStep[] => [
+      verifying,
+      ...repos.flatMap((repo): DoneStep[] => [{ kind: 'push', label: `Pushing ${repo}` }, { kind: 'pullRequest', label: `Opening a pull request in ${repo}` }]),
+    ];
+    const link = (repo: string, number: number) => ({ repo, url: prUrl(repo), number, source: 'plugin' as const });
+    switch (this.demo) {
+      case 'done-gh':
+        return { view: { kind: 'notReady', problems: ["Declaring done needs GitHub's command-line tool, gh. Install it from https://cli.github.com and reopen."] }, steps: [] };
+      case 'done-cannot':
+        return { view: { kind: 'couldNotRun', message: 'ai-sdlc needs Node.js 22.18 or later; this machine has 20.11.0.' }, steps: [] };
+      case 'done-refused':
+        return {
+          view: {
+            kind: 'notReady',
+            problems: [
+              'customer-portal has uncommitted files: src/limits.rs',
+              'the latest review (review 1) has unresolved high findings: F1 (commerce-core, src/upload.ts:10): The upload limit is checked after the file is stored.',
+            ],
+          },
+          steps: [verifying],
+        };
+      case 'done-partial':
+        if (!this.stoppedPartWay) {
+          this.stoppedPartWay = true;
+          const first = this.repos[0];
+          this.published.add(first);
+          return {
+            view: {
+              kind: 'partial',
+              pushed: [first],
+              opened: [link(first, 7)],
+              failed: [`opening the pull request in ${this.repos[1]} failed: GraphQL: something went wrong`, `pushed so far: ${first}; running done again carries on from there`],
+            },
+            steps: stepsFor([first]),
+          };
+        }
+    }
+    const all = [...this.repos, MOCK_MASTER];
+    all.forEach((repo) => this.published.add(repo));
+    const warnings = this.demo === 'done-warnings' ? ['after hook announce failed with exit code 1; nothing was undone'] : [];
+    return { view: { kind: 'done', pullRequests: all.map((repo, i) => link(repo, 7 + i)), warnings }, steps: stepsFor(all) };
   }
 
-  /** Only `?demo=clash-push` finds the branch taken at the push: the first repository refuses it, the others open their pull request. */
-  publish(repos: PublishRepo[], changeName: string): PrResult[] {
-    const taken = this.demo === 'clash-push' ? repos[0]?.repo : undefined;
-    repos.filter((r) => r.repo !== taken).forEach((r) => this.published.add(r.repo));
-    return repos.map((r): PrResult => (r.repo === taken
-      ? { repo: r.repo, outcome: { kind: 'clash', branch: `change/${changeName}` } }
-      : { repo: r.repo, outcome: { kind: 'opened', url: prUrl(r.repo) } }));
-  }
-
-  /** The done view as the Workbench shows it with nothing saved: done while every touched repository has an open pull request. */
-  doneView(repos: PublishRepo[], changeName: string, buildFinished: boolean): DoneView {
-    const prs = this.pullRequests(repos, changeName);
-    const links = prs.flatMap((p) => (p.url === null ? [] : [{ repo: p.repo, url: p.url, state: 'open' as const, seenAt: null }]));
-    const done = buildFinished && prs.length > 0 && links.length === prs.length;
-    // Like a saved record: the links a partial publish opened stay, labeled as opened.
-    const linksFrom = links.length === 0 ? 'none' as const : done ? 'github' as const : 'opened' as const;
-    return { done, links, linksFrom, offerDeclare: buildFinished && !done, prCheckFailed: false };
-  }
-
-  pullRequests(repos: PublishRepo[], changeName: string): PrState[] {
-    // The clash demos leave the finished change without pull requests, so Declare done is offered.
-    const open = (repo: string) => (changeName === MOCK_DONE_CHANGE && !this.demo?.startsWith('clash')) || this.published.has(repo);
-    return repos.map((r) => ({ repo: r.repo, url: open(r.repo) ? prUrl(r.repo) : null }));
+  /**
+   * The change's pull requests as the page shows them: those the plugin recorded (a finished change with a pull request in each repository, the
+   * master's last, or whatever a declaration in this session opened), with their states once `refresh` is asked for. The done demos leave the
+   * finished change without pull requests, so declaring done is offered. `?demo=pr-states` answers OPEN, MERGED and CLOSED and cannot read one;
+   * `?demo=earlier-declaration` shows the finished change as an earlier version of Kata recorded it.
+   */
+  pullRequestsView(changeName: string, refresh: boolean): PullRequestsView {
+    const repos = [...this.repos, MOCK_MASTER];
+    const recorded = repos.filter((repo) => (changeName === MOCK_DONE_CHANGE && !this.demo?.startsWith('done-')) || this.published.has(repo));
+    if (this.demo === 'earlier-declaration' && changeName === MOCK_DONE_CHANGE) {
+      const seenAt = Math.floor(Date.UTC(2026, 9, 21, 14, 30) / 1000);
+      const links = recorded.map((repo, i): PullRequestLink => ({ repo, url: prUrl(repo), number: 7 + i, source: 'legacy', state: 'merged', lastSeen: true, seenAt }));
+      return { done: true, source: 'legacy', links, declareOffered: false };
+    }
+    const asked = ['open', 'merged', 'closed', null] as const;
+    const links = recorded.map((repo, i): PullRequestLink => {
+      const state = !refresh ? null : this.demo === 'pr-states' ? asked[i % asked.length] : 'open';
+      return { repo, url: prUrl(repo), number: 7 + i, source: 'plugin', state, lastSeen: refresh && state === null, seenAt: null };
+    });
+    // The plugin records the master's pull request last: until it is there the declaration stopped part way.
+    return { done: recorded.includes(MOCK_MASTER), source: links.length === 0 ? null : 'plugin', links, declareOffered: true };
   }
 }
 
-const MOCK_CHECKS_DIR = 'C:/Users/demo/.kata/checks';
 const prUrl = (repo: string) => `https://github.com/acme/${repo}/pull/7`;
 
 /** The files each demo task's commit touched. */
@@ -964,3 +1297,479 @@ export const reviewRunScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
   ],
   mid: [],
 };
+
+/** The label the plugin's answer gives a change at a stage, for a test that needs one without a change. */
+export const mockLabel = (stage: string): StageLabel => ({ ...LABEL_DATA[stage] });
+
+/** The repositories each demo change builds in: the first builds in two (one of them asks a question), the second in one the first does not use, and the held one needs a repository the first holds. */
+export const BUILD_REPOS_OF: Record<string, string[]> = {
+  [MOCK_BUILD_CHANGE]: ['commerce-core', 'customer-portal'],
+  [MOCK_BUILD_SECOND]: ['billing-api'],
+  [MOCK_HELD_CHANGE]: ['commerce-core'],
+};
+
+/** The backend's key of a change, as the scripted host builds it. */
+export function mockChangeKey(ref: ChangeRef): ChangeKey {
+  const key = ref.workspace.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
+  return { workspace: { key, name: key.split('/').pop() ?? key }, system: ref.system, change: ref.change };
+}
+
+const sameChange = (a: ChangeKey, b: ChangeKey): boolean => a.workspace.key === b.workspace.key && a.system === b.system && a.change === b.change;
+
+/** One change's scripted build as the strip reads it. */
+export interface MockBuildView {
+  change: ChangeKey;
+  state: BuildState | null;
+  /** The runs of the build that are live: the repository (or `review`) and the run's id. */
+  going: { repo: string; runId: string }[];
+  reviewWaiting: HeldRepo[];
+  heldStart: HeldRepo[];
+  changedMs: number;
+}
+
+interface MockBuild {
+  key: ChangeKey;
+  ref: ChangeRef;
+  /** The live runs: a repository's name (or `review`) to the run's id, empty until the launch has answered. */
+  going: Map<string, string>;
+  stopped: Map<string, { task: string; reason: string; held: boolean }>;
+  /** The rounds asked for and not finished: repository to instructions. */
+  rounds: Map<string, string>;
+  phase: BuildPhase;
+  reviewing: boolean;
+  /** The repositories whose cancel was asked for, so their run's end reads as a cancel. */
+  cancelling: Set<string>;
+  cancelledAll: boolean;
+  /** The build log rows when the review last ran, and whether a round committed since. */
+  reviewedRows: number | null;
+  changed: boolean;
+  waiting: WaitingRepo[];
+  report: StopReport | null;
+  changedMs: number;
+  /** The form the build started with, for a start again. */
+  form: StartForm;
+}
+
+/** What the scripted build host asks of the browser stand-in: start a run, stop one, read the build log, say a build's state. */
+export interface MockBuildIo {
+  /** Start the scripted run of `repo` (`review` for the review) and call `onEnd` when it ends; resolves to the run's id. `instructions` is a round's. */
+  launch(change: ChangeRef, repo: string, onEnd: () => void, instructions?: string): string;
+  /** Stop a live run. */
+  cancel(runId: string): void;
+  /** The build log of a change the scripted host sequences by it; null for a change that only runs its repositories once. */
+  status(change: ChangeRef): BuildStatus | null;
+  announce(event: BuildEvent): void;
+  now(): number;
+}
+
+const NO_FORM: StartForm = { timeoutSecs: 7200 };
+
+/** The browser's stand-in for the backend's build host: several changes build at once, each holding the repositories it works in, and a build that needs a held repository starts held. A change with a build log is sequenced by it, the way the coordinator does. */
+export class MockBuildHost {
+  private readonly builds = new Map<string, MockBuild>();
+  private readonly holds = new Map<string, ChangeKey>();
+  private readonly heldStarts = new Map<string, { key: ChangeKey; held: HeldRepo[]; at: number }>();
+  private readonly reviewWaits = new Map<string, { key: ChangeKey; held: HeldRepo[]; at: number }>();
+
+  constructor(private readonly io: MockBuildIo) {}
+
+  private id(key: ChangeKey): string { return `${key.workspace.key}|${key.system}|${key.change}`; }
+
+  private heldBy(key: ChangeKey, repos: string[]): HeldRepo[] {
+    return repos.flatMap((repo) => {
+      const holder = this.holds.get(repo);
+      return holder && !sameChange(holder, key) ? [{ repo, holder }] : [];
+    });
+  }
+
+  private stateOf(build: MockBuild): BuildState {
+    return {
+      phase: build.phase,
+      going: [...build.going.keys()].sort(),
+      stopped: Object.fromEntries(build.stopped),
+      rounds: Object.fromEntries(build.rounds),
+      waiting: build.waiting,
+      report: build.report,
+    };
+  }
+
+  private announce(build: MockBuild): void {
+    build.changedMs = this.io.now();
+    this.io.announce({
+      change: build.key,
+      state: this.stateOf(build),
+      reviewWaiting: this.reviewWaits.get(this.id(build.key))?.held ?? [],
+      runs: this.runsOf(build),
+    });
+  }
+
+  private runsOf(build: MockBuild): BuildRunRef[] {
+    return [...build.going].flatMap(([key, run]) => (run === '' ? [] : [{ key, run }]));
+  }
+
+  private launch(build: MockBuild, repo: string): void {
+    // The run's id is known once it is launched; a scripted run never ends before that.
+    build.going.set(repo, '');
+    const instructions = build.rounds.get(repo);
+    const runId = this.io.launch(build.ref, repo, () => this.ended(build, repo), instructions);
+    if (build.going.has(repo)) build.going.set(repo, runId);
+  }
+
+  private releaseHolds(build: MockBuild): void {
+    for (const [repo, holder] of [...this.holds]) if (sameChange(holder, build.key)) this.holds.delete(repo);
+  }
+
+  private ended(build: MockBuild, repo: string): void {
+    if (!build.going.delete(repo)) return;
+    const cancelled = build.cancelling.delete(repo);
+    const status = this.io.status(build.ref);
+    if (status === null) {
+      if (build.going.size === 0) {
+        build.phase = 'finished';
+        this.releaseHolds(build);
+      }
+      this.announce(build);
+      return;
+    }
+    if (repo === 'review') {
+      build.reviewing = false;
+      if (cancelled) build.stopped.set('review', { task: 'review', reason: 'Stopped: cancelled', held: false });
+      else build.reviewedRows = status.tasks.filter((t) => t.row !== null).length;
+    } else if (cancelled) {
+      build.stopped.set(repo, { task: this.taskOf(status, repo), reason: 'Stopped: cancelled', held: false });
+    } else if (build.rounds.delete(repo)) {
+      // A round commits its fixes, which makes the last review out of date.
+      build.changed = true;
+    }
+    this.look(build, status);
+  }
+
+  private taskOf(status: BuildStatus, repo: string): string {
+    const state = status.repos.find((r) => r.repo === repo)?.state;
+    return state?.kind === 'done' || state === undefined ? '' : state.task;
+  }
+
+  /** Start what is ready, or settle the build: the coordinator's loop in miniature. */
+  private look(build: MockBuild, status: BuildStatus): void {
+    if (build.cancelledAll) {
+      if (build.going.size === 0) build.phase = 'cancelled';
+      this.announce(build);
+      return;
+    }
+    const waiting: WaitingRepo[] = [];
+    const ready: string[] = [];
+    for (const r of status.repos) {
+      if (r.state.kind === 'waiting') {
+        waiting.push({ repo: r.repo, task: r.state.task, onTask: r.state.onTask, onRepo: r.state.onRepo });
+        continue;
+      }
+      if (build.going.has(r.repo)) continue;
+      if (r.state.kind === 'done' && !build.rounds.has(r.repo)) continue;
+      const task = r.state.kind === 'ready' ? r.state.task : '';
+      const stop = build.stopped.get(r.repo);
+      if (stop && stop.task === task) continue;
+      ready.push(r.repo);
+    }
+    build.waiting = waiting;
+    for (const repo of ready) this.launch(build, repo);
+    if (ready.length > 0) {
+      build.phase = 'building';
+      this.announce(build);
+      return;
+    }
+    if (build.going.size > 0 || build.reviewing) {
+      this.announce(build);
+      return;
+    }
+    const rows = status.tasks.filter((t) => t.row !== null).length;
+    const complete = status.hasTasks && rows === status.tasks.length;
+    if (!complete || build.stopped.size > 0) {
+      build.phase = 'stopped';
+      build.report = {
+        unfinished: [...new Set(status.tasks.filter((t) => t.row === null).map((t) => t.repo))].map((repo) => ({ repo, tasks: status.tasks.filter((t) => t.repo === repo && t.row === null).map((t) => t.id) })),
+        waiting,
+      };
+      this.releaseHolds(build);
+      this.announce(build);
+      return;
+    }
+    if (build.reviewedRows === rows && !build.changed) {
+      build.phase = 'finished';
+      this.releaseHolds(build);
+      this.announce(build);
+      return;
+    }
+    build.changed = false;
+    build.reviewing = true;
+    build.phase = 'reviewing';
+    this.launch(build, 'review');
+    this.announce(build);
+  }
+
+  private fresh(ref: ChangeRef, key: ChangeKey, form: StartForm): MockBuild {
+    const rounds = new Map((form.rounds ?? []).map((r) => [r.repo, r.instructions]));
+    return {
+      key, ref, going: new Map(), stopped: new Map(), rounds, phase: 'building', reviewing: false, cancelling: new Set(), cancelledAll: false,
+      reviewedRows: null, changed: false, waiting: [], report: null, changedMs: this.io.now(), form,
+    };
+  }
+
+  start(ref: ChangeRef, form: StartForm = NO_FORM): StartOutcome {
+    const key = mockChangeKey(ref);
+    const id = this.id(key);
+    if (this.builds.get(id)?.going.size) return { kind: 'alreadyRunning' };
+    const status = this.io.status(ref);
+    const repos = [...new Set([...(BUILD_REPOS_OF[ref.change] ?? []), ...(form.rounds ?? []).map((r) => r.repo)])];
+    const held = this.heldBy(key, repos);
+    if (held.length > 0) {
+      this.heldStarts.set(id, { key, held, at: this.io.now() });
+      return { kind: 'held', held };
+    }
+    this.heldStarts.delete(id);
+    const previous = this.builds.get(id);
+    const build = this.fresh(ref, key, form);
+    // A build started again keeps what it already reviewed: nothing new to review means no new review.
+    if (previous) build.reviewedRows = previous.reviewedRows;
+    this.builds.set(id, build);
+    for (const repo of repos) this.holds.set(repo, key);
+    if (status === null) {
+      for (const repo of repos) this.launch(build, repo);
+      this.announce(build);
+    } else {
+      this.look(build, status);
+    }
+    return { kind: 'started', uncommitted: {} };
+  }
+
+  /** Run one repository (or the review) of a build again after it stopped. */
+  continueRepo(ref: ChangeRef, repo: string): StartOutcome {
+    const key = mockChangeKey(ref);
+    const build = this.builds.get(this.id(key));
+    if (!build) return this.start(ref);
+    if (build.going.has(repo)) return { kind: 'alreadyRunning' };
+    build.stopped.delete(repo);
+    build.cancelledAll = false;
+    for (const r of repoKeys(build)) this.holds.set(r, key);
+    const status = this.io.status(ref);
+    if (status === null) {
+      this.launch(build, repo);
+      this.announce(build);
+    } else if (repo === 'review') {
+      build.reviewing = true;
+      build.phase = 'reviewing';
+      this.launch(build, 'review');
+      this.announce(build);
+    } else {
+      this.look(build, status);
+    }
+    return { kind: 'started', uncommitted: {} };
+  }
+
+  /** Stop one run of a build, or every run when no repository is named. */
+  cancel(ref: ChangeRef, repo: string | null): void {
+    const build = this.builds.get(this.id(mockChangeKey(ref)));
+    if (!build) return;
+    if (repo === null) build.cancelledAll = true;
+    const keys = repo === null ? [...build.going.keys()] : build.going.has(repo) ? [repo] : [];
+    for (const key of keys) {
+      build.cancelling.add(key);
+      this.io.cancel(build.going.get(key) ?? '');
+    }
+    if (repo === null && keys.length === 0) {
+      build.phase = 'cancelled';
+      this.announce(build);
+    }
+  }
+
+  state(ref: ChangeRef): BuildState | null {
+    const build = this.builds.get(this.id(mockChangeKey(ref)));
+    return build ? this.stateOf(build) : null;
+  }
+
+  runs(ref: ChangeRef): BuildRunRef[] {
+    const build = this.builds.get(this.id(mockChangeKey(ref)));
+    return build ? this.runsOf(build) : [];
+  }
+
+  reviewStart(ref: ChangeRef): StartOutcome {
+    const key = mockChangeKey(ref);
+    const id = this.id(key);
+    const held = this.heldBy(key, BUILD_REPOS_OF[ref.change] ?? []);
+    if (held.length > 0) {
+      this.reviewWaits.set(id, { key, held, at: this.io.now() });
+      return { kind: 'held', held };
+    }
+    this.reviewWaits.delete(id);
+    const build = this.builds.get(id) ?? this.fresh(ref, key, NO_FORM);
+    this.builds.set(id, build);
+    build.reviewing = true;
+    build.phase = 'reviewing';
+    this.launch(build, 'review');
+    this.announce(build);
+    return { kind: 'started', uncommitted: {} };
+  }
+
+  reviewWaiting(ref: ChangeRef): HeldRepo[] {
+    return this.reviewWaits.get(this.id(mockChangeKey(ref)))?.held ?? [];
+  }
+
+  /** Every build, review wait and held start, for the running changes. */
+  views(): MockBuildView[] {
+    const out: MockBuildView[] = [...this.builds.values()].map((b) => ({
+      change: b.key,
+      state: this.stateOf(b),
+      going: [...b.going].map(([repo, runId]) => ({ repo, runId })),
+      reviewWaiting: this.reviewWaits.get(this.id(b.key))?.held ?? [],
+      heldStart: [],
+      changedMs: b.changedMs,
+    }));
+    const known = new Set(out.map((v) => this.id(v.change)));
+    for (const w of this.reviewWaits.values()) {
+      if (!known.has(this.id(w.key))) { known.add(this.id(w.key)); out.push({ change: w.key, state: null, going: [], reviewWaiting: w.held, heldStart: [], changedMs: w.at }); }
+    }
+    for (const h of this.heldStarts.values()) {
+      if (!known.has(this.id(h.key))) out.push({ change: h.key, state: null, going: [], reviewWaiting: [], heldStart: h.held, changedMs: h.at });
+    }
+    return out;
+  }
+}
+
+const repoKeys = (build: MockBuild): string[] => BUILD_REPOS_OF[build.ref.change] ?? [];
+
+// ---- the review and the round, as the backend answers them
+
+const RANK: Record<RoundSeverity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+const DEFAULT_PICKED: RoundSeverity[] = ['critical', 'high', 'medium'];
+
+/** The first sentence of a finding's text. */
+const firstSentence = (text: string): string => {
+  const line = text.split(/\r?\n/)[0];
+  const stop = line.indexOf('. ');
+  return stop === -1 ? line : line.slice(0, stop + 1);
+};
+
+/** A finding of the review record as the offer and the rows carry it. */
+const toReviewFinding = (f: ParsedFinding): ReviewFinding => ({
+  id: f.id, severity: f.severity, text: f.text, file: f.file, line: f.line, ...(f.repo === undefined ? {} : { repo: f.repo }),
+  ...(f.concern === undefined ? {} : { concern: f.concern }), ...(f.rule === undefined ? {} : { rule: f.rule }),
+});
+
+/** What a round may fix, from the review record: every finding of the latest review, in the order listed. */
+export function mockRoundOffer(record: ReviewRecord | null, repos: string[]): RoundOffer {
+  const latest = record?.reviews.at(-1);
+  if (!latest) return { review: null, repos, findings: [] };
+  return {
+    review: latest.number,
+    repos,
+    findings: latest.findings.map((f, i) => {
+      const finding = toReviewFinding(f);
+      return { key: f.id || `#${i + 1}`, finding, repo: finding.repo !== undefined && repos.includes(finding.repo) ? finding.repo : null };
+    }),
+  };
+}
+
+/** The findings picked when the dialog opens: critical, high and medium. */
+export const mockDefaultPicks = (offer: RoundOffer): RoundPicks => ({
+  picked: offer.findings.filter((f) => f.finding.severity !== null && DEFAULT_PICKED.includes(f.finding.severity)).map((f) => f.key),
+  assigned: {},
+  notes: {},
+});
+
+/** One request per repository with a picked finding or a note, or why the round cannot start. */
+export function mockRoundPlan(offer: RoundOffer, picks: RoundPicks): RoundPlan {
+  const picked = offer.findings.filter((f) => picks.picked.includes(f.key)).map((f) => ({ f, repo: f.repo ?? picks.assigned[f.key] ?? null }));
+  const unassigned = picked.filter((p) => p.repo === null).map((p) => p.f.key);
+  if (unassigned.length > 0) return { blocked: `Choose a repository for ${unassigned.join(', ')}.`, requests: [] };
+  const requests: RoundRequest[] = [];
+  for (const repo of offer.repos) {
+    const mine = picked.filter((p) => p.repo === repo).map((p) => p.f);
+    const note = (picks.notes[repo] ?? '').trim();
+    if (mine.length === 0 && note === '') continue;
+    const keys = mine.map((f) => f.key).join(', ');
+    const text = mine.length === 0 ? '' : `Fix these findings from review ${offer.review ?? ''} of this change in this repository.\n${mine.map((f) => `- ${f.key} ${f.finding.text}`).join('\n')}`;
+    requests.push({ repo, instructions: [text, note === '' ? '' : `Also from the engineer:\n${note}`].filter((p) => p !== '').join('\n\n'), summary: [repo, ...(keys === '' ? [] : [keys]), ...(note === '' ? [] : ['with a note'])].join(' · ') });
+  }
+  if (requests.length === 0) return { blocked: 'Pick a finding or write a note.', requests: [] };
+  return { blocked: null, requests };
+}
+
+/**
+ * Like the backend's `sdlc_build_board` (`kata_sdlc::board::board`), for the browser fixtures: a live run first, then a stop the
+ * host recorded, then the build log. The backend's tests own the table; this stands in for it where no backend runs.
+ */
+export function mockBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }): RepoBoard[] {
+  return repos.map((repo) => {
+    const state = status.repos.find((r) => r.repo === repo)?.state;
+    const stop = stopped[repo];
+    const situation: Situation = going.includes(repo)
+      ? { kind: 'working', task: state?.kind === 'ready' ? state.task : null }
+      : stop !== undefined
+        ? { kind: 'stopped', task: stop.task, reason: stop.reason }
+        : state === undefined
+          ? { kind: 'idle' }
+          : state.kind === 'done'
+            ? { kind: 'finished' }
+            : state.kind === 'waiting'
+              ? { kind: 'waiting', task: state.task, onTask: state.onTask, onRepo: state.onRepo }
+              : { kind: 'not-started', task: state.task };
+    const tasks = status.tasks.filter((t) => t.repo === repo).map((t) => ({ id: t.id, state: mockTaskState(t, situation) }));
+    return { repo, situation, tasks };
+  });
+}
+
+function mockTaskState(task: TaskStatus, s: Situation): TaskState {
+  if (task.row !== null) return { kind: 'done', departure: task.row.departure };
+  if (s.kind === 'working' && s.task === task.id) return { kind: 'running' };
+  if (s.kind === 'waiting' && s.task === task.id) return { kind: 'waiting', onTask: s.onTask, onRepo: s.onRepo };
+  if (s.kind === 'stopped' && s.task === task.id) return { kind: 'stopped', reason: s.reason };
+  return { kind: 'not-started' };
+}
+
+/** Like the backend's `sdlc_review_standing` (`kata_sdlc::review::standing`), for the browser fixtures. */
+export function mockStanding(input: { links: RunLink[]; records: RunRecord[]; heads: Record<string, string>; scope: ReviewScope; document: ReviewRecord | null; master: string | null }): ReviewStanding {
+  const { links, records, heads, scope, document, master } = input;
+  if (document !== null) {
+    if (document.problems.length > 0) return { kind: 'invalid' };
+    const latest = document.reviews.at(-1);
+    if (latest === undefined) return { kind: 'none' };
+    const moved = Object.entries(heads).some(([repo, head]) => {
+      if (repo === master) return false;
+      const sha = latest.commits[repo];
+      return sha === undefined || sha.length < 4 || !head.startsWith(sha);
+    });
+    return moved || document.master_moved.length > 0 ? { kind: 'stale' } : { kind: 'current-document', review: document.reviews.length - 1 };
+  }
+  let latest: RunLink | null = null;
+  for (const l of links) {
+    if (l.stage !== 'review' || l.workspace_id !== scope.workspaceId || l.system !== scope.system || l.change !== scope.change) continue;
+    if (latest === null || l.started_at >= latest.started_at) latest = l;
+  }
+  if (latest === null) return { kind: 'none' };
+  if (records.find((r) => r.id === latest.run_id)?.exit !== 0) return { kind: 'unfinished' };
+  const then = latest.heads;
+  if (then === undefined || !Object.keys(heads).every((repo) => heads[repo] === then[repo])) return { kind: 'stale' };
+  return { kind: 'current-run', runId: latest.run_id };
+}
+
+/** The Review group for the latest review: most serious first, the low findings apart, counts by severity. */
+export function mockReviewView(record: ReviewRecord | null, repos: string[]): ReviewView {
+  const offer = mockRoundOffer(record, repos);
+  const row = (f: RoundOffer['findings'][number]): ReviewRow => ({ key: f.key, finding: f.finding, summary: firstSentence(f.finding.text) });
+  const named = [...repos, ...offer.findings.flatMap((f) => (f.finding.repo !== undefined && !repos.includes(f.finding.repo) ? [f.finding.repo] : []))];
+  const places: (string | null)[] = [...new Set(named), null];
+  const groups: ReviewRowGroup[] = places.flatMap((repo) => {
+    const mine = offer.findings.filter((f) => (f.finding.repo ?? null) === repo);
+    if (mine.length === 0) return [];
+    return [{
+      repo,
+      rows: mine.filter((f) => f.finding.severity !== 'low').sort((a, b) => (a.finding.severity === null ? 4 : RANK[a.finding.severity]) - (b.finding.severity === null ? 4 : RANK[b.finding.severity])).map(row),
+      low: mine.filter((f) => f.finding.severity === 'low').map(row),
+    }];
+  });
+  const counts = (['critical', 'high', 'medium', 'low'] as const).map((severity) => ({ severity, n: offer.findings.filter((f) => f.finding.severity === severity).length })).filter((c) => c.n > 0);
+  const byKey = new Map(offer.findings.map((f) => [f.key, f]));
+  return {
+    rows: { counts, total: offer.findings.length, groups },
+    groups: groups.map((g) => ({ repo: g.repo, findings: [...g.rows, ...g.low].flatMap((r) => byKey.get(r.key) ?? []) })),
+  };
+}

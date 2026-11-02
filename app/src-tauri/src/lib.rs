@@ -1,5 +1,12 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
+mod build_host;
+mod close_guard;
+mod history;
+mod rename_change;
+mod running;
 mod runs;
+mod sdlc_state;
+mod start_change;
 mod zoom;
 
 use kata_core::catalog::{self, CatalogEntry};
@@ -17,10 +24,8 @@ use tauri_plugin_shell::ShellExt;
 
 /// Channel the engine's normalized KataEvents are relayed on to the webview.
 const RUN_EVENT: &str = "kata://event";
-/// What publishing is doing, one `PublishStep` per event.
-const PUBLISH_STEP_EVENT: &str = "sdlc://publish-step";
-/// What a stage pass reports, one `StageEvent` per event.
-const STAGE_EVENT: &str = "sdlc://stage";
+/// The step the plugin is on while a change is declared done, one `DoneStep` per event.
+const DONE_STEP_EVENT: &str = "sdlc://done-step";
 
 /// Shared run control: every live run plus a monotonic id source. A stale
 /// reader task (a finished run still tearing down) removes only its own id, so
@@ -70,16 +75,36 @@ fn validate_spec(spec: RunSpec) -> Vec<String> {
     spec::validate(&spec).err().unwrap_or_default()
 }
 
+/// The lane a `group` stands for until the commands pass lanes directly: a
+/// `build:<system>/<change>` group is a build run of that change, no group is a Workbench run.
+fn lane_of(group: Option<&str>) -> runs::Lane {
+    let Some((system, change)) = group
+        .and_then(|g| g.strip_prefix("build:"))
+        .and_then(|g| g.split_once('/'))
+    else {
+        return runs::Lane::Solo;
+    };
+    runs::Lane::Change {
+        key: kata_sdlc::holds::ChangeKey {
+            workspace: kata_sdlc::holds::RepoKey::of(Path::new("")),
+            system: system.to_string(),
+            change: change.to_string(),
+        },
+        build: true,
+    }
+}
+
 /// Start a run: write the spec to a temp file, spawn `kata run` in the spec's
 /// workdir as a sidecar, and relay its JSON-line KataEvents over `kata://event`.
 /// Returns the run id once spawned; an async task drains stdout for the run's
 /// lifetime. `group` (`build:<system>/<change>`) rides next to the spec, never
 /// inside it, so the table can tell which runs belong to a build. Every relayed
-/// event is wrapped as `{ runId, event }`.
+/// event is wrapped as `{ runId, seq, event }`, `seq` being its position in the run, counted from 0.
 #[tauri::command]
 async fn run_spec(
     app: AppHandle,
     control: State<'_, RunControl>,
+    history: State<'_, Arc<history::RunHistory>>,
     spec: RunSpec,
     group: Option<String>,
 ) -> Result<String, String> {
@@ -88,10 +113,43 @@ async fn run_spec(
     tauri::async_runtime::spawn_blocking(claude_ready)
         .await
         .map_err(|e| e.to_string())??;
+    let lane = lane_of(group.as_deref());
+    let kind = if lane == runs::Lane::Solo {
+        runs::RunKind::Solo
+    } else {
+        runs::RunKind::Build
+    };
+    start_run(
+        &app,
+        &control,
+        history.inner(),
+        spec,
+        group,
+        lane,
+        kind,
+        None,
+        None,
+    )
+}
+
+/// Claim the spec's folder, spawn `kata run` for it and relay its events. `ended` is called once, after
+/// the run has left the table, with how it ended; the build host uses it to carry on.
+#[allow(clippy::too_many_arguments)]
+fn start_run(
+    app: &AppHandle,
+    control: &RunControl,
+    history: &Arc<history::RunHistory>,
+    spec: RunSpec,
+    group: Option<String>,
+    lane: runs::Lane,
+    kind: runs::RunKind,
+    repo: Option<String>,
+    ended: Option<Box<dyn FnOnce(build_host::RunEnd) + Send>>,
+) -> Result<String, String> {
     // Hold the table across claim, spawn and insert so two starts cannot both
     // pass the claim.
     let mut table = control.state.lock().unwrap();
-    table.claim(Path::new(&spec.workdir), group.as_deref())?;
+    table.claim(Path::new(&spec.workdir), &lane)?;
 
     // Each run gets a unique id so its reader task only ever touches its own temp
     // file and child handle. A new run can begin the moment a terminal event
@@ -120,17 +178,28 @@ async fn run_spec(
         }
     };
 
+    let change_key = match &lane {
+        runs::Lane::Change { key, .. } => Some(key.clone()),
+        _ => None,
+    };
     table.insert(LiveRun {
         id,
         workdir: std::path::PathBuf::from(&spec.workdir),
+        kind,
         group,
+        lane,
+        repo,
         child: Some(child),
     });
     drop(table);
     let state = control.state.clone();
+    let history = history.clone();
+    let app = app.clone();
+    announce_running(&app);
 
     tauri::async_runtime::spawn(async move {
         let mut terminal_seen = false;
+        let mut end: Option<build_host::RunEnd> = None;
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(bytes) => match serde_json::from_slice::<Value>(&bytes) {
@@ -138,35 +207,67 @@ async fn run_spec(
                         if let Some(t) = v.get("type").and_then(|t| t.as_str()) {
                             if matches!(t, "run.completed" | "run.error" | "run.cancelled") {
                                 terminal_seen = true;
+                                let exit = v
+                                    .get("exit_code")
+                                    .and_then(Value::as_i64)
+                                    .and_then(|c| i32::try_from(c).ok());
+                                end = Some(build_host::RunEnd {
+                                    exit,
+                                    error: (t == "run.error").then(|| {
+                                        v.get("message")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("the run failed")
+                                            .to_string()
+                                    }),
+                                    history_id: None,
+                                });
                             }
                         }
-                        let _ = app.emit(RUN_EVENT, runs::wrap(id, v));
+                        let seq = history.push(id, &v);
+                        let announce = matches!(
+                            v.get("type").and_then(Value::as_str),
+                            Some(
+                                "ask.requested"
+                                    | "ask.answered"
+                                    | "permission.requested"
+                                    | "permission.decided"
+                            )
+                        );
+                        let _ = app.emit(RUN_EVENT, runs::wrap(id, seq, v));
+                        if announce {
+                            announce_running(&app);
+                        }
                     }
-                    Err(_) => relay_log(&app, id, &bytes),
+                    Err(_) => relay_log(&app, &history, id, &bytes),
                 },
-                CommandEvent::Stderr(bytes) => relay_log(&app, id, &bytes),
+                CommandEvent::Stderr(bytes) => relay_log(&app, &history, id, &bytes),
                 CommandEvent::Terminated(payload) => {
                     if !terminal_seen {
                         let code = payload.code.unwrap_or(-1);
-                        let _ = app.emit(
-                            RUN_EVENT,
-                            runs::wrap(
-                                id,
-                                json!({
-                                    "type": "run.error",
-                                    "message": format!("engine exited ({code}) without a result"),
-                                }),
-                            ),
-                        );
+                        end = Some(build_host::RunEnd {
+                            exit: Some(code),
+                            error: Some(format!("engine exited ({code}) without a result")),
+                            history_id: None,
+                        });
+                        let ev = json!({
+                            "type": "run.error",
+                            "message": format!("engine exited ({code}) without a result"),
+                        });
+                        let seq = history.push(id, &ev);
+                        let _ = app.emit(RUN_EVENT, runs::wrap(id, seq, ev));
                     }
                     break;
                 }
                 CommandEvent::Error(err) => {
                     terminal_seen = true;
-                    let _ = app.emit(
-                        RUN_EVENT,
-                        runs::wrap(id, json!({ "type": "run.error", "message": err })),
-                    );
+                    end = Some(build_host::RunEnd {
+                        exit: None,
+                        error: Some(err.clone()),
+                        history_id: None,
+                    });
+                    let ev = json!({ "type": "run.error", "message": err });
+                    let seq = history.push(id, &ev);
+                    let _ = app.emit(RUN_EVENT, runs::wrap(id, seq, ev));
                 }
                 _ => {}
             }
@@ -174,9 +275,346 @@ async fn run_spec(
         let _ = std::fs::remove_file(&tmp);
         // Remove only this run; a newer run keeps its own entry.
         state.lock().unwrap().remove(id);
+        if let (Some(key), Some(marks)) =
+            (&change_key, app.try_state::<Arc<running::OpenedMarks>>())
+        {
+            marks.ended(key);
+        }
+        if let Some(ended) = ended {
+            let mut end = end.unwrap_or(build_host::RunEnd {
+                exit: None,
+                error: Some("the engine's output ended without a result".into()),
+                history_id: None,
+            });
+            // The transcript the run wrote is where its tasks are linked to.
+            let events: Vec<Value> = history.replay(id).into_iter().map(|e| e.event).collect();
+            end.history_id = build_host::transcript_run_id(&events);
+            // The host's work is blocking (it runs the plugin and takes locks).
+            let _ = tauri::async_runtime::spawn_blocking(move || ended(end)).await;
+        }
+        // The run's last replay is taken; its events are in the transcript the engine wrote.
+        history.finish(id);
+        announce_running(&app);
     });
 
     Ok(id.to_string())
+}
+
+/// The running changes, computed from the run table, the builds, the histories and the opened marks.
+fn running_strip(app: &AppHandle) -> running::RunningStrip {
+    let live = app.state::<RunControl>().state.lock().unwrap().live();
+    let builds = app
+        .try_state::<Arc<build_host::BuildHost>>()
+        .map(|h| h.views())
+        .unwrap_or_default();
+    let history = app.state::<Arc<history::RunHistory>>();
+    let marks = app.state::<Arc<running::OpenedMarks>>();
+    running::with_workspace_ids(
+        running::entries(&live, &builds, &history, &marks),
+        &sdlc::store::load_workspaces(),
+    )
+}
+
+/// Tell the webview the running changes may have changed.
+fn announce_running(app: &AppHandle) {
+    if app.try_state::<Arc<running::OpenedMarks>>().is_some() {
+        let _ = app.emit(running::RUNNING_EVENT, running_strip(app));
+    }
+}
+
+/// The running changes: the first three and every one.
+#[tauri::command]
+fn sdlc_running(app: AppHandle) -> running::RunningStrip {
+    running_strip(&app)
+}
+
+/// The engineer opened a change; it leaves the running changes once nothing of it needs them.
+#[tauri::command]
+fn sdlc_mark_opened(
+    app: AppHandle,
+    marks: State<Arc<running::OpenedMarks>>,
+    change: build_host::ChangeRef,
+) {
+    marks.open(&build_host::key_of(&change));
+    announce_running(&app);
+}
+
+/// Every event of a run from its start, in order, for a session opened after the run began.
+#[tauri::command]
+fn sdlc_run_history(
+    history: State<Arc<history::RunHistory>>,
+    run_id: String,
+) -> Vec<history::HistoryEntry> {
+    parse_run_id(&run_id)
+        .map(|id| history.replay(id))
+        .unwrap_or_default()
+}
+
+/// The ai-sdlc program of the plugin installed for `workspace`, as the build host asks for it.
+struct PluginTools;
+
+impl PluginTools {
+    fn program(workspace: &Path) -> Result<build_host::ProgramTools, sdlc::ai_sdlc::ProgramError> {
+        match state_inputs(&workspace.display().to_string()) {
+            (Some(program), _) => Ok(build_host::ProgramTools::new(program)),
+            (None, sdlc::plugin::Readiness::Blocked { message, .. }) => {
+                Err(sdlc::ai_sdlc::ProgramError::CouldNotRun { message })
+            }
+            (None, _) => Err(sdlc::ai_sdlc::ProgramError::CouldNotRun {
+                message: "the ai-sdlc plugin cannot be used".into(),
+            }),
+        }
+    }
+}
+
+impl build_host::Tools for PluginTools {
+    fn resolve(
+        &self,
+        workspace: &Path,
+    ) -> Result<sdlc::ai_sdlc::Place, sdlc::ai_sdlc::ProgramError> {
+        Self::program(workspace)?.resolve(workspace)
+    }
+    fn run(
+        &self,
+        command: &[&str],
+        place: &sdlc::ai_sdlc::Place,
+    ) -> Result<Value, sdlc::ai_sdlc::ProgramError> {
+        Self::program(&place.workspace)?.run(command, place)
+    }
+    fn exec(
+        &self,
+        command: &[&str],
+        place: &sdlc::ai_sdlc::Place,
+    ) -> Result<sdlc::ai_sdlc::Reply, String> {
+        Self::program(&place.workspace)
+            .map_err(|e| e.to_string())?
+            .exec(command, place)
+    }
+    fn states(
+        &self,
+        place: &sdlc::ai_sdlc::Place,
+        system: &str,
+    ) -> Result<Vec<sdlc::ai_sdlc::state::ChangeState>, sdlc::ai_sdlc::ProgramError> {
+        Self::program(&place.workspace)?.states(place, system)
+    }
+    fn plan(
+        &self,
+        place: &sdlc::ai_sdlc::Place,
+        state: &sdlc::ai_sdlc::state::ChangeState,
+    ) -> Result<sdlc::format::ParsedPlan, String> {
+        Self::program(&place.workspace)
+            .map_err(|e| e.to_string())?
+            .plan(place, state)
+    }
+    fn review_record(
+        &self,
+        place: &sdlc::ai_sdlc::Place,
+        system: &str,
+        state: &sdlc::ai_sdlc::state::ChangeState,
+    ) -> Result<Option<sdlc::review::ReviewRecord>, String> {
+        Self::program(&place.workspace)
+            .map_err(|e| e.to_string())?
+            .review_record(place, system, state)
+    }
+    fn workspace_id(&self, folder: &Path) -> Option<String> {
+        build_host::workspace_id_in_store(folder)
+    }
+    fn link_tasks(&self, links: &[sdlc::store::TaskLink]) -> Result<(), String> {
+        sdlc::store::append_task_links(links).map_err(|e| e.to_string())
+    }
+    fn head(&self, dir: &Path) -> Result<String, String> {
+        sdlc::git::Repo::open(dir)
+            .and_then(|r| r.head_sha())
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// The run table, the sidecar and the webview, for the build host.
+struct AppLauncher {
+    app: AppHandle,
+}
+
+impl build_host::Launcher for AppLauncher {
+    fn launch(&self, request: build_host::LaunchRequest) -> Result<u64, String> {
+        claude_ready()?;
+        let control = self.app.state::<RunControl>();
+        let history = self.app.state::<Arc<history::RunHistory>>();
+        start_run(
+            &self.app,
+            &control,
+            history.inner(),
+            request.spec,
+            Some(request.group),
+            request.lane,
+            request.kind,
+            request.repo,
+            Some(request.ended),
+        )?
+        .parse()
+        .map_err(|_| "the run id is not a number".to_string())
+    }
+
+    fn cancel(&self, run_id: u64) {
+        cancel_by_id(&self.app.state::<RunControl>(), run_id);
+    }
+
+    fn emit(&self, event: &build_host::BuildEvent) {
+        let _ = self.app.emit(build_host::BUILD_EVENT, event);
+        announce_running(&self.app);
+    }
+}
+
+/// Start a change's build. The decision is the host's; see `BuildHost::start`.
+#[tauri::command(async)]
+fn sdlc_build_start(
+    app: AppHandle,
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    form: build_host::StartForm,
+) -> build_host::StartOutcome {
+    let outcome = host.start(&change, form);
+    announce_running(&app);
+    outcome
+}
+
+/// Continue a change's build in one repository.
+#[tauri::command(async)]
+fn sdlc_build_continue(
+    app: AppHandle,
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    repo: String,
+    off: Option<Vec<String>>,
+) -> build_host::StartOutcome {
+    let outcome = host.continue_with(&change, &repo, off);
+    announce_running(&app);
+    outcome
+}
+
+/// Where a change's build stands, or none when this session hosts no build of it.
+/// The key the backend gives a change, which every build announcement carries: the page compares the two.
+#[tauri::command]
+fn sdlc_change_key(change: build_host::ChangeRef) -> sdlc::holds::ChangeKey {
+    build_host::key_of(&change)
+}
+
+#[tauri::command]
+fn sdlc_build_state(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+) -> Option<sdlc::coordinator::BuildState> {
+    host.state(&change)
+}
+
+/// Start a document run (intent, spec, plan, triage or fix) of a change that exists. The host composes
+/// the spec, with the deny rules of every run of a change, and the run claims the change's own lane.
+#[tauri::command(async)]
+fn sdlc_run_change(
+    app: AppHandle,
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    kind: runs::RunKind,
+    form: sdlc::runspec::RunForm,
+) -> Result<String, String> {
+    let id = host.change_run(&change, kind, form)?;
+    announce_running(&app);
+    Ok(id.to_string())
+}
+
+/// Start a change's review by hand; it waits when another change holds a repository it reads.
+#[tauri::command(async)]
+fn sdlc_review_start(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    off: Option<Vec<String>>,
+) -> build_host::StartOutcome {
+    host.review_start_with(&change, off)
+}
+
+/// The repositories other changes hold that keep a change's review from starting; none when it is free.
+#[tauri::command]
+fn sdlc_review_waiting(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+) -> Vec<build_host::HeldRepo> {
+    host.review_waiting(&change)
+}
+
+/// What a round may fix, and the picks that start selected, from the change's latest review.
+#[tauri::command(async)]
+fn sdlc_round_offer(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+) -> Result<(sdlc::round::RoundOffer, sdlc::round::RoundPicks), String> {
+    let offer = host.round_offer(&change)?;
+    let picks = sdlc::round::default_picks(&offer);
+    Ok((offer, picks))
+}
+
+/// The requests a round with these picks would start.
+#[tauri::command(async)]
+fn sdlc_round_plan(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    picks: sdlc::round::RoundPicks,
+) -> Result<sdlc::round::RoundPlan, String> {
+    host.round_plan(&change, &picks)
+}
+
+/// Stop the run of one repository (or `review`) of a change's build, or, with none named, every run of it.
+#[tauri::command(async)]
+fn sdlc_build_cancel(
+    app: AppHandle,
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    repo: Option<String>,
+) {
+    match repo {
+        Some(key) => host.cancel_run(&change, &key),
+        None => host.cancel(&change),
+    }
+    announce_running(&app);
+}
+
+/// The runs of a change's build that are live, each with its run's id.
+#[tauri::command]
+fn sdlc_build_runs(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+) -> Vec<build_host::BuildRunRef> {
+    host.runs(&change)
+}
+
+/// The run-spec a document run of a change would start with: the call `sdlc_run_change` composes it with. Nothing starts.
+#[tauri::command(async)]
+fn sdlc_preview_change_run(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    kind: runs::RunKind,
+    form: sdlc::runspec::RunForm,
+) -> Result<RunSpec, String> {
+    host.preview_change_run(&change, kind, form)
+}
+
+/// The run-spec of each run a build's preview lists: the call a start composes them with. Nothing starts.
+#[tauri::command(async)]
+fn sdlc_preview_build(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    which: build_host::BuildPreviewKind,
+    repo: Option<String>,
+    form: build_host::StartForm,
+) -> Result<Vec<build_host::BuildSection>, String> {
+    host.preview_build(&change, which, repo.as_deref(), &form)
+}
+
+/// The latest review as the build page lists it: the Review group's rows and the round dialog's groups.
+#[tauri::command(async)]
+fn sdlc_review_view(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+) -> Result<build_host::ReviewView, String> {
+    host.review_view(&change)
 }
 
 /// Step the window's zoom and remember the new level for the next launch.
@@ -213,7 +651,27 @@ fn save_build_layout(layout: serde_json::Value) -> Result<(), String> {
 
 #[tauri::command]
 fn sdlc_save_settings(settings: sdlc::store::Settings) -> Result<(), String> {
+    // The screens never carry the list of systems already told about their old checks; saving keeps it.
+    let settings = sdlc::old_checks::keep_shown(&sdlc::store::load_settings(), settings);
     sdlc::store::save_settings(&settings).map_err(|e| e.to_string())
+}
+
+/// The old per-machine checks files of the systems the home lists, for each the engineer has not been told about yet, in
+/// one answer. Read to be shown, never run and never converted. `folder` is the workspace the engineer opened; the files
+/// are per machine, not per workspace.
+#[tauri::command]
+fn sdlc_old_checks(folder: String, systems: Vec<String>) -> Vec<sdlc::old_checks::OldChecksNotice> {
+    let _ = folder;
+    let Some(home) = sdlc::old_checks::kata_home() else {
+        return Vec::new();
+    };
+    sdlc::old_checks::notices(&home, &systems, &sdlc::store::load_settings())
+}
+
+/// Record that the engineer has been told about the old checks files of these systems.
+#[tauri::command]
+fn sdlc_old_checks_seen(systems: Vec<String>) -> Result<(), String> {
+    sdlc::old_checks::record_shown(&systems).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -253,62 +711,6 @@ fn sdlc_instructions(folder: String, master_repo: String) -> sdlc::workspace::In
     sdlc::workspace::instructions(folder, &folder.join(master_repo))
 }
 
-/// The changes of a system and the title of each intent, from the folder alone.
-#[tauri::command(async)]
-fn sdlc_change_names(master: String, system: String) -> Vec<sdlc::changes::ChangeName> {
-    sdlc::changes::names(Path::new(&master), &system)
-}
-
-/// Starts reading the stage of every change of the system on a background thread and returns the pass
-/// id at once; each result goes out on `sdlc://stage`. `first` is read before the others. A pass already
-/// running for the window is superseded and reports nothing more.
-#[tauri::command]
-fn sdlc_read_stages(
-    window: tauri::Window,
-    passes: State<Arc<StagePasses>>,
-    master: String,
-    system: String,
-    first: Option<String>,
-) -> u64 {
-    let sink: StageSink = {
-        let window = window.clone();
-        Arc::new(move |ev| {
-            let _ = window.emit(STAGE_EVENT, ev);
-        })
-    };
-    start_pass(
-        &passes,
-        window.label(),
-        sink,
-        move |pass, cancelled, emit| {
-            let master = Path::new(&master);
-            let mut order: Vec<String> = sdlc::changes::names(master, &system)
-                .into_iter()
-                .map(|n| n.change)
-                .collect();
-            if let Some(at) = first.and_then(|f| order.iter().position(|c| *c == f)) {
-                let moved = order.remove(at);
-                order.insert(0, moved);
-            }
-            let plugin = ai_sdlc_dir(&master.to_string_lossy()).ok();
-            let ctx = sdlc::changes::ReadContext::new(plugin.as_deref(), master);
-            sdlc::changes::read_stages(&ctx, &system, &order, pass, cancelled, emit);
-        },
-    )
-}
-
-/// One change read in full, for the list row and the change page.
-#[tauri::command(async)]
-fn sdlc_read_change(
-    master: String,
-    system: String,
-    change: String,
-) -> Result<sdlc::changes::ChangeInfo, String> {
-    let plugin = ai_sdlc_dir(&master).ok();
-    let ctx = sdlc::changes::ReadContext::new(plugin.as_deref(), Path::new(&master));
-    sdlc::changes::read_change(&ctx, &system, &change)
-}
-
 /// Which of the folders no longer exist. Nothing else is looked at.
 #[tauri::command(async)]
 fn sdlc_missing_folders(folders: Vec<String>) -> Vec<String> {
@@ -319,8 +721,8 @@ fn sdlc_missing_folders(folders: Vec<String>) -> Vec<String> {
 }
 
 #[tauri::command(async)]
-fn sdlc_branches(master: String) -> sdlc::changes::BranchInfo {
-    sdlc::changes::branch_info(Path::new(&master))
+fn sdlc_branches(master: String) -> sdlc::branch::BranchInfo {
+    sdlc::branch::branch_info(Path::new(&master))
 }
 
 #[tauri::command(async)]
@@ -370,13 +772,41 @@ fn sdlc_discard(
         .map_err(|e| e.to_string())
 }
 
+/// The name the plugin will be asked to give a change described by `title`, so a preview can show it.
+#[tauri::command]
+fn sdlc_change_name(title: String) -> String {
+    let first = title.lines().map(str::trim).find(|l| !l.is_empty());
+    sdlc::naming::change_name(&start_change::today(), first.unwrap_or_default())
+}
+
+/// Start a change through the plugin: its branch and its own copy of the master repository. Kata makes
+/// neither itself. A refusal is an answer carrying the plugin's reasons; an error is a plugin that could
+/// not run.
 #[tauri::command(async)]
-fn sdlc_start_change(master: String) -> Result<String, String> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_secs();
-    sdlc::branch::start_pending(Path::new(&master), now).map_err(|e| e.to_string())
+fn sdlc_start_change(
+    folder: String,
+    system: String,
+    title: String,
+    work_type: String,
+    scope: String,
+    branch: Option<String>,
+) -> Result<start_change::ChangeStart, String> {
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&folder)?);
+    let place = program
+        .resolve(Path::new(&folder))
+        .map_err(|e| e.to_string())?;
+    start_change::start_change(
+        &program,
+        &place,
+        &start_change::today(),
+        &start_change::StartRequest {
+            system: &system,
+            title: &title,
+            work_type: &work_type,
+            scope: &scope,
+            branch: branch.as_deref(),
+        },
+    )
 }
 
 /// A system's naming setting as the window sees it: none declared, the patterns, or why they cannot be
@@ -438,145 +868,163 @@ fn sdlc_check_scope(folder: String, scope: String) -> Result<Vec<String>, String
     sdlc::naming::check_scope(&plugin, &scope).map_err(|e| e.to_string())
 }
 
-/// The branch name the system's setting gives `change`.
-#[tauri::command(async)]
-fn sdlc_suggest_branch(
-    folder: String,
-    master_repo: String,
-    system: String,
-    change: String,
-    work_type: String,
-) -> Result<String, String> {
-    let plugin = ai_sdlc_readiness(Some(&folder));
-    let master = Path::new(&folder).join(&master_repo);
-    sdlc::branch::suggest_branch(&plugin, &master, &system, &change, &work_type)
-        .map_err(|e| e.to_string())
-}
-
-/// Rename the pending branch to the engineer's chosen `name` and record it for the change.
-#[tauri::command(async)]
-fn sdlc_confirm_branch(
-    folder: String,
-    master_repo: String,
-    system: String,
-    change: String,
-    pending: String,
-    name: String,
-    work_type: String,
-) -> Result<sdlc::branch::FinishOutcome, String> {
-    let plugin = ai_sdlc_readiness(Some(&folder));
-    sdlc::branch::confirm_branch(
-        &plugin,
-        Path::new(&folder),
-        &master_repo,
-        &system,
-        &change,
-        &pending,
-        &name,
-        &work_type,
-    )
-    .map_err(|e| e.to_string())
-}
-
-/// What a rename did, for the window.
-#[derive(serde::Serialize)]
-struct RenameResult {
-    old: String,
-    new: String,
-    repos: Vec<String>,
-}
-
-/// Rename the change's branch in every repository that has it, then move the pull requests saved
-/// under the old name to the record's left-behind list. Refused while a build run of the change is
-/// live, since a run holds the branch checked out.
+/// Rename the change's branch through the plugin, which moves it in every repository that has it or in
+/// none. Refused while any run of the change is live (build, review or document), since a run works on the branch.
 #[tauri::command(async)]
 fn sdlc_rename_branch(
     control: State<'_, RunControl>,
     folder: String,
     workspace_id: String,
-    master_repo: String,
     system: String,
     change: String,
-    new_name: String,
-) -> Result<RenameResult, String> {
-    if control
-        .state
-        .lock()
-        .unwrap()
-        .group_live(&format!("build:{system}/{change}"))
-    {
-        return Err("A build run of this change is live. Rename the branch after it ends.".into());
+    to: String,
+) -> Result<rename_change::RenameOutcome, String> {
+    if let Some(refused) = rename_refusal(&control.state.lock().unwrap(), &system, &change) {
+        return Err(refused);
     }
-    let plugin = ai_sdlc_readiness(Some(&folder));
-    let out = sdlc::branch_record::rename(
-        &plugin,
-        Path::new(&folder),
-        &master_repo,
-        &system,
-        &change,
-        &new_name,
-    )
-    .map_err(|e| e.to_string())?;
-    let found = sdlc::store::load_pr_records()
-        .into_iter()
-        .find(|r| r.workspace_id == workspace_id && r.system == system && r.change == change);
-    if let Some(mut record) = found {
-        record.retire(&out.new);
-        sdlc::store::save_pr_record(&record).map_err(|e| e.to_string())?;
-    }
-    Ok(RenameResult {
-        old: out.old,
-        new: out.new,
-        repos: out.repos,
-    })
-}
-
-/// The repositories whose GitHub branch of the change holds work this machine does not have.
-#[tauri::command(async)]
-fn sdlc_remote_clashes(
-    touched: Vec<sdlc::publish::PublishRepo>,
-    master_repo: String,
-    system: String,
-    change: String,
-) -> Result<Vec<sdlc::publish::RemoteClash>, String> {
-    let Some(master) = touched.iter().find(|r| r.repo == master_repo) else {
-        return Err(format!(
-            "{master_repo} is not among the repositories of the change"
-        ));
-    };
-    let branch = sdlc::branch_record::change_branch(Path::new(&master.path), &system, &change)
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&folder)?);
+    let place = program
+        .resolve(Path::new(&folder))
         .map_err(|e| e.to_string())?;
-    sdlc::publish::remote_clashes(
-        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
-        &touched,
-        &branch,
-    )
-    .map_err(|e| e.to_string())
+    let legacy = sdlc::pull_requests::legacy_entries(&workspace_id, &system, &change);
+    rename_change::rename_change(&program, &place, &system, &change, &to, &legacy)
 }
 
+/// The change a triage run started, named by the run's own record: the plugin's `change start` answer among its
+/// tool results. None when the run started no change of `system`.
 #[tauri::command(async)]
-fn sdlc_finish_change(
+fn sdlc_triage_change(transcript: String, system: String) -> Result<Option<String>, String> {
+    let run = kata_core::history::load_run(&transcript).map_err(|e| e.to_string())?;
+    Ok(start_change::started_by_run(&run.events, &system))
+}
+
+/// Switch the master checkout to `branch`. Refused while a live run works in that folder, naming its change;
+/// the runs table stays locked through the switch, so no run can claim the folder half way.
+#[tauri::command(async)]
+fn sdlc_checkout(
+    control: State<'_, RunControl>,
     master: String,
-    pending: String,
-) -> Result<sdlc::branch::FinishOutcome, String> {
-    sdlc::branch::finish_pending(Path::new(&master), &pending).map_err(|e| e.to_string())
+    branch: String,
+) -> Result<(), String> {
+    let table = control.state.lock().unwrap();
+    table.may_switch(Path::new(&master))?;
+    let out = sdlc::branch::checkout(Path::new(&master), &branch).map_err(|e| e.to_string());
+    drop(table);
+    out
 }
 
-#[tauri::command(async)]
-fn sdlc_checkout(master: String, branch: String) -> Result<(), String> {
-    sdlc::branch::checkout(Path::new(&master), &branch).map_err(|e| e.to_string())
+/// Where the plugin has the change, and how it stands: the workspace's own master and the change's state.
+fn change_standing(
+    program: &sdlc::ai_sdlc::Program,
+    change: &build_host::ChangeRef,
+) -> Result<(sdlc::ai_sdlc::Place, sdlc::ai_sdlc::state::ChangeState), String> {
+    let place = program
+        .resolve(Path::new(&change.workspace))
+        .map_err(|e| e.to_string())?;
+    let answer = program
+        .run(
+            &[
+                "state",
+                "--json",
+                "--system",
+                &change.system,
+                "--change",
+                &change.change,
+            ],
+            &place,
+        )
+        .map_err(|e| e.to_string())?;
+    let state = sdlc::ai_sdlc::state::read_state(answer).map_err(|e| e.to_string())?;
+    let found = state
+        .changes
+        .into_iter()
+        .find(|c| c.change == change.change)
+        .ok_or_else(|| format!("the plugin knows no change {}", change.change))?;
+    Ok((place, found))
 }
 
+/// Accept a document of a change: the status edit, the plugin's acceptance commit, then its `doc.accept` event.
 #[tauri::command(async)]
-fn sdlc_decide(
-    master: String,
-    system: String,
-    change: String,
-    decision: sdlc::decide::Decision,
-    confirmed: bool,
-) -> Result<sdlc::decide::DecideOutcome, String> {
-    sdlc::decide::apply(Path::new(&master), &system, &change, decision, confirmed)
-        .map_err(|e| e.to_string())
+fn sdlc_accept(
+    change: build_host::ChangeRef,
+    doc: sdlc::accept::ChangeDocument,
+) -> Result<sdlc::accept::AcceptOutcome, String> {
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let (place, state) = change_standing(&program, &change)?;
+    Ok(sdlc::accept::apply(
+        &program,
+        &place,
+        &change.system,
+        &state,
+        doc,
+    ))
+}
+
+/// Reject a change the way the plugin does: it commits the rejection and removes the change's copy. No run
+/// of the change starts while that goes on, and none may be live when it begins.
+#[tauri::command(async)]
+fn sdlc_reject(
+    control: State<'_, RunControl>,
+    change: build_host::ChangeRef,
+) -> Result<sdlc::accept::RejectOutcome, String> {
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let key = build_host::key_of(&change);
+    control.state.lock().unwrap().begin_rejecting(&key)?;
+    let outcome = change_standing(&program, &change)
+        .map(|(place, state)| sdlc::accept::reject(&program, &place, &change.system, &state));
+    control.state.lock().unwrap().end_rejecting(&key);
+    outcome
+}
+
+/// What the change page offers for the change's copy: removal once its pull requests are merged and the
+/// copy holds nothing uncommitted, else the files that keep it, else nothing. Asks GitHub for the states.
+#[tauri::command(async)]
+fn sdlc_copy_removal(
+    change: build_host::ChangeRef,
+) -> Result<sdlc::copy_removal::CopyRemoval, String> {
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let (place, state) = change_standing(&program, &change)?;
+    sdlc::copy_removal::offer(&program, &place, &state)
+}
+
+/// The branch the change's copy holds, as the plugin records it.
+#[tauri::command(async)]
+fn sdlc_copy_branch(change: build_host::ChangeRef) -> Result<String, String> {
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let place = program
+        .resolve(Path::new(&change.workspace))
+        .map_err(|e| e.to_string())?;
+    sdlc::copy_removal::branch(&program, &place, &change.change)
+}
+
+/// Remove the change's copy on the engineer's confirmation. The plugin refuses a copy with uncommitted
+/// files. No run of the change starts while the copy goes, and none may be live when it begins.
+#[tauri::command(async)]
+fn sdlc_remove_copy(
+    control: State<'_, RunControl>,
+    change: build_host::ChangeRef,
+) -> Result<sdlc::copy_removal::RemoveOutcome, String> {
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let key = build_host::key_of(&change);
+    control.state.lock().unwrap().begin_rejecting(&key)?;
+    let outcome = change_standing(&program, &change)
+        .map(|(place, state)| sdlc::copy_removal::remove(&program, &place, &state));
+    control.state.lock().unwrap().end_rejecting(&key);
+    outcome
+}
+
+/// Open the folder of the change's copy in the system file manager. The folder is the plugin's, never one
+/// the webview names, and only a change in a copy has one.
+#[tauri::command(async)]
+fn sdlc_open_copy_folder(app: AppHandle, change: build_host::ChangeRef) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let (_, state) = change_standing(&program, &change)?;
+    open_copy_with(state.in_copy, &state.master, |path| {
+        app.opener()
+            .open_path(path, None::<&str>)
+            .map_err(|e| e.to_string())
+    })
 }
 
 #[tauri::command]
@@ -594,11 +1042,6 @@ fn sdlc_task_links() -> Vec<sdlc::store::TaskLink> {
     sdlc::store::load_task_links()
 }
 
-#[tauri::command]
-fn sdlc_link_tasks(links: Vec<sdlc::store::TaskLink>) -> Result<(), String> {
-    sdlc::store::append_task_links(&links).map_err(|e| e.to_string())
-}
-
 // ---- AI-SDLC mode: the build, the diff, checks and publishing ----
 
 #[tauri::command(async)]
@@ -611,15 +1054,37 @@ fn sdlc_build_status(
     sdlc::build::status(&plugin, Path::new(&master), &system, &change).map_err(|e| e.to_string())
 }
 
-#[tauri::command(async)]
-fn sdlc_unsaved_rows(
-    master: String,
-    system: String,
-    change: String,
-) -> Result<Vec<sdlc::build::UnsavedRows>, String> {
-    let plugin = ai_sdlc_dir(&master)?;
-    sdlc::build::unsaved_rows(&plugin, Path::new(&master), &system, &change)
-        .map_err(|e| e.to_string())
+/// The build page's tasks area for the repositories asked for: where each stands and what each task's row shows, from the build log's
+/// status and the live runs and stops the host announced, both as the page last read them from the backend.
+#[tauri::command]
+fn sdlc_build_board(
+    repos: Vec<String>,
+    status: sdlc::build::BuildStatus,
+    going: std::collections::BTreeSet<String>,
+    stopped: std::collections::BTreeMap<String, sdlc::coordinator::Stop>,
+) -> Vec<sdlc::board::RepoBoard> {
+    sdlc::board::board(&repos, &status, &going, &stopped)
+}
+
+/// Whether the change's latest review covers its current work, from the inputs the page read: the run links, the run
+/// records, where each repository stands now, the review document and the master repository's name.
+#[tauri::command]
+fn sdlc_review_standing(
+    links: Vec<sdlc::store::RunLink>,
+    records: Vec<kata_core::history::RunRecord>,
+    heads: std::collections::BTreeMap<String, String>,
+    scope: sdlc::review::ReviewScope,
+    document: Option<sdlc::review::ReviewRecord>,
+    master: Option<String>,
+) -> sdlc::review::ReviewStanding {
+    sdlc::review::standing(
+        &links,
+        &records,
+        &heads,
+        &scope,
+        document.as_ref(),
+        master.as_deref(),
+    )
 }
 
 #[tauri::command(async)]
@@ -632,69 +1097,6 @@ fn sdlc_review_record(
     sdlc::review::record(&plugin, Path::new(&master), &system, &change).map_err(|e| e.to_string())
 }
 
-/// The files a review run changed besides the change's review document (none when it kept to it); `before` is the master's dirty files when the run started.
-#[tauri::command(async)]
-fn sdlc_review_verify(
-    master: String,
-    system: String,
-    change: String,
-    since: String,
-    before: std::collections::BTreeMap<String, String>,
-) -> Vec<String> {
-    sdlc::review::verify_run(Path::new(&master), &system, &change, &since, &before)
-        .err()
-        .unwrap_or_default()
-}
-
-#[tauri::command(async)]
-fn sdlc_build_prepare(
-    folder: String,
-    master_repo: String,
-    system: String,
-    change: String,
-    action: sdlc::build::BuildAction,
-    continue_with_leftovers: bool,
-    pending: Vec<String>,
-) -> Result<sdlc::start::PrepareOutcome, String> {
-    let plugin = ai_sdlc_dir_in(&folder)?;
-    sdlc::start::prepare(
-        &plugin,
-        Path::new(&folder),
-        &master_repo,
-        &system,
-        &change,
-        action,
-        continue_with_leftovers,
-        &pending,
-    )
-    .map_err(|e| e.to_string())
-}
-
-#[tauri::command(async)]
-fn sdlc_build_participants(
-    folder: String,
-    master_repo: String,
-    system: String,
-    change: String,
-    pending: Vec<String>,
-) -> Result<Vec<sdlc::participants::Participant>, String> {
-    let plugin = ai_sdlc_dir_in(&folder)?;
-    sdlc::participants::participants(
-        &plugin,
-        Path::new(&folder),
-        &master_repo,
-        &system,
-        &change,
-        &pending,
-    )
-    .map_err(|e| e.to_string())
-}
-
-#[tauri::command(async)]
-fn sdlc_build_settle(start: sdlc::start::BuildStart) -> Result<Vec<String>, String> {
-    sdlc::start::settle(&start).map_err(|e| e.to_string())
-}
-
 #[tauri::command(async)]
 fn sdlc_build_heads(
     folder: String,
@@ -703,8 +1105,140 @@ fn sdlc_build_heads(
     repos: Vec<String>,
     change: String,
 ) -> Result<std::collections::BTreeMap<String, String>, String> {
-    sdlc::start::heads(Path::new(&folder), &master_repo, &system, &repos, &change)
+    sdlc::branch::heads(Path::new(&folder), &master_repo, &system, &repos, &change)
         .map_err(|e| e.to_string())
+}
+
+/// What the run table knows about a change: any of its runs (build, review or document) makes it live, and
+/// only a build or review run makes its build live. `build_stopped` is false here.
+fn live_facts(control: &RunControl, system: &str, change: &str) -> sdlc::offer::LiveFacts {
+    live_facts_of(&control.state.lock().unwrap(), system, change)
+}
+
+/// The live facts of a change in `table`.
+fn live_facts_of<C>(table: &RunTable<C>, system: &str, change: &str) -> sdlc::offer::LiveFacts {
+    sdlc::offer::LiveFacts {
+        run_live: table.change_live(system, change),
+        build_stopped: false,
+        build_live: table.group_live(&format!("build:{system}/{change}")),
+    }
+}
+
+/// Why the change's branch cannot be renamed now: a run of the change (build, review or document) is live
+/// in `table`.
+fn rename_refusal<C>(table: &RunTable<C>, system: &str, change: &str) -> Option<String> {
+    table
+        .change_live(system, change)
+        .then(|| "A run of this change is live. Rename the branch after it ends.".to_string())
+}
+
+/// The program to ask, and the readiness, for a workspace folder. Only a ready mode has a program.
+fn state_inputs(folder: &str) -> (Option<sdlc::ai_sdlc::Program>, sdlc::plugin::Readiness) {
+    let readiness = ai_sdlc_readiness(Some(folder));
+    let program = match &readiness {
+        sdlc::plugin::Readiness::Ready { plugin, .. } => {
+            Some(sdlc::ai_sdlc::Program::locate(&plugin.dir))
+        }
+        sdlc::plugin::Readiness::Blocked { .. } => None,
+    };
+    (program, readiness)
+}
+
+/// Every change of every system the home lists, with its stage, what it offers and its live facts, from one `state`
+/// call per system made side by side, and whether a new change may be started across the set. One system's failed read
+/// fails the answer.
+#[tauri::command(async)]
+fn sdlc_state(
+    control: State<'_, RunControl>,
+    folder: String,
+    systems: Vec<String>,
+) -> Result<sdlc_state::WorkspaceView, String> {
+    let (program, readiness) = state_inputs(&folder);
+    let control: &RunControl = &control;
+    let views = std::thread::scope(|scope| {
+        let reads: Vec<_> = systems
+            .iter()
+            .map(|system| {
+                let (program, readiness, folder) = (&program, &readiness, &folder);
+                scope.spawn(move || {
+                    let source = program.as_ref().map(|p| p as &dyn sdlc_state::StateSource);
+                    sdlc_state::system_view(
+                        source,
+                        readiness,
+                        &|s, c| live_facts(control, s, c),
+                        Path::new(folder),
+                        system,
+                    )
+                })
+            })
+            .collect();
+        reads
+            .into_iter()
+            .map(|read| {
+                read.join()
+                    .unwrap_or_else(|_| Err("reading a system's changes failed".to_string()))
+            })
+            .collect::<Result<Vec<_>, String>>()
+    })?;
+    Ok(sdlc_state::workspace_view(views))
+}
+
+/// One change of a system, as [`sdlc_state`] shows it.
+#[tauri::command(async)]
+fn sdlc_change_state(
+    control: State<'_, RunControl>,
+    folder: String,
+    system: String,
+    change: String,
+) -> Result<sdlc_state::ChangeView, String> {
+    let (program, readiness) = state_inputs(&folder);
+    let source = program.as_ref().map(|p| p as &dyn sdlc_state::StateSource);
+    let mut view = sdlc_state::change_view(
+        source,
+        &readiness,
+        &|s, c| live_facts(&control, s, c),
+        Path::new(&folder),
+        &system,
+        &change,
+    )?;
+    if let Some(program) = &program {
+        drop_declare_done_after_earlier_declaration(program, &folder, &system, &change, &mut view);
+    }
+    Ok(view)
+}
+
+/// A change an earlier version of Kata declared done is not offered declaring done again. Only a change whose
+/// offer lists it and that Kata saved pull requests for needs the plugin asked, so a page costs nothing more
+/// for any other change.
+fn drop_declare_done_after_earlier_declaration(
+    program: &sdlc::ai_sdlc::Program,
+    folder: &str,
+    system: &str,
+    change: &str,
+    view: &mut sdlc_state::ChangeView,
+) {
+    use sdlc::offer::StageAction::DeclareDone;
+    if !view.offer.actions.iter().any(|a| a.action == DeclareDone) {
+        return;
+    }
+    let Some(workspace) = sdlc::store::load_workspaces()
+        .into_iter()
+        .find(|w| Path::new(&w.folder) == Path::new(folder))
+    else {
+        return;
+    };
+    let legacy = sdlc::pull_requests::legacy_entries(&workspace.id, system, change);
+    if legacy.is_empty() {
+        return;
+    }
+    let Ok(place) = program.resolve(Path::new(folder)) else {
+        return;
+    };
+    if let Ok(shown) = program.change_show(&place, change, false) {
+        // Only whether declaring done stays offered is read here, and Kata's earlier record decides that.
+        let pull_requests = sdlc::pull_requests::view(&shown, &legacy, false);
+        view.offer = sdlc::offer::after_pull_requests(view.offer.clone(), &pull_requests);
+    }
 }
 
 #[tauri::command(async)]
@@ -721,7 +1255,9 @@ fn ai_sdlc_readiness(workdir: Option<&str>) -> sdlc::plugin::Readiness {
             && e.name == "ai-sdlc"
             && e.provides.iter().any(|p| p == "skill:build")
     });
-    sdlc::plugin::readiness(plugin.map(|e| e.path.as_path()))
+    sdlc::plugin::readiness(&sdlc::plugin::Machine::detect(
+        plugin.map(|e| e.path.as_path()),
+    ))
 }
 
 /// The ai-sdlc plugin folder the format program is read from, or why the build cannot be read. It is
@@ -738,11 +1274,8 @@ fn ai_sdlc_dir(master: &str) -> Result<std::path::PathBuf, String> {
 /// [`ai_sdlc_dir`] for a command that is given the workspace folder itself.
 fn ai_sdlc_dir_in(folder: &str) -> Result<std::path::PathBuf, String> {
     match ai_sdlc_readiness(Some(folder)) {
-        sdlc::plugin::Readiness::Ready { dir, .. } => Ok(dir),
-        sdlc::plugin::Readiness::Missing => Err("the ai-sdlc plugin is not installed".into()),
-        sdlc::plugin::Readiness::TooOld { have, need } => Err(format!(
-            "the ai-sdlc plugin is version {have}; version {need} or later is needed"
-        )),
+        sdlc::plugin::Readiness::Ready { plugin, .. } => Ok(plugin.dir),
+        sdlc::plugin::Readiness::Blocked { message, .. } => Err(message),
     }
 }
 
@@ -752,8 +1285,8 @@ fn sdlc_change_repos(
     master_repo: String,
     system: String,
     change: String,
-) -> Result<Vec<sdlc::publish::ChangeRepo>, String> {
-    sdlc::publish::change_repos(Path::new(&folder), &master_repo, &system, &change)
+) -> Result<Vec<sdlc::diff::ChangeRepo>, String> {
+    sdlc::diff::change_repos(Path::new(&folder), &master_repo, &system, &change)
 }
 
 #[tauri::command(async)]
@@ -764,7 +1297,7 @@ fn sdlc_missing_change_branches(
     change: String,
 ) -> Result<Vec<String>, String> {
     let plugin = ai_sdlc_dir_in(&folder)?;
-    sdlc::participants::missing_change_branches(
+    sdlc::branch::missing_change_branches(
         &plugin,
         Path::new(&folder),
         &master_repo,
@@ -800,239 +1333,97 @@ fn sdlc_diff_pair(
 }
 
 #[tauri::command(async)]
-fn sdlc_diff_base(repo_path: String) -> Result<sdlc::base::BaseInfo, String> {
-    sdlc::base::base_info(Path::new(&repo_path)).map_err(|e| e.to_string())
+fn sdlc_diff_base(repo_path: String) -> Result<sdlc::diff::BaseInfo, String> {
+    sdlc::diff::base_info(Path::new(&repo_path)).map_err(|e| e.to_string())
 }
 
+/// What each repository of the change's checks came to, as the plugin recorded it on this machine against the
+/// hooks the team committed to the master's base branch. Kata runs no check and reads no checks file.
 #[tauri::command(async)]
-fn sdlc_touched_repos(
-    folder: String,
-    master_repo: String,
-    system: String,
-    change: String,
-) -> Result<Vec<sdlc::publish::PublishRepo>, String> {
-    sdlc::publish::touched_repos(Path::new(&folder), &master_repo, &system, &change)
+fn sdlc_checks_view(
+    change: build_host::ChangeRef,
+) -> Result<Vec<sdlc::checks_view::RepoCheckView>, String> {
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let (place, state) = change_standing(&program, &change)?;
+    let repos: Vec<String> = state
+        .tasks
+        .as_ref()
+        .map(|tasks| tasks.keys().cloned().collect())
+        .unwrap_or_default();
+    sdlc::checks_view::for_change(&program, &place, &change.system, &change.change, &repos)
         .map_err(|e| e.to_string())
 }
 
+/// Declare a change done through the plugin: it verifies the change, pushes every touched repository and
+/// opens one pull request each, the master's last. Each step it reports goes out on `sdlc://done-step`. A
+/// step the machine cannot run is the answer, not an error.
 #[tauri::command(async)]
-fn sdlc_commit_offenders(
-    folder: String,
-    master_repo: String,
-    system: String,
-    change: String,
-) -> Result<Vec<sdlc::commits::Offender>, String> {
-    sdlc::publish::change_offenders(Path::new(&folder), &master_repo, &system, &change)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn sdlc_checks_dir() -> String {
-    sdlc::checks::checks_dir()
-        .map(|d| d.display().to_string())
-        .unwrap_or_default()
-}
-
-/// The checks file of a system, with the system's repositories and the master as the names a
-/// check may target.
-fn load_checks(
-    folder: &Path,
-    master_repo: &str,
-    system: &str,
-) -> Result<sdlc::checks::ChecksPlan, String> {
-    let scan = sdlc::workspace::scan(folder).map_err(|e| e.to_string())?;
-    let mut allowed = sdlc::workspace::system_repos(&scan, system);
-    if !allowed.iter().any(|r| r == master_repo) {
-        allowed.push(master_repo.to_string());
-    }
-    sdlc::checks::load(system, folder, &allowed).map_err(|e| e.to_string())
-}
-
-#[tauri::command(async)]
-fn sdlc_checks_load(
-    folder: String,
-    master_repo: String,
-    system: String,
-) -> Result<sdlc::checks::ChecksPlan, String> {
-    load_checks(Path::new(&folder), &master_repo, &system)
-}
-
-#[tauri::command(async)]
-fn sdlc_run_checks(
-    folder: String,
-    master_repo: String,
-    system: String,
-    repo: sdlc::publish::PublishRepo,
-) -> Result<sdlc::checks::RepoChecks, String> {
-    let plan = load_checks(Path::new(&folder), &master_repo, &system)?;
-    Ok(sdlc::checks::run_repo(
-        &plan,
-        &repo.repo,
-        Path::new(&repo.path),
-    ))
-}
-
-#[tauri::command(async)]
-fn sdlc_gh_signed_in(repos: Vec<sdlc::publish::PublishRepo>) -> Result<String, String> {
-    sdlc::publish::signed_in(
-        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
-        &repos,
+fn sdlc_declare_done(app: AppHandle, change: build_host::ChangeRef) -> sdlc::done::DeclareView {
+    let could_not_run = |message: String| sdlc::done::DeclareView::CouldNotRun { message };
+    let program = match ai_sdlc_dir_in(&change.workspace) {
+        Ok(dir) => sdlc::ai_sdlc::Program::locate(&dir),
+        Err(message) => return could_not_run(message),
+    };
+    let (place, state) = match change_standing(&program, &change) {
+        Ok(found) => found,
+        Err(message) => return could_not_run(message),
+    };
+    // A change that lives in a copy is declared done from its copy.
+    let at = sdlc::ai_sdlc::Place {
+        master: std::path::PathBuf::from(&state.master),
+        workspace: place.workspace,
+    };
+    let readiness = ai_sdlc_readiness(Some(&change.workspace));
+    sdlc::done::declare(
+        &program,
+        &at,
+        &readiness,
+        &change.system,
+        &change.change,
+        Arc::new(move |step| {
+            let _ = app.emit(DONE_STEP_EVENT, step);
+        }),
     )
-    .map_err(|e| e.to_string())
 }
 
+/// The change's pull requests as the page shows them: the plugin's record in `change.yml` first, else what an
+/// earlier version of Kata saved. With `refresh` the plugin also asks GitHub for each state, which starts `gh`
+/// and is slow, so the page asks without it first and with it in the background. Pull requests an earlier
+/// version of Kata saved are not asked about: the plugin does not know them.
 #[tauri::command(async)]
-fn sdlc_gh_origins(repos: Vec<sdlc::publish::PublishRepo>) -> Result<(), String> {
-    sdlc::publish::origins(
-        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
-        &repos,
-    )
-    .map_err(|e| e.to_string())
-}
-
-#[tauri::command(async)]
-fn sdlc_publish(
-    app: AppHandle,
+fn sdlc_pull_requests_view(
     folder: String,
     workspace_id: String,
-    master_repo: String,
     system: String,
     change: String,
-    repos: Vec<sdlc::publish::PublishRepo>,
-) -> sdlc::publish::PublishSummary {
-    let plugin = ai_sdlc_readiness(Some(&folder));
-    sdlc::publish::publish(
-        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
-        &plugin,
-        &master_repo,
-        &system,
-        &change,
-        &repos,
-        &mut sdlc::publish::Recorder::stored(&workspace_id, &system, &change),
-        &mut |step| {
-            let _ = app.emit(PUBLISH_STEP_EVENT, step);
-        },
-    )
-}
-
-/// Whether the change shows as done and with which links, from what is saved. GitHub is asked
-/// only when nothing is saved and the build is finished.
-#[tauri::command(async)]
-fn sdlc_done_view(
-    folder: String,
-    master_repo: String,
-    workspace_id: String,
-    system: String,
-    change: String,
-    build_finished: bool,
-) -> Result<sdlc::prs::DoneView, String> {
-    sdlc::prs::done_view_for(
-        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
-        Path::new(&folder),
-        &master_repo,
-        &workspace_id,
-        &system,
-        &change,
-        build_finished,
-    )
-}
-
-/// Ask GitHub for the state of every saved pull request, save the answers and return the new view.
-#[tauri::command(async)]
-fn sdlc_refresh_pr_states(
-    folder: String,
-    master_repo: String,
-    workspace_id: String,
-    system: String,
-    change: String,
-    build_finished: bool,
-) -> Result<sdlc::prs::DoneView, String> {
-    sdlc::prs::refresh_states(
-        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
-        Path::new(&folder),
-        &master_repo,
-        &workspace_id,
-        &system,
-        &change,
-        build_finished,
-    )
-}
-
-#[tauri::command(async)]
-fn sdlc_pull_requests(
-    master_repo: String,
-    system: String,
-    repos: Vec<sdlc::publish::PublishRepo>,
-    change: String,
-) -> Result<Vec<sdlc::publish::PrState>, String> {
-    sdlc::publish::open_pull_requests(
-        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
-        &master_repo,
-        &system,
-        &repos,
-        &change,
-    )
-}
-
-/// The stage pass each window is running, so a new start can cancel the one before it.
-#[derive(Default)]
-struct StagePasses {
-    next: AtomicU64,
-    live: Mutex<std::collections::HashMap<String, (u64, Arc<std::sync::atomic::AtomicBool>)>>,
-}
-
-/// Where a pass sends its events.
-type StageSink = Arc<dyn Fn(sdlc::changes::StageEvent) + Send + Sync>;
-
-/// Starts `work` on a background thread as the window's only pass and returns its id at once.
-///
-/// A pass already running for the window is cancelled first: `work` is asked through its `cancelled`
-/// function, and whatever it still emits is dropped before it reaches `sink`. The page also filters by
-/// pass id, so the one event that can slip between the check and the send does no harm.
-fn start_pass<F>(passes: &Arc<StagePasses>, window: &str, sink: StageSink, work: F) -> u64
-where
-    F: FnOnce(u64, &dyn Fn() -> bool, &mut dyn FnMut(sdlc::changes::StageEvent)) + Send + 'static,
-{
-    let id = passes.next.fetch_add(1, Ordering::SeqCst) + 1;
-    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let before = passes
-        .live
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(window.to_string(), (id, flag.clone()));
-    if let Some((_, old)) = before {
-        old.store(true, Ordering::SeqCst);
-    }
-    let passes = passes.clone();
-    let window = window.to_string();
-    std::thread::spawn(move || {
-        let cancelled = || flag.load(Ordering::SeqCst);
-        let mut emit = |ev: sdlc::changes::StageEvent| {
-            if !flag.load(Ordering::SeqCst) {
-                sink(ev);
-            }
-        };
-        work(id, &cancelled, &mut emit);
-        let mut live = passes.live.lock().unwrap_or_else(|e| e.into_inner());
-        if live.get(&window).is_some_and(|(current, _)| *current == id) {
-            live.remove(&window);
-        }
-    });
-    id
+    refresh: bool,
+) -> Result<sdlc::pull_requests::PullRequestsView, String> {
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&folder)?);
+    let place = program
+        .resolve(Path::new(&folder))
+        .map_err(|e| e.to_string())?;
+    let legacy = sdlc::pull_requests::legacy_entries(&workspace_id, &system, &change);
+    let shown = program
+        .change_show(&place, &change, refresh && legacy.is_empty())
+        .map_err(|e| e.to_string())?;
+    // A change an earlier version of Kata declared done is done from its record; any other is done once the
+    // master's pull request is recorded in `change.yml`, on every clone, unless this machine's ledger shows the
+    // latest `change.done` failed (its final push of the master).
+    let failed_here = legacy.is_empty()
+        && sdlc::pull_requests::done_failed_here(
+            &program.status(&place, &change).map_err(|e| e.to_string())?,
+        );
+    Ok(sdlc::pull_requests::view(&shown, &legacy, failed_here))
 }
 
 /// Relay a non-JSON stdout/stderr line as a warn-level log event.
-fn relay_log(app: &AppHandle, run_id: u64, bytes: &[u8]) {
+fn relay_log(app: &AppHandle, history: &history::RunHistory, run_id: u64, bytes: &[u8]) {
     let line = String::from_utf8_lossy(bytes);
     let line = line.trim();
     if !line.is_empty() {
-        let _ = app.emit(
-            RUN_EVENT,
-            runs::wrap(
-                run_id,
-                json!({ "type": "log", "level": "warn", "message": line }),
-            ),
-        );
+        let event = json!({ "type": "log", "level": "warn", "message": line });
+        let seq = history.push(run_id, &event);
+        let _ = app.emit(RUN_EVENT, runs::wrap(run_id, seq, event));
     }
 }
 
@@ -1044,6 +1435,11 @@ fn cancel_run(control: State<RunControl>, run_id: String) {
     let Some(id) = parse_run_id(&run_id) else {
         return;
     };
+    cancel_by_id(&control, id);
+}
+
+/// The write `cancel_run` does, for a run the backend itself holds the id of.
+fn cancel_by_id(control: &RunControl, id: u64) {
     let mut table = control.state.lock().unwrap();
     let Some(run) = table.get_mut(id) else {
         return;
@@ -1058,6 +1454,74 @@ fn cancel_run(control: State<RunControl>, run_id: String) {
             let _ = child.kill();
         }
     }
+}
+
+/// The close guard's wrapper: apply `on_close` to the live runs and the builds being started or
+/// launched. A confirm first stops the build host, so no change launches anything more, then cancels every
+/// run the table holds, as `cancel_run` does, including one a launch under way adds later; it waits up to
+/// ten seconds in total for the table to empty and the launches to settle, then destroys the window (a
+/// plain `close` would ask again). No lock is held across the wait.
+fn close_window(app: &AppHandle, answer: close_guard::CloseAnswer) {
+    let host = app
+        .try_state::<Arc<build_host::BuildHost>>()
+        .map(|h| h.inner().clone());
+    let launching = host.as_ref().map(|h| h.launching()).unwrap_or_default();
+    let live = app.state::<RunControl>().state.lock().unwrap().live();
+    match close_guard::on_close(&live, &launching, answer) {
+        close_guard::CloseOutcome::Close => destroy_main(app),
+        ask @ close_guard::CloseOutcome::Ask { .. } => {
+            let _ = app.emit(close_guard::CLOSE_ASKED_EVENT, ask);
+        }
+        close_guard::CloseOutcome::Stay => {}
+        close_guard::CloseOutcome::CancelThenClose { .. } => {
+            let app = app.clone();
+            std::thread::spawn(move || {
+                if let Some(host) = &host {
+                    host.stop_all();
+                }
+                let control = app.state::<RunControl>();
+                let deadline = std::time::Instant::now()
+                    + std::time::Duration::from_secs(close_guard::CANCEL_WAIT_SECS);
+                let mut cancelled: std::collections::HashSet<u64> = Default::default();
+                loop {
+                    let live = control.state.lock().unwrap().live();
+                    let launching = host.as_ref().map(|h| h.launching()).unwrap_or_default();
+                    if live.is_empty() && launching.is_empty() {
+                        break;
+                    }
+                    for run in &live {
+                        if cancelled.insert(run.id) {
+                            cancel_by_id(&control, run.id);
+                        }
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                destroy_main(&app);
+            });
+        }
+    }
+}
+
+fn destroy_main(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.destroy();
+    }
+}
+
+/// The engineer's answer to the close question.
+#[tauri::command]
+fn sdlc_close_answer(app: AppHandle, confirm: bool) {
+    close_window(
+        &app,
+        if confirm {
+            close_guard::CloseAnswer::Confirm
+        } else {
+            close_guard::CloseAnswer::Decline
+        },
+    );
 }
 
 /// Poll until run `id` is no longer live (the reader task has seen the engine
@@ -1279,6 +1743,19 @@ fn open_url(app: AppHandle, url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Opens the change's copy folder with `open`, and only when the change is in a copy. `master` is the
+/// plugin's own folder for the change, as its state reports it; the webview never names a path.
+fn open_copy_with(
+    in_copy: bool,
+    master: &str,
+    open: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    if !in_copy {
+        return Err("This change has no copy of its own to open.".into());
+    }
+    open(master)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1291,9 +1768,27 @@ pub fn run() {
                 .open_js_links_on_click(false)
                 .build(),
         )
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let app = window.app_handle();
+                let live = app.state::<RunControl>().state.lock().unwrap().live();
+                if !live.is_empty() {
+                    api.prevent_close();
+                    close_window(app, close_guard::CloseAnswer::NotAsked);
+                }
+            }
+        })
         .manage(RunControl::default())
-        .manage(Arc::new(StagePasses::default()))
+        .manage(Arc::new(history::RunHistory::default()))
+        .manage(Arc::new(running::OpenedMarks::default()))
         .setup(|app| {
+            app.manage(build_host::BuildHost::new(
+                Arc::new(PluginTools),
+                Arc::new(AppLauncher {
+                    app: app.handle().clone(),
+                }),
+                sdlc::store::workbench_dir().unwrap_or_default(),
+            ));
             // Open at the remembered zoom; a failure leaves the window at 100%.
             let saved = zoom::load();
             let applied = app
@@ -1313,6 +1808,24 @@ pub fn run() {
             validate_spec,
             preview_run,
             run_spec,
+            sdlc_run_history,
+            sdlc_build_start,
+            sdlc_build_continue,
+            sdlc_build_state,
+            sdlc_change_key,
+            sdlc_build_cancel,
+            sdlc_build_runs,
+            sdlc_preview_change_run,
+            sdlc_preview_build,
+            sdlc_review_view,
+            sdlc_run_change,
+            sdlc_review_start,
+            sdlc_review_waiting,
+            sdlc_running,
+            sdlc_close_answer,
+            sdlc_mark_opened,
+            sdlc_round_offer,
+            sdlc_round_plan,
             cancel_run,
             submit_answer,
             send_message,
@@ -1327,6 +1840,8 @@ pub fn run() {
             export_bundle,
             sdlc_settings,
             sdlc_save_settings,
+            sdlc_old_checks,
+            sdlc_old_checks_seen,
             load_build_layout,
             save_build_layout,
             sdlc_workspaces,
@@ -1335,9 +1850,6 @@ pub fn run() {
             sdlc_context_health,
             sdlc_read_context,
             sdlc_instructions,
-            sdlc_change_names,
-            sdlc_read_stages,
-            sdlc_read_change,
             sdlc_missing_folders,
             sdlc_branches,
             sdlc_read_doc,
@@ -1345,47 +1857,40 @@ pub fn run() {
             sdlc_snapshot,
             sdlc_leftovers,
             sdlc_discard,
+            sdlc_change_name,
             sdlc_start_change,
-            sdlc_finish_change,
+            sdlc_triage_change,
             sdlc_naming,
             sdlc_check_scope,
-            sdlc_suggest_branch,
-            sdlc_confirm_branch,
             sdlc_rename_branch,
-            sdlc_remote_clashes,
             sdlc_checkout,
-            sdlc_decide,
+            sdlc_accept,
+            sdlc_reject,
             sdlc_run_links,
             sdlc_task_links,
-            sdlc_link_tasks,
             sdlc_link_run,
             sdlc_wait_run_exit,
             sdlc_build_status,
-            sdlc_unsaved_rows,
-            sdlc_build_prepare,
-            sdlc_build_participants,
-            sdlc_build_settle,
             sdlc_build_heads,
             sdlc_review_record,
-            sdlc_review_verify,
             sdlc_plugin_readiness,
+            sdlc_state,
+            sdlc_build_board,
+            sdlc_review_standing,
+            sdlc_change_state,
             sdlc_change_repos,
             sdlc_missing_change_branches,
             sdlc_diff_files,
             sdlc_commit_files,
             sdlc_diff_pair,
             sdlc_diff_base,
-            sdlc_touched_repos,
-            sdlc_commit_offenders,
-            sdlc_checks_dir,
-            sdlc_checks_load,
-            sdlc_run_checks,
-            sdlc_gh_signed_in,
-            sdlc_gh_origins,
-            sdlc_publish,
-            sdlc_done_view,
-            sdlc_refresh_pr_states,
-            sdlc_pull_requests,
+            sdlc_checks_view,
+            sdlc_declare_done,
+            sdlc_pull_requests_view,
+            sdlc_copy_removal,
+            sdlc_copy_branch,
+            sdlc_remove_copy,
+            sdlc_open_copy_folder,
             zoom,
             open_url
         ])
@@ -1397,6 +1902,30 @@ pub fn run() {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn open_copy_folder_opens_only_a_copy() {
+        // In a copy: the folder the plugin reports is opened, once.
+        let opened = std::cell::RefCell::new(Vec::new());
+        let fake = |path: &str| {
+            opened.borrow_mut().push(path.to_string());
+            Ok(())
+        };
+        open_copy_with(true, "/ws/.ai-sdlc/copies/c", fake).unwrap();
+        assert_eq!(*opened.borrow(), ["/ws/.ai-sdlc/copies/c"]);
+        // Not in a copy: the master is the engineer's own checkout, which is not opened, and the reason is said.
+        let opened = std::cell::RefCell::new(Vec::new());
+        let fake = |path: &str| {
+            opened.borrow_mut().push(path.to_string());
+            Ok(())
+        };
+        let err = open_copy_with(false, "/ws/ai-sdlc", fake).expect_err("not a copy");
+        assert!(err.contains("copy"), "reason should explain: {err}");
+        assert!(opened.borrow().is_empty());
+        // The opener's own failure comes back.
+        let err = open_copy_with(true, "/x", |_| Err("no such folder".into())).unwrap_err();
+        assert_eq!(err, "no such folder");
+    }
 
     #[test]
     fn open_url_refuses_non_web_addresses() {
@@ -1416,63 +1945,6 @@ mod tests {
         assert!(web_url("HTTPS://example.com").is_ok());
     }
 
-    #[test]
-    fn read_stages_command_supersedes_the_running_pass() {
-        use sdlc::changes::StageEvent;
-        use std::sync::mpsc;
-        let passes = Arc::new(StagePasses::default());
-        let seen: Arc<Mutex<Vec<StageEvent>>> = Arc::default();
-        let sink: StageSink = {
-            let seen = seen.clone();
-            Arc::new(move |ev| seen.lock().unwrap().push(ev))
-        };
-        let (started_tx, started_rx) = mpsc::channel::<()>();
-        let (go_tx, go_rx) = mpsc::channel::<()>();
-        let (ended_tx, ended_rx) = mpsc::channel::<()>();
-        let first = start_pass(
-            &passes,
-            "main",
-            sink.clone(),
-            move |pass, _cancelled, emit| {
-                emit(StageEvent::Progress {
-                    pass,
-                    read: 1,
-                    total: 2,
-                });
-                started_tx.send(()).unwrap();
-                go_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-                // The pass was superseded while it waited, so this one must not reach the page.
-                emit(StageEvent::Progress {
-                    pass,
-                    read: 2,
-                    total: 2,
-                });
-                ended_tx.send(()).unwrap();
-            },
-        );
-        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        let (second_tx, second_rx) = mpsc::channel::<()>();
-        let second = start_pass(&passes, "main", sink, move |pass, _cancelled, emit| {
-            emit(StageEvent::Done { pass });
-            second_tx.send(()).unwrap();
-        });
-        assert_ne!(first, second);
-        go_tx.send(()).unwrap();
-        ended_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        second_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(
-            *seen.lock().unwrap(),
-            vec![
-                StageEvent::Progress {
-                    pass: first,
-                    read: 1,
-                    total: 2
-                },
-                StageEvent::Done { pass: second },
-            ]
-        );
-    }
-
     #[derive(Default)]
     struct FakeInput(Vec<u8>);
 
@@ -1487,6 +1959,9 @@ mod tests {
             id,
             workdir: std::path::PathBuf::from(format!("D:/ws/repo{id}")),
             group: Some("build:s/c".into()),
+            lane: lane_of(Some("build:s/c")),
+            kind: runs::RunKind::Build,
+            repo: None,
             child: Some(FakeInput::default()),
         }
     }
@@ -1545,8 +2020,41 @@ mod tests {
             id,
             workdir: std::path::PathBuf::from("D:/ws/app"),
             group: None,
+            lane: runs::Lane::Solo,
+            kind: runs::RunKind::Solo,
+            repo: None,
             child: None,
         }
+    }
+
+    // The rename design (R2.4): a live document run of the change (here its spec run) refuses the rename,
+    // and the change's live facts carry it, which takes the rename off the offer.
+    #[test]
+    fn a_live_document_run_refuses_the_rename_and_removes_the_offer() {
+        let mut table = RunTable::<()>::default();
+        table.insert(LiveRun {
+            id: 1,
+            workdir: std::path::PathBuf::from("D:/ws/.ai-sdlc/copies/c/ai-sdlc"),
+            group: Some("document:s/c".into()),
+            lane: runs::Lane::Change {
+                key: kata_sdlc::holds::ChangeKey {
+                    workspace: kata_sdlc::holds::RepoKey::of(Path::new("D:/ws")),
+                    system: "s".into(),
+                    change: "c".into(),
+                },
+                build: false,
+            },
+            kind: runs::RunKind::Spec,
+            repo: None,
+            child: None,
+        });
+        assert!(rename_refusal(&table, "s", "c").is_some());
+        let facts = live_facts_of(&table, "s", "c");
+        assert!(facts.run_live, "a run of the change is live");
+        assert!(!facts.build_live, "it is not a build run");
+        // Another change is not affected.
+        assert_eq!(rename_refusal(&table, "s", "other"), None);
+        assert!(!live_facts_of(&table, "s", "other").run_live);
     }
 
     #[test]
@@ -1628,7 +2136,7 @@ name: build
         .unwrap();
         std::fs::write(
             plugin.join(".claude-plugin").join("plugin.json"),
-            r#"{"name":"ai-sdlc","version":"0.9.0"}"#,
+            r#"{"name":"ai-sdlc","version":"1.1.0"}"#,
         )
         .unwrap();
         let empty_home = root.join("home");
@@ -1651,10 +2159,10 @@ name: build
             }
         }
         let _ = std::fs::remove_dir_all(&root);
-        let sdlc::plugin::Readiness::Ready { dir, .. } = readiness else {
+        let sdlc::plugin::Readiness::Ready { plugin: found, .. } = readiness else {
             panic!("the workspace's own plugin should be ready, got {readiness:?}");
         };
-        assert_eq!(resolved, Ok(dir));
+        assert_eq!(resolved, Ok(found.dir));
     }
 
     #[test]
@@ -1694,7 +2202,7 @@ name: build
         std::fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
         std::fs::write(
             plugin.join(".claude-plugin").join("plugin.json"),
-            r#"{"name":"ai-sdlc","version":"0.9.0"}"#,
+            r#"{"name":"ai-sdlc","version":"1.1.0"}"#,
         )
         .unwrap();
         let mut plugins = std::collections::BTreeMap::new();

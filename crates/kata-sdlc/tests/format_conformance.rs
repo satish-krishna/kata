@@ -1,7 +1,7 @@
 //! Kata reads every document exactly as the ai-sdlc format program does (R6.2).
 //!
-//! These tests run the vendored copy of the plugin's format folder in `tests/ai-sdlc-format/`
-//! (refreshed with `node scripts/vendor-ai-sdlc-format.mjs`), never the plugin repository. The
+//! These tests run the vendored copy of the plugin's format folder in `tests/ai-sdlc-tools/`
+//! (refreshed with `node scripts/vendor-ai-sdlc-tools.mjs`), never the plugin repository. The
 //! running Workbench always runs the installed plugin's program instead.
 #![allow(clippy::disallowed_methods)]
 use kata_sdlc::format::{self, FormatError, Problem};
@@ -11,11 +11,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn vendored() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools")
 }
 
 fn program() -> PathBuf {
-    vendored().join("check.mjs")
+    vendored().join("ai-sdlc.ts")
 }
 
 /// Every file below `dir` whose name ends with `suffix`, sorted.
@@ -161,24 +161,36 @@ fn the_vendored_copy_matches_the_sibling_checkout() {
     let plugin = std::env::var_os("KATA_AI_SDLC_PLUGIN")
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../ai-sdlc/plugin"));
-    let source = plugin.join("format");
+    let source = plugin.join("tools");
     if !source.is_dir() {
         println!("sibling ai-sdlc checkout not found; copy not compared");
         return;
     }
     let copy = vendored();
     let mut differences = Vec::new();
-    for entry in [
-        "check.mjs",
-        "THIRD_PARTY_LICENSES.txt",
-        "schema",
-        "examples",
-    ] {
-        compare_trees(&source.join(entry), &copy.join(entry), &mut differences);
+    // Everything the program runs from, and its examples; the development files are not copied.
+    let left_out = [
+        "node_modules",
+        "test",
+        "scripts",
+        "package.json",
+        "package-lock.json",
+        "tsconfig.json",
+    ];
+    let mut entries: Vec<_> = fs::read_dir(&source)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .chain(fs::read_dir(&copy).unwrap().map(|e| e.unwrap().file_name()))
+        .filter(|name| name != "VERSION" && !left_out.contains(&name.to_str().unwrap()))
+        .collect();
+    entries.sort();
+    entries.dedup();
+    for entry in entries {
+        compare_trees(&source.join(&entry), &copy.join(&entry), &mut differences);
     }
     assert!(
         differences.is_empty(),
-        "run node scripts/vendor-ai-sdlc-format.mjs; {differences:#?}"
+        "run node scripts/vendor-ai-sdlc-tools.mjs; {differences:#?}"
     );
     let manifest = fs::read_to_string(plugin.join(".claude-plugin/plugin.json")).unwrap();
     let manifest: Value = serde_json::from_str(&manifest).unwrap();
@@ -257,144 +269,4 @@ fn a_file_the_program_does_not_know_is_could_not_run() {
         }
         other => panic!("expected CouldNotRun, got {other:?}"),
     }
-}
-
-/// Runs git in `dir` and returns its stdout.
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
-}
-
-/// A repository with a fix's three drafts committed, returned with the change folder.
-fn fix_repo(dir: &Path, autocrlf: bool) -> PathBuf {
-    git(dir, &["init", "-q", "-b", "main"]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
-    if autocrlf {
-        git(dir, &["config", "core.autocrlf", "true"]);
-    }
-    let folder = dir.join("intent/claims/2026-10-23-fix-it");
-    fs::create_dir_all(&folder).unwrap();
-    let eol = |text: &str| {
-        if autocrlf {
-            text.replace('\n', "\r\n")
-        } else {
-            text.to_string()
-        }
-    };
-    fs::write(
-        folder.join("intent.md"),
-        eol("---\nstatus: draft\ntrack: fix\n---\nintent\n"),
-    )
-    .unwrap();
-    fs::write(
-        folder.join("spec.md"),
-        eol("---\nstatus: draft\nsource_intent_commit: pending acceptance\n---\nspec\n"),
-    )
-    .unwrap();
-    fs::write(
-        folder.join("plan.md"),
-        eol("---\nstatus: draft\nsource_spec_commit: pending acceptance\n---\n\n## Tasks\n"),
-    )
-    .unwrap();
-    git(dir, &["add", "."]);
-    git(dir, &["commit", "-q", "-m", "draft fix"]);
-    folder
-}
-
-#[test]
-#[serial]
-fn kata_reads_where_a_fix_stands_as_the_check_does() {
-    let dir = tempfile::tempdir().unwrap();
-    let folder = fix_repo(dir.path(), false);
-
-    // Row 6: all three drafted, none accepted, nothing built.
-    let state = format::fix_state(&program(), &folder).unwrap();
-    assert_eq!(
-        serde_json::to_value(&state).unwrap(),
-        serde_json::json!({"row": 6, "facts": {
-            "intent": {"inHead": true, "headStatus": "draft", "workingStatus": "draft"},
-            "spec": {"inHead": true, "headStatus": "draft", "workingStatus": "draft"},
-            "plan": {"inHead": true, "headStatus": "draft", "workingStatus": "draft"},
-            "unrecorded": [], "ownLinesOnly": false, "accepted": "none",
-            "acceptanceLast": false, "built": false}})
-    );
-
-    // Row 4: an acceptance's own status line, not yet recorded.
-    fs::write(
-        folder.join("intent.md"),
-        "---\nstatus: accepted\ntrack: fix\n---\nintent\n",
-    )
-    .unwrap();
-    let state = format::fix_state(&program(), &folder).unwrap();
-    assert_eq!(state.row, 4);
-    assert!(state.facts.own_lines_only);
-    assert_eq!(
-        state.facts.intent.working_status.as_deref(),
-        Some("accepted")
-    );
-
-    // Row 3: an edit that is not an acceptance's own.
-    fs::write(folder.join("plan.md"), "---\nstatus: draft\n---\nedited\n").unwrap();
-    let state = format::fix_state(&program(), &folder).unwrap();
-    assert_eq!(state.row, 3);
-    assert_eq!(state.facts.unrecorded, vec!["plan"]);
-}
-
-#[test]
-#[serial]
-fn a_fix_checked_out_with_crlf_is_not_edited_by_it() {
-    let dir = tempfile::tempdir().unwrap();
-    let folder = fix_repo(dir.path(), true);
-    let state = format::fix_state(&program(), &folder).unwrap();
-    assert_eq!(state.row, 6);
-    assert!(state.facts.unrecorded.is_empty());
-}
-
-#[test]
-#[serial]
-fn a_folder_that_is_not_a_fix_is_could_not_run() {
-    let dir = tempfile::tempdir().unwrap();
-    let folder = fix_repo(dir.path(), false);
-    fs::write(
-        folder.join("intent.md"),
-        "---\nstatus: draft\n---\nintent\n",
-    )
-    .unwrap();
-    // The program reads the track from `HEAD` when the working intent names none, so the change is recorded.
-    git(dir.path(), &["add", "."]);
-    git(dir.path(), &["commit", "-q", "-m", "not a fix"]);
-    match format::fix_state(&program(), &folder) {
-        Err(FormatError::CouldNotRun(message)) => {
-            assert!(message.contains("not a fix"), "{message}")
-        }
-        other => panic!("expected CouldNotRun, got {other:?}"),
-    }
-}
-
-#[test]
-#[serial]
-fn the_vendored_program_answers_fix_state_for_several_folders_in_one_run() {
-    let dir = tempfile::tempdir().unwrap();
-    let fix = fix_repo(dir.path(), false);
-    let plain = dir.path().join("plain");
-    fs::create_dir_all(&plain).unwrap();
-    fs::write(plain.join("intent.md"), "---\nstatus: draft\n---\nintent\n").unwrap();
-    let before = format::runs_started();
-    let got = format::fix_states(&program(), &[fix, plain]);
-    assert_eq!(format::runs_started() - before, 1);
-    assert_eq!(got.len(), 2);
-    assert_eq!(got[0].as_ref().unwrap().row, 6);
-    assert!(matches!(&got[1], Err(FormatError::CouldNotRun(m)) if m.contains("not a fix")));
 }

@@ -1,3 +1,6 @@
+import type { RepoBoard } from '@bindings/RepoBoard';
+import type { ReviewStanding } from '@bindings/ReviewStanding';
+import type { Stop } from '@bindings/Stop';
 import type { Readiness } from '@bindings/Readiness';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
@@ -8,55 +11,70 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
-import type { ChangeName } from '@bindings/ChangeName';
-import type { StageEvent } from '@bindings/StageEvent';
+import type { ChangeInfo } from '../../lib/sdlc-mock-types';
+import type { ChangeView } from '@bindings/ChangeView';
+import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { BranchInfo } from '@bindings/BranchInfo';
-import type { BuildAction } from '@bindings/BuildAction';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
-import type { FinishOutcome } from '@bindings/FinishOutcome';
-import type { Decision } from '@bindings/Decision';
-import type { DecideOutcome } from '@bindings/DecideOutcome';
+import type { ChangeStart } from '@bindings/ChangeStart';
+import type { AcceptOutcome } from '@bindings/AcceptOutcome';
+import type { ChangeDocument } from '@bindings/ChangeDocument';
+import type { RejectOutcome } from '@bindings/RejectOutcome';
+import type { CopyRemoval } from '@bindings/CopyRemoval';
+import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { ReadResult } from '@bindings/ReadResult';
 import type { ReadError } from '../../lib/doc-notice';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
-import type { UnsavedRows } from '@bindings/UnsavedRows';
-import type { Participant } from '@bindings/Participant';
-import type { PrepareOutcome } from '@bindings/PrepareOutcome';
-import type { BuildStart } from '@bindings/BuildStart';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { Part } from '@bindings/Part';
 import type { CommitFiles } from '@bindings/CommitFiles';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
-import type { PublishRepo } from '@bindings/PublishRepo';
-import type { Offender } from '@bindings/Offender';
-import type { ChecksPlan } from '@bindings/ChecksPlan';
-import type { RepoChecks } from '@bindings/RepoChecks';
-import type { PublishSummary } from '@bindings/PublishSummary';
-import type { RemoteClash } from '@bindings/RemoteClash';
-import type { PublishStep } from '@bindings/PublishStep';
-import type { PrState } from '@bindings/PrState';
-import type { DoneView } from '@bindings/DoneView';
+import type { RepoCheckView } from '@bindings/RepoCheckView';
+import type { OldChecksNotice } from '@bindings/OldChecksNotice';
+import type { RenameOutcome } from '@bindings/RenameOutcome';
+import type { DeclareView } from '@bindings/DeclareView';
+import type { DoneStep } from '@bindings/DoneStep';
+import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
-import { seedCatalog, validateLocal, previewFixture, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, type ScriptStep } from '../../lib/mock';
+import { seedCatalog, seedSpec, validateLocal, previewFixture, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, type ScriptStep } from '../../lib/mock';
 import { history, runDetailFixture, katasFixture, presetsFixture } from '../../lib/library';
-import { MOCK_LAYOUTS, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import type { OpenRun } from '@bindings/OpenRun';
+import type { Opens } from '@bindings/Opens';
+import type { RunningEntry } from '@bindings/RunningEntry';
+import type { RunRef } from '@bindings/RunRef';
+import { BUILD_REPOS_OF, MOCK_BUILD_CHANGE, MOCK_LAYOUTS, MOCK_MASTER, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
-import { KataTransport, NO_BACKEND, type NamingState, type RenameResult } from './kata-transport';
+import type { BuildState } from '@bindings/BuildState';
+import type { RoundOffer } from '@bindings/RoundOffer';
+import type { RoundPicks } from '@bindings/RoundPicks';
+import type { RoundPlan } from '@bindings/RoundPlan';
+import type { BuildEvent } from '@bindings/BuildEvent';
+import type { StartForm } from '@bindings/StartForm';
+import type { HistoryEntry } from '@bindings/HistoryEntry';
+import type { ChangeKey } from '@bindings/ChangeKey';
+import type { ChangeRef } from '@bindings/ChangeRef';
+import type { CloseOutcome } from '@bindings/CloseOutcome';
+import type { HeldRepo } from '@bindings/HeldRepo';
+import type { RunForm } from '@bindings/RunForm';
+import type { RunningStrip } from '@bindings/RunningStrip';
+import type { BuildRunRef } from '@bindings/BuildRunRef';
+import type { BuildPreviewKind } from '@bindings/BuildPreviewKind';
+import type { BuildSection } from '@bindings/BuildSection';
+import type { ReviewView } from '@bindings/ReviewView';
+import type { StartOutcome } from '@bindings/StartOutcome';
+import type { DocumentKind } from '../../lib/build-host';
+import { KataTransport, NO_BACKEND, type NamingState, type ReviewStandingInput } from './kata-transport';
 
 /** How long the first scan of the demo setup folder takes, long enough to see the checking steps. */
 const SETUP_SCAN_MS = 1800;
-
-/** How long a scripted stage pass takes in all, long enough to see the reading rows. */
-const STAGE_PASS_MS = 1000;
 
 /** How long the scripted agent takes to read a message the operator sent. */
 const MESSAGE_READ_MS = 600;
@@ -74,6 +92,10 @@ interface ScriptedRun {
   awaiting?: boolean;
   /** The run has reached a terminal event or been cancelled. */
   ended?: boolean;
+  /** Called once, when the run ends in any way: a build host carries on from it. */
+  onEnd?: () => void;
+  /** The text of the question the run waits on, for the running changes. */
+  question?: string;
   /** The label a scripted triage was answered with. */
   answer?: string;
 }
@@ -83,14 +105,14 @@ interface ScriptedRun {
  *  each tagged with its own id. */
 export class MockTransport extends KataTransport {
   /** Every run store listening for events: a build starts several runs, each with its own listener. */
-  private readonly listeners = new Set<(runId: string, ev: KataEvent) => void>();
+  private readonly listeners = new Set<(runId: string, ev: KataEvent, seq?: number) => void>();
   /** Everything listening for what publishing is doing. */
-  private readonly publishListeners = new Set<(step: PublishStep) => void>();
-  /** Everything listening for what a stage pass reports. */
-  private readonly stageListeners = new Set<(ev: StageEvent) => void>();
-  private stageTimers: ReturnType<typeof setTimeout>[] = [];
-  private nextPass = 0;
+  private readonly doneListeners = new Set<(step: DoneStep) => void>();
   private readonly runs = new Map<string, ScriptedRun>();
+  /** The change of each document run started through `sdlcRunChange`, by run id; a run that has ended no longer holds the checkout. */
+  private readonly changeRunsLive = new Map<string, string>();
+  /** The change each scripted run started through the plugin, by `<system>/<transcript>`, from its `change start` answer. */
+  private readonly triageStarted = new Map<string, string>();
   private nextRun = 0;
   /** `?demo=build-long` (browser only) widens the build demo to three repositories, seventeen tasks, many files and findings, so every area of the build page overflows at 1280 by 800. */
   private readonly sdlc = new SdlcMock(demoParam() === 'build-long', demoParam());
@@ -98,8 +120,86 @@ export class MockTransport extends KataTransport {
   /** The build layout a browser session has saved; a fresh session starts with none. */
   private buildLayout: Record<string, unknown> = {};
 
+  /** Everything each run said, in order, for a session opened late. */
+  private readonly histories = new Map<string, HistoryEntry[]>();
+  private readonly buildListeners = new Set<(event: BuildEvent) => void>();
+  private readonly runningListeners = new Set<(strip: RunningStrip) => void>();
+  private readonly closeListeners = new Set<(ask: CloseOutcome) => void>();
+  /** The scripted builds: several changes at once, each holding the repositories it works in. */
+  private readonly host = new MockBuildHost({
+    launch: (change, repo, onEnd, instructions) => this.launchBuildRun(change, repo, onEnd, instructions),
+    cancel: (runId) => void this.cancelRun(runId),
+    status: (change) => (change.change === MOCK_BUILD_CHANGE ? this.sdlc.buildStatus(change.change) : null),
+    announce: (event) => {
+      for (const listen of [...this.buildListeners]) listen(event);
+      this.announceRunning();
+    },
+    now: () => Date.now(),
+  });
+
   private emit(runId: string, ev: KataEvent): void {
-    for (const listen of [...this.listeners]) listen(runId, ev);
+    const seen = this.histories.get(runId) ?? [];
+    this.histories.set(runId, [...seen, { seq: seen.length, event: ev }]);
+    for (const listen of [...this.listeners]) listen(runId, ev, seen.length);
+    if (ev.type === 'tool.result' && ev.output) this.noteStarted(runId, ev.output);
+    if (ev.type === 'ask.requested' || ev.type === 'ask.answered' || ev.type === 'permission.requested' || ev.type === 'permission.decided') this.announceRunning();
+  }
+
+  /** A run's tool printed the plugin's `change start` answer: remember the change it started under the run's transcript, as the backend reads it from the run's record. */
+  private noteStarted(runId: string, output: string): void {
+    let answer: { event?: string; system?: string; change?: string; outcome?: string } | null;
+    try {
+      answer = JSON.parse(output) as typeof answer;
+    } catch {
+      return;
+    }
+    if (typeof answer !== 'object' || answer === null || answer.event !== 'change.start' || answer.outcome !== 'passed' || !answer.system || !answer.change) return;
+    const log = (this.histories.get(runId) ?? []).map((h) => h.event).find((e) => e.type === 'log' && e.message.startsWith('transcript: '));
+    const stem = log?.type === 'log' ? (log.message.split(/[\\/]/).pop() ?? '').replace(/\.[^.]*$/, '') : '';
+    if (stem !== '') this.triageStarted.set(`${answer.system}/${stem}`, answer.change);
+  }
+
+  private finish(run: ScriptedRun): void {
+    run.ended = true;
+    const onEnd = run.onEnd;
+    run.onEnd = undefined;
+    onEnd?.();
+  }
+
+  private launchBuildRun(change: ChangeRef, repo: string, onEnd: () => void, instructions?: string): string {
+    const name = repo === 'review' ? `sdlc-build-${change.change}-review` : `sdlc-build-${repo}`;
+    const task = instructions === undefined ? seedSpec().task : `Use the ai-sdlc build skill.\n\nInstructions from the engineer for this run:\n${instructions}`;
+    const spec: RunSpec = { ...seedSpec(), name, task, workdir: `${MOCK_WORKSPACE_FOLDER}/${repo}` };
+    const id = String(++this.nextRun);
+    const { run, head } = this.begin(spec, `build:${change.system}/${change.change}`);
+    run.onEnd = onEnd;
+    this.runs.set(id, run);
+    this.play(id, head);
+    return id;
+  }
+
+  /** The running changes as the backend would report them, from the scripted builds. */
+  private strip(): RunningStrip {
+    const entries = this.host.views().map((v): RunningEntry => {
+      const asking = v.going.filter((g) => this.runs.get(g.runId)?.awaiting);
+      const waiting: RunRef[] = asking.map((g) => ({ run: Number(g.runId), kind: g.repo === 'review' ? 'review' : 'build', repo: g.repo === 'review' ? null : g.repo }));
+      const open = (g: { runId: string; repo: string }, waits: boolean): OpenRun => ({ run: Number(g.runId), kind: g.repo === 'review' ? 'review' : 'build', repo: g.repo === 'review' ? null : g.repo, waiting: waits });
+      // What the backend says picking the entry opens: the one waiting session, else a list of the runs, else the change.
+      const opens: Opens = asking.length === 1 ? { kind: 'session', run: open(asking[0], true) } : asking.length > 1 ? { kind: 'list', runs: asking.map((g) => open(g, true)) } : v.going.length > 0 ? { kind: 'list', runs: v.going.map((g) => open(g, false)) } : { kind: 'change' };
+      const base = { change: v.change, since: v.changedMs, waiting, opens, workspaceId: this.sdlc.getWorkspaces()[0]?.id ?? null };
+      if (asking.length > 0) return { ...base, state: 'needsAnswer', text: this.runs.get(asking[0].runId)?.question ?? 'A question is waiting.', run: Number(asking[0].runId) };
+      if (v.going.length > 0) return { ...base, state: 'working', stage: v.going[0].repo === 'review' ? 'review' : 'build', repo: v.going[0].repo === 'review' ? null : v.going[0].repo, run: Number(v.going[0].runId) };
+      if (v.reviewWaiting.length > 0) return { ...base, state: 'reviewWaiting', holder: v.reviewWaiting[0].holder };
+      if (v.heldStart.length > 0) return { ...base, state: 'held', holder: v.heldStart[0].holder };
+      return { ...base, state: 'finished' };
+    });
+    return { shown: entries.slice(0, 3), all: entries };
+  }
+
+  private announceRunning(): void {
+    if (this.runningListeners.size === 0) return;
+    const strip = this.strip();
+    for (const listen of [...this.runningListeners]) listen(strip);
   }
 
   private play(runId: string, segment: ScriptStep[]): void {
@@ -110,8 +210,10 @@ export class MockTransport extends KataTransport {
       run.timers.push(setTimeout(() => {
         if (step.ev.type === 'run.completed') run.onDone?.();
         if (step.ev.type === 'ask.requested' || step.ev.type === 'permission.requested') run.awaiting = true;
-        if (step.ev.type === 'run.completed' || step.ev.type === 'run.error' || step.ev.type === 'run.cancelled') run.ended = true;
+        const terminal = step.ev.type === 'run.completed' || step.ev.type === 'run.error' || step.ev.type === 'run.cancelled';
+        if (step.ev.type === 'ask.requested') run.question = step.ev.questions[0]?.question;
         this.emit(runId, step.ev);
+        if (terminal) this.finish(run);
       }, acc));
     }
   }
@@ -190,40 +292,18 @@ export class MockTransport extends KataTransport {
   sdlcContextHealth(_folder: string, _master: string, _system: string, repo: string): Promise<ContextState> { return Promise.resolve(this.sdlc.contextHealth(repo)); }
   sdlcReadContext(_master: string, _system: string, repo: string): Promise<string | null> { return Promise.resolve(this.sdlc.readContext(repo)); }
   sdlcInstructions(_folder: string, _masterRepo: string): Promise<InstructionsState> { return Promise.resolve(this.sdlc.instructions()); }
-  sdlcChangeNames(_master: string, _system: string): Promise<ChangeName[]> { return Promise.resolve(this.sdlc.changeNames()); }
-  /** Plays a scripted pass: one `stage` per change and a `progress` after each, spread over about a second, then `done`. A new pass cancels the one before. */
-  sdlcReadStages(_master: string, _system: string, first?: string | null): Promise<number> {
-    this.stageTimers.forEach(clearTimeout);
-    this.stageTimers = [];
-    const pass = ++this.nextPass;
-    const infos = this.sdlc.stagePass();
-    const at = infos.findIndex((c) => c.change === first);
-    if (at > 0) infos.unshift(...infos.splice(at, 1));
-    const every = STAGE_PASS_MS / Math.max(infos.length, 1);
-    const send = (ev: StageEvent) => { for (const listen of [...this.stageListeners]) listen(ev); };
-    infos.forEach((info, i) => {
-      this.stageTimers.push(setTimeout(() => {
-        send({ kind: 'stage', pass, change: info.change, info });
-        send({ kind: 'progress', pass, read: i + 1, total: infos.length });
-        if (i === infos.length - 1) send({ kind: 'done', pass });
-      }, every * (i + 1)));
-    });
-    if (infos.length === 0) this.stageTimers.push(setTimeout(() => send({ kind: 'done', pass }), 0));
-    return Promise.resolve(pass);
+  /** Scripted from the same fixtures the change page reads; the readiness is the one `sdlcPluginReadiness` answers. */
+  async sdlcState(folder: string, systems: string[]): Promise<WorkspaceView> {
+    return this.sdlc.workspaceView(systems, await this.sdlcPluginReadiness(folder));
   }
-  sdlcReadChange(_master: string, _system: string, change: string): Promise<ChangeInfo> {
-    try {
-      return Promise.resolve(this.sdlc.readChange(change));
-    } catch (e) {
-      return Promise.reject(e);
-    }
+  /** Scripted from the same fixtures as `sdlcState`; rejects a change the workspace does not have. */
+  async sdlcChangeState(folder: string, _system: string, change: string): Promise<ChangeView> {
+    return this.sdlc.changeView(change, await this.sdlcPluginReadiness(folder));
   }
+  /** A test or a demo changes what the workspace holds for a change; the next `sdlcChangeState` and `sdlcState` show it. */
+  patchChange(change: string, patch: Partial<ChangeInfo>): void { this.sdlc.patch(change, patch); }
   /** Every demo folder is there. */
   sdlcMissingFolders(_folders: string[]): Promise<string[]> { return Promise.resolve([]); }
-  async onStageEvent(cb: (ev: StageEvent) => void): Promise<() => void> {
-    this.stageListeners.add(cb);
-    return () => { this.stageListeners.delete(cb); };
-  }
   sdlcBranches(_master: string): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches()); }
   sdlcReadDoc(_master: string, _system: string, change: string, doc: string): Promise<string | null> {
     try {
@@ -235,69 +315,70 @@ export class MockTransport extends KataTransport {
   sdlcSnapshot(_master: string): Promise<Snapshot> { return Promise.resolve(this.sdlc.snapshot()); }
   sdlcLeftovers(_master: string, _before: Snapshot, _productRepos: string[], _build?: BuildScope): Promise<Leftovers> { return Promise.resolve(this.sdlc.leftovers()); }
   sdlcDiscard(_master: string, _before: Snapshot, paths: string[], _build?: BuildScope): Promise<void> { this.sdlc.discard(paths); return Promise.resolve(); }
-  sdlcStartChange(_master: string): Promise<string> { return Promise.resolve(this.sdlc.startChange()); }
-  sdlcFinishChange(_master: string, _pending: string): Promise<FinishOutcome> { return Promise.resolve(this.sdlc.finishChange()); }
+  sdlcChangeName(title: string): Promise<string> { return Promise.resolve(this.sdlc.changeName(title)); }
+  /** The change the run's own events name as started: the plugin's `change start` answer among its tool results, as the backend reads the run's record. */
+  sdlcTriageChange(transcript: string, system: string): Promise<string | null> {
+    return Promise.resolve(this.triageStarted.get(`${system}/${transcript}`) ?? null);
+  }
+  sdlcStartChange(_folder: string, _system: string, title: string, _workType: string, _scope: string, branch?: string): Promise<ChangeStart> { return Promise.resolve(this.sdlc.startChange(title, branch)); }
   sdlcNaming(_folder: string, _masterRepo: string, _system: string): Promise<NamingState> { return Promise.resolve(this.sdlc.naming()); }
   sdlcCheckScope(_folder: string, scope: string): Promise<string[]> { return Promise.resolve(scope.includes(' ') ? ['a scope cannot contain a space'] : []); }
-  sdlcSuggestBranch(_folder: string, _masterRepo: string, _system: string, change: string, workType: string): Promise<string> { return Promise.resolve(this.sdlc.suggestBranch(change, workType)); }
-  sdlcConfirmBranch(_folder: string, _masterRepo: string, _system: string, change: string, _pending: string, name: string, _workType: string): Promise<FinishOutcome> { return Promise.resolve(this.sdlc.confirmBranch(change, name)); }
-  sdlcRenameBranch(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, change: string, newName: string): Promise<RenameResult> { return Promise.resolve(this.sdlc.renameBranch(change, newName)); }
-  sdlcRemoteClashes(touched: PublishRepo[], _masterRepo: string, _system: string, change: string): Promise<RemoteClash[]> { return Promise.resolve(this.sdlc.remoteClashes(touched, change)); }
-  sdlcCheckout(_master: string, branch: string): Promise<void> { this.sdlc.checkout(branch); return Promise.resolve(); }
-  sdlcDecide(_master: string, _system: string, change: string, decision: Decision, _confirmed: boolean): Promise<DecideOutcome> { return Promise.resolve(this.sdlc.decide(change, decision)); }
+  sdlcRenameBranch(_folder: string, _workspaceId: string, _system: string, change: string, to: string): Promise<RenameOutcome> { return Promise.resolve(this.sdlc.renameBranch(change, to)); }
+  /** Refused, as the backend refuses it, while a change's document run is live: the mock's changes have no copies, so each runs in the master checkout, as a change started before copies existed does. */
+  sdlcCheckout(master: string, branch: string): Promise<void> {
+    const busy = [...this.changeRunsLive].find(([id]) => this.runs.get(id)?.ended !== true);
+    if (busy !== undefined) return Promise.reject(`The change ${busy[1]} has a run working in ${master}. Switch the branch after the run ends.`);
+    this.sdlc.checkout(branch);
+    return Promise.resolve();
+  }
+  sdlcAccept(change: ChangeRef, doc: ChangeDocument): Promise<AcceptOutcome> { return Promise.resolve(this.sdlc.accept(change.change, doc)); }
+  sdlcCopyRemoval(change: ChangeRef): Promise<CopyRemoval> { return Promise.resolve(this.sdlc.copyRemoval(change.change)); }
+  sdlcCopyBranch(change: ChangeRef): Promise<string> { return Promise.resolve(this.sdlc.copyBranch(change.change)); }
+  sdlcRemoveCopy(change: ChangeRef): Promise<RemoveOutcome> { return Promise.resolve(this.sdlc.removeCopy(change.change)); }
+  sdlcOpenCopyFolder(change: ChangeRef): Promise<void> {
+    try {
+      this.sdlc.openCopyFolder(change.change);
+      return Promise.resolve();
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
+  sdlcReject(change: ChangeRef): Promise<RejectOutcome> { return Promise.resolve(this.sdlc.reject(change.change)); }
   sdlcRunLinks(): Promise<RunLink[]> { return Promise.resolve(this.sdlc.runLinks()); }
   sdlcLinkRun(link: RunLink): Promise<void> { this.sdlc.linkRun(link); return Promise.resolve(); }
   sdlcTaskLinks(): Promise<TaskLink[]> { return Promise.resolve(this.sdlc.taskLinks()); }
-  sdlcLinkTasks(links: TaskLink[]): Promise<void> { this.sdlc.linkTasks(links); return Promise.resolve(); }
   /** The scripted run has no process to wait for. */
   sdlcWaitRunExit(_runId: string, _timeoutMs: number): Promise<boolean> { return Promise.resolve(true); }
   sdlcBuildStatus(_master: string, _system: string, change: string): Promise<BuildStatus> { return Promise.resolve(this.sdlc.buildStatus(change)); }
+  sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }): Promise<RepoBoard[]> { return Promise.resolve(mockBoard(repos, status, going, stopped)); }
+  sdlcReviewStanding(input: ReviewStandingInput): Promise<ReviewStanding> { return Promise.resolve(mockStanding(input)); }
   sdlcReadParsed(_master: string, _system: string, change: string, doc: string): Promise<ReadResult | ReadError | null> { return Promise.resolve(this.sdlc.readParsed(change, doc)); }
   sdlcReviewRecord(_master: string, _system: string, _change: string): Promise<ReviewRecord | null> { return Promise.resolve(this.sdlc.reviewRecord()); }
-  sdlcReviewVerify(_master: string, _system: string, _change: string, _since: string, _before: Snapshot['dirty']): Promise<string[]> { return Promise.resolve([]); }
-  sdlcUnsavedRows(_master: string, _system: string, _change: string): Promise<UnsavedRows[]> { return Promise.resolve([]); }
-  sdlcBuildParticipants(folder: string, _masterRepo: string, _system: string, _change: string, _pending: string[]): Promise<Participant[]> { return Promise.resolve(this.sdlc.participants(folder)); }
-  sdlcBuildPrepare(folder: string, _masterRepo: string, _system: string, change: string, _continueWithLeftovers: boolean, _pending: string[], _action: BuildAction): Promise<PrepareOutcome> {
-    return Promise.resolve({ kind: 'ready', start: this.sdlc.prepare(folder, change) });
-  }
-  sdlcBuildSettle(_start: BuildStart): Promise<string[]> { return Promise.resolve([]); }
   sdlcBuildHeads(_folder: string, _masterRepo: string, _system: string, repos: string[], _change: string): Promise<Record<string, string>> { return Promise.resolve(this.sdlc.heads(repos)); }
-  sdlcPluginReadiness(_workdir: string | null): Promise<Readiness> { return Promise.resolve({ kind: 'ready', dir: '~/.claude/plugins/ai-sdlc', version: MOCK_PLUGIN_VERSION, layouts: MOCK_LAYOUTS, lightTrack: true, naming: true }); }
+  sdlcPluginReadiness(_workdir: string | null): Promise<Readiness> { return Promise.resolve({ kind: 'ready', plugin: { dir: '~/.claude/plugins/ai-sdlc', version: MOCK_PLUGIN_VERSION, layouts: MOCK_LAYOUTS }, gh: 'present' }); }
   sdlcChangeRepos(folder: string, _masterRepo: string, _system: string, change: string): Promise<ChangeRepo[]> { return Promise.resolve(this.sdlc.changeRepos(folder, change)); }
   sdlcMissingChangeBranches(_folder: string, _masterRepo: string, _system: string, _change: string): Promise<string[]> { return Promise.resolve([]); }
   sdlcDiffFiles(_repoPath: string, part: Part): Promise<DiffListing> { return Promise.resolve(this.sdlc.diffFiles(part)); }
   sdlcCommitFiles(repoPath: string): Promise<CommitFiles[]> { return Promise.resolve(this.sdlc.commitFiles(repoPath)); }
   sdlcDiffPair(_repoPath: string, _part: Part, path: string): Promise<FilePair> { return Promise.resolve(this.sdlc.diffPair(path)); }
   sdlcDiffBase(_repoPath: string): Promise<BaseInfo> { return Promise.resolve(this.sdlc.diffBase()); }
-  sdlcTouchedRepos(folder: string, _masterRepo: string, _system: string, _change: string): Promise<PublishRepo[]> { return Promise.resolve(this.sdlc.touchedRepos(folder)); }
-  sdlcCommitOffenders(_folder: string, _masterRepo: string, _system: string, _change: string): Promise<Offender[]> { return Promise.resolve([]); }
-  sdlcChecksDir(): Promise<string> { return Promise.resolve(this.sdlc.checksPlan().path.replace(/\/[^/]*$/, '')); }
-  sdlcChecksLoad(_folder: string, _masterRepo: string, _system: string): Promise<ChecksPlan> { return Promise.resolve(this.sdlc.checksPlan()); }
-  sdlcRunChecks(_folder: string, _masterRepo: string, _system: string, repo: PublishRepo): Promise<RepoChecks> { return Promise.resolve(this.sdlc.runChecks(repo.repo)); }
-  sdlcGhSignedIn(_repos: PublishRepo[]): Promise<string> { return Promise.resolve('demo-user'); }
-  sdlcGhOrigins(_repos: PublishRepo[]): Promise<void> { return Promise.resolve(); }
-  sdlcPublish(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, change: string, repos: PublishRepo[]): Promise<PublishSummary> {
-    for (const r of repos) {
-      for (const step of [{ kind: 'pushing', repo: r.repo }, { kind: 'opening', repo: r.repo }] as PublishStep[]) {
-        for (const listen of [...this.publishListeners]) listen(step);
-      }
-    }
-    return Promise.resolve({ results: this.sdlc.publish(repos, change), leftBehind: [] });
+  sdlcOldChecks(_folder: string, systems: string[]): Promise<OldChecksNotice[]> { return Promise.resolve(this.sdlc.oldChecks(systems)); }
+  sdlcOldChecksSeen(systems: string[]): Promise<void> { this.sdlc.oldChecksSeen(systems); return Promise.resolve(); }
+  sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]> { return Promise.resolve(this.sdlc.checksView(change.change)); }
+  /** The plugin's answer to declaring the change done, with the steps it reports on the way; `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` give each of the other answers. */
+  async sdlcDeclareDone(change: ChangeRef): Promise<DeclareView> {
+    const { view, steps } = this.sdlc.declareDone(change.change);
+    for (const step of steps) for (const listen of [...this.doneListeners]) listen(step);
+    return view;
   }
   /** `?demo=pr-fail` makes the read fail, so the browser checks can see the "Could not check pull requests" note; `?demo=one-pr` keeps only the
-   *  first pull request, so they can see the single inline link. Browser only; this class never runs under Tauri. */
-  async sdlcDoneView(folder: string, masterRepo: string, _workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView> {
+   *  first pull request, so they can see the single inline link; `?demo=pr-states` gives each state GitHub can answer with and one it cannot;
+   *  `?demo=earlier-declaration` records the pull requests the way an earlier version of Kata did. Browser only; this class never runs under Tauri. */
+  async sdlcPullRequestsView(_folder: string, _workspaceId: string, _system: string, change: string, refresh: boolean): Promise<PullRequestsView> {
     const demo = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('demo');
-    if (demo === 'pr-fail' && buildFinished) return { done: false, links: [], linksFrom: 'none', offerDeclare: true, prCheckFailed: true };
-    const repos = await this.sdlcTouchedRepos(folder, masterRepo, system, change);
-    const view = this.sdlc.doneView(repos, change, buildFinished);
+    if (demo === 'pr-fail') throw new Error('the recorded pull requests could not be read');
+    const view = this.sdlc.pullRequestsView(change, refresh);
     return demo === 'one-pr' ? { ...view, links: view.links.slice(0, 1) } : view;
-  }
-  sdlcRefreshPrStates(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView> {
-    return this.sdlcDoneView(folder, masterRepo, workspaceId, system, change, buildFinished);
-  }
-  sdlcPullRequests(_masterRepo: string, _system: string, repos: PublishRepo[], change: string): Promise<PrState[]> {
-    return Promise.resolve(this.sdlc.pullRequests(repos, change));
   }
   loadBuildLayout(): Promise<unknown> { return Promise.resolve(this.buildLayout); }
   saveBuildLayout(layout: Record<string, unknown>): Promise<void> { this.buildLayout = layout; return Promise.resolve(); }
@@ -308,12 +389,12 @@ export class MockTransport extends KataTransport {
   pickOpenSpec(): Promise<string | null> { return Promise.resolve(null); }
   pickSaveSpec(): Promise<string | null> { return Promise.resolve(null); }
 
-  async onPublishStep(cb: (step: PublishStep) => void): Promise<() => void> {
-    this.publishListeners.add(cb);
-    return () => { this.publishListeners.delete(cb); };
+  async onDoneStep(cb: (step: DoneStep) => void): Promise<() => void> {
+    this.doneListeners.add(cb);
+    return () => { this.doneListeners.delete(cb); };
   }
 
-  async onRunEvent(cb: (runId: string, ev: KataEvent) => void): Promise<() => void> {
+  async onRunEvent(cb: (runId: string, ev: KataEvent, seq?: number) => void): Promise<() => void> {
     this.listeners.add(cb);
     return () => { this.listeners.delete(cb); };
   }
@@ -324,12 +405,94 @@ export class MockTransport extends KataTransport {
     this.play(id, head);
     return id;
   }
+  async onBuildState(cb: (event: BuildEvent) => void): Promise<() => void> {
+    this.buildListeners.add(cb);
+    return () => { this.buildListeners.delete(cb); };
+  }
+  async onRunning(cb: (strip: RunningStrip) => void): Promise<() => void> {
+    this.runningListeners.add(cb);
+    return () => { this.runningListeners.delete(cb); };
+  }
+  async onCloseAsked(cb: (ask: CloseOutcome) => void): Promise<() => void> {
+    this.closeListeners.add(cb);
+    // `?demo=close` (browser only) asks the close question once the app shell listens, so the browser checks can see the dialog.
+    if (demoParam() === 'close') queueMicrotask(() => cb({ type: 'ask', running: [{ change: 'A', what: 'building in kata' }, { change: 'B', what: 'writing its spec' }] }));
+    return () => { this.closeListeners.delete(cb); };
+  }
+  async sdlcRunHistory(runId: string): Promise<HistoryEntry[]> { return [...(this.histories.get(runId) ?? [])]; }
+  async sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm): Promise<string> {
+    void kind;
+    const id = await this.runSpec({ ...seedSpec(), name: form.name, task: form.task, workdir: change.workspace });
+    this.changeRunsLive.set(id, change.change);
+    return id;
+  }
+  async sdlcBuildStart(change: ChangeRef, form: StartForm): Promise<StartOutcome> { return this.host.start(change, form); }
+  // The scripted host runs no agent, so the choices a continue or review carries change nothing it shows.
+  async sdlcBuildContinue(change: ChangeRef, repo: string, _off?: string[]): Promise<StartOutcome> { return this.host.continueRepo(change, repo); }
+  async sdlcBuildState(change: ChangeRef): Promise<BuildState | null> { return this.host.state(change); }
+  async sdlcChangeKey(change: ChangeRef): Promise<ChangeKey> { return mockChangeKey(change); }
+  async sdlcBuildCancel(change: ChangeRef, repo: string | null): Promise<void> { this.host.cancel(change, repo); }
+  async sdlcBuildRuns(change: ChangeRef): Promise<BuildRunRef[]> { return this.host.runs(change); }
+  /** The run-spec the backend would compose: a triage or a fix run is always auto, a document run follows the form's permission setting, and the limit and the items are the form's. */
+  async sdlcPreviewChangeRun(change: ChangeRef, kind: DocumentKind, form: RunForm): Promise<RunSpec> {
+    const base = seedSpec();
+    const mode = kind === 'fix' || kind === 'triage' ? 'auto' : form.permissionMode;
+    return {
+      ...base,
+      name: form.name,
+      task: form.task,
+      workdir: change.workspace,
+      permissions: { ...base.permissions, mode },
+      leash: { ...base.leash, timeout_secs: form.timeoutSecs, max_turns: null, max_budget_usd: null },
+      given: { ...(form.given ?? { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [] }), required_plugins: ['ai-sdlc'], build: false },
+    };
+  }
+  async sdlcPreviewBuild(change: ChangeRef, which: BuildPreviewKind, repo: string | null, form: StartForm): Promise<BuildSection[]> {
+    const status = this.sdlc.buildStatus(change.change);
+    const planned = status.repos.length > 0 ? status.repos.map((r) => r.repo) : (BUILD_REPOS_OF[change.change] ?? []);
+    const section = (title: string, folder: string | null): BuildSection => ({
+      title,
+      repo: folder,
+      spec: { ...seedSpec(), name: `sdlc-build-${folder ?? 'review'}`, workdir: `${MOCK_WORKSPACE_FOLDER}/${folder ?? MOCK_MASTER}`, leash: { ...seedSpec().leash, timeout_secs: form.timeoutSecs, max_turns: null, max_budget_usd: null } },
+    });
+    const review = section('Review', null);
+    switch (which) {
+      case 'start':
+      case 'continue-all':
+        return [...planned.map((r) => section(r, r)), review];
+      case 'continue-one':
+        return repo === null || repo === 'review' ? [review] : [section(repo, repo)];
+      case 'round':
+        return (form.rounds ?? []).map((r) => section(r.repo, r.repo));
+      case 'manual-review':
+        return [review];
+    }
+  }
+  async sdlcReviewView(change: ChangeRef): Promise<ReviewView> {
+    return mockReviewView(this.sdlc.reviewRecord(), this.reviewRepos(change));
+  }
+  async sdlcReviewStart(change: ChangeRef, _off?: string[]): Promise<StartOutcome> { return this.host.reviewStart(change); }
+  async sdlcReviewWaiting(change: ChangeRef): Promise<HeldRepo[]> { return this.host.reviewWaiting(change); }
+  /** The repositories a round may go to: the change's own, then the master. */
+  private reviewRepos(change: ChangeRef): string[] {
+    return [...this.sdlc.buildStatus(change.change).repos.map((r) => r.repo), MOCK_MASTER];
+  }
+  async sdlcRoundOffer(change: ChangeRef): Promise<[RoundOffer, RoundPicks]> {
+    const offer = mockRoundOffer(this.sdlc.reviewRecord(), this.reviewRepos(change));
+    return [offer, mockDefaultPicks(offer)];
+  }
+  async sdlcRoundPlan(change: ChangeRef, picks: RoundPicks): Promise<RoundPlan> {
+    return mockRoundPlan(mockRoundOffer(this.sdlc.reviewRecord(), this.reviewRepos(change)), picks);
+  }
+  async sdlcRunning(): Promise<RunningStrip> { return this.strip(); }
+  async sdlcMarkOpened(change: ChangeRef): Promise<void> { void change; }
+  async sdlcCloseAnswer(confirm: boolean): Promise<void> { void confirm; }
   async cancelRun(runId: string): Promise<void> {
     const run = this.runs.get(runId);
     if (!run) return;
     run.timers.forEach(clearTimeout);
     run.timers = [];
-    run.ended = true;
+    this.finish(run);
     if (run.kind === 'sdlc-spec' || run.kind === 'sdlc-setup' || run.kind === 'sdlc-triage') this.sdlc.cancelRun();
   }
   async submitAnswer(runId: string, id: string, answers: string[][]): Promise<void> {

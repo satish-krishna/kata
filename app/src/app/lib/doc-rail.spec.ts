@@ -1,4 +1,4 @@
-import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeInfo } from './sdlc-mock-types';
 import type { RunRecord } from '@bindings/RunRecord';
 import { docStatus, recentRuns, runResultLabel, runTime, usedBy } from './doc-rail';
 

@@ -44,12 +44,16 @@
    | order | item                    | gives way how                                           | minimum                                       |
    |-------|-------------------------|---------------------------------------------------------|-----------------------------------------------|
    | 1     | separators, gaps, and the chevron after the back link | removed / tightened below 1280            | 0                                             |
-   | 2     | branch chip text        | ellipsis in the chip; below 1280 the icon form instead  | 6rem chip from 1280; the icon below 1280      |
-   | 3     | workspace switcher name | ellipsis; full name in its title and accessible name    | 4.5rem                                        |
-   | 4     | pill padding            | tightened                                               | --space-2 each side                           |
-   | 5     | change name             | ellipsis; full name in its title                        | 6rem                                          |
+   | 2     | running changes strip   | entries drop out of the strip whole, last first (each is in the All running list) | the All running button, 9rem |
+   | 3     | branch chip text        | ellipsis in the chip; below 1280 the icon form instead  | 6rem chip from 1280; the icon below 1280      |
+   | 4     | workspace switcher name | ellipsis; full name in its title and accessible name    | 4.5rem                                        |
+   | 5     | pill padding            | tightened                                               | --space-2 each side                           |
+   | 6     | change name             | ellipsis; full name in its title                        | 6rem                                          |
 
    Never shrink: the seal, the mode badge, the pills' text, the pull request control, the settings button, and the back link, which stays whole until the change name has given way to its minimum. */
+/* Order 2: the strip shrinks before everything below it. Its entries wrap out of its one row whole, last first, so none is ever cut in half. */
+.wb-toolbar .k-running { min-width: 9rem; }
+.wb-toolbar:has(.k-crumbs__item) .k-running { flex: 0 1e16 auto; }
 .wb-toolbar:has(.k-crumbs__item) .k-branch { flex: 0 1e12 auto; min-width: calc-size(max-content, min(size, 6rem)); }
 .wb-toolbar:has(.k-crumbs__item) .k-branch__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .wb-toolbar:has(.k-crumbs__item) .k-wstrigger { flex: 0 1e8 16rem; width: auto; min-width: 4.5rem; }
@@ -314,6 +318,11 @@
 .k-waiting { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5); padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border-subtle); background: var(--warning-subtle); color: var(--warning-text); font: var(--font-code-sm); }
 .k-waiting--line { padding-block: var(--space-2); }
 .k-waiting__stop { color: var(--text-secondary); }
+/* The panel for a build or a review that waits for another change's repositories. */
+.k-held { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border-subtle); background: var(--warning-subtle); color: var(--text-primary); }
+.k-held .k-status { color: var(--warning-text); }
+.k-held__list { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.k-held__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); color: var(--text-secondary); }
 /* Where the engineer stopped looking in a pane that kept running. */
 .k-unseen { padding: var(--space-1) 0; border-top: 1px solid var(--accent); font: var(--font-code-sm); color: var(--text-secondary); }
 .k-findings { display: grid; gap: var(--space-3); }
@@ -329,6 +338,12 @@
 .k-check { display: grid; gap: var(--space-3); }
 .k-check > p { margin: 0; }
 .k-check__tail { margin: 0; max-height: 14rem; overflow: auto; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-inset); color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* An old per-machine checks file, shown once: the sentence and its dismiss button on one row, the path and the file's text below. */
+.k-oldchecks { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--space-3) var(--space-4); padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border-subtle); color: var(--text-secondary); flex: none; }
+.k-oldchecks > p { margin: 0; }
+.k-oldchecks__path { grid-column: 1 / -1; color: var(--text-muted); overflow-wrap: anywhere; }
+.k-oldchecks > pre { grid-column: 1 / -1; }
 
 /* ---------- AI-SDLC: change page ---------- */
 .k-change { flex: 1; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
@@ -373,6 +388,12 @@
 /* In the Changes strip only the read-only line shrinks; the controls, counts and the actions the page projects keep their size, so no label breaks onto a second line. The strip wraps (see changes-view.css), so none of them is ever pushed out of the panel. */
 .k-changes__strip > :not(.k-changes__end), .k-changes__end > :not(.k-changes__note) { flex: none; white-space: nowrap; }
 .k-strip { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); background: var(--surface-panel); border-bottom: 1px solid var(--border-default); }
+/* The change's own copy: its folder, the branch it holds, and what the engineer can do with it. The folder wraps, so a long path never pushes the actions out. */
+.k-copyline { flex: none; display: grid; gap: var(--space-3); padding: var(--space-3) var(--space-4); background: var(--surface-panel); border-bottom: 1px solid var(--border-default); }
+.k-copyline__run { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3) var(--space-4); }
+.k-copyline__folder { min-width: 0; overflow-wrap: anywhere; font-size: var(--text-xs); color: var(--text-secondary); }
+.k-copyline__branch { font-size: var(--text-xs); color: var(--text-muted); }
+.k-copyline__why { margin: 0; font-size: var(--text-xs); color: var(--text-muted); }
 .k-strip__file { font: var(--text-xs)/1 var(--font-mono); color: var(--text-muted); }
 
 /* AI-SDLC session view: an agent run in the page main region under the toolbar. */

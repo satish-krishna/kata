@@ -44,6 +44,9 @@ export class ObservePane {
   readonly messages = input<MessageRecord[]>([]);
   readonly refusal = input<MessageRefusal | null>(null);
   readonly say = output<string>();
+  /** The message typed and not sent, and the report of each change to it. */
+  readonly draft = input('');
+  readonly draftChange = output<string>();
   readonly answer = output<{ id: string; answers: string[][] }>();
   readonly decide = output<{ id: string; allow: boolean; message: string | null }>();
 

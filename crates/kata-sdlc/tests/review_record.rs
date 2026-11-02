@@ -1,6 +1,6 @@
 //! Which findings a change shows comes from its review document, `build/review.md` (R14, R15, R16).
 //!
-//! These tests run the vendored copy of the plugin's format program in `tests/ai-sdlc-format/`.
+//! These tests run the vendored copy of the plugin's format program in `tests/ai-sdlc-tools/`.
 #![allow(clippy::disallowed_methods)]
 use kata_sdlc::format::Severity;
 use kata_sdlc::review;
@@ -23,12 +23,12 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
-/// A stand-in for the plugin folder: its `format/` is the vendored program.
+/// A stand-in for the plugin folder: its `tools/` is the vendored program.
 fn plugin(tmp: &Path) -> PathBuf {
     let dir = tmp.join("plugin");
     copy_dir(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format"),
-        &dir.join("format"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools"),
+        &dir.join("tools"),
     );
     dir
 }
@@ -176,33 +176,33 @@ fn a_master_that_gained_a_product_commit_after_the_review_lists_its_files() {
     let tmp = tempfile::tempdir().unwrap();
     let master = reviewed_master(tmp.path());
     fs::create_dir_all(master.join("plugin")).unwrap();
-    fs::write(master.join("plugin/check.mjs"), "// changed\n").unwrap();
+    fs::write(master.join("plugin/ai-sdlc.ts"), "// changed\n").unwrap();
     git(&master, &["add", "."]);
     git(&master, &["commit", "-q", "-m", "product"]);
     assert_eq!(
         moved_since_review(tmp.path(), &master),
-        serde_json::json!(["plugin/check.mjs"])
+        serde_json::json!(["plugin/ai-sdlc.ts"])
     );
 }
 
 #[test]
 fn review_stays_current_after_a_rename_r10_3() {
-    use kata_sdlc::branch_record::{self, BranchRecord, RecordVerb};
     let tmp = tempfile::tempdir().unwrap();
     let master = reviewed_master(tmp.path());
-    // The rename's commit in the master is the record `branch_record::rename` writes.
-    let record = |branch: &str| BranchRecord {
-        branch: branch.to_string(),
-        work_type: Some("feat".to_string()),
-    };
-    branch_record::write(
-        &master,
-        SYS,
-        CHG,
-        &record("feat/PROJ-123-reset"),
-        RecordVerb::Rename,
+    // A rename commits the change's branch record and nothing else in the change's folder.
+    let record = master.join(format!("intent/{SYS}/{CHG}/branch.md"));
+    fs::create_dir_all(record.parent().unwrap()).unwrap();
+    fs::write(
+        &record,
+        "---
+branch: feat/PROJ-123-reset
+type: feat
+---
+",
     )
     .unwrap();
+    git(&master, &["add", "."]);
+    git(&master, &["commit", "-q", "-m", "rename branch"]);
     assert_eq!(
         moved_since_review(tmp.path(), &master),
         serde_json::json!([])
@@ -214,5 +214,124 @@ fn review_stays_current_after_a_rename_r10_3() {
     assert_eq!(
         moved_since_review(tmp.path(), &master),
         serde_json::json!([format!("intent/{SYS}/{CHG}/intent.md")])
+    );
+}
+
+/// A master with the marker and the change's record, reviewed, then renamed by the vendored program.
+fn reviewed_then_renamed(tmp: &Path) -> PathBuf {
+    let master = tmp.join("master");
+    fs::create_dir_all(master.join(format!("intent/{SYS}/{CHG}/build"))).unwrap();
+    git(&master, &["init", "-q", "-b", "main"]);
+    git(&master, &["config", "user.name", "Test"]);
+    git(&master, &["config", "user.email", "test@example.com"]);
+    git(&master, &["config", "commit.gpgsign", "false"]);
+    fs::write(
+        master.join(".ai-sdlc.json"),
+        format!(r#"{{"version":1,"systems":{{"{SYS}":{{"repos":[]}}}}}}"#),
+    )
+    .unwrap();
+    let dir = master.join(format!("intent/{SYS}/{CHG}"));
+    fs::write(
+        dir.join("plan.md"),
+        "# Plan
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("change.yml"),
+        "version: 1
+branch: \"main\"
+type: feat
+scope: \"X-1\"
+base: \"main\"
+",
+    )
+    .unwrap();
+    git(&master, &["add", "."]);
+    git(&master, &["commit", "-q", "-m", "change"]);
+    let head = Command::new("git")
+        .arg("-C")
+        .arg(&master)
+        .args(["rev-parse", "--short=7", "HEAD"])
+        .output()
+        .unwrap()
+        .stdout;
+    let head = String::from_utf8(head).unwrap();
+    let doc = format!(
+        "---
+layout: 2
+---
+
+# Review findings
+
+## Review 1
+
+```yaml
+review: 1
+reviewed_at: 2026-10-22
+commits: {{ master: {} }}
+```
+",
+        head.trim()
+    );
+    fs::write(dir.join("build/review.md"), doc).unwrap();
+    git(&master, &["add", "."]);
+    git(&master, &["commit", "-q", "-m", "review"]);
+    // The plugin renames the branch and commits the change's record.
+    let out = Command::new("node")
+        .arg(plugin(tmp).join("tools/ai-sdlc.ts"))
+        .args([
+            "change",
+            "rename",
+            "--json",
+            "--system",
+            SYS,
+            "--change",
+            CHG,
+            "--to",
+            "feat/X-1-new",
+        ])
+        .arg("--master")
+        .arg(&master)
+        .arg("--workspace")
+        .arg(tmp)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    master
+}
+
+#[test]
+fn review_stays_current_after_the_plugin_renames_the_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let master = reviewed_then_renamed(tmp.path());
+    assert!(String::from_utf8(
+        Command::new("git")
+            .arg("-C")
+            .arg(&master)
+            .args(["show", "--stat", "--format=%s", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout
+    )
+    .unwrap()
+    .contains("change.yml"));
+    assert_eq!(
+        moved_since_review(tmp.path(), &master),
+        serde_json::json!([])
+    );
+    // Product code committed after the review still makes it not current.
+    fs::create_dir_all(master.join("plugin")).unwrap();
+    fs::write(
+        master.join("plugin/ai-sdlc.ts"),
+        "// changed
+",
+    )
+    .unwrap();
+    git(&master, &["add", "."]);
+    git(&master, &["commit", "-q", "-m", "product"]);
+    assert_eq!(
+        moved_since_review(tmp.path(), &master),
+        serde_json::json!(["plugin/ai-sdlc.ts"])
     );
 }

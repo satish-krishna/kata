@@ -2,12 +2,13 @@ import { Component, inject } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { DocLayout } from '../../ui/doc-layout';
 import { SdlcToolbar } from '../../ui/sdlc-toolbar';
+import { RunningChanges } from '../running-changes';
 import { ContextPageViewModel } from './context-page.view-model';
 
 @Component({
   selector: 'app-context-page',
   providers: [ContextPageViewModel],
-  imports: [HlmButtonImports, SdlcToolbar, DocLayout],
+  imports: [HlmButtonImports, SdlcToolbar, RunningChanges, DocLayout],
   templateUrl: './context-page.html',
 })
 export class ContextPage {

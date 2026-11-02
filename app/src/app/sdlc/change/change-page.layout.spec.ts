@@ -1,4 +1,4 @@
-import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeInfo } from '../../lib/sdlc-mock-types';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
 import { of } from 'rxjs';
@@ -12,7 +12,6 @@ import { diagrams } from '../../lib/mermaid';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePage } from './change-page';
-import { ChangePageViewModel } from './change-page.view-model';
 
 const PHOTOS_CHANGE = '2026-10-12-product-photo-upload';
 const settle = async () => {
@@ -151,10 +150,7 @@ describe('ChangePage layout', () => {
 
   it('keeps the plan banner above the plan in the new layout', async () => {
     const transport = new MockTransport();
-    const real = transport.sdlcReadChange.bind(transport);
-    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-      [await real(m, s, n)].map((c) => (c.change === '2026-10-09-merchant-reassign' ? { ...c, stage: 'plan-superseded' as ChangeInfo['stage'] } : c))[0],
-    );
+    transport.patchChange('2026-10-09-merchant-reassign', { stage: 'plan-superseded' as ChangeInfo['stage'] });
     const { container } = await mount('2026-10-09-merchant-reassign', transport);
     const banner = container.querySelector('[data-testid="plan-banner"]')!;
     expect(banner).not.toBeNull();
@@ -201,10 +197,7 @@ describe('ChangePage layout', () => {
   describe('after the pull requests', () => {
     const finished = async (only?: number) => {
       const transport = new MockTransport();
-      const real = transport.sdlcReadChange.bind(transport);
-      vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-        [await real(m, s, n)].map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage: 'build-finished' as const } : c))[0],
-      );
+      transport.patchChange(MOCK_BUILD_CHANGE, { stage: 'build-finished' as const });
       const status = transport.sdlcBuildStatus.bind(transport);
       vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, sys, c) => {
         const got = await status(m, sys, c);
@@ -214,8 +207,15 @@ describe('ChangePage layout', () => {
           tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: ['c0ffee1'], departure: null } })),
         };
       });
-      const repos = await transport.sdlcTouchedRepos('f', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE);
-      await transport.sdlcPublish('f', 'w1', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE, only === undefined ? repos : repos.slice(0, only));
+      await transport.sdlcDeclareDone({ workspace: 'f', system: 'commerce', change: MOCK_BUILD_CHANGE });
+      if (only !== undefined) {
+        // Only the first pull requests are known: the plugin stopped part way.
+        const real = transport.sdlcPullRequestsView.bind(transport);
+        vi.spyOn(transport, 'sdlcPullRequestsView').mockImplementation(async (...args) => {
+          const view = await real(...args);
+          return { ...view, done: false, links: view.links.slice(0, only) };
+        });
+      }
       return transport;
     };
 
@@ -242,8 +242,7 @@ describe('ChangePage layout', () => {
       const { container, fixture } = await mount(MOCK_BUILD_CHANGE, await finished());
       expect(container.querySelectorAll('header [role="tab"]').length).toBe(4);
       expect(container.querySelector('[data-testid="pr-menu"]')).not.toBeNull();
-      const vm = fixture.debugElement.injector.get(ChangePageViewModel);
-      await vm.submitBuild({ timeoutSecs: 5400, rounds: null });
+      await fixture.debugElement.injector.get(BuildPageViewModel).startBuild({ timeoutSecs: 5400 });
       await settle();
       expect(container.querySelector('app-build-page')).not.toBeNull();
       expect(container.querySelector('app-build-view')).toBeNull();

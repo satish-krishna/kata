@@ -1,7 +1,8 @@
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
-import type { Stage } from '@bindings/Stage';
+import type { Stage } from './sdlc-mock-types';
 import { parseFrontMatter, stagePills, stageRuns, type StagePill } from './sdlc';
+import { mockLabel } from './sdlc-mock';
 
 describe('parseFrontMatter', () => {
   // The three real Part 2 documents' front matter, copied.
@@ -204,30 +205,30 @@ describe('stagePills', () => {
   ];
 
   it.each(ROWS)('%s (done: %s) gives the four pills the table lists', (stage, done, expected) => {
-    expect(stagePills(stage, done, ALL_DOCS)).toEqual(expected);
+    expect(stagePills(mockLabel(stage), done, ALL_DOCS)).toEqual(expected);
   });
 
   it('marks exactly one pill current in every row', () => {
     for (const [stage, done] of ROWS) {
-      expect(stagePills(stage, done, ALL_DOCS).filter((p) => p.current)).toHaveLength(1);
+      expect(stagePills(mockLabel(stage), done, ALL_DOCS).filter((p) => p.current)).toHaveLength(1);
     }
   });
 
   it('disables a document pill whose document does not exist, whatever its position', () => {
     // spec-awaiting: intent before, spec at, plan after. Only the intent document exists.
-    const got = stagePills('spec-awaiting', false, { intent: true, spec: false, plan: false });
+    const got = stagePills(mockLabel('spec-awaiting'), false, { intent: true, spec: false, plan: false });
     expect(got.map((p) => [p.step, p.disabled])).toEqual([['intent', false], ['spec', true], ['plan', true], ['build', true]]);
     // plan-awaiting: the earlier documents are missing but the plan pill itself is there.
-    const earlier = stagePills('plan-awaiting', false, { intent: false, spec: false, plan: true });
+    const earlier = stagePills(mockLabel('plan-awaiting'), false, { intent: false, spec: false, plan: true });
     expect(earlier.map((p) => [p.step, p.disabled])).toEqual([['intent', true], ['spec', true], ['plan', false], ['build', true]]);
   });
 
   it('enables the build pill of an accepted plan, whether or not any repository has the change’s branch', () => {
-    expect(stagePills('build-ready', false, ALL_DOCS)[3]).toEqual(pill('build', 'Build', 'Build · ready to start', 'idle', false, true, null));
-    expect(stagePills('build-finished', true, ALL_DOCS)[3]).toEqual(pill('build', 'Build', 'Build · done', 'success', false, true, null));
+    expect(stagePills(mockLabel('build-ready'), false, ALL_DOCS)[3]).toEqual(pill('build', 'Build', 'Build · ready to start', 'idle', false, true, null));
+    expect(stagePills(mockLabel('build-finished'), true, ALL_DOCS)[3]).toEqual(pill('build', 'Build', 'Build · done', 'success', false, true, null));
   });
 
   it('keeps the build pill locked and disabled before the plan is accepted', () => {
-    expect(stagePills('plan-accepted-uncommitted', false, ALL_DOCS)[3]).toEqual(LOCKED);
+    expect(stagePills(mockLabel('plan-accepted-uncommitted'), false, ALL_DOCS)[3]).toEqual(LOCKED);
   });
 });

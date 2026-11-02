@@ -12,6 +12,10 @@
   grid-row: 1;
 }
 
+.k-bp__held {
+  grid-row: 3;
+}
+
 .k-bp__bar {
   grid-row: 2;
   display: flex;
@@ -291,6 +295,14 @@
 
 .k-bp__task-name {
   color: var(--text-secondary);
+}
+
+.k-bp__commits {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  color: var(--text-muted);
 }
 
 .k-bp__departure {

@@ -1,12 +1,14 @@
-import { Injectable, Injector, computed, inject, signal } from '@angular/core';
+import { Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
 import type { Mode } from '@bindings/Mode';
 import type { RunSetting } from '@bindings/RunSetting';
 import type { RunSettings } from '@bindings/RunSettings';
+import type { RoundOffer } from '@bindings/RoundOffer';
+import type { RoundPicks } from '@bindings/RoundPicks';
+import type { RoundPlan } from '@bindings/RoundPlan';
 import type { RunSpec } from '@bindings/RunSpec';
 import { groupRows, isSwitchable, itemSourceLabel, presetRows, settingSourceLabel, toGiven, toggle, type PresetFrom, type PresetRow } from '../../lib/given';
 import { buildPreviewFor, safetyRules, type BuildPreviewKind, type BuildPreviewPlan } from '../../lib/sdlc';
-import type { RoundOffer } from '../../lib/build-round';
-import { buildRequest, createBuildForm, limitSecs, type BuildFormState, type BuildStartRequest } from '../../ui/build-dialog';
+import { buildRequest, createBuildForm, limitSecs, picksOf, type BuildFormState, type BuildStartRequest } from '../../ui/build-dialog';
 import type { PreviewEnvRow, PreviewSection, PreviewSettingRow } from '../../ui/run-preview-dialog';
 import { KataTransport } from '../transport/kata-transport';
 import { GivenStore } from './given.store';
@@ -31,10 +33,14 @@ export type BuildPreviewRequest = {
   limitSecs: number;
   /** What a round may fix; set for a round only. */
   offer?: RoundOffer | null;
+  /** The findings picked when a round's dialog opens, as the backend chose them. */
+  picks?: RoundPicks;
+  /** Asks the backend what a round would start for these picks; a round's dialog shows the answer and starts nothing else. */
+  plan?: (picks: RoundPicks) => Promise<RoundPlan>;
 };
 
-/** What the engineer confirmed: the keys switched off for the build, and the time limit or round the fields asked for. */
-export type BuildPreviewResult = { off: ReadonlySet<string>; request: BuildStartRequest | null };
+/** What the engineer confirmed: the keys switched off for the build, the time limit the fields asked for, and for a round the picks with the plan the dialog showed for them. */
+export type BuildPreviewResult = { off: ReadonlySet<string>; request: BuildStartRequest | null; picks: RoundPicks | null; plan: RoundPlan | null };
 
 /** Seconds as `45 s`, `30 min`, `1 h 30 min`. */
 export function duration(secs: number): string {
@@ -115,6 +121,8 @@ export class RunPreviewViewModel {
   private pending: Pending | null = null;
   private buildPending: BuildPending | null = null;
   private token = 0;
+  /** Which question of the backend is the latest, so a late answer for earlier picks is dropped. */
+  private planSeq = 0;
 
   readonly isOpen = signal(false);
   readonly busy = signal(false);
@@ -124,6 +132,8 @@ export class RunPreviewViewModel {
   /** True when the resolver left the setup out: the run is in the empty room. */
   readonly emptyRoom = signal(false);
 
+  /** What the backend says the round would start for the picks now made; null until it has answered, and outside a round. */
+  readonly plannedRound = signal<RoundPlan | null>(null);
   /** A build's time-limit and round fields; null when the preview asks for neither. */
   readonly buildForm = signal<BuildFormState | null>(null);
   /** The build's safety rules, read-only; null for a run that has none. */
@@ -160,12 +170,11 @@ export class RunPreviewViewModel {
       });
   });
 
-  /** What a round starts, one request per repository, as the start sends them; null outside a round. */
+  /** What a round starts, one request per repository, as the backend's plan says; null outside a round. */
   private readonly roundRequests = computed(() => {
     const req = this.buildReq();
     if (!req || !buildPreviewFor(req.kind).asksRound) return null;
-    const form = this.buildForm();
-    return form ? (buildRequest(form, true, req.offer ?? undefined).rounds ?? []) : [];
+    return this.plannedRound()?.requests ?? [];
   });
 
   /** The start button's text: "Start run", and for a round the number of agents it starts. */
@@ -176,8 +185,34 @@ export class RunPreviewViewModel {
     return rounds.length === 1 ? 'Start 1 agent' : `Start ${rounds.length} agents`;
   });
 
-  /** Start run is available once the rows are in and the build's fields hold a valid time limit and round. */
-  readonly canStart = computed(() => !this.busy() && (this.buildForm()?.form().valid() ?? true));
+  /** Start run is available once the rows are in, the build's fields hold a valid time limit and, for a round, the backend's plan can start. */
+  readonly canStart = computed(() => {
+    const req = this.buildReq();
+    const round = req !== null && buildPreviewFor(req.kind).asksRound;
+    const plan = this.plannedRound();
+    return !this.busy() && (this.buildForm()?.form().valid() ?? true) && (!round || (plan !== null && plan.blocked === null));
+  });
+
+  constructor() {
+    // A round's plan is the backend's: every change of the picks asks it again.
+    effect(() => {
+      const form = this.buildForm();
+      const req = this.buildReq();
+      if (!form || !req?.plan) return;
+      const picks = picksOf(form.model());
+      untracked(() => void this.askPlan(req.plan!, picks));
+    });
+  }
+
+  private async askPlan(ask: (picks: RoundPicks) => Promise<RoundPlan>, picks: RoundPicks): Promise<void> {
+    const seq = ++this.planSeq;
+    try {
+      const plan = await ask(picks);
+      if (seq === this.planSeq) this.plannedRound.set(plan);
+    } catch {
+      if (seq === this.planSeq) this.plannedRound.set({ blocked: 'Could not ask what this round would start.', requests: [] });
+    }
+  }
 
   /**
    * Open the preview; resolves with the run-spec to run (its `given` set from the switches) or null when cancelled.
@@ -228,7 +263,7 @@ export class RunPreviewViewModel {
       this.buildPending = { resolve, reject };
     });
     this.buildReq.set(req);
-    this.buildForm.set(plan.asksTimeLimit ? createBuildForm(this.injector, plan.asksRound, req.offer ?? undefined) : null);
+    this.buildForm.set(plan.asksTimeLimit ? createBuildForm(this.injector, req.offer ?? undefined, req.picks) : null);
     this.safetyRules.set(safetyRules(req.kind === 'manual-review' ? 'review' : 'repo'));
     this.title.set(req.title);
     this.isOpen.set(true);
@@ -294,10 +329,13 @@ export class RunPreviewViewModel {
     // A choice for an item this preview does not list (another repository's, on a one-repository preview) stays as it was.
     for (const key of req.from.build ?? []) if (!listed.has(key)) off.add(key);
     const form = this.buildForm();
-    const request = form ? buildRequest(form, buildPreviewFor(req.kind).asksRound, this.buildReq()?.offer ?? undefined) : null;
+    const request = form ? buildRequest(form) : null;
+    const round = buildPreviewFor(req.kind).asksRound;
+    const picks = round && form ? picksOf(form.model()) : null;
+    const plan = round ? this.plannedRound() : null;
     this.buildPending = null;
     this.reset();
-    pending.resolve({ off, request });
+    pending.resolve({ off, request, picks, plan });
   }
 
   private close(result: RunSpec | null): void {
@@ -320,6 +358,8 @@ export class RunPreviewViewModel {
     this.baseSettings.set([]);
     this.buildReq.set(null);
     this.buildForm.set(null);
+    this.plannedRound.set(null);
+    this.planSeq++;
     this.safetyRules.set(null);
     this.env.set([]);
     this.warnings.set([]);

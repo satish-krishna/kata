@@ -1,6 +1,5 @@
-//! How the Workbench and kata start a child process: hidden on Windows, and never `git` or `gh`
-//! for Kata's own work. The one exception is a program the engineer chose (see
-//! [`Limited::engineers_program`]).
+//! How the Workbench and kata start a child process: hidden on Windows, and never `git` or `gh`:
+//! the ai-sdlc plugin starts those itself.
 
 use std::collections::VecDeque;
 use std::ffi::OsStr;
@@ -25,8 +24,8 @@ pub struct SpawnRefused {
 
 /// A `Command` for `program` that opens no console window on Windows.
 ///
-/// Refuses `git` and `gh` on every build, tests included: Kata does that work itself. The refusal
-/// applies to Kata's own work; only [`run_limited`] with `engineers_program` set starts them.
+/// Refuses `git` and `gh` on every build, tests included: Kata does that work in process, and the
+/// ai-sdlc plugin starts them itself.
 pub fn hidden_command(program: impl AsRef<OsStr>) -> Result<Command, SpawnRefused> {
     let program = program.as_ref();
     if is_refused(Path::new(program)) {
@@ -37,8 +36,46 @@ pub fn hidden_command(program: impl AsRef<OsStr>) -> Result<Command, SpawnRefuse
     Ok(new_hidden(program))
 }
 
-/// The one place a child process is created: no console window on Windows, no refusal.
+/// The programs started while a [`SpawnLog`] is open; `None` when none is.
+static SPAWNS: Mutex<Option<Vec<String>>> = Mutex::new(None);
+
+/// A test hook: while it is held, every child process made through this module records its program,
+/// as the file name without its extension in lowercase (`C:\nodejs\node.exe` records `node`). Nothing is
+/// recorded while no log is open. One log at a time: opening one starts an empty record.
+pub struct SpawnLog(());
+
+impl SpawnLog {
+    pub fn open() -> SpawnLog {
+        *SPAWNS.lock().unwrap_or_else(|e| e.into_inner()) = Some(Vec::new());
+        SpawnLog(())
+    }
+
+    /// The programs started since the log opened, in the order they started.
+    pub fn programs(&self) -> Vec<String> {
+        SPAWNS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .unwrap_or_default()
+    }
+}
+
+impl Drop for SpawnLog {
+    fn drop(&mut self) {
+        *SPAWNS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
+/// The one place a child process is created: no console window on Windows. [`hidden_command`] refuses first.
 fn new_hidden(program: &OsStr) -> Command {
+    if let Some(log) = SPAWNS.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        let name = Path::new(program)
+            .file_stem()
+            .unwrap_or(program)
+            .to_string_lossy()
+            .to_lowercase();
+        log.push(name);
+    }
     #[allow(unused_mut)] // `creation_flags` needs it on Windows
     #[allow(clippy::disallowed_methods)] // the one place a child process is started
     let mut command = Command::new(program);
@@ -72,8 +109,6 @@ pub struct Limited<'a> {
     pub limit: Duration,
     /// Keep all of stdout apart (in `Outcome::Exited::stdout`) and let the tail hold stderr only.
     pub keep_stdout: bool,
-    /// The engineer chose this program; `git` and `gh` are not refused.
-    pub engineers_program: bool,
 }
 
 /// How a [`Limited`] command ended.
@@ -93,18 +128,17 @@ pub enum Outcome {
     WaitFailed(std::io::Error),
 }
 
-/// Runs `spec`: starts the program through [`hidden_command`] (or, when the engineer chose the
-/// program, without the `git` and `gh` refusal but just as hidden), waits up to the limit, and on a
+/// Runs `spec`: starts the program through [`hidden_command`], waits up to the limit, and on a
 /// timeout kills the whole process tree (a Windows job object, a process group elsewhere).
 /// Output is kept as a tail of the last 50 lines (64 KiB), with ANSI sequences stripped.
 pub fn run_limited(spec: &Limited) -> Outcome {
-    let mut command = if spec.engineers_program {
-        new_hidden(spec.program.as_os_str())
-    } else {
-        match hidden_command(spec.program) {
-            Ok(command) => command,
-            Err(refused) => return Outcome::NotStarted(refused.into()),
-        }
+    run_inner(spec, None)
+}
+
+fn run_inner(spec: &Limited, on_line: Option<LineSink>) -> Outcome {
+    let mut command = match hidden_command(spec.program) {
+        Ok(command) => command,
+        Err(refused) => return Outcome::NotStarted(refused.into()),
     };
     command
         .args(&spec.args)
@@ -135,8 +169,8 @@ pub fn run_limited(spec: &Limited) -> Outcome {
     let kept = Arc::new(Mutex::new(Vec::new()));
     let mut readers = Vec::new();
     if let Some(stdout) = tree.stdout().take() {
-        readers.push(if spec.keep_stdout {
-            spawn_collector(stdout, Arc::clone(&kept))
+        readers.push(if spec.keep_stdout || on_line.is_some() {
+            spawn_collector(stdout, Arc::clone(&kept), on_line)
         } else {
             spawn_reader(stdout, Arc::clone(&tail))
         });
@@ -171,6 +205,15 @@ pub fn run_limited(spec: &Limited) -> Outcome {
         },
         None => Outcome::TimedOut { tail },
     }
+}
+
+/// Where [`run_limited_streaming`] sends each whole stdout line as it is read.
+pub type LineSink = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// [`run_limited`] that also hands each whole stdout line to `on_line` while the child runs, for a command
+/// that reports its progress as it goes. All of stdout is kept apart in `Outcome::Exited::stdout` too.
+pub fn run_limited_streaming(spec: &Limited, on_line: LineSink) -> Outcome {
+    run_inner(spec, Some(on_line))
 }
 
 const MAX_LINES: usize = 50;
@@ -319,10 +362,12 @@ fn drain(readers: Vec<Receiver<()>>) {
 fn spawn_collector(
     mut source: impl Read + Send + 'static,
     sink: Arc<Mutex<Vec<u8>>>,
+    on_line: Option<LineSink>,
 ) -> Receiver<()> {
     let (finished, done) = mpsc::channel();
     thread::spawn(move || {
         let mut chunk = [0u8; 8192];
+        let mut line: Vec<u8> = Vec::new();
         while let Ok(n) = source.read(&mut chunk) {
             if n == 0 {
                 break;
@@ -330,6 +375,22 @@ fn spawn_collector(
             sink.lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .extend_from_slice(&chunk[..n]);
+            if let Some(on_line) = &on_line {
+                for &byte in &chunk[..n] {
+                    if byte == b'\n' {
+                        let raw = line.strip_suffix(b"\r").unwrap_or(&line);
+                        on_line(&String::from_utf8_lossy(raw));
+                        line.clear();
+                    } else {
+                        line.push(byte);
+                    }
+                }
+            }
+        }
+        if let Some(on_line) = &on_line {
+            if !line.is_empty() {
+                on_line(&String::from_utf8_lossy(&line));
+            }
         }
         let _ = finished.send(());
     });
@@ -453,6 +514,21 @@ fn is_refused(program: &Path) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_spawn_log_records_each_program_by_name_while_it_is_open() {
+        let log = SpawnLog::open();
+        let _ = hidden_command("/opt/tools/Node.EXE");
+        let _ = hidden_command("/usr/bin/claude");
+        let seen = log.programs();
+        // Other tests of this binary may make commands while the log is open, so only membership is certain.
+        assert!(
+            seen.contains(&"node".to_string()) && seen.contains(&"claude".to_string()),
+            "{seen:?}"
+        );
+        drop(log);
+        assert!(SpawnLog::open().programs().is_empty());
+    }
+
     /// A program name that is `AsRef<OsStr>` but not `AsRef<Path>`.
     struct Name(&'static str);
 
@@ -575,7 +651,6 @@ mod tests {
                 stdin: None,
                 limit: Duration::from_secs(limit_secs),
                 keep_stdout: false,
-                engineers_program: false,
             }
         }
 
@@ -690,21 +765,6 @@ mod tests {
             assert!(matches!(
                 run_limited(&refused),
                 Outcome::NotStarted(StartError::Refused(_))
-            ));
-        }
-
-        #[test]
-        fn run_limited_refuses_git_unless_the_engineer_chose_it() {
-            let dir = tempfile::tempdir().unwrap();
-            let mut run = spec("git", vec![OsString::from("--version")], dir.path(), 10);
-            assert!(matches!(
-                run_limited(&run),
-                Outcome::NotStarted(StartError::Refused(_))
-            ));
-            run.engineers_program = true;
-            assert!(matches!(
-                run_limited(&run),
-                Outcome::Exited { code: Some(0), .. }
             ));
         }
     }

@@ -1,5 +1,5 @@
 import type { BuildStatus } from '@bindings/BuildStatus';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeInfo } from '../../lib/sdlc-mock-types';
 import type { ParsedRequirement } from '@bindings/ParsedRequirement';
 import type { ParsedTask } from '@bindings/ParsedTask';
 import type { ReadResult } from '@bindings/ReadResult';
@@ -496,8 +496,7 @@ describe('ChangePage opens an existing change on the build page', () => {
   /** A change as an earlier version of Kata left it: build log rows for `built` tasks, a run recorded on this machine, a review document. */
   async function existing(stage: ChangeInfo['stage'], built: string[], review: boolean) {
     const transport = new MockTransport();
-    const real = transport.sdlcReadChange.bind(transport);
-    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) => [await real(m, s, n)].map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage } : c))[0]);
+    transport.patchChange(MOCK_BUILD_CHANGE, { stage });
     const status = transport.sdlcBuildStatus.bind(transport);
     vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => {
       const got = await status(m, s, c);
@@ -524,14 +523,14 @@ describe('ChangePage opens an existing change on the build page', () => {
   it('an existing change accepted but not built opens on the build page at its stage', async () => {
     const { container } = await existing('build-ready', [], false);
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
-    expect(actions(container)).toEqual(['Start build', 'Reopen spec', 'Reopen intent']);
+    expect(actions(container)).toEqual(['Start build', 'Reopen spec', 'Reopen intent', 'Rename branch']);
     expect(taskLine(container, 'T1')).toContain('Not started');
   });
 
   it('an existing change stopped partway opens on the build page with its log and earlier run', async () => {
     const { container } = await existing('build-stopped', ['T1'], false);
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
-    expect(actions(container)).toEqual(['Continue build', 'Another round', 'Reopen spec', 'Reopen intent']);
+    expect(actions(container)).toEqual(['Continue build', 'Another round', 'Reopen spec', 'Reopen intent', 'Rename branch']);
     container.querySelector<HTMLButtonElement>('app-build-page [data-fold]')!.click();
     await settle();
     expect(taskLine(container, 'T1')).toContain('Done');
@@ -543,7 +542,7 @@ describe('ChangePage opens an existing change on the build page', () => {
   it('an existing finished change opens on the build page with its log, earlier run and review', async () => {
     const { container } = await existing('build-finished', ['T1', 'T2', 'T3'], true);
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
-    expect(actions(container)).toEqual(['Declare done', 'Another round', 'Run review', 'Reopen spec', 'Reopen intent']);
+    expect(actions(container)).toEqual(['Declare done', 'Another round', 'Run review', 'Reopen spec', 'Reopen intent', 'Rename branch']);
     for (const f of Array.from(container.querySelectorAll<HTMLButtonElement>('app-build-page [data-fold]'))) f.click();
     await settle();
     expect(container.querySelectorAll('app-build-page [data-task]').length).toBeGreaterThan(0);

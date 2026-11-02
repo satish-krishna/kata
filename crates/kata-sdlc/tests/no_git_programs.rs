@@ -1,28 +1,25 @@
-//! R9.1 and R9.3: the Workbench's own work starts no git or GitHub program. The fixtures are built with
-//! the git CLI by absolute path; then `PATH` holds a copy of `node` and nothing else, so a flow that still
-//! starts `git` or `gh` by name fails. Test code may use the git CLI, so the lint is off for this file.
+//! R9.1, R9.2 and R9.3: Kata's own work starts no git or GitHub program. The fixtures are built with the git
+//! CLI by absolute path; then `PATH` holds a copy of `node` (and, for a Workbench-mode run, the kata
+//! binaries) and nothing else, so a flow that still starts `git` or `gh` by name fails, and
+//! `kata_core::proc::SpawnLog` records every program Kata starts, so a flow that starts one by full path is
+//! caught too. The plugin's own flows start `node`, which may start git itself (D1). Test code may use the
+//! git CLI, so the lint is off for this file.
 #![allow(clippy::disallowed_methods)]
 
-use kata_sdlc::build::BuildAction;
-use kata_sdlc::decide::{self, DecideOutcome, Decision};
+use kata_core::proc::SpawnLog;
+use kata_sdlc::ai_sdlc::{state, Program};
 use kata_sdlc::diff::{self, Part};
-use kata_sdlc::github::{ApiError, Credential, GitHub, GitHubHosts, Pull, PullState};
-use kata_sdlc::plugin::Readiness;
-use kata_sdlc::publish::{self, PrOutcome, Recorder};
 use kata_sdlc::snapshot::{self, BuildScope};
-use kata_sdlc::start::{self, PrepareOutcome};
-use kata_sdlc::{base, build, changes, prs, review};
+use kata_sdlc::{branch, build, changes, review};
 use serial_test::serial;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex};
 
 const SYS: &str = "s";
 const CHG: &str = "2026-10-19-c";
 const DRAFT: &str = "2026-10-20-d";
-const WS: &str = "w1";
 
 const SPEC: &str = "layout: 2\nsystem: s\nstatus: accepted\nsource_intent_commit: INTENT\n---\n\n# Spec\n\n```gherkin\nFeature: Demo\n  @R1 @from:outcome-1 @from:D2\n  Rule: The engineer sees what changed\n    @R1.1\n    Scenario: What changed after a build\n      Given a build\n      When it ends\n      Then the engineer sees the diff\n```\n";
 
@@ -187,15 +184,15 @@ fn fixture_on(branch: &str, record: bool) -> Fx {
     };
     fs::create_dir_all(&fx.folder).unwrap();
     copy_dir(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format"),
-        &fx.plugin.join("format"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools"),
+        &fx.plugin.join("tools"),
     );
     fs::create_dir_all(fx.plugin.join(".claude-plugin")).unwrap();
     fs::write(
         fx.plugin.join(".claude-plugin/plugin.json"),
         format!(
             r#"{{"name":"ai-sdlc","version":"{}"}}"#,
-            kata_sdlc::plugin::LIGHT_TRACK_VERSION
+            kata_sdlc::plugin::MIN_VERSION
         ),
     )
     .unwrap();
@@ -302,148 +299,78 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
-/// A GitHub that answers like an account named octo and numbers the pull requests it opens.
-#[derive(Clone, Default)]
-struct Hub(Arc<Mutex<(u64, Vec<String>)>>);
-
-impl GitHub for Hub {
-    fn user(&self) -> Result<String, ApiError> {
-        Ok("octo".into())
-    }
-    fn repo(&self, _owner: &str, _name: &str) -> Result<(), ApiError> {
-        Ok(())
-    }
-    fn open_pull_for_branch(
-        &self,
-        _owner: &str,
-        _name: &str,
-        _branch: &str,
-    ) -> Result<Option<Pull>, ApiError> {
-        Ok(None)
-    }
-    fn create_pull(
-        &self,
-        owner: &str,
-        name: &str,
-        _base: &str,
-        _head: &str,
-        _title: &str,
-        _body: &str,
-    ) -> Result<Pull, ApiError> {
-        let mut s = self.0.lock().unwrap();
-        s.0 += 1;
-        let url = format!("https://github.com/{owner}/{name}/pull/{}", s.0);
-        s.1.push(url.clone());
-        Ok(Pull { number: s.0, url })
-    }
-    fn edit_pull_body(&self, _: &str, _: &str, _: u64, _: &str) -> Result<(), ApiError> {
-        Ok(())
-    }
-    fn pull_state(&self, _: &str, _: &str, _: u64) -> Result<PullState, ApiError> {
-        Ok(PullState {
-            state: "closed".into(),
-            merged: true,
-        })
-    }
-    fn branch_tip(&self, _: &str, _: &str, _: &str) -> Result<Option<String>, ApiError> {
-        Ok(None)
-    }
-}
-
-struct Hosts(Hub);
-
-impl GitHubHosts for Hosts {
-    fn github(&self, _host: &str) -> Option<Box<dyn GitHub>> {
-        Some(Box::new(self.0.clone()))
-    }
-    fn credential(&self, _host: &str) -> Option<Credential> {
-        None
-    }
+/// The programs Kata started while the log was open, each once, sorted.
+fn started(log: &SpawnLog) -> Vec<String> {
+    let mut programs = log.programs();
+    programs.sort();
+    programs.dedup();
+    programs
 }
 
 #[test]
 #[serial]
-fn every_flow_runs_with_no_git_or_gh_on_path() {
-    every_flow(&format!("change/{CHG}"), false);
+fn kata_starts_no_git_or_gh_itself() {
+    kata_flows(&format!("change/{CHG}"), false);
 }
 
 #[test]
 #[serial]
-fn every_flow_runs_with_no_git_or_gh_on_path_with_a_branch_record() {
-    every_flow("feat/PROJ-123-password-reset", true);
+fn kata_starts_no_git_or_gh_itself_with_a_recorded_branch() {
+    kata_flows("feat/PROJ-123-password-reset", true);
 }
 
-fn every_flow(branch: &str, record: bool) {
-    let fx = fixture_on(branch, record);
+/// Every flow the AI-SDLC mode still runs itself, with `PATH` holding only `node`: each one works, and the
+/// only program any of them starts is `node` (the plugin's format program). Then the plugin's own `state`,
+/// which starts git itself (D1), with git's folder added: Kata still starts only `node`.
+fn kata_flows(branch_name: &str, record: bool) {
+    let fx = fixture_on(branch_name, record);
     let _home = KataHome::new(&fx.home);
     let master = fx.repo("m");
     let app = fx.repo("app");
-    let _path = PathOnly::new(&fx.only_node);
+    let path = PathOnly::new(&fx.only_node);
+    let log = SpawnLog::open();
 
-    // The home page and the change page: list the changes and read stages; read one change.
-    let list = stages(&fx.plugin, &master);
-    let names: Vec<&str> = list.iter().map(|c| c.change.as_str()).collect();
-    assert_eq!(names, [DRAFT, CHG]);
-    assert!(
-        !list[1].plan_unreadable,
-        "{:?}",
-        list[1].plan_unreadable_reason
-    );
-    assert_eq!(list[1].build.tasks, 3);
-    let branches = changes::branch_info(&master);
-    assert_eq!(branches.current.as_deref(), Some(branch));
+    // The home page and the change page: the branches and the documents.
+    let branches = branch::branch_info(&master);
+    assert_eq!(branches.current.as_deref(), Some(branch_name));
     assert!(changes::read_doc(&master, SYS, CHG, "intent")
         .unwrap()
         .contains("Build the thing"));
     let parsed = changes::read_parsed(&fx.plugin, &master, SYS, CHG, "plan").unwrap();
     assert!(parsed.is_some());
+
+    // The build page: the rows, the review, the heads of the change branches.
     let status = build::status(&fx.plugin, &master, SYS, CHG).unwrap();
     assert!(
         status.tasks.iter().any(|t| t.id == "T1" && t.row.is_some()),
         "{status:?}"
     );
-    assert!(build::unsaved_rows(&fx.plugin, &master, SYS, CHG)
-        .unwrap()
-        .is_empty());
     let record = review::record(&fx.plugin, &master, SYS, CHG)
         .unwrap()
         .expect("the review document is there");
     assert_eq!(record.reviews.len(), 1);
-
-    // Accept a document.
-    assert_eq!(
-        decide::apply(&master, SYS, DRAFT, Decision::AcceptIntent, false).unwrap(),
-        DecideOutcome::Committed
-    );
-
-    // Prepare and settle a build: the repository with no commits on its change branch gives it back.
-    let begun = start::prepare(
-        &fx.plugin,
+    let heads = branch::heads(
         &fx.folder,
         "m",
         SYS,
+        &["app".to_string(), "api".to_string()],
         CHG,
-        BuildAction::Continue,
-        false,
-        &[],
     )
     .unwrap();
-    let PrepareOutcome::Ready { start: begun } = begun else {
-        panic!("expected Ready, got {begun:?}");
-    };
-    assert!(fx.repo("api").join("README.md").exists());
-    let gone = start::settle(&begun).unwrap();
-    assert_eq!(gone, ["api"]);
-    start::heads(&fx.folder, "m", SYS, &["app".to_string()], CHG).unwrap();
+    assert_eq!(heads.keys().collect::<Vec<_>>(), ["app"]);
 
-    // What changed.
+    // What changed: the repositories, their files, the commits and the base.
+    let repos = diff::change_repos(&fx.folder, "m", SYS, CHG).unwrap();
+    let listed: Vec<&str> = repos.iter().map(|r| r.repo.as_str()).collect();
+    assert_eq!(listed, ["m", "app"]);
+    let missing = branch::missing_change_branches(&fx.plugin, &fx.folder, "m", SYS, CHG).unwrap();
+    assert_eq!(missing, ["api"]);
     let files = diff::changed_files(&app, Part::Whole).unwrap();
     assert!(files.iter().any(|f| f.path == "x.txt"), "{files:?}");
     let pair = diff::file_pair(&app, Part::Whole, "x.txt").unwrap();
     assert_eq!(pair.modified.trim(), "x");
-    let commits = diff::commit_files(&app).unwrap();
-    assert_eq!(commits.len(), 1);
-    assert_eq!(base::base_info(&app).unwrap().base, "main");
+    assert_eq!(diff::commit_files(&app).unwrap().len(), 1);
+    assert_eq!(diff::base_info(&app).unwrap().base, "main");
 
     // Stray document edits are put back.
     let before = snapshot::take(&master).unwrap();
@@ -471,44 +398,12 @@ fn every_flow(branch: &str, record: bool) {
         committed.replace("\r\n", "\n")
     );
 
-    // Declare done: touched repositories, commit rules, sign-in, origins, pull requests.
-    let touched = publish::touched_repos(&fx.folder, "m", SYS, CHG).unwrap();
-    let repos: Vec<&str> = touched.iter().map(|r| r.repo.as_str()).collect();
-    assert_eq!(repos, ["app", "m"]);
-    let offenders = publish::change_offenders(&fx.folder, "m", SYS, CHG).unwrap();
-    assert!(offenders.is_empty(), "{offenders:?}");
-    let hub = Hub::default();
-    let hosts = Hosts(hub.clone());
-    assert!(publish::signed_in(&hosts, &touched)
-        .unwrap()
-        .contains("octo"));
-    publish::origins(&hosts, &touched).unwrap();
-    let results = publish::publish(
-        &hosts,
-        &Readiness::Missing,
-        "m",
-        SYS,
-        CHG,
-        &touched,
-        &mut Recorder::stored(WS, SYS, CHG),
-        &mut |_| {},
-    )
-    .results;
-    for r in &results {
-        assert!(matches!(r.outcome, PrOutcome::Opened { .. }), "{results:?}");
-    }
-    for name in ["app", "m"] {
-        let bare = fx.folder.join(format!("{name}-origin.git"));
-        // The push landed in the bare origin (checked with the git CLI by absolute path).
-        fx.git(
-            &bare,
-            &["rev-parse", "--verify", &format!("refs/heads/{branch}")],
-        );
-    }
-
-    // Reopen the done change: the pull request states are looked up.
-    let view = prs::refresh_states(&hosts, &fx.folder, "m", WS, SYS, CHG, true).unwrap();
-    assert_eq!(view.links.len(), 2, "{view:?}");
+    // The home page's switch to another change's branch.
+    branch::checkout(&master, "main").unwrap();
+    assert_eq!(
+        branch::branch_info(&master).current.as_deref(),
+        Some("main")
+    );
 
     // Run mode: an isolated copy for a run-spec and the summary of what a run changed.
     let root = fx.folder.join("worktrees");
@@ -516,6 +411,18 @@ fn every_flow(branch: &str, record: bool) {
     fs::write(Path::new(&wt.path).join("new.txt"), "n\n").unwrap();
     let summary = kata_core::changeset::diff_at(Path::new(&wt.path)).unwrap();
     assert_eq!(summary.files.len(), 1);
+    assert_eq!(started(&log), ["node"]);
+
+    // The plugin's state, which the home page and the change page read: node, which starts git itself.
+    drop(path);
+    let git_dir = fx.git.parent().unwrap().to_path_buf();
+    let joined = std::env::join_paths([&fx.only_node, &git_dir]).unwrap();
+    let _path = PathOnly::new(Path::new(&joined));
+    let program = Program::locate(&fx.plugin);
+    let system = state::state(&program, &fx.folder, SYS, None).unwrap();
+    let names: Vec<&str> = system.changes.iter().map(|c| c.change.as_str()).collect();
+    assert!(names.contains(&CHG) && names.contains(&DRAFT), "{names:?}");
+    assert_eq!(started(&log), ["node"]);
 }
 
 #[test]
@@ -525,52 +432,94 @@ fn home_and_change_page_read_without_git() {
     let master = fx.repo("m");
     let read = |fx: &Fx| {
         (
-            stages(&fx.plugin, &master),
-            serde_json::to_value(changes::branch_info(&master)).unwrap(),
+            serde_json::to_value(
+                changes::read_parsed(&fx.plugin, &master, SYS, CHG, "spec").unwrap(),
+            )
+            .unwrap(),
+            serde_json::to_value(branch::branch_info(&master)).unwrap(),
             changes::read_doc(&master, SYS, CHG, "spec"),
         )
     };
     let with_git = read(&fx);
-    assert_eq!(with_git.0.len(), 2);
+    assert!(!with_git.0.is_null());
     let without_git = {
         let _path = PathOnly::new(&fx.only_node);
         read(&fx)
     };
-    assert_eq!(with_git.0, without_git.0);
-    assert_eq!(with_git.1, without_git.1);
-    assert_eq!(with_git.2, without_git.2);
+    assert_eq!(with_git, without_git);
 }
 
-/// The home page's two passes and the change page's read: the names, then every stage, then each change on
-/// its own. The stages come back in the order of the names, and each one equals the change read alone.
-fn stages(plugin: &Path, master: &Path) -> Vec<changes::ChangeInfo> {
-    let order: Vec<String> = changes::names(master, SYS)
-        .into_iter()
-        .map(|n| n.change)
-        .collect();
-    let ctx = changes::ReadContext::new(Some(plugin), master);
-    let mut events = Vec::new();
-    changes::read_stages(&ctx, SYS, &order, 1, &|| false, &mut |e| events.push(e));
-    assert!(matches!(
-        events.last(),
-        Some(changes::StageEvent::Done { pass: 1 })
-    ));
-    let mut infos: Vec<changes::ChangeInfo> = events
-        .into_iter()
-        .filter_map(|e| match e {
-            changes::StageEvent::Stage { info, .. } => Some(info),
-            changes::StageEvent::Failed { change, error, .. } => {
-                panic!("{change} failed: {error}")
-            }
-            _ => None,
-        })
-        .collect();
-    infos.sort_by_key(|i| order.iter().position(|c| *c == i.change));
-    for info in &infos {
-        assert_eq!(
-            changes::read_change(&ctx, SYS, &info.change).as_ref(),
-            Ok(info)
-        );
+/// The target folder the test binaries are built into: `kata` and `fake-claude` sit there too.
+fn target_dir() -> PathBuf {
+    let exe = std::env::current_exe().unwrap();
+    exe.parent().unwrap().parent().unwrap().to_path_buf()
+}
+
+/// R9.2: a job composed and run in the Workbench mode, which the Workbench and CI both run through the
+/// kata program, works with neither git nor GitHub's command-line tool installed: `PATH` holds only
+/// `node` and the kata binaries. The job runs worktree-isolated in a git repository, so the isolated copy,
+/// the run's diff and the copy's clean-up all happen.
+#[test]
+#[serial]
+fn the_workbench_mode_runs_without_git_or_gh() {
+    let exe = |name: &str| target_dir().join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    let (kata, fake) = (exe("kata"), exe("fake-claude"));
+    assert!(
+        kata.exists() && fake.exists(),
+        "build the kata binaries first (cargo build): {} {}",
+        kata.display(),
+        fake.display()
+    );
+    let fx = fixture();
+    let bin = fx.folder.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    for (from, name) in [(&kata, "kata"), (&fake, "claude")] {
+        fs::copy(
+            from,
+            bin.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)),
+        )
+        .unwrap();
     }
-    infos
+    let path = std::env::join_paths([&fx.only_node, &bin]).unwrap();
+
+    let work = fx.repo("app");
+    let spec = fx.folder.join("job.toml");
+    fs::write(
+        &spec,
+        format!(
+            "schema = 1\nname = \"job\"\ntask = \"write a file\"\nworkdir = {:?}\n\n[leash]\nisolation = \"worktree\"\n",
+            work.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+    let out = Command::new(bin.join(format!("kata{}", std::env::consts::EXE_SUFFIX)))
+        .arg("run")
+        .arg(&spec)
+        .current_dir(&work)
+        .env("PATH", &path)
+        .env("KATA_HOME", &fx.home)
+        .env("KATA_FAKE_MODE", "writefile")
+        .env_remove("KATA_CLAUDE_BIN")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let events: Vec<serde_json::Value> = stdout
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    let of = |kind: &str| events.iter().find(|e| e["type"] == kind);
+    let started = of("run.started").expect("the run starts");
+    assert_eq!(started["isolation"], "worktree", "{started}");
+    let diff = of("run.diff").expect("the run reports what it changed");
+    assert_eq!(diff["files"][0]["path"], "agent-made.txt", "{diff}");
+    let completed = of("run.completed").expect("the run completes");
+    assert_eq!(completed["exit_code"], 0, "{completed}");
+    // The agent's file landed in the isolated copy, not the repository itself.
+    assert!(!work.join("agent-made.txt").exists());
 }

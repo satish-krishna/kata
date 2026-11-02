@@ -3,6 +3,11 @@
   <div class="k-bp__notice">
     <app-waiting-notice [items]="view().waiting" (goTo)="goToRepo($event)" />
   </div>
+  @if (view().held; as held) {
+    <div class="k-bp__held" data-held-build>
+      <app-held-panel [title]="held.title" [repos]="held.repos" [action]="held.action" (act)="startAgain.emit()" />
+    </div>
+  }
   <div class="k-bp__bar" data-bar>
     <app-segmented [options]="modes()" [value]="layout().mode" (valueChange)="pickMode.emit($event)" ariaLabel="Layout mode" />
     <span class="k-lock__count">{{ view().facts.tasks }}</span>
@@ -11,7 +16,7 @@
     }
     <span class="k-bp__actions">
       @for (a of view().actions; track a) {
-        <button hlmBtn size="sm" type="button" [variant]="primary() === a ? 'primary' : 'secondary'" [disabled]="holdBuild() && a !== 'cancel-build'" [attr.title]="holdBuild() && a !== 'cancel-build' ? 'Name the branch first.' : null" (click)="press(a)">{{ labelOf(a) }}</button>
+        <button hlmBtn size="sm" type="button" [variant]="primary() === a ? 'primary' : 'secondary'" (click)="press(a)">{{ labelOf(a) }}</button>
       }
       @for (e of extras(); track e.action) {
         <button hlmBtn size="sm" type="button" variant="secondary" [disabled]="e.disabled" [attr.title]="e.title" (click)="press(e.action)">{{ labelOf(e.action) }}</button>
@@ -67,6 +72,9 @@
                 }
               }
             </div>
+            @if (g.checks; as c) {
+              <div data-checks><app-check-results [views]="[c]" /></div>
+            }
             @if (g.list.fold; as fold) {
               <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__fold" data-fold [attr.aria-expanded]="fold.open" (click)="toggleFold.emit(g.repo)">
                 <ng-icon [name]="fold.open ? 'lucideChevronDown' : 'lucideChevronRight'" size="14" />
@@ -87,6 +95,13 @@
                     <span class="k-mono">{{ r.line.id }}</span>
                     <span class="k-bp__task-name">{{ r.line.name }}</span>
                     <span [class]="'k-status k-status--' + r.line.status.tone"><span class="k-status__dot"></span><span class="k-bp__status-label">{{ r.line.status.label }}</span></span>
+                    @if (r.line.commits.length > 0) {
+                      <span class="k-mono k-bp__commits" data-commits>
+                        @for (sha of r.line.commits; track sha) {
+                          <span>{{ sha.slice(0, 7) }}</span>
+                        }
+                      </span>
+                    }
                     @if (r.line.departure !== null) {
                       <span class="k-bp__departed k-status k-status--warning" data-departure><span class="k-status__dot" aria-hidden="true"></span>departed</span>
                     }
@@ -231,6 +246,8 @@
                   mode="sdlc"
                   [unseenFrom]="s.unseenFrom"
                   (answer)="answer.emit({ runId: s.id, id: $event.id, answers: $event.answers })"
+                  [draft]="drafts()[s.id] ?? ''"
+                  (draftChange)="draft.emit({ runId: s.id, text: $event })"
                   (say)="say.emit({ runId: s.id, text: $event })"
                   (decide)="decide.emit({ runId: s.id, id: $event.id, allow: $event.allow, message: $event.message })"
                 />
@@ -282,6 +299,11 @@
       <ng-container [ngTemplateOutlet]="head" [ngTemplateOutletContext]="{ $implicit: 'findings' }" />
       <div class="k-bp__body k-bp__body--stack">
         @let area = view().findingsArea;
+        @if (area.waiting; as waiting) {
+          <div data-held-review>
+            <app-held-panel [title]="waiting.title" [repos]="waiting.repos" [action]="waiting.action" (act)="startReviewAgain.emit()" />
+          </div>
+        }
         @if (area.message; as message) {
           <p class="k-state__body">{{ message }}</p>
         } @else if (area.review; as found) {
@@ -320,7 +342,7 @@
               <ol class="k-findings__list">
                 @for (d of departures; track $index) {
                   <li class="k-findings__item">
-                    <span class="k-mono k-left__note">{{ d.repo }} · {{ d.task }}</span>
+                    <span class="k-mono k-left__note">{{ d.repo }}@if (d.task !== null) { · {{ d.task }}}</span>
                     <span class="k-findings__text">{{ d.text }}</span>
                   </li>
                 }

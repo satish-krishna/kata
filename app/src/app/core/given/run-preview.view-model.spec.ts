@@ -163,7 +163,13 @@ describe('RunPreviewViewModel', () => {
         { title: 'acme-api', repo: 'acme-api', spec: { ...spec, workdir: 'D:/Repos/acme-api' }, workdir: 'D:/Repos/acme-api' },
         { title: SECOND_REPO, repo: SECOND_REPO, spec: { ...spec, workdir: `D:/Repos/${SECOND_REPO}` }, workdir: `D:/Repos/${SECOND_REPO}` },
       ];
-      const req: BuildPreviewRequest = { title: 'Start round', kind, sections, from: { session: store.session(), job: null, build: null }, limitSecs: 1800, offer: kind === 'round' ? offer : null };
+      // Stands in for the backend: one request for each repository a picked finding goes to.
+      const plan = async (p: { picked: string[] }) => {
+        const repos = [...new Set(p.picked.map((k) => offer.findings.find((f) => f.key === k)!.repo))];
+        return { blocked: null, requests: repos.map((repo) => ({ repo, instructions: '', summary: repo })) };
+      };
+      const picks = { picked: ['F1', 'F2'], assigned: {}, notes: {} };
+      const req: BuildPreviewRequest = { title: 'Start round', kind, sections, from: { session: store.session(), job: null, build: null }, limitSecs: 1800, offer: kind === 'round' ? offer : null, ...(kind === 'round' ? { picks, plan } : {}) };
       void vm.openBuild(req);
       return vm;
     }
@@ -173,11 +179,11 @@ describe('RunPreviewViewModel', () => {
     it('counts the agents of a round', async () => {
       const vm = preview('round');
       await opened(vm);
-      expect(vm.startLabel()).toBe('Start 2 agents');
+      await vi.waitFor(() => expect(vm.startLabel()).toBe('Start 2 agents'));
       unpick(vm, 'F2');
-      expect(vm.startLabel()).toBe('Start 1 agent');
+      await vi.waitFor(() => expect(vm.startLabel()).toBe('Start 1 agent'));
       unpick(vm, 'F1');
-      expect(vm.startLabel()).toBe('Start agents');
+      await vi.waitFor(() => expect(vm.startLabel()).toBe('Start agents'));
     });
 
     it('stays Start run for a plain build preview', async () => {

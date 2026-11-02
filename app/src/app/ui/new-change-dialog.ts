@@ -10,7 +10,7 @@ import type { WorkType } from '../lib/sdlc-naming';
 import { Field } from './field';
 import { Segmented } from './segmented';
 
-export type NewChange = { system: string; idea: string; track: StartTrack };
+export type NewChange = { system: string; idea: string; track: StartTrack; branch?: string };
 
 /* New change: the description in a sentence or two, the system when the workspace has more than one, and the track.
  * The workflow proposes the title and the folder name itself, so there is no slug field. */
@@ -23,13 +23,17 @@ export type NewChange = { system: string; idea: string; track: StartTrack };
 export class NewChangeDialog {
   readonly open = input.required<boolean>();
   readonly systems = input.required<string[]>();
-  /** Whether the plugin on this machine can triage a change (ai-sdlc 0.13.0 or later). */
+  /** Whether the plugin on this machine can triage a change (ai-sdlc 1.1.0 or later). */
   readonly lightTrack = input(false);
   /** The description the dialog opens with, for describing a change again. */
   readonly initialIdea = input('');
   readonly initialTrack = input<StartTrack>('decide');
   /** Hides the Track field and keeps the track at `initialTrack`, for a caller that has already chosen it. */
   readonly trackFixed = input(false);
+  /** The system the dialog opens on; the first one when null. */
+  readonly initialSystem = input<string | null>(null);
+  /** Why the plugin refused the branch name of the last start; the dialog then asks for another one. */
+  readonly branchProblems = input<string[]>([]);
   /** Shown above the description. */
   readonly note = input<string | null>(null);
 
@@ -60,7 +64,7 @@ export class NewChangeDialog {
   protected readonly trackHint = computed(() =>
     this.lightTrack()
       ? 'The workflow reads the description and picks the light track or the full pipeline.'
-      : 'Needs ai-sdlc 0.13.0 or later.',
+      : 'Needs ai-sdlc 1.1.0 or later.',
   );
 
   /** Reopening starts from the given description, empty when none was given, on the first system. */
@@ -75,9 +79,22 @@ export class NewChangeDialog {
   });
   protected readonly system = linkedSignal<string | null>(() => {
     this.open();
-    return this.systems()[0] ?? null;
+    return this.initialSystem() ?? this.systems()[0] ?? null;
   });
-  protected readonly ready = computed(() => this.system() !== null && this.idea().trim() !== '' && this.namingReady());
+  /** Another branch name, asked for after the plugin refused the one it would have given. */
+  protected readonly branch = linkedSignal(() => {
+    this.open();
+    this.branchProblems();
+    return '';
+  });
+  protected readonly asksBranch = computed(() => this.branchProblems().length > 0);
+  protected readonly ready = computed(
+    () => this.system() !== null && this.idea().trim() !== '' && this.namingReady() && (!this.asksBranch() || this.branch().trim() !== ''),
+  );
+
+  protected onBranch(e: Event): void {
+    this.branch.set((e.target as HTMLInputElement).value);
+  }
 
   protected onSystem(value: unknown): void {
     if (typeof value !== 'string') return;
@@ -107,7 +124,8 @@ export class NewChangeDialog {
   protected submit(): void {
     const system = this.system();
     if (!this.ready() || system === null) return;
-    this.start.emit({ system, idea: this.idea().trim(), track: this.track() });
+    const branch = this.asksBranch() ? this.branch().trim() : '';
+    this.start.emit({ system, idea: this.idea().trim(), track: this.track(), ...(branch === '' ? {} : { branch }) });
   }
 
   /** Escape and a backdrop click close the overlay from inside; surface that as cancel. */

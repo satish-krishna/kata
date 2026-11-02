@@ -19,6 +19,7 @@ const LONG_CHANGE = '2026-10-16-price-flag-for-repeat-resellers-xx'; // 45 chara
 const LONG_BRANCH = 'change/2026-10-09-merchant-reassign';
 const LONG_REPO = 'commerce-seller-reassignment-service-x'; // 38 characters
 const ONE_PR = 'sdlc/commerce/2026-10-18-photo-limits-shipped?demo=one-pr';
+const RUNNING = 'sdlc/commerce/2026-10-19-build-demo';
 const THREE_PRS = 'sdlc/commerce/2026-10-18-photo-limits-shipped';
 
 /** Long values set in the rendered DOM (the way checkPrPopover sets its repository name), so no fixture data is needed. */
@@ -36,6 +37,9 @@ export const LONG_FIXTURES = [
     fixture: { workspace: LONG_WORKSPACE, change: LONG_CHANGE, branch: LONG_BRANCH },
   },
   { route: ONE_PR, name: 'one pull request with a 38-character repository name', pills: 4, links: 1, fixture: { prRepo: LONG_REPO } },
+  // The running changes strip: the scripted build of the route is started in the page, so the strip has an entry that asks a question.
+  { route: RUNNING, name: 'a running build, with the strip', pills: 4, links: 0, fixture: { running: true } },
+  { route: RUNNING, name: 'a running build with a 45-character change name and a long workspace', pills: 4, links: 0, fixture: { running: true, change: LONG_CHANGE, workspace: LONG_WORKSPACE } },
 ];
 
 // The numbers in the shrink-order table (workbench.css), in pixels at the 16px root.
@@ -44,6 +48,14 @@ const BRANCH_FLOOR = 96;
 const PILL_PADDING = { natural: 12, min: 4 };
 const NEVER_SHRINK = { seal: 26, settings: 32 };
 const EPS = 0.5;
+
+/** Starts the route's scripted build through the page's own controls and waits for the strip to show an entry that needs an answer. */
+async function startBuild(page) {
+  await page.locator('app-sdlc-toolbar header [role="tab"]', { hasText: 'Build' }).first().click();
+  await page.locator('app-build-page [data-bar] button', { hasText: 'Start build' }).click();
+  await page.locator('[role=dialog] button', { hasText: 'Start run' }).click();
+  await page.locator('app-sdlc-toolbar header .k-running__entry', { hasText: 'needs an answer' }).waitFor({ timeout: 15000 });
+}
 
 /** Runs in the page: sets the long values of a fixture in the rendered DOM, the title and accessible name included. */
 function applyFixture(fixture) {
@@ -93,9 +105,11 @@ function measure() {
     return range.getBoundingClientRect().width;
   };
   const items = [
-    ...header.querySelectorAll('.wb-seal, .k-modebadge, app-workspace-switcher, .k-wstrigger, .k-crumbs, .k-branch, .k-pill, .k-prlinks__label, .k-prlinks a, [data-testid="pr-menu"], :scope > button'),
+    ...header.querySelectorAll('.wb-seal, .k-modebadge, app-workspace-switcher, .k-wstrigger, .k-crumbs, .k-branch, .k-pill, .k-prlinks__label, .k-prlinks a, [data-testid="pr-menu"], .k-running__all, .k-running__entry, :scope > button'),
   ]
     .filter((el) => el.getBoundingClientRect().width > 0)
+    // An entry that wrapped out of the strip's one row is cut off whole, so it takes no part in the layout checks.
+    .filter((el) => !el.classList.contains('k-running__entry') || el.getBoundingClientRect().top < el.closest('.k-running').getBoundingClientRect().bottom - 1)
     .map((el) => ({ el, name: label(el), ...box(el) }));
   const nested = (a, b) => a.el.contains(b.el) || b.el.contains(a.el);
   const overlaps = [];
@@ -111,6 +125,10 @@ function measure() {
   }
   const head = box(header);
   const beyond = items.filter((i) => !isInside(i.el, header)).map((i) => `"${i.name}" spans ${i.left.toFixed(2)}-${i.right.toFixed(2)}, header ${head.left.toFixed(2)}-${head.right.toFixed(2)}`);
+  const strip = header.querySelector('.k-running');
+  const stripBox = strip ? strip.getBoundingClientRect() : null;
+  const stripEntries = strip ? Array.from(strip.querySelectorAll('.k-running__entry')).filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.top < stripBox.bottom - 1; }) : [];
+  const stripAll = strip ? strip.querySelector('.k-running__all') : null;
   const badge = header.querySelector('.k-modebadge');
   const crumb = header.querySelector('.k-crumbs__item');
   const links = Array.from(header.querySelectorAll('.k-prlinks a'));
@@ -128,6 +146,16 @@ function measure() {
     clipped: textClipped(p, 'border'),
   }));
   return {
+    strip: strip
+      ? {
+          width: stripBox.width,
+          focus: strip ? Array.from(strip.querySelectorAll('.k-running__entry'), (e) => ({ text: e.textContent.trim().replace(/s+/g, ' '), cut: e.getBoundingClientRect().top >= stripBox.bottom - 1, inert: e.hasAttribute('inert') })) : [],
+          allText: stripAll ? stripAll.textContent.trim() : null,
+          allClipped: stripAll ? textClipped(stripAll) : 0,
+          allInside: stripAll ? isInside(stripAll, header) && isInside(stripAll, strip) : false,
+          entries: stripEntries.map((e) => ({ text: e.textContent.trim().replace(/s+/g, ' '), inside: isInside(e, strip), title: e.getAttribute('title'), textTitle: e.querySelector('.k-running__text')?.getAttribute('title') ?? null, textClipped: e.querySelector('.k-running__text') ? textClipped(e.querySelector('.k-running__text')) : 0 })),
+        }
+      : null,
     menuText: menu ? menu.textContent.trim().replace(/\s+/g, ' ') : null,
     menuClipped: menu ? textClipped(menu) : 0,
     menuInside: menu ? isInside(menu, header) : false,
@@ -201,6 +229,37 @@ export function shrinkOrderFails(m, width, at) {
   return fails;
 }
 
+/**
+ * The running changes strip (order 2 of the table): with a running change it is there and the All running button is whole; an entry is
+ * either whole or gone, never cut in half; a question's text may be cut but its title carries it whole; and the strip never makes the
+ * page scroll or overlap another item (the overlap and page checks above cover those).
+ */
+export function runningStripFails(m, fixture, width, at) {
+  const fails = [];
+  const expected = fixture !== null && !!fixture.running;
+  if (!expected) return m.strip === null ? [] : [`${at}: the strip shows with no running change`];
+  if (m.strip === null) return [`${at}: a change is running but the toolbar has no strip`];
+  const s = m.strip;
+  if (s.allText !== 'All running (1)') fails.push(`${at}: the All running button reads ${JSON.stringify(s.allText)}, not "All running (1)"`);
+  if (s.allClipped > 0 || !s.allInside) fails.push(`${at}: the All running button is clipped or outside the strip (${s.allClipped.toFixed(2)}px cut off)`);
+  if (s.width < 144 - EPS) fails.push(`${at}: the strip shrank to ${s.width.toFixed(2)}px, below its 9rem floor`);
+  for (const e of s.entries) {
+    if (!e.inside) fails.push(`${at}: the entry "${e.text}" is cut off by the strip`);
+    if (!e.title) fails.push(`${at}: the entry "${e.text}" has no title with its whole text`);
+    if (e.textClipped > 0 && !e.textTitle) fails.push(`${at}: the entry's question is cut off and its title does not carry it whole`);
+  }
+  // Focus only reaches what is on show: an entry cut off by the strip is inert, one on show is not.
+  for (const e of s.focus) {
+    if (e.cut && !e.inert) fails.push(`${at}: the cut-off entry "${e.text}" can still take focus (it is not inert)`);
+    if (!e.cut && e.inert) fails.push(`${at}: the entry "${e.text}" is on show but inert`);
+  }
+  // At 1280 the strip has no room for an entry, so the check above would pass with nothing cut; a cut entry must exist there.
+  if (width === 1280 && !s.focus.some((e) => e.cut)) fails.push(`${at}: expected an entry cut off by the strip at 1280, found none, so the focus check proved nothing`);
+  // From 1600 up the strip has room for its entry, unless a long workspace or change name has taken it.
+  if (width >= 1600 && !(fixture.change || fixture.workspace) && s.entries.length === 0) fails.push(`${at}: from 1600 the strip shows no entry, only the All running button`);
+  return fails;
+}
+
 /** Opens one change route at one width and returns the failures as readable lines; empty means the toolbar is sound. */
 export async function checkChangeToolbar(browser, origin, { route, name, pills, links, menu = null, fixture = null }, width) {
   const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1 });
@@ -219,6 +278,7 @@ export async function checkChangeToolbar(browser, origin, { route, name, pills, 
     } catch {
       /* the measurement below reports what is actually there */
     }
+    if (fixture !== null && fixture.running) await startBuild(page);
     if (fixture !== null) {
       await page.evaluate(applyFixture, fixture);
       await page.waitForTimeout(100);
@@ -258,6 +318,7 @@ export async function checkChangeToolbar(browser, origin, { route, name, pills, 
     // Order 1 of the table: below 1280 the separators are gone.
     if (width < 1280 && m.separators > 0) fails.push(`${at}: below 1280 the toolbar's separators are removed, but ${m.separators} are shown`);
     fails.push(...shrinkOrderFails(m, width, at));
+    fails.push(...runningStripFails(m, fixture, width, at));
     // The mock master repository is on main, never on change/<change>, so the warning chip is always there: an icon below 1280, the whole text from 1280.
     const b = m.branch;
     if (b === null) fails.push(`${at}: the master repository is not on change/<change> but no branch warning is shown`);

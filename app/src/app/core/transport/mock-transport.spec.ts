@@ -3,12 +3,13 @@ import { readAllChanges } from '../../../testing/read-all';
 import { NO_BACKEND } from './kata-transport';
 import { runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, seedSpec } from '../../lib/mock';
 import type { KataEvent } from '../../lib/events';
-import { transcriptRunId } from '../../lib/sdlc';
+import { stageName, transcriptRunId } from '../../lib/sdlc';
 import type { RunSpec } from '@bindings/RunSpec';
-import type { PublishStep } from '@bindings/PublishStep';
-import type { StageEvent } from '@bindings/StageEvent';
+import type { DoneStep } from '@bindings/DoneStep';
 import type { Resolved } from '@bindings/Resolved';
-import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, sdlcSetupScript, sdlcSpecScript } from '../../lib/sdlc-mock';
+import type { BuildEvent } from '@bindings/BuildEvent';
+import type { ChangeRef } from '@bindings/ChangeRef';
+import { MOCK_BUILD_CHANGE, MOCK_BUILD_SECOND, MOCK_HELD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MOCK_MASTER, MOCK_STARTED_FIX, TRIAGE_LIGHT, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 
 const total = (steps: { delay: number }[]) => steps.reduce((a, s) => a + s.delay, 0);
 
@@ -120,67 +121,153 @@ describe('MockTransport', () => {
   it('checkout records the previous change branch without its prefix and drops the target', async () => {
     const t = new MockTransport();
     await t.sdlcCheckout('/m', 'change/2026-10-17-product-notes');
-    expect(await t.sdlcBranches('/m')).toEqual({ current: 'change/2026-10-17-product-notes', others: [], default_base: 'main', pending_change: null });
+    expect(await t.sdlcBranches('/m')).toEqual({ current: 'change/2026-10-17-product-notes', others: [], default_base: 'main' });
     await t.sdlcCheckout('/m', 'main');
     expect((await t.sdlcBranches('/m')).others.map((o) => o.change)).toEqual(['2026-10-17-product-notes']);
   });
 
-  it('finishing a change renames it once, then deletes a pending branch that created nothing', async () => {
+  it('starting a change adds it, named from the title, on its own branch', async () => {
     const t = new MockTransport();
-    const pending = await t.sdlcStartChange('/m');
-    const out = await t.sdlcFinishChange('/m', pending);
-    expect(out).toEqual({ renamed: { branch: 'change/2026-10-18-new-change', change: '2026-10-18-new-change' } });
-    const b = await t.sdlcBranches('/m');
-    expect(b.current).toBe('main');
-    expect(b.others.map((o) => o.change)).toEqual(['2026-10-17-product-notes', '2026-10-18-new-change']);
-    expect((await readAllChanges(t))[0].change).toBe('2026-10-18-new-change');
-
-    const again = await t.sdlcStartChange('/m');
-    expect(await t.sdlcFinishChange('/m', again)).toBe('deleted');
-    const after = await t.sdlcBranches('/m');
-    expect(after.current).toBe('main');
-    expect(after.others).toEqual(b.others);
+    const name = await t.sdlcChangeName('Password reset');
+    expect(name).toMatch(/^\d{4}-\d{2}-\d{2}-password-reset$/);
+    const out = await t.sdlcStartChange('/ws', 'commerce', 'Password reset', 'feat', '');
+    expect(out).toMatchObject({ outcome: 'started', change: name, branch: 'change/' + name });
+    expect((await readAllChanges(t))[0].state.change).toBe(name);
+    expect((await t.sdlcBranches('/m')).current).toBe('main');
   });
 
-  it('rejecting an intent moves its change to rejected', async () => {
+  it('a branch name the mock plugin refuses starts nothing and says why', async () => {
     const t = new MockTransport();
-    expect(await t.sdlcDecide('/m', 'commerce', '2026-10-16-price-flag', 'reject-intent', false)).toEqual({ kind: 'committed' });
-    const c = (await readAllChanges(t)).find((x) => x.change === '2026-10-16-price-flag');
-    expect(c?.stage).toBe('rejected');
-    expect(c?.intent.status).toBe('rejected');
+    const before = (await readAllChanges(t)).length;
+    expect(await t.sdlcStartChange('/ws', 'commerce', 'Password reset', 'feat', '', 'main')).toMatchObject({ outcome: 'refused', kind: 'branchTaken' });
+    expect(await t.sdlcStartChange('/ws', 'commerce', 'Password reset', 'feat', '', 'bad name')).toMatchObject({ outcome: 'refused', kind: 'branchInvalid' });
+    expect((await readAllChanges(t)).length).toBe(before);
+  });
+
+  it('rejecting a change takes it out of the list and says where its record stays', async () => {
+    const t = new MockTransport();
+    const ref = { workspace: '/ws', system: 'commerce', change: '2026-10-16-price-flag' };
+    expect(await t.sdlcReject(ref)).toEqual({ outcome: 'rejected', recordBranch: 'change/2026-10-16-price-flag' });
+    expect((await readAllChanges(t)).find((x) => x.state.change === '2026-10-16-price-flag')).toBeUndefined();
+  });
+
+
+  it('the finished change has its own copy: the mock offers its removal, and removing it takes the copy away', async () => {
+    const t = new MockTransport();
+    const ref = { workspace: '/ws', system: 'commerce', change: MOCK_DONE_CHANGE };
+    expect((await t.sdlcChangeState('/ws', 'commerce', MOCK_DONE_CHANGE)).state.inCopy).toBe(true);
+    expect(await t.sdlcCopyBranch(ref)).toBe(`change/${MOCK_DONE_CHANGE}`);
+    expect(await t.sdlcCopyRemoval(ref)).toEqual({ outcome: 'offer' });
+    await expect(t.sdlcOpenCopyFolder(ref)).resolves.toBeUndefined();
+    const out = await t.sdlcRemoveCopy(ref);
+    expect(out.outcome).toBe('removed');
+    expect((await t.sdlcChangeState('/ws', 'commerce', MOCK_DONE_CHANGE)).state.inCopy).toBe(false);
+    expect(await t.sdlcCopyRemoval(ref)).toEqual({ outcome: 'notOffered' });
+  });
+
+  it('a change with no copy has nothing to remove or open', async () => {
+    const t = new MockTransport();
+    const ref = { workspace: '/ws', system: 'commerce', change: '2026-10-16-price-flag' };
+    expect((await t.sdlcChangeState('/ws', 'commerce', ref.change)).state.inCopy).toBe(false);
+    expect(await t.sdlcCopyRemoval(ref)).toEqual({ outcome: 'notOffered' });
+    await expect(t.sdlcOpenCopyFolder(ref)).rejects.toThrow(/not in a copy/);
   });
 
   it('accepting the photos spec moves its change to plan-ready', async () => {
     const t = new MockTransport();
-    const before = (await readAllChanges(t, 'D:/Work/acme-commerce/commerce-docs')).find((c) => c.change === '2026-10-12-product-photo-upload');
-    expect(before?.stage).toBe('spec-awaiting');
-    const out = await t.sdlcDecide('D:/Work/acme-commerce/commerce-docs', 'commerce', '2026-10-12-product-photo-upload', 'accept-spec', false);
-    expect(out).toEqual({ kind: 'committed' });
-    const after = (await readAllChanges(t, 'D:/Work/acme-commerce/commerce-docs')).find((c) => c.change === '2026-10-12-product-photo-upload');
-    expect(after?.stage).toBe('plan-ready');
+    const before = (await readAllChanges(t)).find((c) => c.state.change === '2026-10-12-product-photo-upload');
+    expect(before && stageName(before.offer.stage)).toBe('spec-awaiting');
+    const out = await t.sdlcAccept({ workspace: '/ws', system: 'commerce', change: '2026-10-12-product-photo-upload' }, 'spec');
+    expect(out).toEqual({ outcome: 'accepted', warnings: [] });
+    const after = (await readAllChanges(t)).find((c) => c.state.change === '2026-10-12-product-photo-upload');
+    expect(after && stageName(after.offer.stage)).toBe('plan-ready');
   });
 
-  it('shows a change done once every touched repository has a pull request, and refreshing gives the same view', async () => {
+  it('shows a change done once the plugin has recorded the pull request of the master, links at once and states after a refresh', async () => {
     const t = new MockTransport();
-    const args = [MOCK_WORKSPACE_FOLDER, 'commerce-docs', 'w1', 'commerce', MOCK_BUILD_CHANGE] as const;
-    const before = await t.sdlcDoneView(...args, true);
-    expect(before).toMatchObject({ done: false, links: [], offerDeclare: true, prCheckFailed: false });
-    const repos = await t.sdlcTouchedRepos(MOCK_WORKSPACE_FOLDER, 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE);
-    await t.sdlcPublish(MOCK_WORKSPACE_FOLDER, 'w1', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE, repos);
-    const after = await t.sdlcDoneView(...args, true);
+    const args = [MOCK_WORKSPACE_FOLDER, 'w1', 'commerce', MOCK_BUILD_CHANGE] as const;
+    const before = await t.sdlcPullRequestsView(...args, false);
+    expect(before).toMatchObject({ done: false, links: [], source: null, declareOffered: true });
+    const declared = await t.sdlcDeclareDone({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE });
+    const after = await t.sdlcPullRequestsView(...args, false);
     expect(after.done).toBe(true);
-    expect(after.links.map((l) => l.repo)).toEqual(repos.map((r) => r.repo));
-    expect(await t.sdlcRefreshPrStates(...args, true)).toEqual(after);
+    expect(after.links.map((l) => l.repo).sort()).toEqual((declared.kind === 'done' ? declared.pullRequests.map((p) => p.repo) : []).sort());
+    expect(after.links.every((l) => l.state === null && !l.lastSeen)).toBe(true);
+    const refreshed = await t.sdlcPullRequestsView(...args, true);
+    expect(refreshed.links.map((l) => l.url)).toEqual(after.links.map((l) => l.url));
+    expect(refreshed.links.every((l) => l.state === 'open')).toBe(true);
   });
 
-  it('says what publishing is doing, repository by repository, then returns the results', async () => {
-    const t = new MockTransport();
-    const steps: PublishStep[] = [];
-    await t.onPublishStep((step) => steps.push(step));
-    const repos = await t.sdlcTouchedRepos(MOCK_WORKSPACE_FOLDER, 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE);
-    const summary = await t.sdlcPublish(MOCK_WORKSPACE_FOLDER, 'w1', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE, repos);
-    expect(summary.results).toHaveLength(repos.length);
-    expect(steps).toEqual(repos.flatMap((r) => [{ kind: 'pushing', repo: r.repo }, { kind: 'opening', repo: r.repo }]));
+  describe('the scripted build host', () => {
+    const ref = (change: string): ChangeRef => ({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change });
+    const FORM = { timeoutSecs: 600 };
+
+    it('two scripted builds run at once and both report state', async () => {
+      const t = new MockTransport();
+      const announced: BuildEvent[] = [];
+      await t.onBuildState((e) => announced.push(e));
+      expect((await t.sdlcBuildStart(ref(MOCK_BUILD_CHANGE), FORM)).kind).toBe('started');
+      expect((await t.sdlcBuildStart(ref(MOCK_BUILD_SECOND), FORM)).kind).toBe('started');
+      expect((await t.sdlcBuildState(ref(MOCK_BUILD_CHANGE)))?.phase).toBe('building');
+      expect((await t.sdlcBuildState(ref(MOCK_BUILD_SECOND)))?.phase).toBe('building');
+      expect(new Set(announced.map((e) => e.change.change))).toEqual(new Set([MOCK_BUILD_CHANGE, MOCK_BUILD_SECOND]));
+      vi.advanceTimersByTime(30000);
+      // The second build ends on its own; the first waits on its question.
+      expect((await t.sdlcBuildState(ref(MOCK_BUILD_SECOND)))?.phase).toBe('finished');
+      expect((await t.sdlcBuildState(ref(MOCK_BUILD_CHANGE)))?.phase).toBe('building');
+      expect(await t.sdlcBuildState(ref('2026-01-01-never-started'))).toBeNull();
+    });
+
+    it('a build that needs a repository another change holds starts held, and says who holds it', async () => {
+      const t = new MockTransport();
+      await t.sdlcBuildStart(ref(MOCK_BUILD_CHANGE), FORM);
+      const out = await t.sdlcBuildStart(ref(MOCK_HELD_CHANGE), FORM);
+      expect(out.kind).toBe('held');
+      if (out.kind === 'held') expect(out.held.map((h) => [h.repo, h.holder.change])).toEqual([['commerce-core', MOCK_BUILD_CHANGE]]);
+      expect(await t.sdlcBuildState(ref(MOCK_HELD_CHANGE))).toBeNull();
+    });
+
+    it('a review that waits for a held repository names the holder, and the wait is readable later', async () => {
+      const t = new MockTransport();
+      await t.sdlcBuildStart(ref(MOCK_BUILD_CHANGE), FORM);
+      const out = await t.sdlcReviewStart(ref(MOCK_HELD_CHANGE));
+      expect(out.kind).toBe('held');
+      expect((await t.sdlcReviewWaiting(ref(MOCK_HELD_CHANGE))).map((h) => h.holder.change)).toEqual([MOCK_BUILD_CHANGE]);
+      expect(await t.sdlcReviewWaiting(ref(MOCK_BUILD_SECOND))).toEqual([]);
+    });
+
+    it('the running changes show the question of the build that waits on one', async () => {
+      const t = new MockTransport();
+      await t.sdlcBuildStart(ref(MOCK_BUILD_CHANGE), FORM);
+      await t.sdlcBuildStart(ref(MOCK_BUILD_SECOND), FORM);
+      vi.advanceTimersByTime(30000);
+      const strip = await t.sdlcRunning();
+      const first = strip.all.find((e) => e.change.change === MOCK_BUILD_CHANGE);
+      expect(first?.state).toBe('needsAnswer');
+      expect(strip.all.find((e) => e.change.change === MOCK_BUILD_SECOND)?.state).toBe('finished');
+      expect(strip.shown.length).toBeLessThanOrEqual(3);
+    });
+
+    it('keeps the whole history of a run for a session opened late', async () => {
+      const t = new MockTransport();
+      await t.onRunEvent(() => undefined);
+      const id = await t.runSpec(seedSpec());
+      vi.advanceTimersByTime(30000);
+      const history = await t.sdlcRunHistory(id);
+      expect(history.length).toBeGreaterThan(2);
+      expect(history[0].event.type).toBe(runScriptHead[0].ev.type);
+      expect(history.map((h) => h.seq)).toEqual(history.map((_, i) => i));
+      expect(await t.sdlcRunHistory('no-such-run')).toEqual([]);
+    });
+
+    it('launches a document run of a change as a scripted run with an id', async () => {
+      const t = new MockTransport();
+      const seen: [string, KataEvent][] = [];
+      await t.onRunEvent((id, e) => seen.push([id, e]));
+      const id = await t.sdlcRunChange(ref(MOCK_BUILD_CHANGE), 'spec', { name: 'sdlc-spec', task: 'x', permissionMode: 'auto', timeoutSecs: 600 });
+      vi.advanceTimersByTime(30000);
+      expect(seen.some(([i]) => i === id)).toBe(true);
+    });
   });
 
   describe('several scripted runs at once', () => {
@@ -238,9 +325,12 @@ describe('MockTransport', () => {
     });
 
     it('lists the build-demo change at build-ready', async () => {
-      const c = (await readAllChanges(new MockTransport())).find((x) => x.change === MOCK_BUILD_CHANGE);
-      expect(c?.stage).toBe('build-ready');
-      expect(c?.build).toEqual({ tasks: 3, finished: 0, repos: 2 });
+      const c = (await readAllChanges(new MockTransport())).find((x) => x.state.change === MOCK_BUILD_CHANGE);
+      expect(c && stageName(c.offer.stage)).toBe('build-ready');
+      const repos = Object.values(c?.state.tasks ?? {});
+      expect(repos).toHaveLength(2);
+      expect(repos.flatMap((r) => r?.all ?? [])).toHaveLength(3);
+      expect(repos.flatMap((r) => r?.logged ?? [])).toEqual([]);
     });
   });
 
@@ -369,95 +459,27 @@ describe('MockTransport previewRun', () => {
     expect(b.items.some((i) => i.name.includes('alpha'))).toBe(false);
   });
 
-  describe('the two reading passes', () => {
-    beforeEach(() => vi.useFakeTimers());
-    afterEach(() => vi.useRealTimers());
-
-    const collect = async (t: MockTransport) => {
-      const seen: StageEvent[] = [];
-      await t.onStageEvent((e) => seen.push(e));
-      return seen;
-    };
-
-    it('names every change at once, with no stage read yet', async () => {
-      const t = new MockTransport();
-      const names = await t.sdlcChangeNames('/m', 'commerce');
-      const changes = await readAllChanges(t);
-      expect(names.map((n) => n.change)).toEqual(changes.map((c) => c.change));
-      expect(names.length).toBeGreaterThan(0);
-    });
-
+  describe('reading the changes', () => {
     it('reads one change in full, and refuses a change it does not have', async () => {
       const t = new MockTransport();
-      const [first] = await t.sdlcChangeNames('/m', 'commerce');
-      const info = await t.sdlcReadChange('/m', 'commerce', first.change);
-      expect(info.change).toBe(first.change);
-      expect(info.system).toBe('commerce');
-      await expect(t.sdlcReadChange('/m', 'commerce', 'no-such-change')).rejects.toThrow();
+      const [first] = await readAllChanges(t);
+      const view = await t.sdlcChangeState(MOCK_WORKSPACE_FOLDER, 'commerce', first.state.change);
+      expect(view).toEqual(first);
+      await expect(t.sdlcChangeState(MOCK_WORKSPACE_FOLDER, 'commerce', 'no-such-change')).rejects.toThrow();
     });
 
     it('reports no folder missing', async () => {
       expect(await new MockTransport().sdlcMissingFolders(['/a', '/b'])).toEqual([]);
     });
 
-    it('plays one stage per change, a progress after each, then done, all for the same pass id', async () => {
-      const t = new MockTransport();
-      const seen = await collect(t);
-      const changes = await readAllChanges(t);
-      const pass = await t.sdlcReadStages('/m', 'commerce');
-      expect(seen).toEqual([]);
-      vi.advanceTimersByTime(2000);
-      expect(seen.every((e) => e.pass === pass)).toBe(true);
-      expect(seen.filter((e) => e.kind === 'stage').map((e) => (e.kind === 'stage' ? e.change : ''))).toEqual(changes.map((c) => c.change));
-      expect(seen.filter((e) => e.kind === 'progress')).toEqual(changes.map((_c, i) => ({ kind: 'progress', pass, read: i + 1, total: changes.length })));
-      expect(seen.at(-1)).toEqual({ kind: 'done', pass });
-      expect(seen.filter((e) => e.kind === 'done')).toHaveLength(1);
-    });
-
-    it('reads the change named first before the others', async () => {
-      const t = new MockTransport();
-      const seen = await collect(t);
-      const changes = await readAllChanges(t);
-      const last = changes[changes.length - 1].change;
-      await t.sdlcReadStages('/m', 'commerce', last);
-      vi.advanceTimersByTime(2000);
-      const stages = seen.filter((e) => e.kind === 'stage');
-      expect(stages[0].kind === 'stage' && stages[0].change).toBe(last);
-    });
-
-    it('a second pass supersedes the first, whose events stop', async () => {
-      const t = new MockTransport();
-      const seen = await collect(t);
-      const first = await t.sdlcReadStages('/m', 'commerce');
-      vi.advanceTimersByTime(100);
-      const second = await t.sdlcReadStages('/m', 'commerce');
-      expect(second).not.toBe(first);
-      const before = seen.filter((e) => e.pass === first).length;
-      vi.advanceTimersByTime(2000);
-      expect(seen.filter((e) => e.pass === first)).toHaveLength(before);
-      expect(seen.filter((e) => e.pass === second).at(-1)).toEqual({ kind: 'done', pass: second });
-    });
-
-    it('stops reporting to a listener that left', async () => {
-      const t = new MockTransport();
-      const seen: StageEvent[] = [];
-      const off = await t.onStageEvent((e) => seen.push(e));
-      off();
-      await t.sdlcReadStages('/m', 'commerce');
-      vi.advanceTimersByTime(2000);
-      expect(seen).toEqual([]);
-    });
-
     it('the long demo has one change whose plan cannot be read, shown with its reason', async () => {
       window.history.replaceState({}, '', '/?demo=build-long');
       try {
         const t = new MockTransport();
-        const seen = await collect(t);
-        await t.sdlcReadStages('/m', 'commerce');
-        vi.advanceTimersByTime(2000);
-        const unreadable = seen.flatMap((e) => (e.kind === 'stage' && e.info.plan_unreadable ? [e.info] : []));
+        const [system] = (await t.sdlcState(MOCK_WORKSPACE_FOLDER, ['commerce'])).systems;
+        const unreadable = system.changes.filter((c) => c.offer.stage === 'plan-unreadable');
         expect(unreadable).toHaveLength(1);
-        expect(unreadable[0].plan_unreadable_reason).toBeTruthy();
+        expect(system.problems.length).toBeGreaterThan(0);
       } finally {
         window.history.replaceState({}, '', '/');
       }
@@ -466,7 +488,6 @@ describe('MockTransport previewRun', () => {
 });
 
 describe('MockTransport branch naming demos', () => {
-  const REPOS = [{ repo: 'commerce-core', path: 'D:/Work/acme-commerce/commerce-core', base: 'main' }];
   /** Run `body` with `?demo=<demo>` in the address, the way the browser checks reach a demo. */
   const withDemo = async (demo: string | null, body: (t: MockTransport) => Promise<void>) => {
     window.history.replaceState({}, '', demo === null ? '/' : `/?demo=${demo}`);
@@ -476,48 +497,220 @@ describe('MockTransport branch naming demos', () => {
       window.history.replaceState({}, '', '/');
     }
   };
-  const publish = (t: MockTransport) => t.sdlcPublish('/w', 'acme-commerce', 'commerce-docs', 'commerce', MOCK_DONE_CHANGE, REPOS);
 
-  it('keeps the default fixtures: no pending change, no clash, the finished change has its pull requests', async () => {
+  it('keeps the default fixtures: the master on main, the finished change has its pull requests', async () => {
     await withDemo(null, async (t) => {
       const b = await t.sdlcBranches('/m');
       expect(b.current).toBe('main');
-      expect(b.pending_change).toBeNull();
-      expect(await t.sdlcRemoteClashes(REPOS, 'commerce-docs', 'commerce', MOCK_DONE_CHANGE)).toEqual([]);
-      expect((await t.sdlcPullRequests('commerce-docs', 'commerce', REPOS, MOCK_DONE_CHANGE))[0].url).not.toBeNull();
-      expect((await publish(t)).results[0].outcome.kind).toBe('opened');
+      expect((await t.sdlcPullRequestsView(MOCK_WORKSPACE_FOLDER, 'w1', 'commerce', MOCK_DONE_CHANGE, false)).links[0].url).toContain('github.com');
     });
   });
 
-  it('?demo=naming stands the master on a pending branch that holds the build demo change', async () => {
-    await withDemo('naming', async (t) => {
-      const b = await t.sdlcBranches('/m');
-      expect(b.current?.startsWith('change/pending-')).toBe(true);
-      expect(b.pending_change).toBe(`commerce/${MOCK_BUILD_CHANGE}`);
+
+});
+
+describe('MockTransport declaring-done demos', () => {
+  const ref: ChangeRef = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_DONE_CHANGE };
+  /** Run `body` with `?demo=<demo>` in the address, the way the browser checks reach a demo. */
+  const withDemo = async (demo: string | null, body: (t: MockTransport) => Promise<void>) => {
+    window.history.replaceState({}, '', demo === null ? '/' : `/?demo=${demo}`);
+    try {
+      await body(new MockTransport());
+    } finally {
+      window.history.replaceState({}, '', '/');
+    }
+  };
+
+  it('declares done with every pull request, the master last, naming each step it is on (R7.1 passes, R7.3)', async () => {
+    await withDemo(null, async (t) => {
+      const steps: DoneStep[] = [];
+      await t.onDoneStep((step) => steps.push(step));
+      const view = await t.sdlcDeclareDone(ref);
+      expect(view.kind).toBe('done');
+      const repos = view.kind === 'done' ? view.pullRequests.map((p) => p.repo) : [];
+      expect(repos.at(-1)).toBe('commerce-docs');
+      expect(steps.map((s) => s.label)).toEqual([
+        'Declaring done: the plugin is verifying the change',
+        ...repos.flatMap((r) => [`Pushing ${r}`, `Opening a pull request in ${r}`]),
+      ]);
     });
   });
 
-  it('?demo=clash leaves the finished change undeclared and reports its branch as taken in a repository', async () => {
-    await withDemo('clash', async (t) => {
-      expect((await t.sdlcPullRequests('commerce-docs', 'commerce', REPOS, MOCK_DONE_CHANGE))[0].url).toBeNull();
-      const clashes = await t.sdlcRemoteClashes(REPOS, 'commerce-docs', 'commerce', MOCK_DONE_CHANGE);
-      expect(clashes).toEqual([{ repo: 'commerce-core', branch: `change/${MOCK_DONE_CHANGE}` }]);
+  it.each([
+    ['done-refused', 'notReady'],
+    ['done-gh', 'notReady'],
+    ['done-cannot', 'couldNotRun'],
+  ] as const)("?demo=%s gives the plugin's %s answer (R7.1, R9.1)", async (demo, kind) => {
+    await withDemo(demo, async (t) => {
+      const view = await t.sdlcDeclareDone(ref);
+      expect(view.kind).toBe(kind);
+      if (view.kind === 'notReady' && demo === 'done-gh') expect(view.problems).toEqual(["Declaring done needs GitHub's command-line tool, gh. Install it from https://cli.github.com and reopen."]);
+      if (view.kind === 'notReady' && demo === 'done-refused') expect(view.problems.join(' ')).toContain('has unresolved high findings');
     });
   });
 
-  it('the clash demos have nothing uncommitted, so declaring done gets past its first check', async () => {
-    for (const demo of [null, 'clash', 'clash-push']) {
+  it("?demo=done-warnings declares done with the plugin's warnings (F22)", async () => {
+    await withDemo('done-warnings', async (t) => {
+      const view = await t.sdlcDeclareDone(ref);
+      expect(view.kind === 'done' ? view.warnings : null).toEqual(['after hook announce failed with exit code 1; nothing was undone']);
+    });
+  });
+
+  it('?demo=done-partial stops part way, and declaring done again carries on to done (R7.1 fails)', async () => {
+    await withDemo('done-partial', async (t) => {
+      const first = await t.sdlcDeclareDone(ref);
+      expect(first.kind).toBe('partial');
+      expect((await t.sdlcDeclareDone(ref)).kind).toBe('done');
+    });
+  });
+
+  it('the done demos have nothing uncommitted, so declaring done is offered at once', async () => {
+    for (const demo of [null, 'done-refused']) {
       await withDemo(demo, async (t) => {
-        const left = (await t.sdlcDiffFiles('/w', 'uncommitted')).files.length;
-        expect(left > 0).toBe(demo === null);
+        expect((await t.sdlcDiffFiles('/w', 'uncommitted')).files.length > 0).toBe(demo === null);
       });
     }
   });
+});
 
-  it('?demo=clash-push finds the branch free, then the push meets another change on it', async () => {
-    await withDemo('clash-push', async (t) => {
-      expect(await t.sdlcRemoteClashes(REPOS, 'commerce-docs', 'commerce', MOCK_DONE_CHANGE)).toEqual([]);
-      expect((await publish(t)).results).toEqual([{ repo: 'commerce-core', outcome: { kind: 'clash', branch: `change/${MOCK_DONE_CHANGE}` } }]);
-    });
+describe('MockTransport answers every call the backend gained on this branch (F29)', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  const ref = (change: string): ChangeRef => ({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change });
+  const FORM = { timeoutSecs: 600 };
+  const FORM_RUN = { name: 'sdlc-spec', task: 'x', permissionMode: 'prompt' as const, timeoutSecs: 900 };
+
+  it("sdlcTriageChange names the change the triage's own run started through the plugin, and none for any other run", async () => {
+    const t = new MockTransport();
+    await t.onRunEvent(() => undefined);
+    const id = await t.runSpec({ ...seedSpec(), name: 'sdlc-commerce-new-triage' });
+    vi.advanceTimersByTime(total(sdlcTriageScript.head));
+    await t.submitAnswer(id, 'q1', [[TRIAGE_LIGHT]]);
+    vi.advanceTimersByTime(total(sdlcTriageScript.mid));
+    const transcript = 'sdlc-commerce-new-triage-20261024T090000Z';
+    expect(await t.sdlcTriageChange(transcript, 'commerce')).toBe(MOCK_STARTED_FIX);
+    expect(await t.sdlcTriageChange(transcript, 'other')).toBeNull();
+    expect(await t.sdlcTriageChange('sdlc-commerce-spec-1', 'commerce')).toBeNull();
+  });
+
+  it('sdlcBuildBoard places each repository: working, stopped, finished, not started and idle, with its tasks', async () => {
+    const t = new MockTransport();
+    const status = {
+      tasks: [{ id: 'T1', repo: 'a', row: null }, { id: 'T2', repo: 'b', row: null }],
+      repos: [{ repo: 'a', state: { kind: 'ready', task: 'T1' } }, { repo: 'b', state: { kind: 'ready', task: 'T2' } }, { repo: 'c', state: { kind: 'done' } }, { repo: 'd', state: { kind: 'ready', task: 'T4' } }],
+      departures: [], hasTasks: true, problems: [], logLayouts: [],
+    } as unknown as Parameters<MockTransport['sdlcBuildBoard']>[1];
+    const board = await t.sdlcBuildBoard(['a', 'b', 'c', 'd', 'e'], status, ['a'], { b: { task: 'T2', reason: 'cancelled' } as never });
+    expect(board.map((r) => [r.repo, r.situation.kind])).toEqual([['a', 'working'], ['b', 'stopped'], ['c', 'finished'], ['d', 'not-started'], ['e', 'idle']]);
+    expect(board[0].tasks).toEqual([{ id: 'T1', state: { kind: 'running' } }]);
+  });
+
+  it("sdlcReviewStanding reads the review document first: none, current and stale; without one, the latest review run's", async () => {
+    const t = new MockTransport();
+    const scope = { workspaceId: 'w', system: 'commerce', change: 'c' };
+    const doc = (commits: Record<string, string>) => ({ reviews: [{ commits }], master_moved: [], problems: [] }) as never;
+    const base = { links: [], records: [], heads: { app: 'abc1234' }, scope, master: MOCK_MASTER };
+    expect(await t.sdlcReviewStanding({ ...base, document: { reviews: [], master_moved: [], problems: [] } as never })).toEqual({ kind: 'none' });
+    expect(await t.sdlcReviewStanding({ ...base, document: doc({ app: 'abc1' }) })).toEqual({ kind: 'current-document', review: 0 });
+    expect(await t.sdlcReviewStanding({ ...base, document: doc({ app: 'fff1' }) })).toEqual({ kind: 'stale' });
+    const link = { workspace_id: 'w', system: 'commerce', change: 'c', stage: 'review', run_id: 'r1', started_at: 1, heads: { app: 'abc1234' } };
+    expect(await t.sdlcReviewStanding({ ...base, document: null, links: [link], records: [{ id: 'r1', exit: 0 }] as never })).toEqual({ kind: 'current-run', runId: 'r1' });
+    expect(await t.sdlcReviewStanding({ ...base, document: null, links: [link], records: [{ id: 'r1', exit: 1 }] as never })).toEqual({ kind: 'unfinished' });
+  });
+
+  it('sdlcChangeKey normalizes the workspace folder the way the backend keys it', async () => {
+    const key = await new MockTransport().sdlcChangeKey({ workspace: 'D:\\WS\\Acme\\', system: 'commerce', change: 'c' });
+    expect(key).toEqual({ workspace: { key: 'd:/ws/acme', name: 'acme' }, system: 'commerce', change: 'c' });
+  });
+
+  it('sdlcBuildRuns lists the live runs of a build, sdlcBuildCancel stops one, and sdlcBuildContinue starts it again', async () => {
+    const t = new MockTransport();
+    await t.onRunEvent(() => undefined);
+    expect(await t.sdlcBuildRuns(ref(MOCK_BUILD_SECOND))).toEqual([]);
+    await t.sdlcBuildStart(ref(MOCK_BUILD_SECOND), FORM);
+    const runs = await t.sdlcBuildRuns(ref(MOCK_BUILD_SECOND));
+    expect(runs.length).toBeGreaterThan(0);
+    const repo = runs[0].key;
+    expect(runs.every((r) => r.run !== '')).toBe(true);
+    expect((await t.sdlcBuildContinue(ref(MOCK_BUILD_SECOND), repo)).kind).toBe('alreadyRunning');
+    await t.sdlcBuildCancel(ref(MOCK_BUILD_SECOND), repo);
+    vi.advanceTimersByTime(1000);
+    expect((await t.sdlcBuildRuns(ref(MOCK_BUILD_SECOND))).some((r) => r.key === repo)).toBe(false);
+    expect((await t.sdlcBuildContinue(ref(MOCK_BUILD_SECOND), repo)).kind).not.toBe('alreadyRunning');
+  });
+
+  it("sdlcPreviewChangeRun composes the run from the form: a document run keeps the form's permission mode, a triage or fix run is auto", async () => {
+    const t = new MockTransport();
+    const spec = await t.sdlcPreviewChangeRun(ref(MOCK_BUILD_CHANGE), 'spec', FORM_RUN);
+    expect([spec.name, spec.task, spec.permissions.mode, spec.leash.timeout_secs]).toEqual(['sdlc-spec', 'x', 'prompt', 900]);
+    expect(spec.given?.required_plugins).toEqual(['ai-sdlc']);
+    expect((await t.sdlcPreviewChangeRun(ref(MOCK_BUILD_CHANGE), 'fix', FORM_RUN)).permissions.mode).toBe('auto');
+    expect((await t.sdlcPreviewChangeRun(ref(MOCK_BUILD_CHANGE), 'triage', FORM_RUN)).permissions.mode).toBe('auto');
+  });
+
+  it('sdlcPreviewBuild gives one section per repository then the review, and one section for one repository', async () => {
+    const t = new MockTransport();
+    const all = await t.sdlcPreviewBuild(ref(MOCK_BUILD_CHANGE), 'start', null, FORM);
+    expect(all.at(-1)?.title).toBe('Review');
+    expect(all.length).toBeGreaterThan(1);
+    expect(all.every((s) => s.spec.leash.timeout_secs === 600)).toBe(true);
+    const one = await t.sdlcPreviewBuild(ref(MOCK_BUILD_CHANGE), 'continue-one', 'commerce-core', FORM);
+    expect(one.map((s) => s.repo)).toEqual(['commerce-core']);
+    expect((await t.sdlcPreviewBuild(ref(MOCK_BUILD_CHANGE), 'manual-review', null, FORM)).map((s) => s.title)).toEqual(['Review']);
+  });
+
+  it("sdlcReviewView, sdlcRoundOffer and sdlcRoundPlan read the same review: the offer's default picks plan a round", async () => {
+    const t = new MockTransport();
+    const view = await t.sdlcReviewView(ref(MOCK_BUILD_CHANGE));
+    const [offer, picks] = await t.sdlcRoundOffer(ref(MOCK_BUILD_CHANGE));
+    const keys = offer.findings.map((f) => f.key);
+    expect(view.groups.flatMap((g) => g.findings.map((f) => f.key)).sort()).toEqual([...keys].sort());
+    expect(picks.picked.every((k) => keys.includes(k))).toBe(true);
+    const plan = await t.sdlcRoundPlan(ref(MOCK_BUILD_CHANGE), { picked: [], assigned: {}, notes: {} });
+    expect(plan).toEqual({ blocked: 'Pick a finding or write a note.', requests: [] });
+  });
+
+  it('sdlcMarkOpened and sdlcCloseAnswer have nothing to do in the browser and resolve', async () => {
+    const t = new MockTransport();
+    await expect(t.sdlcMarkOpened(ref(MOCK_BUILD_CHANGE))).resolves.toBeUndefined();
+    await expect(t.sdlcCloseAnswer(true)).resolves.toBeUndefined();
+  });
+
+  it('sdlcRenameBranch renames the change branch in every repository that has it', async () => {
+    const out = await new MockTransport().sdlcRenameBranch(MOCK_WORKSPACE_FOLDER, 'w1', 'commerce', MOCK_BUILD_CHANGE, 'feat/x');
+    expect(out).toMatchObject({ outcome: 'renamed', from: `change/${MOCK_BUILD_CHANGE}`, to: 'feat/x' });
+  });
+
+  it("sdlcChecksView gives each repository's checks with the plugin's sentence", async () => {
+    const views = await new MockTransport().sdlcChecksView(ref(MOCK_DONE_CHANGE));
+    expect(views.length).toBeGreaterThan(0);
+    expect(views.every((v) => v.summary !== '')).toBe(true);
+  });
+
+  it('sdlcOldChecks says nothing without ?demo=old-checks, and sdlcOldChecksSeen resolves', async () => {
+    const t = new MockTransport();
+    expect(await t.sdlcOldChecks(MOCK_WORKSPACE_FOLDER, ['commerce'])).toEqual([]);
+    await expect(t.sdlcOldChecksSeen(['commerce'])).resolves.toBeUndefined();
+  });
+
+  it('onRunning hands every new strip to its listener until unlistened', async () => {
+    const t = new MockTransport();
+    const seen: unknown[] = [];
+    const off = await t.onRunning((s) => seen.push(s));
+    await t.sdlcBuildStart(ref(MOCK_BUILD_SECOND), FORM);
+    expect(seen.length).toBeGreaterThan(0);
+    off();
+    const before = seen.length;
+    await t.sdlcBuildStart(ref(MOCK_BUILD_CHANGE), FORM);
+    expect(seen.length).toBe(before);
+  });
+
+  it('onCloseAsked asks nothing outside ?demo=close', async () => {
+    const t = new MockTransport();
+    const seen: unknown[] = [];
+    const off = await t.onCloseAsked((a) => seen.push(a));
+    await Promise.resolve();
+    expect(seen).toEqual([]);
+    off();
   });
 });

@@ -33,7 +33,7 @@ jobs:
         # Only needed to run the sidecar-staging script below (no npm deps).
         uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
@@ -56,9 +56,9 @@ jobs:
 
       - name: Document format conformance (vendored copy)
         # Runs Kata's document readers against the vendored copy of the ai-sdlc format program in
-        # crates/kata-sdlc/tests/ai-sdlc-format/ (needs Node 20, installed above). No network, no secret and no
+        # crates/kata-sdlc/tests/ai-sdlc-tools/ (needs Node 22.18 or later, installed above). No network, no secret and no
         # second checkout: the comparison with the sibling plugin skips itself where ../ai-sdlc is absent.
-        # Refresh the copy locally with: node scripts/vendor-ai-sdlc-format.mjs
+        # Refresh the copy locally with: node scripts/vendor-ai-sdlc-tools.mjs
         run: cargo test -p kata-sdlc --test format_conformance
 
       - name: Schema freshness (regenerate & diff)

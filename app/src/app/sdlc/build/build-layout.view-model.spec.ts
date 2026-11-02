@@ -3,12 +3,16 @@ import { TestBed } from '@angular/core/testing';
 import { LockStore } from '../../core/lock/lock.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
+import { RunLandingStore } from '../../core/run/run-landing.store';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { defaultArrangement, type AreaId, type LayoutMode } from '../../lib/build-layout';
 import { readLayoutFile } from '../../lib/build-layout-file';
 import type { LayoutStage } from '../../lib/build-layout-stage';
 import { BuildLayoutViewModel } from './build-layout.view-model';
 import { BuildPageViewModel } from './build-page.view-model';
+
+/** Hold the lock the way Kata's own checks do, and never finish: the screen stays locked for the rest of the test. */
+const holdLock = (lock: LockStore): void => void lock.runSteps('Checking', [{ label: 'Check', run: () => new Promise<string | null>(() => undefined) }]);
 
 const BIG = { width: 1600, height: 900 };
 const UNREADABLE_WATCH = 'The Watch layout could not be read; it is back to its default.';
@@ -95,6 +99,27 @@ describe('BuildLayoutViewModel', () => {
     expect(second.vm.mode()).toBe('watch');
     expect(second.vm.arrangement().left).toEqual(['activity']);
     expect(second.vm.arrangement().sizes.left).toBe(420);
+  });
+
+  it('R13.6: the mode picked on a change comes back when its page is opened again, unless a run was asked for', async () => {
+    const transport = setup();
+    const ctx = { folder: 'D:/ws', system: 'shop', change: 'A' };
+    const first = await make(transport);
+    first.standIn.loaded.set({ ctx });
+    first.vm.open('A');
+    first.vm.pickMode('review');
+
+    const second = await make(transport);
+    second.standIn.loaded.set({ ctx });
+    second.vm.open('A');
+    expect(second.vm.mode()).toBe('review');
+
+    // A run the engineer just asked for is shown in the stage's own mode, not the remembered one.
+    TestBed.inject(RunLandingStore).ask({ workspaceId: null, system: 'shop', change: 'A', run: { run: 1, kind: 'build', repo: 'kata', waiting: true } });
+    const third = await make(transport);
+    third.standIn.loaded.set({ ctx });
+    third.vm.open('A');
+    expect(third.vm.mode()).toBe('watch');
   });
 
   it('R8.2: one arrangement per mode is shared by every change', async () => {
@@ -278,7 +303,8 @@ describe('BuildLayoutViewModel', () => {
   it('R12.1: rearranging takes effect at once while the screen is locked', async () => {
     setup();
     const lock = TestBed.inject(LockStore);
-    expect(lock.beginBuild('Build')).toBe(true);
+    holdLock(lock);
+    expect(lock.active()).not.toBeNull();
     const { vm } = await make(TestBed.inject(KataTransport) as MockTransport);
     vm.open('A');
     vm.pickMode('changes');
@@ -296,7 +322,8 @@ describe('BuildLayoutViewModel', () => {
   it('R12.2: the lock still blocks other work after rearranging', async () => {
     const transport = setup();
     const lock = TestBed.inject(LockStore);
-    expect(lock.beginBuild('Build')).toBe(true);
+    holdLock(lock);
+    expect(lock.active()).not.toBeNull();
     const { vm } = await make(transport);
     vm.open('A');
     vm.pickMode('review');
@@ -306,7 +333,7 @@ describe('BuildLayoutViewModel', () => {
     vm.focusOn('files');
     expect(vm.focus()).toBe('files');
     vm.arrange({ kind: 'reset' });
-    expect(lock.beginBuild('Other')).toBe(false);
+    expect(await lock.runSteps('Other', [])).toBe('failed');
   });
 
   it('R12.3: rearranging only ever calls saveBuildLayout', async () => {

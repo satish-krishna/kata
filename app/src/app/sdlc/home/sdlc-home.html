@@ -4,7 +4,6 @@
     [current]="vm.current()"
     [missing]="vm.missing()"
     [branch]="vm.masterBranch()"
-    [locked]="vm.locked()"
     [blocked]="vm.state() === 'plugin-missing'"
     (switchMode)="vm.switchMode()"
     (select)="vm.selectWorkspace($event)"
@@ -13,10 +12,18 @@
     (openSettings)="vm.openSettings()"
   >
     @if (vm.canWork()) {
-      <button hlmBtn variant="primary" type="button" [disabled]="vm.locked()" (click)="vm.openNewChange()">
+      <button
+        hlmBtn
+        variant="primary"
+        type="button"
+        [disabled]="vm.locked() || !vm.canStartChange()"
+        [attr.title]="vm.startChangeReason()"
+        (click)="vm.openNewChange()"
+      >
         <ng-icon name="lucidePlus" size="14" />New change
       </button>
     }
+    <app-running-changes />
   </app-sdlc-toolbar>
 
   @if (vm.session(); as s) {
@@ -139,6 +146,17 @@
                 <span class="k-status k-status--warning"><span class="k-status__dot"></span>{{ notice.text }}</span>
               </div>
             }
+            @for (old of vm.oldChecks(); track old.system) {
+              <section class="k-oldchecks" data-testid="old-checks" role="status" [attr.aria-label]="'Old checks for ' + old.system">
+                <p>
+                  These checks no longer run. Checks are now team settings in the master repository; check them in with the ai-sdlc setup skill's
+                  <code class="k-mono">--hooks</code>.
+                </p>
+                <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.dismissOldChecks(old.system)">Dismiss</button>
+                <p class="k-oldchecks__path k-mono">{{ old.path }}</p>
+                <pre class="k-check__tail k-mono" data-testid="old-checks-text" tabindex="0">{{ old.text }}</pre>
+              </section>
+            }
             @if (vm.triageNotice(); as t) {
               <div class="wb-banner wb-banner--quiet" data-testid="triage-notice" role="status">
                 <span>No change was created. The triage's verdict is in the run's record.</span>
@@ -155,7 +173,6 @@
               <app-changes-table
                 [rows]="vm.rows()"
                 [others]="vm.otherBranches()"
-                [needsName]="vm.otherNeedingName()"
                 [lastRuns]="vm.lastRuns()"
                 [disabled]="vm.locked()"
                 (open)="vm.openChange($event.system, $event.change)"
@@ -212,6 +229,8 @@
     [initialIdea]="vm.newChangeIdea()"
     [initialTrack]="vm.newChangeTrack()"
     [note]="vm.newChangeNote()"
+    [initialSystem]="vm.newChangeSystem()"
+    [branchProblems]="vm.branchProblems()"
     [workTypes]="vm.workTypes()"
     [workType]="vm.workType()"
     [scope]="vm.scope()"
@@ -223,7 +242,7 @@
     (trackChange)="vm.pickTrack($event)"
     (workTypeChange)="vm.pickWorkType($event)"
     (scopeChange)="vm.setScope($event)"
-    (start)="vm.newChange($event.system, $event.idea, $event.track)"
+    (start)="vm.newChange($event.system, $event.idea, $event.track, $event.branch)"
     (cancel)="vm.closeNewChange()"
   />
   @if (vm.settings(); as s) {

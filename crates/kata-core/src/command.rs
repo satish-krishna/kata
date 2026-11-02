@@ -60,7 +60,12 @@ pub fn build_invocation_with(
         }
     }
 
-    if let Some(dir) = &assembled.plugin_dir {
+    // Claude loads each `--plugin-dir` as one plugin, or a folder of plugins as
+    // each child: the loose kit skills and the kit plugins need one flag each.
+    for dir in [&assembled.skills_root, &assembled.plugins_root]
+        .into_iter()
+        .flatten()
+    {
         args.push("--plugin-dir".into());
         args.push(dir.clone());
     }
@@ -203,6 +208,14 @@ mod tests {
         Assembled::for_test(plugin_dir.map(String::from), sys.map(String::from))
     }
 
+    fn assembled_kit(skills_root: Option<&str>, plugins_root: Option<&str>) -> Assembled {
+        Assembled::for_test_kit(
+            skills_root.map(String::from),
+            plugins_root.map(String::from),
+            None,
+        )
+    }
+
     fn flag_value<'a>(inv: &'a ClaudeInvocation, flag: &str) -> Option<&'a str> {
         inv.args
             .windows(2)
@@ -329,6 +342,32 @@ mod tests {
             .args
             .windows(2)
             .any(|w| w[0] == "--model" && w[1] == "claude-sonnet-4-6"));
+    }
+
+    #[test]
+    fn a_kit_with_plugins_passes_the_plugins_folder() {
+        let plugin_dirs = |inv: &ClaudeInvocation| -> Vec<String> {
+            inv.args
+                .windows(2)
+                .filter(|w| w[0] == "--plugin-dir")
+                .map(|w| w[1].clone())
+                .collect()
+        };
+        let both = assembled_kit(Some("/tmp/kit"), Some("/tmp/kit/plugins"));
+        assert_eq!(
+            plugin_dirs(&build_invocation(&spec(), &both)),
+            vec!["/tmp/kit".to_string(), "/tmp/kit/plugins".to_string()]
+        );
+        let skills = assembled_kit(Some("/tmp/kit"), None);
+        assert_eq!(
+            plugin_dirs(&build_invocation(&spec(), &skills)),
+            vec!["/tmp/kit".to_string()]
+        );
+        let plugins = assembled_kit(None, Some("/tmp/kit/plugins"));
+        assert_eq!(
+            plugin_dirs(&build_invocation(&spec(), &plugins)),
+            vec!["/tmp/kit/plugins".to_string()]
+        );
     }
 
     #[test]
