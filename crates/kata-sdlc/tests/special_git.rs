@@ -310,7 +310,12 @@ fn goes_through_every_step(need: Need) {
             .next()
             .expect("the change is listed");
         let outcome = accept::apply(&program(), &place, SYSTEM, &change, doc);
-        assert_eq!(outcome, AcceptOutcome::Accepted, "{}", say(file));
+        assert_eq!(
+            outcome,
+            AcceptOutcome::Accepted { warnings: vec![] },
+            "{}",
+            say(file)
+        );
     }
 
     // build.start puts the product repository on the change's branch.
@@ -438,7 +443,7 @@ fn goes_through_every_step(need: Need) {
         Arc::new(|_| {}),
     );
     match &view {
-        DeclareView::Done { pull_requests } => {
+        DeclareView::Done { pull_requests, .. } => {
             let repos: Vec<&str> = pull_requests.iter().map(|p| p.repo.as_str()).collect();
             assert_eq!(repos, ["kata", "master"], "{}", say("the master's last"));
         }

@@ -379,6 +379,15 @@ impl build_host::Tools for PluginTools {
     ) -> Result<Value, sdlc::ai_sdlc::ProgramError> {
         Self::program(&place.workspace)?.run(command, place)
     }
+    fn exec(
+        &self,
+        command: &[&str],
+        place: &sdlc::ai_sdlc::Place,
+    ) -> Result<sdlc::ai_sdlc::Reply, String> {
+        Self::program(&place.workspace)
+            .map_err(|e| e.to_string())?
+            .exec(command, place)
+    }
     fn states(
         &self,
         place: &sdlc::ai_sdlc::Place,

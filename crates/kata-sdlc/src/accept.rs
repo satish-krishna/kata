@@ -29,8 +29,9 @@ pub enum ChangeDocument {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum AcceptOutcome {
-    /// Committed, and the `doc.accept` event passed.
-    Accepted,
+    /// Committed, and the `doc.accept` event passed; `warnings` are the plugin's, such as an after hook
+    /// that failed (nothing was undone).
+    Accepted { warnings: Vec<String> },
     /// Committed, but a team hook on accepting failed; the engineer decides what happens next.
     AcceptedHookFailed {
         hook: Option<String>,
@@ -318,7 +319,9 @@ fn strings(value: &Value) -> Vec<String> {
 fn event_outcome(answer: &Value) -> AcceptOutcome {
     let problems = strings(&answer["problems"]);
     match answer["outcome"].as_str() {
-        Some("passed") => AcceptOutcome::Accepted,
+        Some("passed") => AcceptOutcome::Accepted {
+            warnings: Vec::new(),
+        },
         Some("failed" | "refused") => {
             let failed = &answer["failed"];
             AcceptOutcome::AcceptedHookFailed {
@@ -540,6 +543,47 @@ mod tests {
             .to_string()
     }
 
+    /// F22: an after hook on accepting that fails changes nothing, and the engineer sees its warning.
+    #[test]
+    fn an_after_hook_that_fails_on_accepting_is_a_warning() {
+        let hooks = json!({"version": 1, "hooks": {"doc.accept": [
+            {"id": "notify", "when": "after", "run": ["node", "-e", "process.exit(3)"]}]}})
+        .to_string();
+        let fx = ready(
+            ChangeDocument::Spec,
+            SPEC_BODY,
+            &[("intent/demo/hooks.json", &hooks)],
+        );
+        assert_eq!(
+            fx.apply(ChangeDocument::Spec),
+            AcceptOutcome::Accepted {
+                warnings: vec![
+                    "after hook notify failed with exit code 3; nothing was undone".into()
+                ]
+            }
+        );
+    }
+
+    /// F3: a hook on accepting that cannot run makes the plugin print its answer and exit 2. The
+    /// engineer sees the hook's own output, not the exit code.
+    #[test]
+    fn a_hook_that_cannot_run_on_accepting_shows_its_output() {
+        let hooks = accept_hook(json!(["kata-no-such-program-on-this-machine"]));
+        let fx = ready(
+            ChangeDocument::Intent,
+            SPEC_BODY,
+            &[("intent/demo/hooks.json", &hooks)],
+        );
+        let outcome = fx.apply(ChangeDocument::Intent);
+        let AcceptOutcome::AcceptedHookCouldNotRun { output } = outcome else {
+            panic!("expected AcceptedHookCouldNotRun, got {outcome:?}");
+        };
+        assert!(
+            output.contains("cannot start kata-no-such-program-on-this-machine"),
+            "{output}"
+        );
+    }
+
     #[test]
     fn accepting_a_document_rows() {
         // R3.1 "the commit and the accepting step pass": one case for each document.
@@ -555,7 +599,11 @@ mod tests {
             let fx = ready(doc, SPEC_BODY, &[]);
             let before = git(&fx.copy, &["rev-list", "--count", "HEAD"]);
             let outcome = fx.apply(doc);
-            assert_eq!(outcome, AcceptOutcome::Accepted, "{doc:?}");
+            assert_eq!(
+                outcome,
+                AcceptOutcome::Accepted { warnings: vec![] },
+                "{doc:?}"
+            );
             // The plugin made one commit, with its header and trailer; Kata made none.
             assert_eq!(
                 git(&fx.copy, &["rev-list", "--count", "HEAD"])

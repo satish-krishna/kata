@@ -28,6 +28,9 @@ pub struct HookShown {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum CheckView {
+    /// The team's hook configuration on the master's base branch has problems, so the plugin runs no
+    /// check until it is fixed; `output` is the plugin's problems, one a line.
+    ConfigBroken { output: String },
     /// No `build.finish` hook is configured for the repository.
     NoChecks,
     /// Checks are configured and have not run.
@@ -135,6 +138,7 @@ pub fn of(status: &Status, repo: &str, head: &str, hooks: &Hooks) -> CheckView {
 /// The sentence the page shows for a view.
 pub fn summary(view: &CheckView) -> String {
     match view {
+        CheckView::ConfigBroken { .. } => String::new(),
         CheckView::NoChecks => "This repository has no checks.".to_string(),
         CheckView::NotRunYet => "The checks have not run yet.".to_string(),
         CheckView::Stale { head } => format!("Checks last ran at {head}."),
@@ -408,6 +412,26 @@ mod tests {
             assert_eq!(got.view, case.expect, "{}", case.row);
             assert_eq!(got.summary, case.says, "{}", case.row);
         }
+    }
+
+    /// F20: a broken hook configuration is shown with the checks, with the plugin's problems, rather
+    /// than "not run yet" for ever.
+    #[test]
+    fn a_broken_hook_configuration_is_shown_with_the_checks() {
+        let fx = Fx::new(true);
+        // Broken after the change started: the plugin will run no check until it is fixed.
+        let marker = json!({"version": 1, "systems": {"demo": {"repos": ["app"]}},
+            "hooks": {"build.finish": [{"id": "unit", "run": ["node", "-v"], "repos": ["app"], "timeout": "soon"}]}});
+        testutil::commit_file(&fx.master, ".ai-sdlc.json", &marker.to_string(), "broken");
+        let got = fx.view();
+        let CheckView::ConfigBroken { output } = &got.view else {
+            panic!("{got:?}");
+        };
+        assert!(output.contains("timeout must be"), "{output}");
+        assert_eq!(
+            got.summary,
+            "The team's check configuration on the base branch has problems. No check runs until it is fixed."
+        );
     }
 
     #[test]

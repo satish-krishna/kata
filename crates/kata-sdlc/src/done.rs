@@ -51,6 +51,8 @@ pub enum DeclareView {
     /// Every repository is pushed and every pull request is open, the master's last.
     Done {
         pull_requests: Vec<RecordedPullRequest>,
+        /// The plugin's warnings, such as an after hook that failed (nothing was undone).
+        warnings: Vec<String>,
     },
     /// The plugin refused before pushing anything; each problem is its own sentence.
     NotReady { problems: Vec<String> },
@@ -90,6 +92,7 @@ pub fn outcome(event: &Value) -> DeclareView {
     match event["outcome"].as_str() {
         Some("passed") => DeclareView::Done {
             pull_requests: pull_requests(event),
+            warnings: Vec::new(),
         },
         Some("refused") => DeclareView::NotReady { problems },
         Some("failed") => {
@@ -278,7 +281,8 @@ mod tests {
         assert_eq!(
             outcome(&passed),
             DeclareView::Done {
-                pull_requests: vec![pr("app", 1), pr("master", 2)]
+                pull_requests: vec![pr("app", 1), pr("master", 2)],
+                warnings: vec![]
             },
             "1 passed: the master's pull request is last"
         );
@@ -365,6 +369,71 @@ mod tests {
             master: PathBuf::from("."),
             workspace: PathBuf::from("."),
         }
+    }
+
+    /// F22: declaring done passed, and an after hook failed; the engineer sees the warning with the pull
+    /// requests.
+    #[test]
+    fn passed_with_warnings_keeps_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let line = json!({"type": "outcome", "event": "change.done", "outcome": "passed",
+            "problems": ["after hook announce failed with exit code 1; nothing was undone"], "hooks": [], "failed": null,
+            "details": {"pushed": ["app", "master"], "pullRequests": [line("app", 1), line("master", 2)]}});
+        let program = scripted(
+            dir.path(),
+            &format!(
+                "console.log({}); process.exitCode = 0;",
+                serde_json::to_string(&line.to_string()).unwrap()
+            ),
+        );
+        let view = declare(
+            &program,
+            &here(),
+            &ready(GhPresence::Present),
+            "demo",
+            CHANGE,
+            Arc::new(|_| {}),
+        );
+        assert_eq!(
+            view,
+            DeclareView::Done {
+                pull_requests: vec![pr("app", 1), pr("master", 2)],
+                warnings: vec![
+                    "after hook announce failed with exit code 1; nothing was undone".into()
+                ]
+            }
+        );
+    }
+
+    /// F3 and R7.1 row 4: the plugin prints its could-not-run answer and exits 2. The engineer is told
+    /// the plugin's reason, not "exit 2", and nothing is claimed as pushed.
+    #[test]
+    fn a_could_not_run_answer_on_exit_2_is_told_with_its_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        let line = json!({"type": "outcome", "event": "change.done", "outcome": "could-not-run",
+            "problems": ["declaring a change done needs the GitHub command-line tool, gh, which is not installed or not on PATH"],
+            "hooks": [], "failed": null, "details": {}});
+        let program = scripted(
+            dir.path(),
+            &format!(
+                "console.log({}); process.exitCode = 2;",
+                serde_json::to_string(&line.to_string()).unwrap()
+            ),
+        );
+        let view = declare(
+            &program,
+            &here(),
+            &ready(GhPresence::Present),
+            "demo",
+            CHANGE,
+            Arc::new(|_| {}),
+        );
+        assert_eq!(
+            view,
+            DeclareView::CouldNotRun {
+                message: "declaring a change done needs the GitHub command-line tool, gh, which is not installed or not on PATH".into()
+            }
+        );
     }
 
     /// R7.3: a team hook, a push and a pull request each name the step the plugin is on, as it happens. The
@@ -659,7 +728,7 @@ say({ type: 'outcome', outcome: 'passed', problems: [], hooks: [], failed: null,
         // Passes: every pull request, the master's last, and the change records them.
         let fx = Fx::ready();
         let view = fx.declare();
-        let DeclareView::Done { pull_requests } = &view else {
+        let DeclareView::Done { pull_requests, .. } = &view else {
             panic!("{view:?}")
         };
         assert_eq!(

@@ -9,12 +9,14 @@ pub mod status;
 
 use crate::process::CapturedExit;
 use kata_core::proc::{run_limited, run_limited_streaming, Limited, LineSink, Outcome, StartError};
+use serde::Serialize;
 use serde_json::Value;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// How long [`Program::run`] lets a command run before its process tree is killed.
+/// How long a command may run before its process tree is killed, when it runs no team hook. A step that
+/// runs hooks gets this plus the hooks' own time limits (see [`Program::limit_for`]).
 pub const TIMEOUT: Duration = Duration::from_secs(60);
 
 /// What a missing `node` is reported as.
@@ -108,6 +110,99 @@ pub(crate) fn execute(
     }
 }
 
+/// How the program exited: its exit code and what it printed. A stand-in for the program in a test hands
+/// one back in place of running it, so the test reads it the same way as the real program's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reply {
+    /// None when it was ended by a signal.
+    pub code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl Reply {
+    /// A reply that prints `json` as its one line and exits with `code`.
+    pub fn json(code: i32, json: &Value) -> Reply {
+        Reply {
+            code: Some(code),
+            stdout: format!("{json}\n"),
+            stderr: String::new(),
+        }
+    }
+}
+
+/// The blocking hook that stopped a step, what it asks for, and its output as the plugin gave it.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct HookFailure {
+    pub id: String,
+    /// `fix` or `stop`; None when the plugin did not say.
+    pub on_failure: Option<String>,
+    pub output: String,
+}
+
+/// What the plugin answered to a step (an event, a commit, a change command), read from its exit code and
+/// the JSON it printed. Every caller reads a step through [`answer_of`]; none reads the exit code itself.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(
+    tag = "outcome",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum StepOutcome {
+    /// Exit 0. `problems` are warnings, such as an after hook that failed (nothing was undone).
+    Passed { problems: Vec<String> },
+    /// Exit 1 without a failure: the plugin's reasons; it did nothing.
+    Refused { problems: Vec<String> },
+    /// Exit 1 with `outcome: failed`: a blocking hook or the step's own work failed.
+    Failed {
+        problems: Vec<String>,
+        hook: Option<HookFailure>,
+    },
+    /// Exit 2, or the program could not be run at all: a fault of the machine, not of the work.
+    CouldNotRun {
+        reason: String,
+        /// The repository the plugin names, when it names one.
+        repo: Option<String>,
+        hook: Option<HookFailure>,
+    },
+}
+
+/// A step's outcome with the JSON it came from (`Value::Null` when there was none), for the details a
+/// caller shows: the branch a start made, the files a build start found uncommitted.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Answer {
+    pub outcome: StepOutcome,
+    pub json: Value,
+}
+
+/// Reads a step's reply, or the reason it could not be run, as the plugin's contract gives it:
+///
+/// | # | reply | outcome |
+/// |---|---|---|
+/// | 1 | none (no Node.js, a timeout, ...) | `CouldNotRun` with the reason |
+/// | 2 | exit 0, JSON | `Passed`, with its `problems` as warnings |
+/// | 3 | exit 1, JSON with `outcome: failed` | `Failed`, with `failed` as the hook and its output |
+/// | 4 | exit 1, JSON | `Refused` with its `problems` (its `reason` when it lists none) |
+/// | 5 | exit 1, not JSON | `Refused` with what it printed |
+/// | 6 | exit 2, JSON | `CouldNotRun`: the problems, the repository it names and the hook that could not run |
+/// | 7 | anything else | `CouldNotRun` with stderr, or the exit code |
+pub fn answer_of(reply: Result<Reply, String>) -> Answer {
+    let _ = reply;
+    Answer {
+        outcome: StepOutcome::CouldNotRun {
+            reason: String::new(),
+            repo: None,
+            hook: None,
+        },
+        json: Value::Null,
+    }
+}
+
 /// The ai-sdlc program: the Node.js executable and the entry file it runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Program {
@@ -157,6 +252,64 @@ impl Program {
         let workspace = place.workspace.display().to_string();
         let args = with_place(command, &master, &workspace);
         self.call_with(&args, &place.workspace, limit, Some(on_line))
+    }
+
+    /// Runs a step (`command`) in `place` and reads its answer through [`answer_of`].
+    pub fn step(&self, command: &[&str], place: &Place) -> Answer {
+        answer_of(self.exec(command, place))
+    }
+
+    /// [`Program::step`] that hands each whole stdout line to `on_line` while it runs (`--stream`).
+    pub fn step_streaming(&self, command: &[&str], place: &Place, on_line: LineSink) -> Answer {
+        answer_of(self.exec_within(command, place, base_limit(command), Some(on_line)))
+    }
+
+    /// Runs `command` in `place` and returns how it exited, within the time limit chosen for it.
+    pub fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String> {
+        self.exec_within(command, place, base_limit(command), None)
+    }
+
+    /// [`Program::exec`] with `base` as the limit before the time limits of the team's hooks are added.
+    pub fn exec_within(
+        &self,
+        command: &[&str],
+        place: &Place,
+        base: Duration,
+        on_line: Option<LineSink>,
+    ) -> Result<Reply, String> {
+        if !self.entry.is_file() {
+            return Err(ProgramError::TooOld {
+                found: format!("{} does not exist", self.entry.display()),
+            }
+            .to_string());
+        }
+        let limit = self.limit_for(command, place, base);
+        let master = place.master.display().to_string();
+        let workspace = place.workspace.display().to_string();
+        let args = with_place(command, &master, &workspace);
+        match execute(
+            &self.node,
+            &self.entry,
+            &place.workspace,
+            &args,
+            limit,
+            on_line,
+        ) {
+            Ok(exit) => Ok(Reply {
+                code: exit.code,
+                stdout: String::from_utf8_lossy(&exit.stdout).into_owned(),
+                stderr: exit.stderr,
+            }),
+            Err(Failure::NodeMissing) => Err(NEEDS_NODE.to_string()),
+            Err(Failure::Other(message)) => Err(message),
+            Err(Failure::TimedOut { secs }) => Err(format!("it did not finish in {secs} seconds")),
+        }
+    }
+
+    /// How long `command` may run in `place`: `base`, plus the time limits of the team's hooks it runs.
+    pub fn limit_for(&self, command: &[&str], place: &Place, base: Duration) -> Duration {
+        let _ = (command, place);
+        base
     }
 
     /// Finds the master repository of `workspace` as the program's `resolve` does, with no master given.
@@ -233,6 +386,13 @@ impl Program {
             ))),
         }
     }
+}
+
+/// The time limit a command starts from, before the team's hooks are added: declaring done pushes and
+/// opens pull requests, and a commit runs the repository's own git hooks, which the plugin does not limit.
+fn base_limit(command: &[&str]) -> Duration {
+    let _ = command;
+    TIMEOUT
 }
 
 fn could_not_run(message: impl Into<String>) -> ProgramError {
@@ -350,6 +510,214 @@ mod tests {
             with_place(&["naming", "--json"], "/m", "/w"),
             ["naming", "--json"]
         );
+    }
+
+    /// A node script standing in for the program, in a folder of its own that is also its workspace.
+    fn scripted(dir: &Path, body: &str) -> (Program, Place) {
+        let entry = dir.join("scripted.js");
+        std::fs::write(&entry, body).unwrap();
+        let place = Place {
+            master: dir.to_path_buf(),
+            workspace: dir.to_path_buf(),
+        };
+        (
+            Program {
+                node: "node".into(),
+                entry,
+            },
+            place,
+        )
+    }
+
+    /// A program that prints `json` as its one line and exits with `code`, with nothing on stderr.
+    fn answering(dir: &Path, code: i32, json: &Value) -> (Program, Place) {
+        let line = serde_json::to_string(&json.to_string()).unwrap();
+        scripted(
+            dir,
+            &format!("process.stdout.write({line} + '\\n'); process.exitCode = {code};"),
+        )
+    }
+
+    /// F3: `run` and `change start` print their whole answer and exit 2 when they could not run, with
+    /// nothing on stderr. The engineer is told the plugin's reason and the repository, not "exit 2".
+    #[test]
+    fn a_could_not_run_answer_on_exit_2_keeps_its_reason_and_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let event = serde_json::json!({"event": "build.start", "repo": "bob", "outcome": "could-not-run",
+            "problems": ["hook prep could not run"], "hooks": [],
+            "failed": {"id": "prep", "onFailure": "stop", "output": "spawn prep ENOENT"}});
+        let (program, place) = answering(dir.path(), 2, &event);
+        let answer = program.step(&["run", "build.start", "--json"], &place);
+        assert_eq!(
+            answer.outcome,
+            StepOutcome::CouldNotRun {
+                reason: "hook prep could not run".into(),
+                repo: Some("bob".into()),
+                hook: Some(HookFailure {
+                    id: "prep".into(),
+                    on_failure: Some("stop".into()),
+                    output: "spawn prep ENOENT".into()
+                }),
+            }
+        );
+        assert_eq!(answer.json, event);
+
+        // `--check` names the repository among `repos`.
+        let dir = tempfile::tempdir().unwrap();
+        let check = serde_json::json!({"event": "build.start", "check": true, "outcome": "could-not-run",
+            "problems": ["the hook configuration on the base branch: bad"], "refusing": [],
+            "repos": [{"repo": "kata", "outcome": "passed", "problems": []},
+                      {"repo": "bob", "outcome": "could-not-run", "problems": ["the hook configuration on the base branch: bad"]}]});
+        let (program, place) = answering(dir.path(), 2, &check);
+        assert_eq!(
+            program
+                .step(&["run", "build.start", "--json"], &place)
+                .outcome,
+            StepOutcome::CouldNotRun {
+                reason: "the hook configuration on the base branch: bad".into(),
+                repo: Some("bob".into()),
+                hook: None,
+            }
+        );
+    }
+
+    /// F10: a blocking hook that failed is a failure of the work, with the hook and its output.
+    #[test]
+    fn a_failed_step_carries_the_hook_and_its_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let event = serde_json::json!({"event": "build.start", "repo": "kata", "outcome": "failed",
+            "problems": ["hook lint failed with exit code 1"], "hooks": [],
+            "failed": {"id": "lint", "onFailure": "fix", "output": "src/a.rs: unused import\n"}});
+        let (program, place) = answering(dir.path(), 1, &event);
+        assert_eq!(
+            program
+                .step(&["run", "build.start", "--json"], &place)
+                .outcome,
+            StepOutcome::Failed {
+                problems: vec!["hook lint failed with exit code 1".into()],
+                hook: Some(HookFailure {
+                    id: "lint".into(),
+                    on_failure: Some("fix".into()),
+                    output: "src/a.rs: unused import\n".into()
+                }),
+            }
+        );
+    }
+
+    /// F22: a step that passed keeps the plugin's warnings, such as an after hook that failed.
+    #[test]
+    fn a_passed_step_keeps_its_warnings() {
+        let dir = tempfile::tempdir().unwrap();
+        let event = serde_json::json!({"event": "doc.accept", "repo": "master", "outcome": "passed",
+            "problems": ["after hook notify failed with exit code 1; nothing was undone"], "hooks": [], "failed": null});
+        let (program, place) = answering(dir.path(), 0, &event);
+        assert_eq!(
+            program
+                .step(&["run", "doc.accept", "--json"], &place)
+                .outcome,
+            StepOutcome::Passed {
+                problems: vec![
+                    "after hook notify failed with exit code 1; nothing was undone".into()
+                ]
+            }
+        );
+    }
+
+    /// A refusal is the plugin's reasons; a commit that lists none gives its `reason`; an exit 1 that is
+    /// not JSON is what it printed; a crash is its stderr.
+    #[test]
+    fn refusals_and_crashes_read_as_the_plugin_gave_them() {
+        let refused = |json: Value| answer_of(Ok(Reply::json(1, &json))).outcome;
+        assert_eq!(
+            refused(serde_json::json!({"outcome": "refused", "problems": ["bob is dirty"]})),
+            StepOutcome::Refused {
+                problems: vec!["bob is dirty".into()]
+            }
+        );
+        assert_eq!(
+            refused(
+                serde_json::json!({"committed": false, "reason": "git refused", "problems": []})
+            ),
+            StepOutcome::Refused {
+                problems: vec!["git refused".into()]
+            }
+        );
+        let plain = Reply {
+            code: Some(1),
+            stdout: "no\n".into(),
+            stderr: String::new(),
+        };
+        assert_eq!(
+            answer_of(Ok(plain)).outcome,
+            StepOutcome::Refused {
+                problems: vec!["no".into()]
+            }
+        );
+        let crash = Reply {
+            code: Some(2),
+            stdout: String::new(),
+            stderr: "internal error: boom\n".into(),
+        };
+        assert_eq!(
+            answer_of(Ok(crash)).outcome,
+            StepOutcome::CouldNotRun {
+                reason: "internal error: boom".into(),
+                repo: None,
+                hook: None
+            }
+        );
+        assert_eq!(
+            answer_of(Err(NEEDS_NODE.into())).outcome,
+            StepOutcome::CouldNotRun {
+                reason: NEEDS_NODE.into(),
+                repo: None,
+                hook: None
+            }
+        );
+    }
+
+    /// F2: a step that runs the team's hooks may take as long as their own time limits allow. The base
+    /// limit here is 3 seconds and the hook takes 6, within its own limit of 30: it is not killed.
+    #[test]
+    fn a_hook_is_limited_by_its_own_time_limit_not_the_base_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let master = testutil::repo(dir.path(), "ai-sdlc");
+        testutil::repo(dir.path(), "app");
+        let marker = serde_json::json!({"version": 1, "systems": {"demo": {"repos": ["app"]}},
+            "hooks": {"change.start": [{"id": "slow", "run": ["node", "-e", "setTimeout(() => {}, 6000)"], "timeout": 30}]}});
+        testutil::commit_file(&master, ".ai-sdlc.json", &marker.to_string(), "marker");
+        let place = Place {
+            master,
+            workspace: dir.path().to_path_buf(),
+        };
+        let command = [
+            "change",
+            "start",
+            "--json",
+            "--system",
+            "demo",
+            "--change",
+            "2026-11-01-slow",
+            "--type",
+            "feat",
+            "--scope",
+            "demo",
+        ];
+        let answer =
+            answer_of(program().exec_within(&command, &place, Duration::from_secs(3), None));
+        assert_eq!(
+            answer.outcome,
+            StepOutcome::Passed { problems: vec![] },
+            "{:?}",
+            answer.json
+        );
+        // Plain reads keep the base limit; an event checked with `--check` runs no hook.
+        let base = Duration::from_secs(3);
+        assert_eq!(
+            program().limit_for(&["state", "--json"], &place, base),
+            base
+        );
+        assert!(program().limit_for(&command, &place, base) >= Duration::from_secs(33));
     }
 
     #[test]

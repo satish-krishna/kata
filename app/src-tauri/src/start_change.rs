@@ -1,7 +1,7 @@
 //! Starting a change: the plugin makes the change's branch and its own copy of the master repository,
 //! and Kata only asks. Kata never creates a branch or a copy itself; a refusal is the plugin's own reason,
 //! sorted by what the engineer can do about it.
-use kata_sdlc::ai_sdlc::{Place, Program};
+use kata_sdlc::ai_sdlc::{HookFailure, Place, Program};
 use kata_sdlc::naming;
 use serde::Serialize;
 
@@ -43,6 +43,18 @@ pub enum ChangeStart {
     Refused {
         kind: StartRefusal,
         problems: Vec<String>,
+    },
+    /// A team hook or the plugin's own step failed. `made` is what the plugin says it made before that
+    /// (the branch, the copy), which may still be there; `problems` are its words.
+    Failed {
+        problems: Vec<String>,
+        hook: Option<HookFailure>,
+        made: Vec<String>,
+    },
+    /// This machine could not run the plugin's step; `hook` is the team hook that could not run, if any.
+    CouldNotRun {
+        reason: String,
+        hook: Option<HookFailure>,
     },
 }
 
@@ -373,6 +385,71 @@ mod tests {
                     .exists(),
                 "{label}"
             );
+        }
+    }
+
+    /// F21 and R2.2: a branch name the plugin reserves for itself asks the engineer for another name.
+    #[test]
+    fn a_reserved_branch_name_asks_for_another() {
+        let (_dir, place) = workspace(PLAIN);
+        match start(&place, "X-1", Some("change/pending-x")) {
+            ChangeStart::Refused { kind, problems } => {
+                assert_eq!(kind, StartRefusal::BranchTaken, "{problems:?}");
+                assert!(
+                    problems.iter().any(|p| p.contains("reserved")),
+                    "{problems:?}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn with_hook(run: &str) -> String {
+        format!(
+            r#"{{"version":1,"systems":{{"demo":{{"repos":["app"]}}}},"hooks":{{"change.start":[{{"id":"gate","run":{run}}}]}}}}"#
+        )
+    }
+
+    /// F10: a team hook on starting fails. The engineer sees the hook's failure and its output, and is
+    /// not told the plugin refused.
+    #[test]
+    fn a_failed_hook_on_starting_shows_its_output() {
+        let (_dir, place) = workspace(&with_hook(
+            r#"["node","-e","console.log('gate says no');process.exit(1)"]"#,
+        ));
+        match start(&place, "X-1", None) {
+            ChangeStart::Failed {
+                hook: Some(hook),
+                made,
+                ..
+            } => {
+                assert_eq!(hook.id, "gate");
+                assert!(hook.output.contains("gate says no"), "{hook:?}");
+                // A blocking before hook stops the start before the plugin makes anything.
+                assert_eq!(made, Vec::<String>::new());
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// F3: a team hook on starting cannot run on this machine. The plugin prints its answer and exits
+    /// 2; the engineer is told the machine could not run it, with the hook's own output.
+    #[test]
+    fn a_hook_that_cannot_run_on_starting_says_why() {
+        let (_dir, place) = workspace(&with_hook(r#"["kata-no-such-program-on-this-machine"]"#));
+        match start(&place, "X-1", None) {
+            ChangeStart::CouldNotRun {
+                reason,
+                hook: Some(hook),
+            } => {
+                assert!(reason.contains("gate"), "{reason}");
+                assert!(
+                    hook.output
+                        .contains("cannot start kata-no-such-program-on-this-machine"),
+                    "{hook:?}"
+                );
+            }
+            other => panic!("{other:?}"),
         }
     }
 

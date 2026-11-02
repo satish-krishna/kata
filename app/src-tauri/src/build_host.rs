@@ -8,7 +8,7 @@ use crate::runs::{self, Lane};
 use kata_core::spec::PermissionMode;
 use kata_core::RunSpec;
 use kata_sdlc::ai_sdlc::state::{read_state, ChangeState};
-use kata_sdlc::ai_sdlc::{Place, Program, ProgramError};
+use kata_sdlc::ai_sdlc::{HookFailure, Place, Program, ProgramError, Reply};
 use kata_sdlc::coordinator::{
     self, BuildChoices, BuildFacts, BuildPhase, BuildState, Command, Coordinator, Input,
 };
@@ -145,8 +145,16 @@ pub enum StartOutcome {
     Held { held: Vec<HeldRepo> },
     /// The plugin refused, and these are its reasons.
     Refused { problems: Vec<String> },
-    /// The machine could not run the plugin's step.
-    CouldNotRun { output: String },
+    /// A team hook or the plugin's own step failed: a failure of the work, with the hook's output.
+    Failed {
+        problems: Vec<String>,
+        hook: Option<HookFailure>,
+    },
+    /// The machine could not run the plugin's step; `repo` is the repository the plugin names, if any.
+    CouldNotRun {
+        output: String,
+        repo: Option<String>,
+    },
 }
 
 /// A change's build state, announced on [`BUILD_EVENT`].
@@ -233,8 +241,10 @@ pub struct LaunchRequest {
 pub trait Tools: Send + Sync {
     /// The master repository and the workspace around `workspace`.
     fn resolve(&self, workspace: &Path) -> Result<Place, ProgramError>;
-    /// One program command, as `Program::run`.
+    /// One program command that reads, as `Program::run`.
     fn run(&self, command: &[&str], place: &Place) -> Result<Value, ProgramError>;
+    /// One program step, as `Program::exec`: how it exited, for `ai_sdlc::answer_of` to read.
+    fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String>;
     /// Every change of `system`.
     fn states(&self, place: &Place, system: &str) -> Result<Vec<ChangeState>, ProgramError>;
     /// The change's plan, as committed.
@@ -282,6 +292,10 @@ impl Tools for ProgramTools {
 
     fn run(&self, command: &[&str], place: &Place) -> Result<Value, ProgramError> {
         self.program.run(command, place)
+    }
+
+    fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String> {
+        self.program.exec(command, place)
     }
 
     fn states(&self, place: &Place, system: &str) -> Result<Vec<ChangeState>, ProgramError> {
@@ -466,6 +480,7 @@ fn error_text(e: &ProgramError) -> String {
 fn could_not_run(e: &ProgramError) -> StartOutcome {
     StartOutcome::CouldNotRun {
         output: error_text(e),
+        repo: None,
     }
 }
 
@@ -475,6 +490,7 @@ fn failure(answer: &Value) -> StartOutcome {
     match answer["outcome"].as_str() {
         Some("refused") => StartOutcome::Refused { problems },
         _ => StartOutcome::CouldNotRun {
+            repo: None,
             output: if problems.is_empty() {
                 format!("the ai-sdlc program answered {}", answer["outcome"])
             } else {
@@ -690,7 +706,7 @@ impl BuildHost {
         let key = key_of(change);
         let (snapshot, _) = match self.snapshot(&place, &change.system, &change.change) {
             Ok(s) => s,
-            Err(output) => return StartOutcome::CouldNotRun { output },
+            Err(output) => return StartOutcome::CouldNotRun { output, repo: None },
         };
         let unrecorded = snapshot
             .state
@@ -1092,7 +1108,7 @@ impl BuildHost {
         }
         let (snapshot, plan) = match self.snapshot(place, &change.system, &change.change) {
             Ok(s) => s,
-            Err(output) => return StartOutcome::CouldNotRun { output },
+            Err(output) => return StartOutcome::CouldNotRun { output, repo: None },
         };
         let master = master_name(place);
         let rounds: Vec<String> = form.rounds.iter().map(|r| r.repo.clone()).collect();
@@ -1742,8 +1758,8 @@ mod tests {
         plans: Mutex<HashMap<String, ParsedPlan>>,
         heads: Mutex<HashMap<String, String>>,
         review: Mutex<Option<ReviewRecord>>,
-        check: Mutex<Option<Result<Value, ProgramError>>>,
-        starts: Mutex<HashMap<String, Result<Value, ProgramError>>>,
+        check: Mutex<Option<Result<Reply, String>>>,
+        starts: Mutex<HashMap<String, Result<Reply, String>>>,
         calls: Mutex<Vec<Vec<String>>>,
         /// The next `states` call announces itself on `.0` and waits for `.1`.
         gate: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
@@ -1796,22 +1812,29 @@ mod tests {
         }
 
         fn refuse_check(&self, repo: &str, problem: &str) {
-            *self.check.lock().unwrap() = Some(Ok(json!({
+            *self.check.lock().unwrap() = Some(Ok(Reply::json(
+                1,
+                &json!({
                 "event": "build.start", "check": true, "outcome": "refused",
-                "problems": [problem], "refusing": [repo], "repos": []})));
+                "problems": [problem], "refusing": [repo], "repos": []}),
+            )));
         }
 
         fn check_cannot_run(&self, why: &str) {
-            *self.check.lock().unwrap() = Some(Err(ProgramError::CouldNotRun {
-                message: why.into(),
-            }));
+            *self.check.lock().unwrap() = Some(Err(why.into()));
         }
 
+        /// `repo`'s build start prints `answer` and exits with the code the plugin gives that outcome.
         fn start_answer(&self, repo: &str, answer: Value) {
+            let code = match answer["outcome"].as_str() {
+                Some("passed") => 0,
+                Some("could-not-run") => 2,
+                _ => 1,
+            };
             self.starts
                 .lock()
                 .unwrap()
-                .insert(repo.to_string(), Ok(answer));
+                .insert(repo.to_string(), Ok(Reply::json(code, &answer)));
         }
 
         fn calls_for(&self, change: &str) -> Vec<Vec<String>> {
@@ -1858,6 +1881,23 @@ mod tests {
                     self.system_repos.iter().map(|r| (r, json!({}))).collect();
                 return Ok(json!({"repos": repos}));
             }
+            // A step asked through `run` reads as `Program::run` read it before every step had one reader.
+            self.calls.lock().unwrap().pop();
+            match self.exec(command, _place) {
+                Ok(reply) if matches!(reply.code, Some(0 | 1)) => {
+                    Ok(serde_json::from_str(reply.stdout.trim()).unwrap())
+                }
+                Ok(reply) => Err(ProgramError::CouldNotRun {
+                    message: format!("exit {}", reply.code.unwrap_or(-1)),
+                }),
+                Err(message) => Err(ProgramError::CouldNotRun { message }),
+            }
+        }
+        fn exec(&self, command: &[&str], _place: &Place) -> Result<Reply, String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(command.iter().map(|s| s.to_string()).collect());
             let repos: Vec<String> = command
                 .windows(2)
                 .filter(|w| w[0] == "--repo")
@@ -1866,12 +1906,12 @@ mod tests {
             if command.contains(&"--check") {
                 return match self.check.lock().unwrap().clone() {
                     Some(answer) => answer,
-                    None => Ok(passed_check(&repos)),
+                    None => Ok(Reply::json(0, &passed_check(&repos))),
                 };
             }
             match self.starts.lock().unwrap().get(&repos[0]).cloned() {
                 Some(answer) => answer,
-                None => Ok(passed_start(&repos[0], &[])),
+                None => Ok(Reply::json(0, &passed_start(&repos[0], &[]))),
             }
         }
         fn states(&self, _place: &Place, _system: &str) -> Result<Vec<ChangeState>, ProgramError> {
@@ -2378,7 +2418,8 @@ mod tests {
             assert_eq!(
                 r.host.start(&cref("A"), form()),
                 StartOutcome::CouldNotRun {
-                    output: "ai-sdlc needs Node.js 22.18 or later".into()
+                    output: "ai-sdlc needs Node.js 22.18 or later".into(),
+                    repo: None
                 }
             );
             assert!(
@@ -2411,6 +2452,7 @@ mod tests {
             assert_eq!(r.holder("kata"), None, "row 5: holds released");
             assert_eq!(r.holder("bob"), None);
         }
+        // F3: the plugin prints its could-not-run answer and exits 2; its reason and repository are shown.
         {
             let r = rig();
             r.simple("A", &["kata", "bob"]);
@@ -2421,11 +2463,36 @@ mod tests {
             assert_eq!(
                 r.host.start(&cref("A"), form()),
                 StartOutcome::CouldNotRun {
-                    output: "git failed".into()
+                    output: "git failed".into(),
+                    repo: Some("kata".into())
                 }
             );
             assert_eq!(r.tools.real_starts("A"), ["kata"]);
             assert_eq!(r.launcher.count(), 0);
+        }
+        // F10: a team hook marked to stop fails; the engineer sees the hook's failure and its output.
+        {
+            let r = rig();
+            r.simple("A", &["kata", "bob"]);
+            r.tools.start_answer(
+                "bob",
+                json!({"event": "build.start", "repo": "bob", "outcome": "failed",
+                    "problems": ["hook deps failed with exit code 1"], "hooks": [],
+                    "failed": {"id": "deps", "onFailure": "stop", "output": "npm ci: lockfile out of date"}, "details": {}}),
+            );
+            assert_eq!(
+                r.host.start(&cref("A"), form()),
+                StartOutcome::Failed {
+                    problems: strs(&["hook deps failed with exit code 1"]),
+                    hook: Some(HookFailure {
+                        id: "deps".into(),
+                        on_failure: Some("stop".into()),
+                        output: "npm ci: lockfile out of date".into()
+                    })
+                }
+            );
+            assert_eq!(r.launcher.count(), 0);
+            assert_eq!(r.holder("kata"), None);
         }
         // Row 6 and R4.1 "passes for both": both runs start, holds kept, in plan order.
         {
@@ -3431,6 +3498,9 @@ mod tests {
         }
         fn run(&self, command: &[&str], place: &Place) -> Result<Value, ProgramError> {
             self.real.run(command, place)
+        }
+        fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String> {
+            self.real.exec(command, place)
         }
         fn states(&self, place: &Place, system: &str) -> Result<Vec<ChangeState>, ProgramError> {
             self.fake.states(place, system)
