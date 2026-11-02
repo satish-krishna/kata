@@ -115,8 +115,6 @@ const EXIT_WAIT_MS = 15000;
 const TERMINAL: readonly RunState[] = ['success', 'warning', 'error'];
 const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
 
-/** Placeholder until the runner passes a change target through: every target is taken as a checkout. */
-const asWorkspace = (t: SnapshotTarget): SnapshotTarget => (t.kind === 'workspace' ? t : { kind: 'workspace', master: '' });
 const repoName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path;
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
@@ -318,7 +316,7 @@ export class SdlcRunner {
     let candidates: Map<string, Snapshot> | null = null;
     if (target.target !== null) {
       try {
-        snapshot = await this.transport.sdlcSnapshot(asWorkspace(target.target));
+        snapshot = await this.transport.sdlcSnapshot(target.target);
       } catch (e) {
         this.toasts.error(`Could not read the master repo before the run: ${message(e)}`);
         return { state: 'error', runId: null, snapshot: null, exited: true, batch: null };
@@ -414,9 +412,10 @@ export class SdlcRunner {
     const entry = this.pending().find((b) => b.id === id)?.entries.find((p) => p.repo === repo);
     if (!entry) return false;
     try {
-      await this.transport.sdlcDiscard(asWorkspace(entry.target), entry.snapshot, paths, ...(entry.build ? [entry.build] : []));
+      await this.transport.sdlcDiscard(entry.target, entry.snapshot, paths, ...(entry.build ? [entry.build] : []));
     } catch (e) {
-      this.toasts.error(`Could not discard: ${message(e)}`);
+      // The backend's own words, such as "Nothing discarded: <reason>"; the entry stays listed.
+      this.toasts.error(message(e));
       return false;
     }
     const rest = (this.pending().find((b) => b.id === id)?.entries ?? []).filter((p) => p.repo !== repo);
@@ -513,13 +512,12 @@ export class SdlcRunner {
     }
     return decide
       ? this.triage(workspace, master, system, idea, spec)
-      : this.startAndRun(workspace, master, system, idea, spec, previewed, naming, branch);
+      : this.startAndRun(workspace, system, idea, spec, previewed, naming, branch);
   }
 
   /** Full track: ask the plugin to start the change, then run the intent skill in it. */
   private async startAndRun(
     workspace: WorkspaceEntry,
-    master: string,
     system: string,
     idea: string,
     confirmed: RunSpec,
@@ -562,7 +560,7 @@ export class SdlcRunner {
       null,
       'Starting a change',
       spec,
-      { workspaceId: workspace.id, target: { kind: 'workspace', master }, link: null, label: 'Intent' },
+      { workspaceId: workspace.id, target: { kind: 'change', workspace: workspace.folder, system, change }, link: null, label: 'Intent' },
       { ref: { workspace: workspace.folder, system, change }, kind: 'intent' },
     );
     if (!out.exited) return { kind: 'stopped' };
@@ -687,7 +685,7 @@ export class SdlcRunner {
 
   private async readLeftovers(target: SnapshotTarget, snapshot: Snapshot): Promise<Leftovers> {
     try {
-      return await this.transport.sdlcLeftovers(asWorkspace(target), snapshot);
+      return await this.transport.sdlcLeftovers(target, snapshot);
     } catch (e) {
       this.toasts.error(`Could not read what the run left behind: ${message(e)}`);
       return EMPTY;
