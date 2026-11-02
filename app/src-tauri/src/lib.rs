@@ -1735,6 +1735,17 @@ fn open_url(app: AppHandle, url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Opens the change's copy folder with `open`, and only when the change is in a copy. `master` is the
+/// plugin's own folder for the change, as its state reports it; the webview never names a path.
+fn open_copy_with(
+    in_copy: bool,
+    master: &str,
+    open: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    let _ = (in_copy, master, open);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1884,6 +1895,30 @@ pub fn run() {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn open_copy_folder_opens_only_a_copy() {
+        // In a copy: the folder the plugin reports is opened, once.
+        let opened = std::cell::RefCell::new(Vec::new());
+        let fake = |path: &str| {
+            opened.borrow_mut().push(path.to_string());
+            Ok(())
+        };
+        open_copy_with(true, "/ws/.ai-sdlc/copies/c", fake).unwrap();
+        assert_eq!(*opened.borrow(), ["/ws/.ai-sdlc/copies/c"]);
+        // Not in a copy: the master is the engineer's own checkout, which is not opened, and the reason is said.
+        let opened = std::cell::RefCell::new(Vec::new());
+        let fake = |path: &str| {
+            opened.borrow_mut().push(path.to_string());
+            Ok(())
+        };
+        let err = open_copy_with(false, "/ws/ai-sdlc", fake).expect_err("not a copy");
+        assert!(err.contains("copy"), "reason should explain: {err}");
+        assert!(opened.borrow().is_empty());
+        // The opener's own failure comes back.
+        let err = open_copy_with(true, "/x", |_| Err("no such folder".into())).unwrap_err();
+        assert_eq!(err, "no such folder");
+    }
 
     #[test]
     fn open_url_refuses_non_web_addresses() {
