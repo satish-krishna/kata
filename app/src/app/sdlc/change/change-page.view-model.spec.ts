@@ -19,7 +19,7 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/given';
 import { safetyRules, type StageAction } from '../../lib/sdlc';
-import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_REFUSED_CHANGE, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_COPY_CHANGE, MOCK_COPY_FIX, MOCK_DONE_CHANGE, MOCK_NOT_LISTED, MOCK_REFUSED_CHANGE, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePageViewModel } from './change-page.view-model';
 
@@ -29,6 +29,7 @@ const holdLock = (lock: LockStore): void => void lock.runSteps('Checking', [{ la
 const PHOTOS_CHANGE = '2026-10-12-product-photo-upload';
 const FRAUD = '2026-10-16-price-flag';
 const REASSIGN = '2026-10-09-merchant-reassign';
+const NO_PLACE = 'Could not find where this change lives: the ai-sdlc program could not run: boom';
 const toastText = () => toastState.toasts().map((t) => String(t.title)).join(' | ');
 
 /** `confirm` (the default) lets the preview confirm every run at once, so a test about something else never meets it; `real` leaves it to the test. */
@@ -1754,5 +1755,73 @@ describe('ChangePageViewModel: the change copy', () => {
     await vm.confirmRemoveCopy();
     expect(vm.copy()).not.toBeNull();
     expect(vm.copyNote()?.text).toContain('node was not found');
+  });
+});
+
+describe('ChangePageViewModel: where the change lives', () => {
+  const copyRef = (change: string) => ({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change });
+
+  it('switching_tabs_reads_from_the_change_copy', async () => {
+    const transport = new MockTransport();
+    const read = vi.spyOn(transport, 'sdlcReadDoc');
+    const { vm } = setup(MOCK_COPY_CHANGE, transport);
+    await ready(vm);
+    expect(vm.state()).toBe('ready');
+    await vm.showDoc('intent');
+    expect(vm.doc()).toContain('The copy holds this intent.');
+    await vm.showDoc('plan');
+    expect(vm.doc()).toContain('The copy holds this plan.');
+    expect(read).toHaveBeenCalledWith(copyRef(MOCK_COPY_CHANGE), 'plan');
+  });
+
+  it('full_pipeline_from_a_fix_reads_the_fix_intent_in_its_copy', async () => {
+    const transport = new MockTransport();
+    const read = vi.spyOn(transport, 'sdlcReadDoc');
+    const { vm } = setup(MOCK_COPY_FIX, transport);
+    await ready(vm);
+    await vm.act('full-pipeline-instead');
+    expect(read).toHaveBeenCalledWith(copyRef(MOCK_COPY_FIX), 'intent');
+    expect(vm.pipelineOpen()).toBe(true);
+    expect(vm.pipelineIdea()).toContain('The fix intent is in the copy.');
+  });
+
+  it('opens a change with one call that carries the change reference, and reads nothing else for it', async () => {
+    const transport = new MockTransport();
+    const open = vi.spyOn(transport, 'sdlcOpenChange');
+    const read = vi.spyOn(transport, 'sdlcReadDoc');
+    const { vm } = setup(MOCK_COPY_CHANGE, transport);
+    await ready(vm);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open.mock.calls[0][0]).toEqual(copyRef(MOCK_COPY_CHANGE));
+    expect(open.mock.calls[0][1]).toBe(vm.shownDoc());
+    expect(read.mock.calls.length).toBe(open.mock.calls.length);
+  });
+
+  it('shows the backend message and no document when the change cannot be placed', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcOpenChange').mockRejectedValue(new Error(NO_PLACE));
+    const { vm } = setup(MOCK_COPY_CHANGE, transport);
+    await ready(vm);
+    expect(vm.state()).toBe('not-found');
+    expect(vm.resolutionError()).toBe(NO_PLACE);
+    expect(vm.doc()).toBeNull();
+    expect(toastText()).not.toContain('Could not read the change');
+  });
+
+  it('tab_switch_after_copy_removed_shows_the_backend_message', async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(MOCK_COPY_CHANGE, transport);
+    await ready(vm);
+    await vm.showDoc('intent');
+    expect(vm.doc()).toContain('The copy holds this intent.');
+    vi.spyOn(transport, 'sdlcReadDoc').mockRejectedValue(new Error(MOCK_NOT_LISTED));
+    await vm.showDoc('plan');
+    expect(vm.shownDoc()).toBe('plan');
+    expect(vm.doc()).toBeNull();
+    expect(vm.docNotice()).toEqual({ tone: 'warning', text: MOCK_NOT_LISTED, lines: [] });
+    vi.spyOn(transport, 'sdlcReadDoc').mockRestore();
+    await vm.showDoc('intent');
+    expect(vm.resolutionError()).toBeNull();
+    expect(vm.doc()).toContain('The copy holds this intent.');
   });
 });

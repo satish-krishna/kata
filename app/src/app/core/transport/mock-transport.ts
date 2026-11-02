@@ -318,13 +318,12 @@ export class MockTransport extends KataTransport {
   async sdlcOpenChange(ref: ChangeRef, doc: string): Promise<OpenedChange> {
     const view = await this.sdlcChangeState(ref.workspace, ref.system, ref.change);
     const planned = view.state.documents.plan.exists;
-    return {
-      view,
-      text: this.sdlc.readDoc(ref.change, doc),
-      parsed: doc === 'spec' || doc === 'plan' ? this.sdlc.readParsed(ref.change, doc) : null,
-      status: planned ? this.sdlc.buildStatus(ref.change) : null,
-      review: planned ? this.sdlc.reviewRecord() : null,
-    };
+    // Composed of the transport's own reads, so a test that changes what a read answers changes what the change opens with.
+    const text = await this.sdlcReadDoc(ref, doc);
+    const parsed = doc === 'spec' || doc === 'plan' ? await this.sdlcReadParsed(ref, doc).catch((e): ParsedRead => ({ kind: 'error', message: e instanceof Error ? e.message : String(e) })) : null;
+    const status = planned ? await this.sdlcBuildStatus(ref) : null;
+    const review = planned ? await this.sdlcReviewRecord(ref).catch(() => null) : null;
+    return { view, text, parsed, status, review };
   }
   sdlcReadDoc(ref: ChangeRef, doc: string): Promise<string | null> {
     try {

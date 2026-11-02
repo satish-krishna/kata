@@ -112,6 +112,8 @@ export const MOCK_HELD_CHANGE = '2026-10-21-held-build';
 /** A change whose build finished and whose three pull requests are open: the toolbar's links and its "Build · done" pill. */
 /** A change that lives only in its own copy: the checkout has no folder for it, so its documents exist under the copy alone. */
 export const MOCK_COPY_CHANGE = '2026-11-02-copy-only';
+/** A drafted fix that lives only in its own copy. */
+export const MOCK_COPY_FIX = '2026-11-02-copy-fix';
 export const MOCK_DONE_CHANGE = '2026-10-18-photo-limits-shipped';
 /** The version the demo's `ai-sdlc` plugin reports. */
 export const MOCK_PLUGIN_VERSION = '1.1.0';
@@ -430,12 +432,19 @@ const DOC_STEMS = new Set(['intent', 'spec', 'plan']);
 
 /** The copy of the change that lives only in a copy. */
 const COPY_ONLY_PATH = `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${MOCK_COPY_CHANGE}`;
+const COPY_FIX_PATH = `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${MOCK_COPY_FIX}`;
 
 /** Document text a copy holds, keyed by the copy's folder and then `<change>/<stem>`. The checkout's fixture is `DOCS`. */
 const COPY_DOCS: Record<string, Record<string, string>> = {
   [COPY_ONLY_PATH]: {
     [`${MOCK_COPY_CHANGE}/intent`]: '---\nstatus: accepted\n---\n# Copy-only change\n\nThe copy holds this intent.\n',
-    [`${MOCK_COPY_CHANGE}/spec`]: '---\nstatus: draft\n---\n# Spec: copy-only change\n\nThe copy holds this spec.\n',
+    [`${MOCK_COPY_CHANGE}/spec`]: '---\nstatus: accepted\n---\n# Spec: copy-only change\n\nThe copy holds this spec.\n',
+    [`${MOCK_COPY_CHANGE}/plan`]: '---\nstatus: draft\n---\n# Plan: copy-only change\n\nThe copy holds this plan.\n',
+  },
+  [COPY_FIX_PATH]: {
+    [`${MOCK_COPY_FIX}/intent`]: '---\ntitle: Copy fix\nstatus: draft\n---\n\n## Problem\n\nThe fix intent is in the copy.\n',
+    [`${MOCK_COPY_FIX}/spec`]: '---\nstatus: draft\n---\n# Spec: copy fix\n',
+    [`${MOCK_COPY_FIX}/plan`]: '---\nstatus: draft\n---\n# Plan: copy fix\n',
   },
 };
 
@@ -760,8 +769,12 @@ export class SdlcMock {
   /** Like the backend's `sdlc_change_state`: one change from the plugin's answer; refuses a change the workspace does not have. */
   changeView(changeName: string, readiness: Readiness): ChangeView {
     if (changeName === MOCK_COPY_CHANGE) {
-      const copied = change(MOCK_COPY_CHANGE, doc('accepted'), doc('draft'), doc(null), 'spec-awaiting');
+      const copied = change(MOCK_COPY_CHANGE, doc('accepted'), doc('accepted'), doc('draft'), 'plan-awaiting');
       return changeViewOf(copied, readiness, null, {}, COPY_ONLY_PATH);
+    }
+    if (changeName === MOCK_COPY_FIX) {
+      const fix = change(MOCK_COPY_FIX, doc('draft'), doc('draft'), doc('draft'), 'fix-awaiting', 'fix');
+      return changeViewOf(fix, readiness, null, {}, COPY_FIX_PATH);
     }
     if (changeName === MOCK_REFUSED_CHANGE) {
       const refused = change(MOCK_REFUSED_CHANGE, doc('accepted'), doc('accepted'), doc('accepted'), 'build-ready');
@@ -779,6 +792,7 @@ export class SdlcMock {
   /** The copy folder of a change that has one, else null. */
   private copyOf(changeName: string): string | null {
     if (changeName === MOCK_COPY_CHANGE) return COPY_ONLY_PATH;
+    if (changeName === MOCK_COPY_FIX) return COPY_FIX_PATH;
     return this.copies.has(changeName) ? `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${changeName}` : null;
   }
   /** Removal is offered for the finished change with its pull requests merged; the done demos leave it undeclared, so nothing is offered. */
@@ -831,6 +845,7 @@ export class SdlcMock {
   /** Where a change lives, as the plugin would place it: its copy's folder, else the engineer's checkout. Rejects with the message for a change the plugin does not list. */
   homeOf(changeName: string): string {
     if (changeName === MOCK_COPY_CHANGE) return COPY_ONLY_PATH;
+    if (changeName === MOCK_COPY_FIX) return COPY_FIX_PATH;
     if (changeName === MOCK_REFUSED_CHANGE) return MOCK_CHECKOUT;
     if (!this.stagePass().some((c) => c.change === changeName)) throw new Error(MOCK_NOT_LISTED);
     return this.copyOf(changeName) ?? MOCK_CHECKOUT;
@@ -840,7 +855,7 @@ export class SdlcMock {
   private docText(changeName: string, docName: string): string | null {
     const key = `${changeName}/${docName}`;
     const home = this.homeOf(changeName);
-    return COPY_DOCS[home]?.[key] ?? (home === COPY_ONLY_PATH ? null : (this.docs[key] ?? null));
+    return COPY_DOCS[home] ? (COPY_DOCS[home][key] ?? null) : (this.docs[key] ?? null);
   }
 
   /** Like the backend's `read_parsed`: the spec or plan as the format program reads it; null when the change has no such document. */

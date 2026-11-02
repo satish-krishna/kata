@@ -344,6 +344,8 @@ export class ChangePageViewModel {
   private readonly linksFrom = signal<PullRequestsView['source']>(null);
   /** The shown document, raw as it is on disk, or null when the file is missing. */
   readonly doc = signal<string | null>(null);
+  /** The backend's message when it could not place the change or read its document; null when the last read succeeded. */
+  readonly resolutionError = signal<string | null>(null);
   /** The shown spec or plan as the format program read it; null for the other documents, or when the program could not run. */
   private readonly read = signal<ReadResult | ReadError | null>(null);
   /** Whether the ai-sdlc plugin can be used; null until the first load has asked. */
