@@ -725,3 +725,58 @@ describe('SdlcRunner leftovers are held per change run (F4)', () => {
     expect(files(runner.leftovers())).toEqual(['second.md']);
   });
 });
+
+describe("SdlcRunner shows a run's leftovers and settling only where it was started (F27)", () => {
+  const target = { workspace: WORKSPACE, master: '/ws/commerce-docs', productRepos: ['commerce-core'] };
+  const SCAN = {
+    folder: '/ws',
+    repos: ['commerce-docs', 'commerce-core'],
+    master: { kind: 'one', repo: 'commerce-docs', committed: true },
+    marker: { version: 1, systems: { commerce: { repos: ['commerce-core'] } } },
+    marker_error: null,
+  };
+  const keyA = changeRunKey({ workspace: '/ws', system: 'commerce', change: '2026-10-12-photos' });
+
+  it("a new change's intent run settling on the home does not block Close on another change's page", async () => {
+    const ctx = setup(() => 'warning');
+    let exit!: (v: boolean) => void;
+    ctx.fake.sdlcWaitRunExit.mockImplementationOnce(() => new Promise<boolean>((r) => (exit = r)));
+    const p = ctx.runner.newChange(target, 'commerce', 'flag prices', 'full');
+    await vi.waitFor(() => expect(ctx.fake.sdlcWaitRunExit).toHaveBeenCalled());
+    // The home started it: it settles there, and nowhere else.
+    expect(ctx.runner.settling()).toBe(true);
+    expect(ctx.runner.settlingOn(keyA)).toBe(false);
+    exit(true);
+    await p;
+  });
+
+  it("a triage settling on the home does not block Close on a change's page", async () => {
+    const ctx = setup(() => 'warning');
+    ctx.fake.scan = SCAN;
+    let exit!: (v: boolean) => void;
+    ctx.fake.sdlcWaitRunExit.mockImplementationOnce(() => new Promise<boolean>((r) => (exit = r)));
+    const p = ctx.runner.newChange(target, 'commerce', 'idea', 'decide');
+    await vi.waitFor(() => expect(ctx.fake.sdlcWaitRunExit).toHaveBeenCalled());
+    expect(ctx.runner.settling()).toBe(true);
+    expect(ctx.runner.settlingOn(keyA)).toBe(false);
+    exit(true);
+    await p;
+  });
+
+  it("a failed triage's leftovers show on the home, where it was started, and not on a change's page", async () => {
+    const ctx = setup(() => 'error');
+    ctx.fake.scan = SCAN;
+    ctx.fake.leftovers = { ...EMPTY, discardable: ['triage.md'] };
+    const p = ctx.runner.newChange(target, 'commerce', 'idea', 'decide');
+    await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
+    expect(ctx.runner.leftovers()?.flatMap((l) => l.data.discardable)).toEqual(['triage.md']);
+    expect(ctx.runner.leftoversOn(keyA)).toBeNull();
+    // A change page's discard or close never reaches the home's batch.
+    expect(await ctx.runner.discardAll([{ repo: 'commerce-docs', paths: ['triage.md'] }], keyA)).toBe(true);
+    ctx.runner.closeLeftovers(keyA);
+    expect(ctx.fake.sdlcDiscard).not.toHaveBeenCalled();
+    expect(ctx.runner.leftovers()).not.toBeNull();
+    ctx.runner.closeLeftovers();
+    await p;
+  });
+});
