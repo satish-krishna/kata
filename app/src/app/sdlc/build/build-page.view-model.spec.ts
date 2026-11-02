@@ -95,7 +95,7 @@ async function opened(s: ReturnType<typeof setup>, over: { stage?: OfferStage; b
   const status = await s.transport.sdlcBuildStatus({ workspace: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE });
   const [found] = (await readAllChanges(s.transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
   const change = over.stage === undefined ? found : atStage(found, over.stage);
-  const load = () => s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change, status, done: over.done ?? false, review: over.review ?? null });
+  const load = () => s.vm.load({ ctx: CTX, masterRepo: MOCK_MASTER, change, status, done: over.done ?? false, review: over.review ?? null });
   return { ...s, load, status, change };
 }
 
@@ -802,7 +802,7 @@ describe('the layout follows the real build page through a finish, whatever orde
   const loadLayout = async (transport: MockTransport, vm: BuildPageViewModel) => {
     const status = await transport.sdlcBuildStatus({ workspace: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE });
     const [found] = (await readAllChanges(transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
-    await vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: found, status, done: false, review: null });
+    await vm.load({ ctx: CTX, masterRepo: MOCK_MASTER, change: found, status, done: false, review: null });
   };
 
   it('R10.1: a review that ends before its result is read never passes through stopped, and Changes stays on show with Review marked', async () => {
@@ -874,7 +874,7 @@ describe('the layout follows the real build page through a finish, whatever orde
     const [found] = (await readAllChanges(transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
     const loading = vm.load({
       ctx: CTX,
-      master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` },
+      masterRepo: MOCK_MASTER,
       change: atStage(found, 'build-finished'),
       status,
       done: false,
@@ -929,7 +929,7 @@ describe('the tasks area folds, filters and shows a departure with its task', ()
     vi.spyOn(s.transport, 'listRuns').mockResolvedValue([]);
     vi.spyOn(s.transport, 'sdlcBuildStatus').mockResolvedValue(status);
     const [found] = (await readAllChanges(s.transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
-    await s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: found, status, done: false, review: null });
+    await s.vm.load({ ctx: CTX, masterRepo: MOCK_MASTER, change: found, status, done: false, review: null });
     await advance(300);
     return s;
   }
@@ -1013,7 +1013,7 @@ describe('the build page reads the backend\'s build and starts it through the ho
     const s = setup();
     const status = await s.transport.sdlcBuildStatus({ workspace: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE });
     const [found] = (await readAllChanges(s.transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
-    const input = { ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: found, status, done: false, review: null };
+    const input = { ctx: CTX, masterRepo: MOCK_MASTER, change: found, status, done: false, review: null };
     const load = () => s.vm.load(input);
     return { ...s, load, status, input };
   }
@@ -1192,7 +1192,7 @@ describe('moving the page from one change to another (F1)', () => {
     const linkRun = vi.spyOn(s.transport, 'sdlcLinkRun').mockResolvedValue();
     const inputOf = async (name: string) => ({
       ctx: { ...CTX, change: name },
-      master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` },
+      masterRepo: MOCK_MASTER,
       change: await s.transport.sdlcChangeState(FOLDER, 'commerce', name),
       status: await s.transport.sdlcBuildStatus({ workspace: FOLDER, system: 'commerce', change: name }),
       done: false,

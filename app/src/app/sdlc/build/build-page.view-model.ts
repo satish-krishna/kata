@@ -104,8 +104,8 @@ export type StageMessage = { title: string; lines: string[] };
 /** What the page is given on every load of the change. */
 export type BuildPageInput = {
   ctx: BuildContext;
-  master?: { repo: string; path: string };
-  masterRepo?: string;
+  /** The master repository's name, which orders the lists; never a path, since the backend resolves where the change lives. */
+  masterRepo: string;
   change: ChangeView;
   status: BuildStatus | null;
   done: boolean;
@@ -253,7 +253,7 @@ export type BuildPageView = {
 export type BuildTab = 'activity' | 'changes';
 
 /** What the Changes view looks at. */
-export type BuildChanges = { folder: string; masterRepo: string; system: string; change: string };
+export type BuildChanges = { ref: ChangeRef; masterRepo: string };
 
 /** What starting a build came to, as the page needs to tell it. */
 export type StartKind = StartOutcome['kind'];
@@ -265,7 +265,7 @@ export type StartRefusal = { reason: string; problems: string[] };
  * A run the page follows: which row it belongs to, when the page first saw it, and the change it is a run of, with that change's master
  * and repositories as the page knew them then. A run stays the run of its own change when the page moves to another one.
  */
-type Entry = { id: string; key: string; at: number; ctx: BuildContext; master: { repo: string; path: string }; repos: string[] };
+type Entry = { id: string; key: string; at: number; ctx: BuildContext; repos: string[] };
 
 /** Whether two contexts name the same change. */
 const sameCtx = (a: BuildContext, b: BuildContext): boolean => a.folder === b.folder && a.system === b.system && a.change === b.change;
@@ -827,7 +827,7 @@ export class BuildPageViewModel {
     this.status.set(input.status);
     this.reviewDoc.set(input.review);
     this.restorePick();
-    this.changes.set({ folder: input.ctx.folder, masterRepo: input.masterRepo ?? input.master?.repo ?? '', system: input.ctx.system, change: input.ctx.change });
+    this.changes.set({ ref: this.refOf(input.ctx), masterRepo: input.masterRepo });
     await Promise.all([this.readSessions(), this.readChanges(), this.attach(this.ref()!), this.readChecks()]);
     if (!this.shows(input.ctx)) return;
     if (input.status !== null) await this.readBoard(this.groupKeys(), input.status, this.buildState());
@@ -914,7 +914,7 @@ export class BuildPageViewModel {
   /** The repositories of the tasks area, in order: the plan's, then the master once it has tasks or runs. */
   private readonly groupKeys = computed<string[]>(() => {
     const status = this.status();
-    const master = this.masterRef()?.repo ?? null;
+    const master = this.masterName();
     if (status === null) return [];
     return taskGroups(status, master ?? '', master !== null && this.sessionRefs().has(master));
   });
@@ -1273,16 +1273,20 @@ export class BuildPageViewModel {
     this.findingPlace.set({ file: f.file, line: f.line ?? null, text: f.text, n: ++this.placeCount, ...(f.repo === undefined ? {} : { repo: f.repo }) });
   }
 
-  /** Where the master repository is, as the change page loaded it. */
-  private masterRef(): { repo: string; path: string } | null {
-    return this.loaded()?.master ?? null;
+  /** The change's reference: the backend resolves where it lives, so no path is computed here. */
+  private refOf(ctx: BuildContext): ChangeRef {
+    return { workspace: ctx.folder, system: ctx.system, change: ctx.change };
+  }
+
+  /** The master repository's name as the change page loaded it; null before a load. */
+  private masterName(): string | null {
+    return this.loaded()?.masterRepo ?? null;
   }
 
   /** Read the change's run links, task links and run records, and where each repository stands. */
   private async readSessions(): Promise<void> {
     const ctx = this.ctx;
-    const master = this.masterRef();
-    if (ctx === null || master === null) return;
+    if (ctx === null || this.masterName() === null) return;
     try {
       const [links, tasks, records] = await Promise.all([this.transport.sdlcRunLinks(), this.transport.sdlcTaskLinks(), this.transport.listRuns()]);
       this.runLinks.set(links);
@@ -1311,7 +1315,7 @@ export class BuildPageViewModel {
         heads: this.heads(),
         scope: { workspaceId: ctx.workspaceId, system: ctx.system, change: ctx.change },
         document: this.reviewDoc(),
-        master: this.masterRef()?.repo ?? null,
+        master: this.masterName(),
       });
       if (this.shows(ctx)) this.standing.set(standing);
     } catch {
@@ -1334,9 +1338,8 @@ export class BuildPageViewModel {
   /** Where each repository of the change stands now. */
   private readHeads(): Promise<Record<string, string>> {
     const ctx = this.ctx!;
-    const master = this.masterRef()!;
-    const repos = [...new Set([master.repo, ...(this.status()?.repos.map((r) => r.repo) ?? [])])];
-    return this.transport.sdlcBuildHeads({ workspace: ctx.folder, system: ctx.system, change: ctx.change }, repos);
+    const repos = [...new Set([this.masterName()!, ...(this.status()?.repos.map((r) => r.repo) ?? [])])];
+    return this.transport.sdlcBuildHeads(this.refOf(ctx), repos);
   }
 
   /** Read an earlier session's transcript the first time it is shown. */
@@ -1659,13 +1662,13 @@ export class BuildPageViewModel {
 
   /** Follow every run the backend names that the page has not seen, and finish with the ones that left the build. */
   private followRuns(ctx: BuildContext, refs: BuildRunRef[]): void {
-    const master = this.masterRef();
+    const master = this.masterName();
     if (master === null) return;
     const known = new Set(this.followed().map((e) => e.id));
-    const repos = [...new Set([master.repo, ...(this.status()?.repos.map((r) => r.repo) ?? [])])];
+    const repos = [...new Set([master, ...(this.status()?.repos.map((r) => r.repo) ?? [])])];
     for (const ref of refs) {
       if (known.has(ref.run)) continue;
-      this.followed.update((l) => [...l, { id: ref.run, key: ref.key, at: Date.now(), ctx, master, repos }]);
+      this.followed.update((l) => [...l, { id: ref.run, key: ref.key, at: Date.now(), ctx, repos }]);
       this.clocks.update((c) => ({ ...c, [ref.run]: { work: 0, paused: 0, current: 0 } }));
       const before = this.status();
       if (before !== null && ref.key !== REVIEW) this.bases.update((b) => ({ ...b, [ref.run]: before }));
@@ -1683,7 +1686,7 @@ export class BuildPageViewModel {
     let heads: Record<string, string> | undefined;
     if (entry.key === REVIEW) {
       try {
-        heads = await this.transport.sdlcBuildHeads({ workspace: ctx.folder, system: ctx.system, change: ctx.change }, entry.repos);
+        heads = await this.transport.sdlcBuildHeads(this.refOf(ctx), entry.repos);
       } catch (e) {
         this.toasts.error(`Could not record where each repository stood: ${message(e)}`);
       }
@@ -1777,16 +1780,15 @@ export class BuildPageViewModel {
 
   private async readStatus(): Promise<BuildStatus> {
     const ctx = this.ctx!;
-    return this.transport.sdlcBuildStatus({ workspace: ctx.folder, system: ctx.system, change: ctx.change });
+    return this.transport.sdlcBuildStatus(this.refOf(ctx));
   }
 
   /** Read whether any repository has changed files, the way the Changes view lists them; a failed read counts as none. */
   private async readChanges(): Promise<void> {
     const ctx = this.ctx;
-    const master = this.masterRef();
-    if (ctx === null || master === null) return;
+    if (ctx === null || this.masterName() === null) return;
     try {
-      const repos = await this.transport.sdlcChangeRepos({ workspace: ctx.folder, system: ctx.system, change: ctx.change });
+      const repos = await this.transport.sdlcChangeRepos(this.refOf(ctx));
       const counts = await Promise.all(repos.map((r) => this.transport.sdlcDiffFiles(r.path, 'whole').then((l) => l.files.length, () => 0)));
       if (!this.shows(ctx)) return;
       this.changedFileTotal.set(counts.reduce((sum, n) => sum + n, 0));
@@ -1800,7 +1802,7 @@ export class BuildPageViewModel {
 
   private async refresh(): Promise<void> {
     // A change with no plan has no build log to read.
-    if (this.masterRef() === null || this.ctx === null || this.loaded()?.status === null) return;
+    if (this.masterName() === null || this.ctx === null || this.loaded()?.status === null) return;
     void this.readChanges();
     const ctx = this.ctx;
     try {
@@ -1837,11 +1839,10 @@ export class BuildPageViewModel {
 
   /** The review document of the change, null when it has none, undefined when it cannot be read (reported). */
   private async readDocument(): Promise<ReviewRecord | null | undefined> {
-    const master = this.masterRef();
     const ctx = this.ctx;
-    if (master === null || ctx === null) return undefined;
+    if (this.masterName() === null || ctx === null) return undefined;
     try {
-      return await this.transport.sdlcReviewRecord({ workspace: ctx.folder, system: ctx.system, change: ctx.change });
+      return await this.transport.sdlcReviewRecord(this.refOf(ctx));
     } catch (e) {
       this.toasts.error(`Could not read the review document: ${message(e)}`);
       return undefined;

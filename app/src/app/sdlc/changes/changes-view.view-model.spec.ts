@@ -4,7 +4,8 @@ import { MockTransport } from '../../core/transport/mock-transport';
 import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { ChangesViewModel } from './changes-view.view-model';
 
-const CTX = { folder: MOCK_WORKSPACE_FOLDER, masterRepo: MOCK_MASTER, system: 'commerce', change: MOCK_BUILD_CHANGE };
+const REF = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE };
+const CTX = { ref: REF, masterRepo: MOCK_MASTER };
 
 function setup() {
   const transport = new MockTransport();
@@ -24,7 +25,7 @@ describe('ChangesViewModel', () => {
 
   it('names each product repository that has no change branch, so its absence from the list is explained', async () => {
     const { vm, transport } = setup();
-    expect(await transport.sdlcMissingChangeBranches({ workspace: CTX.folder, system: CTX.system, change: CTX.change })).toEqual([]);
+    expect(await transport.sdlcMissingChangeBranches(REF)).toEqual([]);
     vi.spyOn(transport, 'sdlcMissingChangeBranches').mockResolvedValue(['billing']);
     await vm.open(CTX);
     expect(vm.missingBranches()).toEqual(['billing']);
@@ -106,7 +107,7 @@ describe('the Changes view follows the change reference (R2.2)', () => {
     const ref = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_DONE_CHANGE };
     const repos = vi.spyOn(transport, 'sdlcChangeRepos');
     const missing = vi.spyOn(transport, 'sdlcMissingChangeBranches');
-    await vm.open({ ...CTX, change: MOCK_DONE_CHANGE, ref });
+    await vm.open({ ref, masterRepo: MOCK_MASTER });
     expect(repos).toHaveBeenCalledWith(ref);
     expect(missing).toHaveBeenCalledWith(ref);
     const master = vm.repos().find((r) => r.repo === MOCK_MASTER)!;

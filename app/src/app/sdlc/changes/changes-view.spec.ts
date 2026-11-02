@@ -11,7 +11,7 @@ import { DiffEditor } from '../../ui/diff-editor/diff-editor';
 import { ChangesView } from './changes-view';
 import { ChangesViewModel } from './changes-view.view-model';
 
-const INPUTS = { folder: MOCK_WORKSPACE_FOLDER, masterRepo: MOCK_MASTER, system: 'commerce', change: MOCK_BUILD_CHANGE, turns: 0, banner: null };
+const INPUTS = { changeRef: { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE }, masterRepo: MOCK_MASTER, turns: 0, banner: null };
 const settle = async () => {
   for (let i = 0; i < 4; i++) {
     TestBed.tick();

@@ -1039,7 +1039,9 @@ export class SdlcMock {
   changeRepos(folder: string, changeName: string): ChangeRepo[] {
     this.homeOf(changeName);
     const base = this.diffBase();
-    return [MOCK_MASTER, ...this.repos].map((repo) => ({ repo, path: `${folder}/${repo}`, branch: `change/${changeName}`, base }));
+    // The copy is the master repository's own worktree: the master's entry carries the copy's folder when the change lives in one.
+    const copy = this.copyOf(changeName);
+    return [MOCK_MASTER, ...this.repos].map((repo) => ({ repo, path: repo === MOCK_MASTER && copy !== null ? copy : `${folder}/${repo}`, branch: `change/${changeName}`, base }));
   }
 
   diffFiles(part: Part): DiffListing {

@@ -470,7 +470,7 @@ export class ChangePageViewModel {
   readonly changesContext = computed<ChangesContext | null>(() => {
     const w = this.current();
     const master = this.scanMaster();
-    return w && master !== null ? { folder: w.folder, masterRepo: master, system: this.system(), change: this.changeName() } : null;
+    return w && master !== null ? { ref: { workspace: w.folder, system: this.system(), change: this.changeName() }, masterRepo: master } : null;
   });
   readonly docName = computed(() => `${this.shownDoc()}.md`);
   readonly stems: readonly DocStem[] = ['intent', 'spec', 'plan'];
@@ -1653,7 +1653,7 @@ export class ChangePageViewModel {
       }
       // The build page shows the change's tasks, sessions and findings whether or not a build ran on this page.
       const context = this.buildContext();
-      if (found && context !== null) this.build.loaded.set({ ctx: context, master: { repo, path: master }, change: found, status, done: this.done(), review });
+      if (found && context !== null) this.build.loaded.set({ ctx: context, masterRepo: repo, change: found, status, done: this.done(), review });
       // The recorded links show first; the plugin reads their states from GitHub in the background. Pull requests an earlier version of Kata saved are not read: the plugin does not know them.
       if (found && pulls.view.source === 'plugin' && pulls.view.links.length > 0) void this.refreshLinks(seq, w.folder, w.id, system, name);
     } catch (e) {

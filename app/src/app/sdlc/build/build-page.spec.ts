@@ -21,7 +21,7 @@ import { BuildPage } from './build-page';
 import { BuildPageViewModel } from './build-page.view-model';
 import type { BuildChanges, BuildPageView, ReviewRowsShown, ShownSession, StatusText, TaskGroupView } from './build-page.view-model';
 
-const CHANGES: BuildChanges = { folder: MOCK_WORKSPACE_FOLDER, masterRepo: MOCK_MASTER, system: 'commerce', change: MOCK_BUILD_CHANGE };
+const CHANGES: BuildChanges = { ref: { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE }, masterRepo: MOCK_MASTER };
 
 /** What the review entry says when it lists no findings. */
 const NO_ROWS = { rows: null, stale: null, nothingFound: false, openLow: new Set<string>() };

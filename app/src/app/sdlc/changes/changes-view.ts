@@ -1,6 +1,7 @@
 import { NgTemplateOutlet } from '@angular/common';
 import { Component, TemplateRef, effect, inject, input, untracked, viewChild } from '@angular/core';
 import type { BuildRow } from '@bindings/BuildRow';
+import type { ChangeRef } from '@bindings/ChangeRef';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideChevronDown, lucideTriangleAlert } from '@ng-icons/lucide';
 import { HlmAlertImports } from '@spartan-ng/helm/alert';
@@ -27,10 +28,8 @@ import { ChangesViewModel, type ShowAt } from './changes-view.view-model';
 export class ChangesView {
   protected readonly vm = inject(ChangesViewModel);
 
-  readonly folder = input.required<string>();
+  readonly changeRef = input.required<ChangeRef>();
   readonly masterRepo = input.required<string>();
-  readonly system = input.required<string>();
-  readonly change = input.required<string>();
   readonly turns = input(0);
   readonly banner = input<string | null>(null);
   /** The build log's rows, which say which task made which commit. */
@@ -50,7 +49,7 @@ export class ChangesView {
 
   constructor() {
     effect(() => {
-      const ctx = { folder: this.folder(), masterRepo: this.masterRepo(), system: this.system(), change: this.change() };
+      const ctx = { ref: this.changeRef(), masterRepo: this.masterRepo() };
       untracked(() => void this.vm.open(ctx));
     });
     effect(() => {

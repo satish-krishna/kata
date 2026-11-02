@@ -95,7 +95,7 @@ async function continuing(): Promise<Scenario> {
   const ctx: BuildContext = { workspaceId: 'acme-commerce', folder: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: BUILD, systemRepos: [] };
   const status = await transport.sdlcBuildStatus({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: BUILD });
   const [change] = (await readAllChanges(transport)).filter((c) => c.state.change === BUILD);
-  await vm.load({ ctx, master: { repo: MOCK_MASTER, path: `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}` }, change, status, done: false, review: null });
+  await vm.load({ ctx, masterRepo: MOCK_MASTER, change, status, done: false, review: null });
   const ref = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: BUILD };
   await transport.sdlcBuildStart(ref, { timeoutSecs: 5400 });
   await transport.sdlcBuildCancel(ref, 'commerce-core');
