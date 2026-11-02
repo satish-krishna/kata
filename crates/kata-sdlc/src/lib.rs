@@ -26,6 +26,7 @@ pub mod plugin;
 mod process;
 pub mod prs;
 pub mod publish;
+pub mod pull_requests;
 pub mod review;
 pub mod round;
 pub mod runspec;

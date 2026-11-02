@@ -2,6 +2,7 @@
 mod build_host;
 mod close_guard;
 mod history;
+mod rename_change;
 mod running;
 mod runs;
 mod sdlc_state;
