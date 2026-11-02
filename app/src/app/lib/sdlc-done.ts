@@ -6,6 +6,7 @@ import type { CheckSpec } from '@bindings/CheckSpec';
 import type { Departure } from '@bindings/Departure';
 import type { Offender } from '@bindings/Offender';
 import type { ParsedReviewSection } from '@bindings/ParsedReviewSection';
+import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { RunLink } from '@bindings/RunLink';
@@ -22,7 +23,7 @@ export type DoneReview = ReviewOnShow | { missing: ReviewMissing };
 export type ReviewOnShow = { at: number | string; findings: Finding[]; older?: boolean };
 
 /** One repository the change opens a pull request in, with the checks it must pass and what they came to. */
-export type DoneRepo = { repo: string; base: string; checks: CheckSpec[]; result: RepoChecks | null };
+export type DoneRepo = { repo: string; base: string; checks: CheckSpec[]; result: RepoChecks | null; view?: RepoCheckView | null };
 
 /** Everything the done dialog shows. */
 export type DoneReport = {

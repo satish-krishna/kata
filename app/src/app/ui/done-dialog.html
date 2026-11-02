@@ -54,7 +54,7 @@
         </div>
         <p class="k-left__note">Checks from <span class="k-mono">{{ r.checksPath }}</span></p>
 
-        <app-check-results [repos]="r.repos" />
+        <app-check-results [views]="[]" />
 
         @if (r.offenders.length > 0) {
           <section class="k-left__group" aria-labelledby="done-offenders">

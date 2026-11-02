@@ -6,6 +6,7 @@ import type { BuildState } from '@bindings/BuildState';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { ChangeKey } from '@bindings/ChangeKey';
 import type { OfferStage } from '@bindings/OfferStage';
+import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { ReviewRows } from '@bindings/ReviewRows';
 import type { RoundOffer } from '@bindings/RoundOffer';
@@ -388,6 +389,36 @@ describe('the build page shows tasks and sessions from the build log, the run li
     const portal = group(vm, 'customer-portal');
     expect(portal.status.tone === 'success').toBe(false);
     expect(portal.action).toBeNull();
+  });
+
+  const failed: RepoCheckView = { repo: 'commerce-core', view: { kind: 'failedStop', id: 'unit', output: '2 tests failed' }, summary: 'unit failed. The build stopped here.' };
+  const passed: RepoCheckView = { repo: 'customer-portal', view: { kind: 'passed', hooks: [{ id: 'lint', outcome: 'passed' }] }, summary: 'The checks passed.' };
+
+  it('a group carries the checks of its repository exactly as the plugin answered, and none for a repository it did not name', async () => {
+    const { vm, load, transport } = await page({ built: false });
+    const read = vi.spyOn(transport, 'sdlcChecksView').mockResolvedValue([failed, passed]);
+    await load();
+    await advance(100);
+    expect(read).toHaveBeenCalledWith(REF);
+    expect(group(vm, 'commerce-core').checks).toEqual(failed);
+    expect(group(vm, 'customer-portal').checks).toEqual(passed);
+    read.mockResolvedValue([passed]);
+    await load();
+    await advance(100);
+    expect(group(vm, 'commerce-core').checks).toBeNull();
+  });
+
+  it('reads them again when the host announces the build moved, so a finished run shows its result', async () => {
+    const { vm, load, transport } = await page({ built: false });
+    const read = vi.spyOn(transport, 'sdlcChecksView').mockResolvedValue([]);
+    await load();
+    await advance(100);
+    const first = read.mock.calls.length;
+    read.mockResolvedValue([failed]);
+    expect(await vm.startBuild({ timeoutSecs: 5400 })).toBe('started');
+    await advance(500);
+    expect(read.mock.calls.length).toBeGreaterThan(first);
+    expect(group(vm, 'commerce-core').checks).toEqual(failed);
   });
 });
 

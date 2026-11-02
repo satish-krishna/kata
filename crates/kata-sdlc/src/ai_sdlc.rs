@@ -5,6 +5,7 @@
 //! reads the JSON the command prints on its last line.
 pub mod show;
 pub mod state;
+pub mod status;
 
 use crate::process::CapturedExit;
 use kata_core::proc::{run_limited, Limited, Outcome, StartError};

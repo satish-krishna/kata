@@ -1382,6 +1382,7 @@ export class ChangePageViewModel {
         base: r.base,
         checks: (got.plan?.checks ?? []).filter((c) => c.repo === r.repo),
         result: got.results.get(r.repo) ?? null,
+        view: null,
       })),
       offenders: got.offenders,
       departures: this.status()?.departures ?? [],

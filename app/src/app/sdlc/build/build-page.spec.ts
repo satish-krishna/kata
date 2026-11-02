@@ -2,6 +2,7 @@ import { onTestFinished } from 'vitest';
 import { ChangeDetectorRef, Component, inject, input, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import type { BuildRow } from '@bindings/BuildRow';
+import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { Pick } from '../../lib/build-sessions';
 import { filterCounts, summaryOf, taskList, type TaskFilter, type TaskLine } from '../../lib/build-task-list';
 import type { BuildStage } from '../../lib/build-stage';
@@ -54,6 +55,7 @@ const group = (repo: string, status: StatusText, action: TaskGroupView['action']
     true,
     null,
   ),
+  checks: null,
   ...extra,
   action,
   picked,
@@ -1835,5 +1837,30 @@ describe("the Review group lists the latest review's findings", () => {
     expect(host.revealed).toEqual(['findings', 'files']);
     expect(host.shownFindings).toHaveLength(1);
     expect(host.shownFindings[0]).toMatchObject({ file: 'src/Photos/UploadController.cs', line: 48 });
+  });
+});
+
+describe("the build page shows each repository's checks under its heading (R5.1)", () => {
+  const checks = (repo: string, view: RepoCheckView['view'], summary: string): RepoCheckView => ({ repo, view, summary });
+
+  it('a repository shows its own result, a failed check with its output, and a repository without a result shows none', async () => {
+    const v = base({
+      groups: [
+        group('commerce-core', STOPPED, 'continue', [task('T1', DONE)], false, {
+          checks: checks('commerce-core', { kind: 'failedStop', id: 'unit', output: 'line 1\nthe assertion failed' }, 'unit failed. The build stopped here.'),
+        }),
+        group('customer-portal', { tone: 'success', label: 'Finished' }, null, [task('T2', DONE)], false, {
+          checks: checks('customer-portal', { kind: 'passed', hooks: [{ id: 'lint', outcome: 'passed' }] }, 'The checks passed.'),
+        }),
+        group('billing-api', NOT_STARTED, null, [task('T3', NOT_STARTED)]),
+      ],
+    });
+    const { el } = await mount(v);
+    const [core, portal, billing] = Array.from(el.querySelectorAll<HTMLElement>('[data-group]'));
+    expect(norm(core.querySelector('[data-checks]')!.textContent)).toContain('unit failed. The build stopped here.');
+    expect(core.querySelector('[data-checks] pre')!.textContent).toBe('line 1\nthe assertion failed');
+    expect(norm(portal.querySelector('[data-checks]')!.textContent)).toContain('The checks passed.');
+    expect(portal.querySelector('[data-checks] pre')).toBeNull();
+    expect(billing.querySelector('[data-checks]')).toBeNull();
   });
 });

@@ -5,6 +5,7 @@ import type { BuildRow } from '@bindings/BuildRow';
 import type { BuildRunRef } from '@bindings/BuildRunRef';
 import type { BuildState } from '@bindings/BuildState';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import type { ChangeView } from '@bindings/ChangeView';
 import type { HeldRepo } from '@bindings/HeldRepo';
@@ -142,6 +143,8 @@ export type TaskGroupView = {
   progress: { done: number; total: number };
   /** What the repository lists on their own line and what it folds, under the filter. */
   list: TaskListView;
+  /** The repository's checks as the plugin recorded them; null while they are not read. */
+  checks: RepoCheckView | null;
 };
 
 /** One row of the Review group: the finding as the page draws and picks it, under the backend's key and one-line summary. */
@@ -1085,6 +1088,7 @@ export class BuildPageViewModel {
         picked: pickedRepo === g.repo,
         progress: { done: linesOf(g).filter((t) => t.finished).length, total: g.tasks.length },
         list: taskList(linesOf(g), filter, openFolds.has(g.repo), pickedTask),
+        checks: null,
         tasks: g.tasks.map((t) => ({
           id: t.id,
           name: t.name,

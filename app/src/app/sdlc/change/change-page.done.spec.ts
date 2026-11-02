@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import { render } from '../../../testing/render';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { PrEntry } from '@bindings/PrEntry';
 import type { PrLink } from '@bindings/PrLink';
 import { toastState } from '@spartan-ng/brain/sonner';
@@ -86,6 +87,17 @@ describe('declaring done', () => {
     expect(report.repos.every((r) => r.result !== null)).toBe(true);
     expect(canConfirm(report)).toBe(true);
     expect(report.account).toBe('demo-user');
+  });
+
+  it("the done dialog shows each repository's checks as the plugin recorded them and Kata runs none (R5.1)", async () => {
+    const failed: RepoCheckView = { repo: 'commerce-core', view: { kind: 'failedStop', id: 'unit', output: 'assertion failed' }, summary: 'unit failed. The build stopped here.' };
+    const { vm, transport } = await finished((t) => vi.spyOn(t, 'sdlcChecksView').mockResolvedValue([failed]));
+    const run = vi.spyOn(transport, 'sdlcRunChecks');
+    await vm.act('declare-done');
+    const report = vm.doneReport()!;
+    expect(report.repos.find((r) => r.repo === 'commerce-core')!.view).toEqual(failed);
+    expect(report.repos.find((r) => r.repo === 'customer-portal')!.view).toBeNull();
+    expect(run).not.toHaveBeenCalled();
   });
 
   it('a failed check blocks confirm and publishes nothing (R11.2)', async () => {
