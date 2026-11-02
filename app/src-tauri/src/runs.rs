@@ -189,6 +189,19 @@ impl<C> RunTable<C> {
             .any(|r| r.group.as_deref() == Some(group))
     }
 
+    /// Whether any run of the change is live: a build or review run (`build:` group), a document run
+    /// (`document:` group), or any run on the change's lane.
+    pub fn change_live(&self, system: &str, change: &str) -> bool {
+        let groups = [
+            format!("build:{system}/{change}"),
+            format!("document:{system}/{change}"),
+        ];
+        self.runs.values().any(|r| {
+            r.group.as_ref().is_some_and(|g| groups.contains(g))
+                || matches!(&r.lane, Lane::Change { key, .. } if key.system == system && key.change == change)
+        })
+    }
+
     pub fn is_live(&self, id: u64) -> bool {
         self.runs.contains_key(&id)
     }

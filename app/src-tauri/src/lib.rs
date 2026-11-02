@@ -864,7 +864,7 @@ fn sdlc_check_scope(folder: String, scope: String) -> Result<Vec<String>, String
 }
 
 /// Rename the change's branch through the plugin, which moves it in every repository that has it or in
-/// none. Refused while a build run of the change is live, since a run holds the branch checked out.
+/// none. Refused while any run of the change is live (build, review or document), since a run works on the branch.
 #[tauri::command(async)]
 fn sdlc_rename_branch(
     control: State<'_, RunControl>,
@@ -1071,28 +1071,27 @@ fn sdlc_build_heads(
         .map_err(|e| e.to_string())
 }
 
-/// What the run table knows about a change. Only a build run carries its change (`group`); a document run
-/// has none, so it is not attributed to a change. No build host exists yet to know a stopped build
-/// (T16), so `build_stopped` is false.
+/// What the run table knows about a change: any of its runs (build, review or document) makes it live, and
+/// only a build or review run makes its build live. `build_stopped` is false here.
 fn live_facts(control: &RunControl, system: &str, change: &str) -> sdlc::offer::LiveFacts {
     live_facts_of(&control.state.lock().unwrap(), system, change)
 }
 
 /// The live facts of a change in `table`.
 fn live_facts_of<C>(table: &RunTable<C>, system: &str, change: &str) -> sdlc::offer::LiveFacts {
-    let live = table.group_live(&format!("build:{system}/{change}"));
     sdlc::offer::LiveFacts {
-        run_live: live,
+        run_live: table.change_live(system, change),
         build_stopped: false,
-        build_live: live,
+        build_live: table.group_live(&format!("build:{system}/{change}")),
     }
 }
 
-/// Why the change's branch cannot be renamed now: a run of the change is live in `table`.
+/// Why the change's branch cannot be renamed now: a run of the change (build, review or document) is live
+/// in `table`.
 fn rename_refusal<C>(table: &RunTable<C>, system: &str, change: &str) -> Option<String> {
     table
-        .group_live(&format!("build:{system}/{change}"))
-        .then(|| "A build run of this change is live. Rename the branch after it ends.".to_string())
+        .change_live(system, change)
+        .then(|| "A run of this change is live. Rename the branch after it ends.".to_string())
 }
 
 /// The program to ask, and the readiness, for a workspace folder. Only a ready mode has a program.
