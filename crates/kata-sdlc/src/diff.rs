@@ -465,6 +465,7 @@ pub struct ChangeRepo {
 /// the whole-change part of its diff.
 pub fn change_repos(
     folder: &Path,
+    _master: &Path,
     master_repo: &str,
     system: &str,
     change: &str,
@@ -1101,5 +1102,93 @@ mod base_tests {
         commit_file(&r, "c.txt", "c\n", "the change");
         let info = base_info(&r).unwrap();
         assert_eq!(info.reference, "origin/main");
+    }
+}
+
+#[cfg(test)]
+mod change_repos_tests {
+    use super::*;
+    use crate::git;
+    use crate::testutil::{checkout, commit_file, repo, write};
+    use std::path::PathBuf;
+
+    const SYS: &str = "s";
+    const CHG: &str = "2026-11-02-c";
+
+    struct Fx {
+        _dir: tempfile::TempDir,
+        folder: PathBuf,
+        checkout: PathBuf,
+        copy: PathBuf,
+    }
+
+    /// A workspace with the master checkout `m` on `main`, a product repository `app` whose
+    /// `feat/x` has a commit, and a linked copy of the master on `feat/x` that holds the change's
+    /// `change.yml` and one uncommitted file. The checkout has no folder for the change.
+    fn fixture() -> Fx {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().to_path_buf();
+        let checkout_path = repo(&folder, "m");
+        git::run(&checkout_path, &["config", "core.autocrlf", "false"]).unwrap();
+        commit_file(
+            &checkout_path,
+            ".ai-sdlc.json",
+            &format!("{{\"version\":1,\"systems\":{{\"{SYS}\":{{\"repos\":[\"app\"]}}}}}}"),
+            "marker",
+        );
+        let app = repo(&folder, "app");
+        checkout(&app, "feat/x", true);
+        commit_file(&app, "a.txt", "a\n", "work");
+        let copy = folder.join(".ai-sdlc").join("copies").join(CHG);
+        std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        git::run(
+            &checkout_path,
+            &["worktree", "add", "-b", "feat/x", &copy.to_string_lossy()],
+        )
+        .unwrap();
+        commit_file(
+            &copy,
+            &format!("intent/{SYS}/{CHG}/change.yml"),
+            "branch: \"feat/x\"\n",
+            "record",
+        );
+        write(&copy, "pending.txt", "p\n");
+        Fx {
+            _dir: dir,
+            folder,
+            checkout: checkout_path,
+            copy,
+        }
+    }
+
+    #[test]
+    fn change_repos_lists_the_master_at_the_change_copy() {
+        let fx = fixture();
+        let repos = change_repos(&fx.folder, &fx.copy, "m", SYS, CHG).unwrap();
+        let master = &repos[0];
+        assert_eq!(master.repo, "m");
+        assert_eq!(master.path, fx.copy.to_string_lossy());
+        assert_eq!(master.branch, "feat/x");
+        let files = changed_files(&fx.copy, Part::Uncommitted).unwrap();
+        assert!(files.iter().any(|f| f.path == "pending.txt"), "{files:?}");
+        assert_eq!(repos[1].repo, "app");
+        assert_eq!(repos[1].path, fx.folder.join("app").to_string_lossy());
+    }
+
+    #[test]
+    fn change_repos_for_a_checkout_change_is_unchanged() {
+        let fx = fixture();
+        checkout(&fx.checkout, "feat/x2", true);
+        commit_file(
+            &fx.checkout,
+            &format!("intent/{SYS}/{CHG}/change.yml"),
+            "branch: \"feat/x\"\n",
+            "record",
+        );
+        let repos = change_repos(&fx.folder, &fx.checkout, "m", SYS, CHG).unwrap();
+        let listed: Vec<&str> = repos.iter().map(|r| r.repo.as_str()).collect();
+        assert_eq!(listed, ["m", "app"]);
+        assert_eq!(repos[0].path, fx.checkout.to_string_lossy());
+        assert_eq!(repos[0].branch, "feat/x");
     }
 }

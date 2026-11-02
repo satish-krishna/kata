@@ -194,6 +194,7 @@ pub fn checkout(master: &Path, branch: &str) -> Result<(), BranchError> {
 /// branch (one the build never changed) is left out.
 pub fn heads(
     folder: &Path,
+    _master: &Path,
     master_repo: &str,
     system: &str,
     repos: &[String],
@@ -236,6 +237,7 @@ pub fn heads(
 pub fn missing_change_branches(
     plugin: &Path,
     folder: &Path,
+    _master: &Path,
     master_repo: &str,
     system: &str,
     change: &str,
@@ -347,7 +349,7 @@ mod tests {
     }
 
     fn missing(fx: &Fx) -> Result<Vec<String>, String> {
-        missing_change_branches(testutil::plugin_dir(), &fx.folder, "m", S, C)
+        missing_change_branches(testutil::plugin_dir(), &fx.folder, &fx.master, "m", S, C)
     }
 
     /// Commit a `branch.md` naming `branch` on the master and put the master on that branch.
@@ -395,20 +397,36 @@ mod tests {
             testutil::checkout(&fx.repo(r), &format!("change/{C}"), true);
         }
         testutil::commit_msg(&fx.repo("app"), "a.txt", "a\n", OWN);
-        let got = heads(&fx.folder, "m", S, &["app".into(), "api".into()], C).unwrap();
+        let got = heads(
+            &fx.folder,
+            &fx.master,
+            "m",
+            S,
+            &["app".into(), "api".into()],
+            C,
+        )
+        .unwrap();
         for r in ["app", "api"] {
             let want = git::run(&fx.repo(r), &["rev-parse", &format!("change/{C}")]).unwrap();
             assert_eq!(got[r], want);
         }
         assert_ne!(got["app"], got["api"]);
-        assert!(heads(&fx.folder, "m", S, &["../x".into()], C).is_err());
+        assert!(heads(&fx.folder, &fx.master, "m", S, &["../x".into()], C).is_err());
     }
 
     #[test]
     fn heads_skips_repos_without_the_branch() {
         let fx = fixture();
         testutil::checkout(&fx.repo("app"), &format!("change/{C}"), true);
-        let got = heads(&fx.folder, "m", S, &["app".into(), "api".into()], C).unwrap();
+        let got = heads(
+            &fx.folder,
+            &fx.master,
+            "m",
+            S,
+            &["app".into(), "api".into()],
+            C,
+        )
+        .unwrap();
         assert_eq!(got.keys().collect::<Vec<_>>(), ["app"]);
     }
 
@@ -440,7 +458,15 @@ mod tests {
         }
         testutil::commit_msg(&fx.repo("app"), "a.txt", "a\n", OWN);
         let decoy = git::run(&fx.repo("app"), &["rev-parse", &format!("change/{C}")]).unwrap();
-        let got = heads(&fx.folder, "m", S, &["app".into(), "api".into()], C).unwrap();
+        let got = heads(
+            &fx.folder,
+            &fx.master,
+            "m",
+            S,
+            &["app".into(), "api".into()],
+            C,
+        )
+        .unwrap();
         let want = git::run(&fx.repo("app"), &["rev-parse", RECORDED]).unwrap();
         assert_eq!(got["app"], want);
         assert_ne!(got["app"], decoy);
@@ -709,5 +735,40 @@ base: \"main\"
         )
         .unwrap();
         assert!(branch().unwrap_err().contains("not a usable branch name"));
+    }
+}
+
+#[cfg(test)]
+mod copy_tests {
+    use super::*;
+    use crate::testutil;
+
+    #[test]
+    fn heads_reads_the_branch_recorded_in_the_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().to_path_buf();
+        let master = testutil::repo(&folder, "m");
+        let app = testutil::repo(&folder, "app");
+        let change = "2026-11-02-c";
+        // The decoy a reader of the checkout would look for.
+        git::run(&app, &["branch", &format!("change/{change}"), "main"]).unwrap();
+        testutil::checkout(&app, "feat/x", true);
+        testutil::commit_file(&app, "a.txt", "a\n", "work");
+        let copy = folder.join(".ai-sdlc").join("copies").join(change);
+        std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        git::run(
+            &master,
+            &["worktree", "add", "-b", "feat/x", &copy.to_string_lossy()],
+        )
+        .unwrap();
+        testutil::commit_file(
+            &copy,
+            &format!("intent/s/{change}/change.yml"),
+            "branch: \"feat/x\"\n",
+            "record",
+        );
+        let got = heads(&folder, &copy, "m", "s", &["app".into()], change).unwrap();
+        let want = git::run(&app, &["rev-parse", "feat/x"]).unwrap();
+        assert_eq!(got["app"], want);
     }
 }

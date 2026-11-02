@@ -1089,8 +1089,15 @@ fn sdlc_build_heads(
     repos: Vec<String>,
     change: String,
 ) -> Result<std::collections::BTreeMap<String, String>, String> {
-    sdlc::branch::heads(Path::new(&folder), &master_repo, &system, &repos, &change)
-        .map_err(|e| e.to_string())
+    sdlc::branch::heads(
+        Path::new(&folder),
+        &Path::new(&folder).join(&master_repo),
+        &master_repo,
+        &system,
+        &repos,
+        &change,
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// What the run table knows about a change: any of its runs (build, review or document) makes it live, and
@@ -1270,7 +1277,13 @@ fn sdlc_change_repos(
     system: String,
     change: String,
 ) -> Result<Vec<sdlc::diff::ChangeRepo>, String> {
-    sdlc::diff::change_repos(Path::new(&folder), &master_repo, &system, &change)
+    sdlc::diff::change_repos(
+        Path::new(&folder),
+        &Path::new(&folder).join(&master_repo),
+        &master_repo,
+        &system,
+        &change,
+    )
 }
 
 #[tauri::command(async)]
@@ -1284,6 +1297,7 @@ fn sdlc_missing_change_branches(
     sdlc::branch::missing_change_branches(
         &plugin,
         Path::new(&folder),
+        &Path::new(&folder).join(&master_repo),
         &master_repo,
         &system,
         &change,
