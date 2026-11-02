@@ -180,3 +180,31 @@ describe('SdlcHome', () => {
     expect(send).toHaveBeenCalledWith(runId, expect.any(String), 'look at import only');
   });
 });
+
+describe('SdlcHome old per-machine checks', () => {
+  afterEach(() => history.replaceState({}, '', '/'));
+
+  it('tells the engineer once that the old checks no longer run, shows the file in mono, and is gone once dismissed (R6.1, R6.2)', async () => {
+    history.replaceState({}, '', '/?demo=old-checks');
+    const { container, transport } = await mount();
+    const notice = container.querySelector('[data-testid="old-checks"]')!;
+    expect(notice).not.toBeNull();
+    const text = notice.textContent!.replace(/\s+/g, ' ');
+    expect(text).toContain('These checks no longer run.');
+    expect(text).toContain('Checks are now team settings in the master repository');
+    expect(text).toContain('--hooks');
+    const file = notice.querySelector<HTMLElement>('[data-testid="old-checks-text"]')!;
+    expect(file.classList.contains('k-mono')).toBe(true);
+    expect(file.textContent).toContain('command');
+    Array.from(notice.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'Dismiss')!.click();
+    await settle();
+    expect(container.querySelector('[data-testid="old-checks"]')).toBeNull();
+    // A later visit: the backend no longer offers it.
+    expect(await transport.sdlcOldChecks('D:/Work/acme-commerce', 'commerce')).toBeNull();
+  });
+
+  it('shows no notice when the system has no old checks file', async () => {
+    const { container } = await mount();
+    expect(container.querySelector('[data-testid="old-checks"]')).toBeNull();
+  });
+});

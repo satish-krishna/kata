@@ -40,6 +40,9 @@ pub struct Settings {
     pub mode: Option<Mode>,
     pub remember: bool,
     pub permission_mode: SdlcPermissionMode,
+    /// Systems whose old per-machine checks file the engineer has been told about. Not on the wire to the screens.
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub old_checks_shown: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -241,6 +244,7 @@ mod tests {
             mode: Some(Mode::Sdlc),
             remember: true,
             permission_mode: SdlcPermissionMode::Prompt,
+            ..Settings::default()
         };
         save_settings(&s).unwrap();
         assert_eq!(load_settings(), s);

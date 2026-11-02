@@ -38,6 +38,7 @@ import type { BaseInfo } from '@bindings/BaseInfo';
 import type { PublishRepo } from '@bindings/PublishRepo';
 import type { Offender } from '@bindings/Offender';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
+import type { OldChecks } from '@bindings/OldChecks';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
 import type { DoneView } from '@bindings/DoneView';
@@ -166,6 +167,8 @@ export class TauriTransport extends KataTransport {
   sdlcDiffBase(repoPath: string) { return this.ipc.invoke<BaseInfo>('sdlc_diff_base', { repoPath }); }
   sdlcTouchedRepos(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<PublishRepo[]>('sdlc_touched_repos', { folder, masterRepo, system, change }); }
   sdlcCommitOffenders(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<Offender[]>('sdlc_commit_offenders', { folder, masterRepo, system, change }); }
+  sdlcOldChecks(folder: string, system: string) { return this.ipc.invoke<OldChecks | null>('sdlc_old_checks', { folder, system }); }
+  sdlcOldChecksSeen(system: string) { return this.ipc.invoke<void>('sdlc_old_checks_seen', { system }); }
   sdlcChecksView(change: ChangeRef) { return this.ipc.invoke<RepoCheckView[]>('sdlc_checks_view', { change }); }
   sdlcGhSignedIn(repos: PublishRepo[]) { return this.ipc.invoke<string>('sdlc_gh_signed_in', { repos }); }
   sdlcGhOrigins(repos: PublishRepo[]) { return this.ipc.invoke<void>('sdlc_gh_origins', { repos }); }

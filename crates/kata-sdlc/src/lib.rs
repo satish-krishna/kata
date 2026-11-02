@@ -19,6 +19,7 @@ pub mod github;
 pub mod holds;
 pub mod naming;
 pub mod offer;
+pub mod old_checks;
 pub mod participants;
 pub mod permissions;
 pub mod pins;

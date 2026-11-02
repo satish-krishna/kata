@@ -125,6 +125,8 @@ export class SdlcHomeViewModel {
   readonly startChangeReason = computed(() => this.views().find((v) => !v.canStartChange)?.startChangeReason ?? null);
   /** This machine's workspace instructions against the master's; null when the plugin cannot report it. */
   readonly instructions = signal<InstructionsState | null>(null);
+  /** Old per-machine checks files the backend says the engineer has not been told about, shown until dismissed. */
+  readonly oldChecks = signal<{ system: string; path: string; text: string }[]>([]);
   private readonly catalogRead = signal(false);
   private readonly currentRead = signal(false);
   /** The page can show a state once the catalog and the current workspace's change list are in. */
@@ -929,6 +931,8 @@ export class SdlcHomeViewModel {
       // Unknown is not "missing": the switcher simply shows no flag.
     }
   }
+
+  dismissOldChecks(_system: string): void {}
 
   private clearDetail(): void {
     this.scan.set(null);

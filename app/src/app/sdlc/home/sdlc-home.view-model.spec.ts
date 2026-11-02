@@ -1166,3 +1166,49 @@ describe('SdlcHomeViewModel a refused start (R2.2)', () => {
     expect(vm.newChangeOpen()).toBe(false);
   });
 });
+
+describe('SdlcHomeViewModel old per-machine checks', () => {
+  const demoAt = (demo: string | null) => history.replaceState({}, '', demo ? `/?demo=${demo}` : '/');
+  afterEach(() => demoAt(null));
+
+  it('shows the old checks file with its text the first time the system is opened, and converts or commits nothing (R6.1)', async () => {
+    demoAt('old-checks');
+    const { vm, transport, saveSettings, runAgent } = setup();
+    const seen = vi.spyOn(transport, 'sdlcOldChecksSeen');
+    await vm.init();
+    await flush();
+    const [shown] = vm.oldChecks();
+    expect(vm.oldChecks().length).toBe(1);
+    expect(shown.system).toBe('commerce');
+    expect(shown.path).toMatch(/workbench[\/]checks[\/]commerce\.toml$/);
+    expect(shown.text).toContain('command');
+    // Told once: the backend is asked to remember it, and nothing else is written or run.
+    expect(seen).toHaveBeenCalledWith('commerce');
+    expect(saveSettings).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not show it again once the engineer has been told, in this session or the next (R6.2)', async () => {
+    demoAt('old-checks');
+    const { vm, transport } = setup();
+    await vm.init();
+    await flush();
+    expect(vm.oldChecks().length).toBe(1);
+    vm.dismissOldChecks('commerce');
+    expect(vm.oldChecks()).toEqual([]);
+    // Opening the system again: the backend has it as told.
+    expect(await transport.sdlcOldChecks('D:/Work/acme-commerce', 'commerce')).toBeNull();
+    await vm.init();
+    await flush();
+    expect(vm.oldChecks()).toEqual([]);
+  });
+
+  it('shows nothing when there is no old checks file', async () => {
+    const { vm, transport } = setup();
+    const seen = vi.spyOn(transport, 'sdlcOldChecksSeen');
+    await vm.init();
+    await flush();
+    expect(vm.oldChecks()).toEqual([]);
+    expect(seen).not.toHaveBeenCalled();
+  });
+});
