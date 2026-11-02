@@ -51,6 +51,9 @@ pub struct RunRecord {
     /// True while the key is still the repository's head.
     #[serde(default)]
     pub current: bool,
+    /// When the run was recorded, as an ISO 8601 time, which orders runs across repositories.
+    #[serde(default)]
+    pub at: Option<String>,
 }
 
 /// One repository's ledger, oldest run first.

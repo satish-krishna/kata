@@ -104,6 +104,13 @@ pub fn declared_done(status: &Status) -> bool {
         .any(|run| run.event == "change.done" && run.outcome == "passed")
 }
 
+/// Whether this machine's ledger shows the change's latest `change.done` failed. The plugin records the
+/// master's pull request in `change.yml` before its final push of the master, so a failure there leaves it
+/// recorded. A clone that never declared has no ledger, and the record alone decides.
+pub fn done_failed_here(_status: &Status) -> bool {
+    false
+}
+
 /// The pull requests as the page shows them, from `show` (read with or without `--refresh`) and the
 /// `legacy` entries. `declared` is [`declared_done`] of the change's ledger.
 pub fn view(show: &ChangeShow, legacy: &[PrEntry], declared: bool) -> PullRequestsView {
@@ -356,13 +363,13 @@ mod tests {
     }
 
     /// R8.2: a change with a legacy entry and pull requests in `change.yml` shows only `change.yml`'s; it
-    /// is done once the plugin's `change.done` passed, and declaring done stays offered until then.
+    /// is done once the master's pull request is recorded there, whatever machine declared it.
     #[test]
     fn a_new_declaration_reads_only_change_yml() {
         let both = view(
             &show(vec![plugin("app", 7), plugin("master", 8)]),
             &[legacy("old", 3)],
-            true,
+            false,
         );
         assert_eq!(both.source, Some(PullRequestSource::Plugin));
         assert_eq!(
@@ -382,46 +389,140 @@ mod tests {
         assert!(partial.declare_offered);
     }
 
-    fn ledger(runs: &[(&str, &str)]) -> Status {
+    /// A ledger of `(repo, event, outcome, at)` runs, each repository's runs oldest first as the plugin
+    /// appends them.
+    fn ledger_of(runs: &[(&str, &str, &str, &str)]) -> Status {
+        let mut repos: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
+        for (repo, event, outcome, at) in runs {
+            let run = serde_json::json!({
+                "event": event, "key": "abc", "outcome": outcome, "hooks": [], "problems": [], "failed": null,
+                "at": at,
+            });
+            match repos.iter_mut().find(|(r, _)| r == repo) {
+                Some((_, list)) => list.push(run),
+                None => repos.push((repo.to_string(), vec![run])),
+            }
+        }
         serde_json::from_value(serde_json::json!({
             "system": "s",
             "change": "2026-11-01-c",
-            "repos": [{
-                "repo": "master",
-                "path": "D:/ws/ai-sdlc",
-                "head": "abc",
-                "runs": runs.iter().map(|(event, outcome)| serde_json::json!({
-                    "event": event, "key": "abc", "outcome": outcome, "hooks": [], "problems": [], "failed": null,
-                })).collect::<Vec<_>>(),
-            }],
+            "repos": repos.into_iter().map(|(repo, runs)| serde_json::json!({
+                "repo": repo, "path": "D:/ws/x", "head": "abc", "runs": runs,
+            })).collect::<Vec<_>>(),
         }))
         .unwrap()
     }
 
-    /// R7.1 row 3: the plugin records the master's pull request in change.yml before its final push of the
-    /// master. When that push fails, `change.done` failed: the change is not done and declaring done again
-    /// is offered to carry on.
+    /// The master's ledger, its runs recorded one second apart in the order given.
+    fn ledger(runs: &[(&str, &str)]) -> Status {
+        let times = (0..runs.len())
+            .map(|i| format!("2026-11-01T10:00:{i:02}.000Z"))
+            .collect::<Vec<_>>();
+        ledger_of(
+            &runs
+                .iter()
+                .zip(&times)
+                .map(|((event, outcome), at)| ("master", *event, *outcome, at.as_str()))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    /// The view as this machine shows it, from the recorded pull requests and its ledger, the way
+    /// `sdlc_pull_requests_view` reads it.
+    fn done_view(recorded: &ChangeShow, legacy: &[PrEntry], status: &Status) -> PullRequestsView {
+        view(
+            recorded,
+            legacy,
+            legacy.is_empty() && done_failed_here(status),
+        )
+    }
+
+    /// R7.1 row 1, R7.1 row 3 and R8.2: done is the master's pull request recorded in `change.yml`, unless
+    /// this machine's ledger shows the latest `change.done` failed. The ledger lives only on the clone that
+    /// declared, so every other clone reads done from the record alone.
     #[test]
-    fn a_failed_final_push_is_not_done_and_offers_declaring_again() {
+    fn done_is_the_masters_pull_request_unless_the_latest_change_done_failed_here() {
         let recorded = show(vec![plugin("app", 7), plugin("master", 8)]);
-        let status = ledger(&[("build.finish", "passed"), ("change.done", "failed")]);
-        let got = view(&recorded, &[], declared_done(&status));
-        assert!(!got.done, "the master's pull request alone is not done");
+
+        // Recorded, and no ledger on this machine (declared on another clone): done.
+        let got = done_view(&recorded, &[], &Status { repos: vec![] });
+        assert!(got.done, "a change declared done elsewhere is done here");
+
+        // Recorded, and the latest change.done here passed: done.
+        let got = done_view(
+            &recorded,
+            &[],
+            &ledger(&[("change.done", "failed"), ("change.done", "passed")]),
+        );
+        assert!(got.done);
+
+        // Recorded, and the latest change.done here failed (the final push of the master): not done, and
+        // declaring done is offered again to carry on.
+        let failed = ledger(&[("build.finish", "passed"), ("change.done", "failed")]);
+        assert!(done_failed_here(&failed));
+        let got = done_view(&recorded, &[], &failed);
+        assert!(!got.done, "a failed final push is not done");
         assert!(got.declare_offered);
         assert_eq!(got.links.len(), 2, "what was opened still shows");
-        // Declared again, it passed: now it is done.
-        let status = ledger(&[("change.done", "failed"), ("change.done", "passed")]);
-        assert!(declared_done(&status));
-        assert!(view(&recorded, &[], declared_done(&status)).done);
-        // No ledger at all: not done.
-        assert!(!declared_done(&Status { repos: vec![] }));
+        // An earlier passed declaration does not hide a later failure.
+        assert!(done_failed_here(&ledger(&[
+            ("change.done", "passed"),
+            ("change.done", "failed"),
+        ])));
+
+        // The latest is read across repositories by when it was recorded, not by which file came first.
+        let across = ledger_of(&[
+            (
+                "master",
+                "change.done",
+                "passed",
+                "2026-11-01T10:00:05.000Z",
+            ),
+            ("app", "change.done", "failed", "2026-11-01T10:00:01.000Z"),
+        ]);
+        assert!(!done_failed_here(&across));
+        let across = ledger_of(&[
+            ("app", "change.done", "passed", "2026-11-01T10:00:01.000Z"),
+            (
+                "master",
+                "change.done",
+                "failed",
+                "2026-11-01T10:00:05.000Z",
+            ),
+        ]);
+        assert!(done_failed_here(&across));
+
+        // A refused or could-not-run declaration changed nothing, so the one before it decides.
+        assert!(!done_failed_here(&ledger(&[
+            ("change.done", "passed"),
+            ("change.done", "refused"),
+        ])));
+        assert!(done_failed_here(&ledger(&[
+            ("change.done", "failed"),
+            ("change.done", "could-not-run"),
+        ])));
+
+        // No pull request recorded for the master: not done, whatever the ledger says.
+        let partial = show(vec![plugin("app", 7)]);
+        assert!(!done_view(&partial, &[], &Status { repos: vec![] }).done);
+        assert!(!done_view(&partial, &[], &ledger(&[("change.done", "passed")])).done);
+        assert!(!done_view(&show(vec![]), &[], &Status { repos: vec![] }).done);
+
+        // An earlier declaration (Kata's old record): done, and declaring done is not offered.
+        let got = done_view(
+            &show(vec![]),
+            &[legacy("old", 3)],
+            &Status { repos: vec![] },
+        );
+        assert!(got.done);
+        assert!(!got.declare_offered);
     }
 
     /// R8.1: a change declared done before this change has no `change.done` in the ledger and still shows as done.
     #[test]
     fn an_earlier_declaration_is_done_with_no_change_done_in_the_ledger() {
         let status = Status { repos: vec![] };
-        let got = view(&show(vec![]), &[legacy("old", 3)], declared_done(&status));
+        let got = done_view(&show(vec![]), &[legacy("old", 3)], &status);
         assert!(got.done);
         assert!(!got.declare_offered);
     }
