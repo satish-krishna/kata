@@ -1,5 +1,5 @@
 import type { BuildStatus } from '@bindings/BuildStatus';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeInfo } from '../../lib/sdlc-mock-types';
 import type { ParsedRequirement } from '@bindings/ParsedRequirement';
 import type { ParsedTask } from '@bindings/ParsedTask';
 import type { ReadResult } from '@bindings/ReadResult';

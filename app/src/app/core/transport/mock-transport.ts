@@ -8,7 +8,7 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeInfo } from '../../lib/sdlc-mock-types';
 import type { ChangeView } from '@bindings/ChangeView';
 import type { SystemView } from '@bindings/SystemView';
 import type { BranchInfo } from '@bindings/BranchInfo';
@@ -47,7 +47,7 @@ import type { OpenRun } from '@bindings/OpenRun';
 import type { Opens } from '@bindings/Opens';
 import type { RunningEntry } from '@bindings/RunningEntry';
 import type { RunRef } from '@bindings/RunRef';
-import { BUILD_REPOS_OF, MOCK_BUILD_CHANGE, MOCK_LAYOUTS, MOCK_MASTER, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockDefaultPicks, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import { BUILD_REPOS_OF, MOCK_BUILD_CHANGE, MOCK_LAYOUTS, MOCK_MASTER, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockChangeKey, mockDefaultPicks, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import type { BuildState } from '@bindings/BuildState';
 import type { RoundOffer } from '@bindings/RoundOffer';
@@ -56,6 +56,7 @@ import type { RoundPlan } from '@bindings/RoundPlan';
 import type { BuildEvent } from '@bindings/BuildEvent';
 import type { StartForm } from '@bindings/StartForm';
 import type { HistoryEntry } from '@bindings/HistoryEntry';
+import type { ChangeKey } from '@bindings/ChangeKey';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import type { CloseOutcome } from '@bindings/CloseOutcome';
 import type { HeldRepo } from '@bindings/HeldRepo';
@@ -393,6 +394,7 @@ export class MockTransport extends KataTransport {
   // The scripted host runs no agent, so the choices a continue or review carries change nothing it shows.
   async sdlcBuildContinue(change: ChangeRef, repo: string, _off?: string[]): Promise<StartOutcome> { return this.host.continueRepo(change, repo); }
   async sdlcBuildState(change: ChangeRef): Promise<BuildState | null> { return this.host.state(change); }
+  async sdlcChangeKey(change: ChangeRef): Promise<ChangeKey> { return mockChangeKey(change); }
   async sdlcBuildCancel(change: ChangeRef, repo: string | null): Promise<void> { this.host.cancel(change, repo); }
   async sdlcBuildRuns(change: ChangeRef): Promise<BuildRunRef[]> { return this.host.runs(change); }
   /** The run-spec the backend would compose: a triage or a fix run is always auto, a document run follows the form's permission setting, and the limit and the items are the form's. */
@@ -445,11 +447,6 @@ export class MockTransport extends KataTransport {
   }
   async sdlcRoundPlan(change: ChangeRef, picks: RoundPicks): Promise<RoundPlan> {
     return mockRoundPlan(mockRoundOffer(this.sdlc.reviewRecord(), this.reviewRepos(change)), picks);
-  }
-  async sdlcRoundStart(change: ChangeRef, picks: RoundPicks): Promise<StartOutcome> {
-    const plan = await this.sdlcRoundPlan(change, picks);
-    if (plan.blocked !== null) return { kind: 'refused', problems: [plan.blocked] };
-    return this.host.start(change, { timeoutSecs: 7200, rounds: plan.requests });
   }
   async sdlcRunning(): Promise<RunningStrip> { return this.strip(); }
   async sdlcMarkOpened(change: ChangeRef): Promise<void> { void change; }

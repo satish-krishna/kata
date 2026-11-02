@@ -1,4 +1,4 @@
-import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeInfo } from '../../lib/sdlc-mock-types';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
 import { of } from 'rxjs';

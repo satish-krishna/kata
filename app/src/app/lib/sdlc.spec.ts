@@ -1,6 +1,6 @@
 import type { CatalogEntry } from "@bindings/CatalogEntry";
 import type { Settings } from "@bindings/Settings";
-import type { Stage } from "@bindings/Stage";
+import type { Stage } from "./sdlc-mock-types";
 import type { WorkspaceScan } from "@bindings/WorkspaceScan";
 import type { KataEvent, RunDetail } from "./events";
 import { validateLocal } from "./mock";

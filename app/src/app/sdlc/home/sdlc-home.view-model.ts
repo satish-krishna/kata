@@ -140,8 +140,6 @@ export class SdlcHomeViewModel {
   });
   readonly masterBranch = computed(() => this.branches()?.current ?? null);
   readonly otherBranches = computed(() => (this.branches()?.others ?? []).map((o) => o.change));
-  /** The other branches that are pending branches of a change waiting for its name. */
-  readonly otherNeedingName = computed(() => (this.branches()?.others ?? []).filter((o) => o.needs_name).map((o) => o.change));
   readonly systems = computed(() => {
     const s = this.scan();
     return s ? systemNames(s) : [];
@@ -669,7 +667,7 @@ export class SdlcHomeViewModel {
     const master = this.masterDir();
     if (!master || this.refuseWhileLocked()) return;
     try {
-      // The branch is the one the list read: a pending branch is not named after its change.
+      // The branch is the one the list read: a recorded branch is not named after its change.
       const branch = this.branches()?.others.find((o) => o.change === change)?.branch ?? `change/${change}`;
       await this.transport.sdlcCheckout(master, branch);
     } catch (e) {

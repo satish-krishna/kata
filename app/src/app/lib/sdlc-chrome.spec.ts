@@ -1,6 +1,6 @@
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
-import type { Stage } from '@bindings/Stage';
+import type { Stage } from './sdlc-mock-types';
 import { parseFrontMatter, stagePills, stageRuns, type StagePill } from './sdlc';
 import { mockLabel } from './sdlc-mock';
 

@@ -36,7 +36,7 @@ import type { ParsedRequirement } from '@bindings/ParsedRequirement';
 import type { ParsedSection } from '@bindings/ParsedSection';
 import type { ParsedTask } from '@bindings/ParsedTask';
 import type { Part } from '@bindings/Part';
-import type { PlanTask } from '@bindings/PlanTask';
+import type { ChangeInfo, DocState, PlanTask, Stage, Track } from './sdlc-mock-types';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { DoneStep } from '@bindings/DoneStep';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
@@ -49,7 +49,6 @@ import type { RepoState } from '@bindings/RepoState';
 import type { RepoStatus } from '@bindings/RepoStatus';
 import type { TaskStatus } from '@bindings/TaskStatus';
 import type { BranchInfo } from '@bindings/BranchInfo';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { ChangeView } from '@bindings/ChangeView';
 import type { CopyRemoval } from '@bindings/CopyRemoval';
 import type { RemoveOutcome } from '@bindings/RemoveOutcome';
@@ -70,15 +69,12 @@ import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { AcceptOutcome } from '@bindings/AcceptOutcome';
 import type { ChangeDocument } from '@bindings/ChangeDocument';
 import type { RejectOutcome } from '@bindings/RejectOutcome';
-import type { DocState } from '@bindings/DocState';
 import type { ChangeStart } from '@bindings/ChangeStart';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { Settings } from '@bindings/Settings';
 import type { Snapshot } from '@bindings/Snapshot';
-import type { Stage } from '@bindings/Stage';
-import type { Track } from '@bindings/Track';
 import type { ParsedFinding } from '@bindings/ParsedFinding';
 import type { Severity } from '@bindings/Severity';
 import type { Concern } from '@bindings/Concern';
@@ -92,7 +88,6 @@ export const MOCK_WORKSPACE_FOLDER = DEMO_WORKSPACE_FOLDER;
 export const MOCK_SETUP_FOLDER = DEMO_SETUP_FOLDER;
 export const MOCK_MASTER = 'commerce-docs';
 export const MOCK_SYSTEM = 'commerce';
-export const MOCK_PENDING_BRANCH = 'change/pending-20261018T000000Z';
 export const MOCK_BASE = 'main';
 export const MOCK_NEW_CHANGE = '2026-10-18-new-change';
 
@@ -609,7 +604,6 @@ export class SdlcMock {
 
   constructor(long = false, demo: string | null = null) {
     this.demo = demo;
-    if (demo === 'naming') this.current = MOCK_PENDING_BRANCH;
     this.unreadable = long ? '2026-10-09-merchant-reassign' : null;
     this.plan = long ? [...BUILD_PLAN, ...LONG_PLAN] : BUILD_PLAN;
     this.repos = long ? [...BUILD_REPOS, 'billing-api'] : BUILD_REPOS;
@@ -785,7 +779,7 @@ export class SdlcMock {
   patch(changeName: string, patch: Partial<ChangeInfo>): void {
     this.changes = this.changes.map((c) => (c.change === changeName ? { ...c, ...patch } : c));
   }
-  branches(): BranchInfo { return { current: this.current, others: this.others.map((change) => ({ branch: `change/${change}`, change, needs_name: false })), default_base: MOCK_BASE, pending_change: this.demo === 'naming' ? `${MOCK_SYSTEM}/${MOCK_BUILD_CHANGE}` : null }; }
+  branches(): BranchInfo { return { current: this.current, others: this.others.map((change) => ({ branch: `change/${change}`, change })), default_base: MOCK_BASE }; }
   /** Like the backend's `read_doc`: the document is named by its stem; anything else is a caller bug. */
   readDoc(changeName: string, docName: string): string | null {
     if (!DOC_STEMS.has(docName)) throw new Error(`read_doc takes a document stem (intent, spec or plan), not "${docName}"`);

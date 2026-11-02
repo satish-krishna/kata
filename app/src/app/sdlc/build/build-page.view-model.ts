@@ -35,7 +35,7 @@ import { ChangeDraftStore } from '../../core/sdlc/change-draft.store';
 import { RunLandingStore } from '../../core/run/run-landing.store';
 import { type AskRecord, type MessageRecord, type MessageRefusal, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
 import { activityFor, linksOfFollowedRuns, outcomeOf, recordOutcome, repoSessions, sessionsFor, type Chosen, type LiveRun, type Pick, type SessionRef } from '../../lib/build-sessions';
-import { isChange } from '../../lib/build-host';
+import { sameChange } from '../../lib/build-host';
 import { buildStage, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
 import { hms, ms, situationView, type Situation, type SituationView, type TaskState } from '../../lib/build-state';
 import { layoutStage as layoutStageOf, type LayoutStage } from '../../lib/build-layout-stage';
@@ -699,8 +699,10 @@ export class BuildPageViewModel {
     if (this.attached === id) return;
     this.detach();
     this.attached = id;
+    const key = await this.transport.sdlcChangeKey(ref);
+    if (this.attached !== id) return;
     const unlisten = await this.transport.onBuildState((event) => {
-      if (isChange(event.change, ref)) this.apply(event.state, event.reviewWaiting, event.runs);
+      if (sameChange(event.change, key)) this.apply(event.state, event.reviewWaiting, event.runs);
     });
     if (this.attached !== id) {
       unlisten();

@@ -1,7 +1,7 @@
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { CopyRemoval } from '@bindings/CopyRemoval';
 import type { RemoveOutcome } from '@bindings/RemoveOutcome';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeInfo } from '../../lib/sdlc-mock-types';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter, type Routes } from '@angular/router';

@@ -48,6 +48,7 @@ import type { RoundPlan } from '@bindings/RoundPlan';
 import type { BuildEvent } from '@bindings/BuildEvent';
 import type { StartForm } from '@bindings/StartForm';
 import type { HistoryEntry } from '@bindings/HistoryEntry';
+import type { ChangeKey } from '@bindings/ChangeKey';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import type { CloseOutcome } from '@bindings/CloseOutcome';
 import type { HeldRepo } from '@bindings/HeldRepo';
@@ -92,6 +93,8 @@ export abstract class KataTransport {
   abstract sdlcBuildContinue(change: ChangeRef, repo: string, off?: string[]): Promise<StartOutcome>;
   /** Where a change's build stands, or null when this session hosts no build of it. */
   abstract sdlcBuildState(change: ChangeRef): Promise<BuildState | null>;
+  /** The key the backend gives the change, which its build announcements carry. */
+  abstract sdlcChangeKey(change: ChangeRef): Promise<ChangeKey>;
   /** Stop the run of one repository (or `review`) of a change's build, or, with none named, every run of it. */
   abstract sdlcBuildCancel(change: ChangeRef, repo: string | null): Promise<void>;
   /** The runs of a change's build that are live, each with its run's id. */
@@ -111,7 +114,6 @@ export abstract class KataTransport {
   /** The requests a round with these picks would start, or why it cannot. */
   abstract sdlcRoundPlan(change: ChangeRef, picks: RoundPicks): Promise<RoundPlan>;
   /** Start the round the picks describe. */
-  abstract sdlcRoundStart(change: ChangeRef, picks: RoundPicks): Promise<StartOutcome>;
   /** The running changes: the first three and every one. */
   abstract sdlcRunning(): Promise<RunningStrip>;
   /** The engineer opened a change; it leaves the running changes once nothing of it needs them. */

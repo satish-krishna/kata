@@ -1,6 +1,6 @@
 import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import type { Stage } from '@bindings/Stage';
+import type { Stage } from '../lib/sdlc-mock-types';
 import { HlmTabsImports } from '@spartan-ng/helm/tabs';
 import { stagePills, type DocsPresent } from '../lib/sdlc';
 import { mockLabel } from '../lib/sdlc-mock';

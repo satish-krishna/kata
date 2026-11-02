@@ -46,21 +46,14 @@ describe('LockPanel', () => {
 describe('LockPanel progress line', () => {
   const entry = (label: string) => ({ line: 'Working on it…', label, long: false });
   const labels: [string, string][] = [
-    ['the checks of a repository', progressLabels.runningChecks('commerce-core')],
-    ['a push', progressLabels.pushing('2026-10-18-photo-limits', 'commerce-core')],
-    ['a pull request', progressLabels.openingPr('customer-portal')],
+    ['what changed in a repository', progressLabels.readingDiff('commerce-core')],
+    ['a build being prepared', progressLabels.preparingBuild()],
+    ['a document', progressLabels.readingDoc('plan')],
   ];
 
   it.each(labels)('shows the plain label of %s', async (_what, label) => {
     const { container } = await mount({ view: STEPS, stepProgress: entry(label) });
     expect(container.querySelector('app-progress-line [data-testid="progress-label"]')?.textContent?.trim()).toBe(label);
-  });
-
-  it('names the repository in each plain label', () => {
-    expect(progressLabels.runningChecks('commerce-core')).toBe('Running the checks in commerce-core');
-    expect(progressLabels.pushing('2026-10-18-photo-limits', 'commerce-core')).toBe('Pushing change/2026-10-18-photo-limits in commerce-core');
-    expect(progressLabels.pushing('2026-11-02-password-reset', 'kata', 'feat/PROJ-123-password-reset')).toBe('Pushing feat/PROJ-123-password-reset in kata');
-    expect(progressLabels.openingPr('customer-portal')).toBe('Opening a pull request in customer-portal');
   });
 
   it('shows no progress line while nothing reports', async () => {

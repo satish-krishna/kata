@@ -51,6 +51,7 @@ import type { RoundPlan } from '@bindings/RoundPlan';
 import type { BuildEvent } from '@bindings/BuildEvent';
 import type { StartForm } from '@bindings/StartForm';
 import type { HistoryEntry } from '@bindings/HistoryEntry';
+import type { ChangeKey } from '@bindings/ChangeKey';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import type { CloseOutcome } from '@bindings/CloseOutcome';
 import type { BuildRunRef } from '@bindings/BuildRunRef';
@@ -115,6 +116,7 @@ export class TauriTransport extends KataTransport {
   sdlcBuildStart(change: ChangeRef, form: StartForm) { return this.ipc.invoke<StartOutcome>('sdlc_build_start', { change, form }); }
   sdlcBuildContinue(change: ChangeRef, repo: string, off?: string[]) { return this.ipc.invoke<StartOutcome>('sdlc_build_continue', { change, repo, ...(off === undefined ? {} : { off }) }); }
   sdlcBuildState(change: ChangeRef) { return this.ipc.invoke<BuildState | null>('sdlc_build_state', { change }); }
+  sdlcChangeKey(change: ChangeRef) { return this.ipc.invoke<ChangeKey>('sdlc_change_key', { change }); }
   sdlcBuildCancel(change: ChangeRef, repo: string | null) { return this.ipc.invoke<void>('sdlc_build_cancel', { change, repo }); }
   sdlcBuildRuns(change: ChangeRef) { return this.ipc.invoke<BuildRunRef[]>('sdlc_build_runs', { change }); }
   sdlcPreviewChangeRun(change: ChangeRef, kind: DocumentKind, form: RunForm) { return this.ipc.invoke<RunSpec>('sdlc_preview_change_run', { change, kind, form }); }
@@ -124,7 +126,6 @@ export class TauriTransport extends KataTransport {
   sdlcReviewWaiting(change: ChangeRef) { return this.ipc.invoke<HeldRepo[]>('sdlc_review_waiting', { change }); }
   sdlcRoundOffer(change: ChangeRef) { return this.ipc.invoke<[RoundOffer, RoundPicks]>('sdlc_round_offer', { change }); }
   sdlcRoundPlan(change: ChangeRef, picks: RoundPicks) { return this.ipc.invoke<RoundPlan>('sdlc_round_plan', { change, picks }); }
-  sdlcRoundStart(change: ChangeRef, picks: RoundPicks) { return this.ipc.invoke<StartOutcome>('sdlc_round_start', { change, picks }); }
   sdlcRunning() { return this.ipc.invoke<RunningStrip>('sdlc_running'); }
   sdlcMarkOpened(change: ChangeRef) { return this.ipc.invoke<void>('sdlc_mark_opened', { change }); }
   sdlcCloseAnswer(confirm: boolean) { return this.ipc.invoke<void>('sdlc_close_answer', { confirm }); }

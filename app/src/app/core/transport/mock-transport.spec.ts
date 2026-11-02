@@ -121,7 +121,7 @@ describe('MockTransport', () => {
   it('checkout records the previous change branch without its prefix and drops the target', async () => {
     const t = new MockTransport();
     await t.sdlcCheckout('/m', 'change/2026-10-17-product-notes');
-    expect(await t.sdlcBranches('/m')).toEqual({ current: 'change/2026-10-17-product-notes', others: [], default_base: 'main', pending_change: null });
+    expect(await t.sdlcBranches('/m')).toEqual({ current: 'change/2026-10-17-product-notes', others: [], default_base: 'main' });
     await t.sdlcCheckout('/m', 'main');
     expect((await t.sdlcBranches('/m')).others.map((o) => o.change)).toEqual(['2026-10-17-product-notes']);
   });
@@ -498,22 +498,14 @@ describe('MockTransport branch naming demos', () => {
     }
   };
 
-  it('keeps the default fixtures: no pending change, the finished change has its pull requests', async () => {
+  it('keeps the default fixtures: the master on main, the finished change has its pull requests', async () => {
     await withDemo(null, async (t) => {
       const b = await t.sdlcBranches('/m');
       expect(b.current).toBe('main');
-      expect(b.pending_change).toBeNull();
       expect((await t.sdlcPullRequestsView(MOCK_WORKSPACE_FOLDER, 'w1', 'commerce', MOCK_DONE_CHANGE, false)).links[0].url).toContain('github.com');
     });
   });
 
-  it('?demo=naming stands the master on a pending branch that holds the build demo change', async () => {
-    await withDemo('naming', async (t) => {
-      const b = await t.sdlcBranches('/m');
-      expect(b.current?.startsWith('change/pending-')).toBe(true);
-      expect(b.pending_change).toBe(`commerce/${MOCK_BUILD_CHANGE}`);
-    });
-  });
 
 });
 

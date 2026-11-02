@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeInfo } from '../lib/sdlc-mock-types';
 import { BehaviorSubject } from 'rxjs';
 import { RunPreviewViewModel } from '../core/given/run-preview.view-model';
 import { LockStore } from '../core/lock/lock.store';

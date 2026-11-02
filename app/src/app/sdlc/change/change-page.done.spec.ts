@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import { render } from '../../../testing/render';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeInfo } from '../../lib/sdlc-mock-types';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { PullRequestLink } from '@bindings/PullRequestLink';
