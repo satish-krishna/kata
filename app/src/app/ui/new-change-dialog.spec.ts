@@ -186,4 +186,50 @@ describe('NewChangeDialog', () => {
     expect(dialog()!.querySelector('[data-testid="naming-error"]')!.textContent).toContain('cannot be used');
     expect((button('Start') as HTMLButtonElement).disabled).toBe(true);
   });
+
+  describe('another branch name (R2.2)', () => {
+    const branchInput = () => dialog()!.querySelector<HTMLInputElement>('input[aria-label="Branch name"]');
+    const typeBranch = async (value: string) => {
+      branchInput()!.value = value;
+      branchInput()!.dispatchEvent(new Event('input'));
+      await settle();
+    };
+
+    it('does not ask for a branch name until the plugin refused one', async () => {
+      await render(NewChangeDialog, { open: true, systems: ['commerce'], initialIdea: 'x' });
+      await settle();
+      expect(branchInput()).toBeNull();
+    });
+
+    it.each([
+      ['taken', 'feat/x is taken in master by the branch feat/x'],
+      ['invalid', 'bad name: a branch name cannot contain a space'],
+    ])('a %s branch name: shows the reason of the plugin as it is and asks for another one', async (_row, reason) => {
+      await render(NewChangeDialog, { open: true, systems: ['commerce'], initialIdea: 'x', branchProblems: [reason] });
+      await settle();
+      expect(dialog()!.textContent).toContain(reason);
+      expect(branchInput()).not.toBeNull();
+      expect((button('Start') as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it('starts again with the new branch name', async () => {
+      const { fixture } = await render(NewChangeDialog, { open: true, systems: ['commerce'], initialIdea: 'flag prices', branchProblems: ['feat/x is taken in master by the branch feat/x'] });
+      await settle();
+      const got: unknown[] = [];
+      fixture.componentInstance.start.subscribe((v) => got.push(v));
+      await typeBranch('  feat/y  ');
+      expect((button('Start') as HTMLButtonElement).disabled).toBe(false);
+      button('Start').click();
+      expect(got).toEqual([{ system: 'commerce', idea: 'flag prices', track: 'full', branch: 'feat/y' }]);
+    });
+
+    it('reopens on the system it was given', async () => {
+      const { fixture } = await render(NewChangeDialog, { open: true, systems: ['commerce', 'billing'], initialSystem: 'billing', initialIdea: 'x' });
+      await settle();
+      const got: { system: string }[] = [];
+      fixture.componentInstance.start.subscribe((v) => got.push(v));
+      button('Start').click();
+      expect(got[0].system).toBe('billing');
+    });
+  });
 });

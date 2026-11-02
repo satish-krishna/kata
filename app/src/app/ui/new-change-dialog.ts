@@ -10,7 +10,7 @@ import type { WorkType } from '../lib/sdlc-naming';
 import { Field } from './field';
 import { Segmented } from './segmented';
 
-export type NewChange = { system: string; idea: string; track: StartTrack };
+export type NewChange = { system: string; idea: string; track: StartTrack; branch?: string };
 
 /* New change: the description in a sentence or two, the system when the workspace has more than one, and the track.
  * The workflow proposes the title and the folder name itself, so there is no slug field. */
@@ -30,6 +30,10 @@ export class NewChangeDialog {
   readonly initialTrack = input<StartTrack>('decide');
   /** Hides the Track field and keeps the track at `initialTrack`, for a caller that has already chosen it. */
   readonly trackFixed = input(false);
+  /** The system the dialog opens on; the first one when null. */
+  readonly initialSystem = input<string | null>(null);
+  /** Why the plugin refused the branch name of the last start; the dialog then asks for another one. */
+  readonly branchProblems = input<string[]>([]);
   /** Shown above the description. */
   readonly note = input<string | null>(null);
 

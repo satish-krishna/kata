@@ -282,6 +282,39 @@ mod tests {
     }
 
     #[test]
+    fn change_commands_get_the_master_and_the_workspace() {
+        let args = with_place(
+            &["change", "start", "--json", "--system", "demo"],
+            "/m",
+            "/w",
+        );
+        assert_eq!(
+            args,
+            [
+                "change",
+                "start",
+                "--json",
+                "--system",
+                "demo",
+                "--master",
+                "/m",
+                "--workspace",
+                "/w"
+            ]
+        );
+        // The caller's own placement is kept, and a command that takes none is left alone.
+        let given = with_place(&["change", "show", "--master", "/x"], "/m", "/w");
+        assert_eq!(
+            given,
+            ["change", "show", "--master", "/x", "--workspace", "/w"]
+        );
+        assert_eq!(
+            with_place(&["naming", "--json"], "/m", "/w"),
+            ["naming", "--json"]
+        );
+    }
+
+    #[test]
     fn master_and_workspace_are_passed() {
         let (_dir, place) = workspace();
         let found = program().run(&["resolve", "--json"], &place).unwrap();

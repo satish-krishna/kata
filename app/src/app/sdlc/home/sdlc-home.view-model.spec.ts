@@ -1107,3 +1107,62 @@ describe('SdlcHomeViewModel naming at the start of a change', () => {
     expect(start).not.toHaveBeenCalled();
   });
 });
+
+describe('SdlcHomeViewModel a refused start (R2.2)', () => {
+  async function opened() {
+    const ctx = setup();
+    await ctx.vm.init();
+    ctx.vm.openNewChange();
+    await vi.waitFor(() => expect(ctx.vm.newChangeNaming()).not.toBeNull());
+    ctx.vm.pickTrack('full');
+    ctx.vm.pickWorkType('refactor');
+    ctx.vm.setScope('PROJ-123');
+    await vi.waitFor(() => expect(ctx.vm.namingReady()).toBe(true));
+    return ctx;
+  }
+
+  it.each([
+    ['taken', 'feat/x is taken in master by the branch feat/x'],
+    ['invalid', 'feat/x: a branch name cannot contain a space'],
+  ])('a %s branch name: the dialog opens again on the same description with the reason and asks for another name', async (_row, problem) => {
+    const { vm, runner } = await opened();
+    vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'retry', ask: 'branch', problems: [problem] });
+    await vm.newChange('commerce', 'flag prices', 'full');
+    expect(vm.newChangeOpen()).toBe(true);
+    expect(vm.newChangeIdea()).toBe('flag prices');
+    expect(vm.newChangeTrack()).toBe('full');
+    expect(vm.newChangeSystem()).toBe('commerce');
+    expect(vm.branchProblems()).toEqual([problem]);
+    // What the engineer picked is still picked.
+    expect(vm.workType()).toBe('refactor');
+    expect(vm.scope()).toBe('PROJ-123');
+  });
+
+  it('starts again with the branch name the engineer gave, and asks for no branch once it works', async () => {
+    const { vm, runner } = await opened();
+    const spy = vi.spyOn(runner, 'newChange').mockResolvedValueOnce({ kind: 'retry', ask: 'branch', problems: ['taken'] }).mockResolvedValue({ kind: 'stopped' });
+    await vm.newChange('commerce', 'flag prices', 'full');
+    await vm.newChange('commerce', 'flag prices', 'full', 'feat/y');
+    expect(spy.mock.calls[1][6]).toBe('feat/y');
+    expect(spy.mock.calls[1][5]).toEqual({ workType: 'refactor', scope: 'PROJ-123' });
+    expect(vm.newChangeOpen()).toBe(false);
+    expect(vm.branchProblems()).toEqual([]);
+  });
+
+  it('a scope the plugin refuses: the dialog opens again with the reason on the scope and Start off until it is changed', async () => {
+    const { vm, runner } = await opened();
+    vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'retry', ask: 'scope', problems: ['the scope: a scope cannot contain a space'] });
+    await vm.newChange('commerce', 'flag prices', 'full');
+    expect(vm.newChangeOpen()).toBe(true);
+    expect(vm.scopeProblems()).toEqual(['the scope: a scope cannot contain a space']);
+    expect(vm.namingReady()).toBe(false);
+    expect(vm.branchProblems()).toEqual([]);
+  });
+
+  it('a start that went through leaves the dialog closed', async () => {
+    const { vm, runner } = await opened();
+    vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened', change: '2026-10-18-x', branch: 'change/2026-10-18-x' });
+    await vm.newChange('commerce', 'flag prices', 'full');
+    expect(vm.newChangeOpen()).toBe(false);
+  });
+});

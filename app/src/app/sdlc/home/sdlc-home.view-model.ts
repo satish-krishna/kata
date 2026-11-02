@@ -179,6 +179,10 @@ export class SdlcHomeViewModel {
   readonly newChangeIdea = signal('');
   readonly newChangeTrack = signal<StartTrack>('decide');
   readonly newChangeNote = signal<string | null>(null);
+  /** The system the dialog reopens on after a refused start; null opens on the first. */
+  readonly newChangeSystem = signal<string | null>(null);
+  /** Why the plugin refused the branch name of the last start; empty when it did not. */
+  readonly branchProblems = signal<string[]>([]);
   /** Whether the plugin on this machine can triage a change. */
   readonly lightTrack = computed(() => {
     const r = this.readiness();
@@ -538,7 +542,8 @@ export class SdlcHomeViewModel {
     await this.runOnBase('Refreshing workspace instructions', 'Instructions', 'setup', { system: '', instructions: true });
   }
 
-  async newChange(system: string, idea: string, track: StartTrack): Promise<void> {
+  async newChange(system: string, idea: string, track: StartTrack, branch?: string): Promise<void> {
+    void branch;
     const answer = this.naming();
     // A broken setting never falls back to `change/` naming (R3.2), and a setting needs its checked scope.
     if (answer?.kind === 'error' || (answer?.kind === 'setting' && !this.namingReady())) {

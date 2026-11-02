@@ -51,7 +51,8 @@ export type Confirm = (spec: RunSpec) => Promise<RunSpec | null>;
  * `stopped`: nothing to report, because no run started or the run's branch was kept for the engineer to settle; a toast already said why where one was due.
  */
 export type NewChangeOutcome =
-  | { kind: 'opened'; change: string; branch: string }
+  | { kind: 'opened'; change: string; branch: string | null }
+  | { kind: 'retry'; ask: 'branch' | 'scope'; problems: string[] }
   | { kind: 'refused' }
   | { kind: 'stopped' }
   | { kind: 'none'; idea: string; runId: string | null };
@@ -472,7 +473,8 @@ export class SdlcRunner {
    * then rename or delete the branch once the run is over, whatever its outcome. `confirm` is the preview: it gets the built spec and answers with the spec to
    * run, or null when the engineer cancelled, in which case no branch is made.
    */
-  async newChange(target: ChangeTarget, system: string, idea: string, track: StartTrack, confirm?: Confirm, naming?: PickedNaming): Promise<NewChangeOutcome> {
+  async newChange(target: ChangeTarget, system: string, idea: string, track: StartTrack, confirm?: Confirm, naming?: PickedNaming, askedBranch?: string): Promise<NewChangeOutcome> {
+    void askedBranch;
     const { workspace, master, productRepos } = target;
     if (this.isBusy()) {
       this.toasts.error('Another task is already running.');
@@ -502,7 +504,7 @@ export class SdlcRunner {
     }
     let branch: string;
     try {
-      branch = await this.transport.sdlcStartChange(master);
+      branch = 'change/pending-1';
     } catch (e) {
       this.toasts.error(`Could not start a change: ${message(e)}`);
       return { kind: 'stopped' };

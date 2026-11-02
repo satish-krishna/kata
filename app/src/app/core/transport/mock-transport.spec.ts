@@ -126,21 +126,22 @@ describe('MockTransport', () => {
     expect((await t.sdlcBranches('/m')).others.map((o) => o.change)).toEqual(['2026-10-17-product-notes']);
   });
 
-  it('finishing a change renames it once, then deletes a pending branch that created nothing', async () => {
+  it('starting a change adds it, named from the title, on its own branch', async () => {
     const t = new MockTransport();
-    const pending = await t.sdlcStartChange('/m');
-    const out = await t.sdlcFinishChange('/m', pending);
-    expect(out).toEqual({ renamed: { branch: 'change/2026-10-18-new-change', change: '2026-10-18-new-change' } });
-    const b = await t.sdlcBranches('/m');
-    expect(b.current).toBe('main');
-    expect(b.others.map((o) => o.change)).toEqual(['2026-10-17-product-notes', '2026-10-18-new-change']);
-    expect((await readAllChanges(t))[0].state.change).toBe('2026-10-18-new-change');
+    const name = await t.sdlcChangeName('Password reset');
+    expect(name).toMatch(/^\d{4}-\d{2}-\d{2}-password-reset$/);
+    const out = await t.sdlcStartChange('/ws', 'commerce', 'Password reset', 'feat', '');
+    expect(out).toMatchObject({ outcome: 'started', change: name, branch: 'change/' + name });
+    expect((await readAllChanges(t))[0].state.change).toBe(name);
+    expect((await t.sdlcBranches('/m')).current).toBe('main');
+  });
 
-    const again = await t.sdlcStartChange('/m');
-    expect(await t.sdlcFinishChange('/m', again)).toBe('deleted');
-    const after = await t.sdlcBranches('/m');
-    expect(after.current).toBe('main');
-    expect(after.others).toEqual(b.others);
+  it('a branch name the mock plugin refuses starts nothing and says why', async () => {
+    const t = new MockTransport();
+    const before = (await readAllChanges(t)).length;
+    expect(await t.sdlcStartChange('/ws', 'commerce', 'Password reset', 'feat', '', 'main')).toMatchObject({ outcome: 'refused', kind: 'branchTaken' });
+    expect(await t.sdlcStartChange('/ws', 'commerce', 'Password reset', 'feat', '', 'bad name')).toMatchObject({ outcome: 'refused', kind: 'branchInvalid' });
+    expect((await readAllChanges(t)).length).toBe(before);
   });
 
   it('rejecting an intent moves its change to rejected', async () => {

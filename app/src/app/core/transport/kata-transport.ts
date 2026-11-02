@@ -14,6 +14,7 @@ import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
+import type { ChangeStart } from '@bindings/ChangeStart';
 import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Decision } from '@bindings/Decision';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
@@ -155,7 +156,10 @@ export abstract class KataTransport {
   /** `build` scopes the run to a build: only that change's build log rows are build log data. A run outside a build passes none. */
   abstract sdlcLeftovers(master: string, before: Snapshot, productRepos: string[], build?: BuildScope): Promise<Leftovers>;
   abstract sdlcDiscard(master: string, before: Snapshot, paths: string[], build?: BuildScope): Promise<void>;
-  abstract sdlcStartChange(master: string): Promise<string>;
+  /** The name the plugin will give a change described by `title`, so the preview shows it. */
+  abstract sdlcChangeName(title: string): Promise<string>;
+  /** Ask the plugin to start a change: its branch and its own copy. A refusal is an answer with the plugin's reasons, not an error. */
+  abstract sdlcStartChange(folder: string, system: string, title: string, workType: string, scope: string, branch?: string): Promise<ChangeStart>;
   abstract sdlcFinishChange(master: string, pending: string): Promise<FinishOutcome>;
   /** The system's naming setting, or why it cannot be used. */
   abstract sdlcNaming(folder: string, masterRepo: string, system: string): Promise<NamingState>;

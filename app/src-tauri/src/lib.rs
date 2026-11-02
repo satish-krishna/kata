@@ -5,6 +5,7 @@ mod history;
 mod running;
 mod runs;
 mod sdlc_state;
+mod start_change;
 mod zoom;
 
 use kata_core::catalog::{self, CatalogEntry};

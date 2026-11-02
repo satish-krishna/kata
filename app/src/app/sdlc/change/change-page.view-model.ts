@@ -1016,7 +1016,7 @@ export class ChangePageViewModel {
       return;
     }
     if (outcome.kind !== 'opened') return;
-    await this.closeFix({ ...fixRef, master, fixBranch, newBranch: outcome.branch }, false);
+    await this.closeFix({ ...fixRef, master, fixBranch, newBranch: outcome.branch ?? `change/${outcome.change}` }, false);
   }
 
   /**

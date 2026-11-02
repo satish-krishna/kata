@@ -181,6 +181,13 @@ pub fn names(
         .ok_or_else(|| NamingError::Unreadable("the program rendered no names".into()))
 }
 
+/// The name of a new change: `date` (`YYYY-MM-DD`) and the title's first words, at most five, in lowercase
+/// kebab-case. Only ASCII letters and digits are kept; a title with no usable word gives `change`.
+pub fn change_name(date: &str, title: &str) -> String {
+    let _ = (date, title);
+    String::new()
+}
+
 /// Refuses a branch name git or Kata would not accept. Called before any branch is created or renamed
 /// from a name Kata did not build itself.
 pub fn check_branch_name(plugin: &Readiness, name: &str) -> Result<(), NamingError> {
@@ -401,6 +408,39 @@ mod tests {
                 problems.iter().any(|p| p.contains(reason)),
                 "{scope}: {problems:?}"
             );
+        }
+    }
+
+    #[test]
+    fn change_name_rows() {
+        let rows = [
+            ("two words", "Password reset", "2026-11-01-password-reset"),
+            (
+                "six words are cut to five",
+                "Let customers reset their own password",
+                "2026-11-01-let-customers-reset-their-own",
+            ),
+            (
+                "punctuation is dropped",
+                "Don't flag prices, please!",
+                "2026-11-01-dont-flag-prices-please",
+            ),
+            ("one word", "Photos", "2026-11-01-photos"),
+            (
+                "hyphens and capitals",
+                "Add Login-Page (v2)",
+                "2026-11-01-add-login-page-v2",
+            ),
+            ("no usable word", "!!! ... ???", "2026-11-01-change"),
+            ("an empty title", "   ", "2026-11-01-change"),
+            (
+                "letters outside ASCII are dropped",
+                "café 日本",
+                "2026-11-01-caf",
+            ),
+        ];
+        for (label, title, want) in rows {
+            assert_eq!(change_name("2026-11-01", title), want, "{label}");
         }
     }
 
