@@ -1,9 +1,12 @@
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
 import type { ChangeKey } from '@bindings/ChangeKey';
+import type { OpenRun } from '@bindings/OpenRun';
+import type { Opens } from '@bindings/Opens';
 import type { RunningEntry } from '@bindings/RunningEntry';
 import type { RunningStrip as Strip } from '@bindings/RunningStrip';
 import { render } from '../../testing/render';
+import { RunLandingStore } from '../core/run/run-landing.store';
 import { KataTransport } from '../core/transport/kata-transport';
 import { RunningStrip } from './running-strip';
 
@@ -12,8 +15,27 @@ const A = key('2026-11-01-plugin-owns-workflow');
 const B = key('2026-10-30-findings-rounds', 'bob');
 const ref = (run: number, repo: string | null = 'kata') => ({ run, kind: 'build' as const, repo });
 
-const asking = (change: ChangeKey, text: string, waiting = [ref(7)]): RunningEntry => ({ change, since: 1, waiting, state: 'needsAnswer', text, run: waiting[0].run });
-const working = (change: ChangeKey, run: number): RunningEntry => ({ change, since: 2, waiting: [], state: 'working', stage: 'build', repo: 'kata', run });
+const open = (r: { run: number; kind: 'build'; repo: string | null }, waiting: boolean): OpenRun => ({ ...r, waiting });
+/** What the backend says picking the entry opens (running.rs): the one waiting session, else a list of the runs. */
+const asking = (change: ChangeKey, text: string, waiting = [ref(7)], opens?: Opens): RunningEntry => ({
+  change,
+  since: 1,
+  waiting,
+  opens: opens ?? (waiting.length === 1 ? { kind: 'session', run: open(waiting[0], true) } : { kind: 'list', runs: waiting.map((w) => open(w, true)) }),
+  state: 'needsAnswer',
+  text,
+  run: waiting[0].run,
+});
+const working = (change: ChangeKey, run: number): RunningEntry => ({
+  change,
+  since: 2,
+  waiting: [],
+  opens: { kind: 'list', runs: [open({ run, kind: 'build', repo: 'kata' }, false)] },
+  state: 'working',
+  stage: 'build',
+  repo: 'kata',
+  run,
+});
 const strip = (...entries: RunningEntry[]): Strip => ({ shown: entries.slice(0, 3), all: entries });
 
 /** A transport that reports a strip, and reports the next one when the test says the backend did. */
@@ -67,7 +89,8 @@ describe('RunningStrip', () => {
       entryButton(container, A.change).click();
       await settle();
       expect(navigate).toHaveBeenCalledTimes(1);
-      expect(navigate).toHaveBeenCalledWith(['/sdlc', 'kata', A.change], { queryParams: { run: 7 } });
+      expect(navigate).toHaveBeenCalledWith(['/sdlc', 'kata', A.change]);
+      expect(TestBed.inject(RunLandingStore).pending()).toEqual({ workspace: '/w', system: 'kata', change: A.change, run: open(ref(7), true) });
       expect(choices()).toHaveLength(0);
     });
 
@@ -80,7 +103,8 @@ describe('RunningStrip', () => {
       expect(choices().map((c) => text(c))).toEqual(['kata Answer', 'ai-sdlc Answer']);
       choices()[1].click();
       await settle();
-      expect(navigate).toHaveBeenCalledWith(['/sdlc', 'kata', A.change], { queryParams: { run: 9 } });
+      expect(navigate).toHaveBeenCalledWith(['/sdlc', 'kata', A.change]);
+      expect(TestBed.inject(RunLandingStore).pending()).toEqual({ workspace: '/w', system: 'kata', change: A.change, run: open(ref(9, 'ai-sdlc'), true) });
     });
 
     it("no session waiting, one working: a list of the change's sessions opens, each opening in one more step", async () => {
@@ -92,8 +116,46 @@ describe('RunningStrip', () => {
       expect(choices().map((c) => text(c))).toEqual(['kata Watch']);
       choices()[0].click();
       await settle();
-      expect(navigate).toHaveBeenCalledWith(['/sdlc', 'kata', A.change], { queryParams: { run: 4 } });
+      expect(navigate).toHaveBeenCalledWith(['/sdlc', 'kata', A.change]);
+      expect(TestBed.inject(RunLandingStore).pending()).toEqual({ workspace: '/w', system: 'kata', change: A.change, run: open(ref(4), false) });
     });
+  });
+
+  it('follows what the backend says picking an entry opens, not its own count of waiting runs', async () => {
+    // One waiting run, yet the backend says a list: the strip lists. Two waiting runs, yet it says a session: the strip opens it.
+    const one = asking(A, 'Which branch?', [ref(7)], { kind: 'list', runs: [open(ref(7), true), open(ref(8), false)] });
+    const two = asking(B, 'Which tag?', [ref(3), ref(4)], { kind: 'session', run: open(ref(4), true) });
+    const { container, fixture, navigate } = await mount(strip(one, two));
+    entryButton(container, A.change).click();
+    await settle();
+    fixture.detectChanges();
+    expect(navigate).not.toHaveBeenCalled();
+    expect(choices().map((c) => text(c))).toEqual(['kata Answer', 'kata Watch']);
+    TestBed.resetTestingModule();
+    const again = await mount(strip(one, two));
+    entryButton(again.container, B.change).click();
+    await settle();
+    expect(again.navigate).toHaveBeenCalledWith(['/sdlc', 'bob', B.change]);
+    expect(TestBed.inject(RunLandingStore).pending()?.run).toEqual(open(ref(4), true));
+  });
+
+  it('cut-off entries take no focus: an entry that wrapped out of the strip is inert, and the All running list still reaches it', async () => {
+    // jsdom has no layout, so the rectangles stand in for the browser's: the strip is 32 tall and the second entry wrapped below it.
+    const rect = (top: number, bottom: number) => ({ top, bottom, left: 0, right: 100, width: 100, height: bottom - top, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+    const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains('k-running')) return rect(0, 32);
+      if (this.dataset['change'] === B.change) return rect(40, 66);
+      return rect(0, 26);
+    });
+    try {
+      const { container, fixture } = await mount(strip(asking(A, 'Which branch?'), working(B, 3)));
+      await settle();
+      fixture.detectChanges();
+      expect(entryButton(container, A.change).hasAttribute('inert')).toBe(false);
+      expect(entryButton(container, B.change).hasAttribute('inert')).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('a question shows its text and offers no answer (R14.1)', async () => {
