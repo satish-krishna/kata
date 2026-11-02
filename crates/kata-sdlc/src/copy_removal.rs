@@ -4,7 +4,7 @@
 //! moment it removes it, so a file written after the offer still keeps the copy.
 use crate::ai_sdlc::show::ChangeShow;
 use crate::ai_sdlc::state::ChangeState;
-use crate::ai_sdlc::{Place, Program, ProgramError};
+use crate::ai_sdlc::{Place, Program, StepOutcome};
 use crate::git::{Repo, StatusEntry};
 use serde::Serialize;
 use serde_json::Value;
@@ -113,21 +113,16 @@ pub fn branch(program: &Program, place: &Place, change: &str) -> Result<String, 
 /// offer keeps the copy; the refusal is answered as `Keep` naming the files.
 pub fn remove(program: &Program, place: &Place, change: &ChangeState) -> RemoveOutcome {
     let command = ["change", "remove", "--json", "--change", &change.change];
-    let problems = match program.run(&command, place) {
-        Ok(answer) => {
-            let problems = strings(&answer["problems"]);
-            if problems.is_empty() {
-                return RemoveOutcome::Removed {
-                    kept: strings(&answer["kept"]),
-                };
+    let answer = program.step(&command, place);
+    let problems = match answer.outcome {
+        StepOutcome::Passed { .. } => {
+            return RemoveOutcome::Removed {
+                kept: strings(&answer.json["kept"]),
             }
-            problems
         }
-        Err(ProgramError::Refused { stdout }) => vec![stdout],
-        Err(e) => {
-            return RemoveOutcome::CouldNotRun {
-                message: e.to_string(),
-            }
+        StepOutcome::Refused { problems } | StepOutcome::Failed { problems, .. } => problems,
+        StepOutcome::CouldNotRun { reason, .. } => {
+            return RemoveOutcome::CouldNotRun { message: reason }
         }
     };
     // The copy is still there when the plugin refused: its files are the reason, or it says another.

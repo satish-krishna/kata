@@ -61,6 +61,7 @@ pub struct RepoCheckView {
 ///
 /// | # | hooks | latest `build.finish` run | view |
 /// |---|---|---|---|
+/// | 0 | the configuration has problems | any | `ConfigBroken`: the plugin runs no hook until it is fixed |
 /// | 1 | none for the repository | any | `NoChecks` |
 /// | 2 | some | none | `NotRunYet` |
 /// | 3 | some | at an earlier head | `Stale` |
@@ -72,6 +73,14 @@ pub struct RepoCheckView {
 /// A run the plugin refused checked nothing, and a failure that names no check has nothing to show; both
 /// read as `NotRunYet`.
 pub fn of(status: &Status, repo: &str, head: &str, hooks: &Hooks) -> CheckView {
+    if !hooks.problems.is_empty() {
+        return CheckView::ConfigBroken {
+            output: hooks.problems.join(
+                "
+",
+            ),
+        };
+    }
     let configured = hooks.hooks.iter().any(|h| {
         h.event == EVENT
             && h.repos
@@ -138,7 +147,7 @@ pub fn of(status: &Status, repo: &str, head: &str, hooks: &Hooks) -> CheckView {
 /// The sentence the page shows for a view.
 pub fn summary(view: &CheckView) -> String {
     match view {
-        CheckView::ConfigBroken { .. } => String::new(),
+        CheckView::ConfigBroken { .. } => "The team's check configuration on the base branch has problems. No check runs until it is fixed.".to_string(),
         CheckView::NoChecks => "This repository has no checks.".to_string(),
         CheckView::NotRunYet => "The checks have not run yet.".to_string(),
         CheckView::Stale { head } => format!("Checks last ran at {head}."),

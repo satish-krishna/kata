@@ -1,7 +1,7 @@
 //! Starting a change: the plugin makes the change's branch and its own copy of the master repository,
 //! and Kata only asks. Kata never creates a branch or a copy itself; a refusal is the plugin's own reason,
 //! sorted by what the engineer can do about it.
-use kata_sdlc::ai_sdlc::{HookFailure, Place, Program};
+use kata_sdlc::ai_sdlc::{HookFailure, Place, Program, StepOutcome};
 use kata_sdlc::naming;
 use serde::Serialize;
 
@@ -92,14 +92,19 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 }
 
 /// Sorts the plugin's problems by what the engineer can do about them. The program prints no code, only
-/// words, so this reads the prefixes and phrases its `change start` check uses.
+/// words, so this reads the prefixes and phrases its `change start` check uses. A name the plugin keeps
+/// for itself (`change/pending-`) is taken: the engineer picks another.
 fn classify(problems: &[String]) -> StartRefusal {
     let any = |f: &dyn Fn(&str) -> bool| problems.iter().any(|p| f(p));
     if any(&|p| p.starts_with("the scope:")) {
         StartRefusal::Scope
     } else if any(&|p| p.starts_with("the team naming on the base branch")) {
         StartRefusal::Naming
-    } else if any(&|p| p.contains(" is taken in ") || p.contains(" clashes in ")) {
+    } else if any(&|p| {
+        p.contains(" is taken in ")
+            || p.contains(" clashes in ")
+            || p.contains("names starting \"change/pending-\" are reserved")
+    }) {
         StartRefusal::BranchTaken
     } else if any(&|p| p.contains("a branch name cannot")) {
         StartRefusal::BranchInvalid
@@ -108,8 +113,8 @@ fn classify(problems: &[String]) -> StartRefusal {
     }
 }
 
-/// Asks the plugin to start a change named from `date` and the title. An `Err` is a plugin that could not
-/// run at all; a refusal is an answer.
+/// Asks the plugin to start a change named from `date` and the title, and reads its answer through
+/// `ai_sdlc::answer_of`. An `Err` is an answer that passed but named no branch or copy.
 pub fn start_change(
     program: &Program,
     place: &Place,
@@ -145,33 +150,32 @@ pub fn start_change(
     if let Some(branch) = request.branch {
         command.extend(["--branch", branch]);
     }
-    let answer = program.run(&command, place).map_err(|e| e.to_string())?;
-    let details = &answer["details"];
-    if answer["outcome"] == "passed" {
-        let text = |key: &str| details[key].as_str().map(str::to_string);
-        if let (Some(branch), Some(copy)) = (text("branch"), text("copy")) {
-            return Ok(ChangeStart::Started {
+    let answer = program.step(&command, place);
+    let text = |key: &str| answer.json["details"][key].as_str().map(str::to_string);
+    match answer.outcome {
+        StepOutcome::Passed { .. } => match (text("branch"), text("copy")) {
+            (Some(branch), Some(copy)) => Ok(ChangeStart::Started {
                 change,
                 branch,
                 copy,
-            });
+            }),
+            _ => Err(format!(
+                "the plugin started {change} but named no branch or copy"
+            )),
+        },
+        StepOutcome::Refused { problems } => Ok(ChangeStart::Refused {
+            kind: classify(&problems),
+            problems,
+        }),
+        StepOutcome::Failed { problems, hook } => Ok(ChangeStart::Failed {
+            problems,
+            hook,
+            made: ["branch", "copy"].into_iter().filter_map(text).collect(),
+        }),
+        StepOutcome::CouldNotRun { reason, hook, .. } => {
+            Ok(ChangeStart::CouldNotRun { reason, hook })
         }
-        return Err(format!(
-            "the plugin started {change} but named no branch or copy"
-        ));
     }
-    let problems: Vec<String> = answer["problems"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|p| p.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    Ok(ChangeStart::Refused {
-        kind: classify(&problems),
-        problems,
-    })
 }
 
 #[cfg(test)]

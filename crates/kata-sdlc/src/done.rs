@@ -1,14 +1,13 @@
 //! Declaring a change done is the plugin's step: `run change.done` verifies the change, pushes every
 //! touched repository, opens one pull request each (the master's last) and records them in the change.
 //! Kata runs it, relays its progress and shows its answer; it adds no check of its own.
-use crate::ai_sdlc::{Place, Program};
+use crate::ai_sdlc::{Answer, Place, Program, StepOutcome};
 use crate::plugin::{GhPresence, Readiness};
 use crate::pull_requests::{PullRequestSource, RecordedPullRequest};
 use kata_core::proc::LineSink;
 use serde::Serialize;
 use serde_json::Value;
 use std::sync::Arc;
-use std::time::Duration;
 
 /// What a progress line is about.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,37 +68,32 @@ pub enum DeclareView {
 /// The refusal when `gh` is not installed.
 pub const GH_MISSING: &str = "Declaring done needs GitHub's command-line tool, gh. Install it from https://cli.github.com and reopen.";
 
-/// How long declaring done may take: it pushes and opens pull requests, and a team's hooks run around it.
-const LIMIT: Duration = Duration::from_secs(30 * 60);
-
-/// The view of the plugin's `change.done` outcome line, from the first row of this table that matches:
+/// The view of the plugin's `change.done` answer, as [`crate::ai_sdlc::answer_of`] read it:
 ///
-/// | # | `outcome` | view |
+/// | # | outcome | view |
 /// |---|---|---|
-/// | 1 | `passed` | `Done`: `details.pullRequests`, the master's last |
-/// | 2 | `refused` | `NotReady`: every problem as the plugin wrote it |
-/// | 3 | `failed` | `Partial`: `details.pushed`, `details.pullRequests`, the problems and a hook that stopped it |
-/// | 4 | `could-not-run`, or anything else | `CouldNotRun`: the problems joined |
-pub fn outcome(event: &Value) -> DeclareView {
-    let problems: Vec<String> = event["problems"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|p| p.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    match event["outcome"].as_str() {
-        Some("passed") => DeclareView::Done {
+/// | 1 | `Passed` | `Done`: `details.pullRequests`, the master's last, and the plugin's warnings |
+/// | 2 | `Refused` | `NotReady`: every problem as the plugin wrote it |
+/// | 3 | `Failed` | `Partial`: `details.pushed`, `details.pullRequests`, the problems and a hook that stopped it |
+/// | 4 | `CouldNotRun` | `CouldNotRun`: the plugin's reason, and the output of a hook that could not run |
+pub fn outcome(answer: &Answer) -> DeclareView {
+    let event = &answer.json;
+    match &answer.outcome {
+        StepOutcome::Passed { problems } => DeclareView::Done {
             pull_requests: pull_requests(event),
-            warnings: Vec::new(),
+            warnings: problems.clone(),
         },
-        Some("refused") => DeclareView::NotReady { problems },
-        Some("failed") => {
-            let mut failed = problems;
-            if let Some(id) = event["failed"]["id"].as_str() {
-                let output = event["failed"]["output"].as_str().unwrap_or("").trim();
-                failed.push(format!("The hook {id} stopped it: {output}"));
+        StepOutcome::Refused { problems } => DeclareView::NotReady {
+            problems: problems.clone(),
+        },
+        StepOutcome::Failed { problems, hook } => {
+            let mut failed = problems.clone();
+            if let Some(hook) = hook {
+                failed.push(format!(
+                    "The hook {} stopped it: {}",
+                    hook.id,
+                    hook.output.trim()
+                ));
             }
             DeclareView::Partial {
                 pushed: event["details"]["pushed"]
@@ -114,11 +108,13 @@ pub fn outcome(event: &Value) -> DeclareView {
                 failed,
             }
         }
-        _ => DeclareView::CouldNotRun {
-            message: if problems.is_empty() {
-                "the plugin gave no answer Kata can read".to_string()
-            } else {
-                problems.join(" ")
+        StepOutcome::CouldNotRun { reason, hook, .. } => DeclareView::CouldNotRun {
+            message: match hook.as_ref().map(|h| h.output.trim()) {
+                Some(output) if !output.is_empty() => format!(
+                    "{reason}
+{output}"
+                ),
+                _ => reason.clone(),
             },
         },
     }
@@ -226,17 +222,13 @@ pub fn declare(
         "--change",
         change,
     ];
-    match program.run_streaming(&command, place, LIMIT, relay) {
-        Ok(answer) => outcome(&answer),
-        Err(e) => DeclareView::CouldNotRun {
-            message: e.to_string(),
-        },
-    }
+    outcome(&program.step_streaming(&command, place, relay))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_sdlc::{answer_of, Reply};
     use crate::plugin::{self, BlockReason, GhPresence, Installed, Machine, Plugin};
     use crate::pull_requests::PullRequestSource;
     use crate::testutil;
@@ -267,6 +259,16 @@ mod tests {
             number,
             source: PullRequestSource::Plugin,
         }
+    }
+
+    /// The view of an outcome line printed with the exit code the plugin's `run` gives it.
+    fn outcome(event: &Value) -> DeclareView {
+        let code = match event["outcome"].as_str() {
+            Some("passed") => 0,
+            Some("could-not-run") => 2,
+            _ => 1,
+        };
+        super::outcome(&answer_of(Ok(Reply::json(code, event))))
     }
 
     fn line(repo: &str, number: u64) -> Value {
@@ -338,7 +340,10 @@ mod tests {
             "4 could not run"
         );
         assert!(matches!(
-            outcome(&json!({ "outcome": "something-new" })),
+            super::outcome(&answer_of(Ok(Reply::json(
+                2,
+                &json!({ "outcome": "something-new" })
+            )))),
             DeclareView::CouldNotRun { .. }
         ));
     }

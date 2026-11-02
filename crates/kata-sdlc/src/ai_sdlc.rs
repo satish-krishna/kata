@@ -1,8 +1,9 @@
 //! The one door to the ai-sdlc program: `node <plugin>/tools/ai-sdlc.ts <command>`.
 //!
 //! Every call Kata makes to the program goes through [`execute`]: it starts Node.js hidden, with a time
-//! limit, and kills the whole process tree on a timeout. [`Program::run`] adds the workspace options and
-//! reads the JSON the command prints on its last line.
+//! limit, and kills the whole process tree on a timeout. Every answer is read by [`answer_of`]: a step
+//! (an event, a commit, a change command) through [`Program::step`] as a typed [`StepOutcome`], and a
+//! read through [`Program::run`] as its JSON.
 pub mod show;
 pub mod state;
 pub mod status;
@@ -192,15 +193,117 @@ pub struct Answer {
 /// | 6 | exit 2, JSON | `CouldNotRun`: the problems, the repository it names and the hook that could not run |
 /// | 7 | anything else | `CouldNotRun` with stderr, or the exit code |
 pub fn answer_of(reply: Result<Reply, String>) -> Answer {
-    let _ = reply;
-    Answer {
+    let machine = |reason: String, json: Value| Answer {
         outcome: StepOutcome::CouldNotRun {
-            reason: String::new(),
+            reason,
             repo: None,
             hook: None,
         },
-        json: Value::Null,
+        json,
+    };
+    let reply = match reply {
+        Ok(reply) => reply,
+        Err(reason) => return machine(reason, Value::Null),
+    };
+    let json = reply
+        .stdout
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .and_then(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(Value::is_object);
+    let Some(json) = json else {
+        return match reply.code {
+            Some(1) => Answer {
+                outcome: StepOutcome::Refused {
+                    problems: vec![reply.stdout.trim().to_string()],
+                },
+                json: Value::Null,
+            },
+            Some(0) => machine(
+                format!(
+                    "it printed something that is not JSON: {}",
+                    reply.stdout.trim()
+                ),
+                Value::Null,
+            ),
+            code => machine(stderr_or_code(&reply.stderr, code), Value::Null),
+        };
+    };
+    let problems = strings(&json["problems"]);
+    let hook = hook_failure(&json["failed"]);
+    let outcome = match reply.code {
+        Some(0) => StepOutcome::Passed { problems },
+        Some(1) if json["outcome"] == "failed" => StepOutcome::Failed { problems, hook },
+        Some(1) => StepOutcome::Refused {
+            problems: if problems.is_empty() {
+                json["reason"]
+                    .as_str()
+                    .map(|r| vec![r.to_string()])
+                    .unwrap_or_default()
+            } else {
+                problems
+            },
+        },
+        Some(2) => StepOutcome::CouldNotRun {
+            reason: if problems.is_empty() {
+                stderr_or_code(&reply.stderr, reply.code)
+            } else {
+                problems.join("\n")
+            },
+            repo: named_repo(&json),
+            hook,
+        },
+        code => StepOutcome::CouldNotRun {
+            reason: stderr_or_code(&reply.stderr, code),
+            repo: None,
+            hook: None,
+        },
+    };
+    Answer { outcome, json }
+}
+
+fn stderr_or_code(stderr: &str, code: Option<i32>) -> String {
+    match stderr.trim() {
+        "" => format!(
+            "exit {}",
+            code.map_or("by signal".into(), |c| c.to_string())
+        ),
+        text => text.to_string(),
     }
+}
+
+fn strings(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The blocking hook an answer's `failed` names, with its output.
+fn hook_failure(failed: &Value) -> Option<HookFailure> {
+    Some(HookFailure {
+        id: failed["id"].as_str()?.to_string(),
+        on_failure: failed["onFailure"].as_str().map(str::to_string),
+        output: failed["output"].as_str().unwrap_or_default().to_string(),
+    })
+}
+
+/// The repository a could-not-run answer is about: the event's `repo`, or with `--check` the first of
+/// `repos` that could not run.
+fn named_repo(json: &Value) -> Option<String> {
+    let named = |v: &Value| v.as_str().filter(|s| !s.is_empty()).map(str::to_string);
+    named(&json["repo"]).or_else(|| {
+        json["repos"]
+            .as_array()?
+            .iter()
+            .find(|r| r["outcome"] == "could-not-run")
+            .and_then(|r| named(&r["repo"]))
+    })
 }
 
 /// The ai-sdlc program: the Node.js executable and the entry file it runs.
@@ -221,7 +324,8 @@ impl Program {
 
     /// Runs `command` (for example `["resolve", "--json"]`) in `place` and returns the JSON on its last
     /// stdout line. Exit 0 and exit 1 are answers (exit 1 is one such as `refused`), so both return the
-    /// JSON; `Refused` is for an exit 1 whose output is not JSON. Exit 2 is `CouldNotRun` with stderr.
+    /// JSON; `Refused` is for an exit 1 whose output is not JSON. Exit 2 is `CouldNotRun` with the
+    /// plugin's reason: its problems when it printed JSON, else stderr. A step uses [`Program::step`].
     pub fn run(&self, command: &[&str], place: &Place) -> Result<Value, ProgramError> {
         if !self.entry.is_file() {
             return Err(ProgramError::TooOld {
@@ -232,26 +336,6 @@ impl Program {
         let workspace = place.workspace.display().to_string();
         let args = with_place(command, &master, &workspace);
         self.call(&args, &place.workspace)
-    }
-
-    /// [`Program::run`] that hands each whole stdout line to `on_line` while the command runs, and waits
-    /// up to `limit` instead of [`TIMEOUT`], for a command that reports its progress (`run ... --stream`).
-    pub fn run_streaming(
-        &self,
-        command: &[&str],
-        place: &Place,
-        limit: Duration,
-        on_line: LineSink,
-    ) -> Result<Value, ProgramError> {
-        if !self.entry.is_file() {
-            return Err(ProgramError::TooOld {
-                found: format!("{} does not exist", self.entry.display()),
-            });
-        }
-        let master = place.master.display().to_string();
-        let workspace = place.workspace.display().to_string();
-        let args = with_place(command, &master, &workspace);
-        self.call_with(&args, &place.workspace, limit, Some(on_line))
     }
 
     /// Runs a step (`command`) in `place` and reads its answer through [`answer_of`].
@@ -300,16 +384,24 @@ impl Program {
                 stdout: String::from_utf8_lossy(&exit.stdout).into_owned(),
                 stderr: exit.stderr,
             }),
-            Err(Failure::NodeMissing) => Err(NEEDS_NODE.to_string()),
-            Err(Failure::Other(message)) => Err(message),
-            Err(Failure::TimedOut { secs }) => Err(format!("it did not finish in {secs} seconds")),
+            Err(failure) => Err(failure.reason()),
         }
     }
 
     /// How long `command` may run in `place`: `base`, plus the time limits of the team's hooks it runs.
+    /// Only an event that runs hooks (`run <event>` without `--check`, and `change start`, which runs
+    /// `change.start`) gets more; every hook of the event is counted, as the plugin runs them one after
+    /// another. When the hooks cannot be read the plugin will not run them either, and `base` stands.
     pub fn limit_for(&self, command: &[&str], place: &Place, base: Duration) -> Duration {
-        let _ = (command, place);
-        base
+        let (Some(event), Some(system)) = (hook_event(command), option(command, "--system")) else {
+            return base;
+        };
+        match self.hooks(place, system, Some(event)) {
+            Ok(hooks) => {
+                base + Duration::from_secs(hooks.hooks.iter().map(|h| h.timeout).sum::<u64>())
+            }
+            Err(_) => base,
+        }
     }
 
     /// Finds the master repository of `workspace` as the program's `resolve` does, with no master given.
@@ -339,60 +431,71 @@ impl Program {
         }
     }
 
-    /// Runs the program with `args` as given, in `cwd`, and reads the answer as `run` does.
+    /// Runs the program with `args` as given, in `cwd`, within [`TIMEOUT`], and reads the answer as
+    /// `run` does.
     fn call(&self, args: &[&str], cwd: &Path) -> Result<Value, ProgramError> {
-        self.call_with(args, cwd, TIMEOUT, None)
-    }
-
-    fn call_with(
-        &self,
-        args: &[&str],
-        cwd: &Path,
-        limit: Duration,
-        on_line: Option<LineSink>,
-    ) -> Result<Value, ProgramError> {
-        let exit = match execute(&self.node, &self.entry, cwd, args, limit, on_line) {
-            Ok(exit) => exit,
-            Err(Failure::NodeMissing) => return Err(could_not_run(NEEDS_NODE)),
-            Err(Failure::Other(message)) => return Err(could_not_run(message)),
-            Err(Failure::TimedOut { secs }) => {
-                return Err(could_not_run(format!(
-                    "it did not finish in {secs} seconds"
-                )))
-            }
+        let reply = match execute(&self.node, &self.entry, cwd, args, TIMEOUT, None) {
+            Ok(exit) => Ok(Reply {
+                code: exit.code,
+                stdout: String::from_utf8_lossy(&exit.stdout).into_owned(),
+                stderr: exit.stderr,
+            }),
+            Err(failure) => Err(failure.reason()),
         };
-        let stdout = String::from_utf8_lossy(&exit.stdout).into_owned();
-        match exit.code {
-            Some(0 | 1) => {}
-            code => {
-                let stderr = exit.stderr.trim();
-                return Err(could_not_run(if stderr.is_empty() {
-                    format!(
-                        "exit {}",
-                        code.map_or("by signal".into(), |c| c.to_string())
-                    )
-                } else {
-                    stderr.to_string()
-                }));
-            }
+        read_value(reply)
+    }
+}
+
+impl Failure {
+    /// What the engineer is told when a command could not be run.
+    fn reason(self) -> String {
+        match self {
+            Failure::NodeMissing => NEEDS_NODE.to_string(),
+            Failure::Other(message) => message,
+            Failure::TimedOut { secs } => format!("it did not finish in {secs} seconds"),
         }
-        let last = stdout.lines().rev().find(|l| !l.trim().is_empty());
-        match last.map(serde_json::from_str::<Value>) {
-            Some(Ok(value)) => Ok(value),
-            _ if exit.code == Some(1) => Err(ProgramError::Refused { stdout }),
-            _ => Err(could_not_run(format!(
-                "it printed something that is not JSON: {}",
-                stdout.trim()
-            ))),
-        }
+    }
+}
+
+/// A read's answer: the JSON of exit 0 and exit 1 (an answer such as `refused` is still an answer), read
+/// through [`answer_of`] like every step's, so an exit 2 is the plugin's own reason.
+fn read_value(reply: Result<Reply, String>) -> Result<Value, ProgramError> {
+    let code = reply.as_ref().ok().and_then(|r| r.code);
+    let stdout = reply.as_ref().map(|r| r.stdout.clone()).unwrap_or_default();
+    let answer = answer_of(reply);
+    match (code, answer.outcome) {
+        (Some(0 | 1), _) if !answer.json.is_null() => Ok(answer.json),
+        (_, StepOutcome::CouldNotRun { reason, .. }) => Err(could_not_run(reason)),
+        _ => Err(ProgramError::Refused { stdout }),
     }
 }
 
 /// The time limit a command starts from, before the team's hooks are added: declaring done pushes and
 /// opens pull requests, and a commit runs the repository's own git hooks, which the plugin does not limit.
 fn base_limit(command: &[&str]) -> Duration {
-    let _ = command;
-    TIMEOUT
+    match (command.first().copied(), hook_event(command)) {
+        (_, Some("change.done")) => Duration::from_secs(30 * 60),
+        (Some("commit"), _) => Duration::from_secs(10 * 60),
+        _ => TIMEOUT,
+    }
+}
+
+/// The event whose team hooks `command` runs: `run <event>` without `--check`, or `change start`.
+fn hook_event<'a>(command: &[&'a str]) -> Option<&'a str> {
+    match command {
+        ["run", event, rest @ ..] if !rest.contains(&"--check") => Some(event),
+        ["change", "start", ..] => Some("change.start"),
+        _ => None,
+    }
+}
+
+/// The value given for `name` in `command`, before a `--` that starts paths.
+fn option<'a>(command: &[&'a str], name: &str) -> Option<&'a str> {
+    command
+        .iter()
+        .take_while(|a| **a != "--")
+        .position(|a| *a == name)
+        .and_then(|i| command.get(i + 1).copied())
 }
 
 fn could_not_run(message: impl Into<String>) -> ProgramError {

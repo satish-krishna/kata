@@ -8,7 +8,9 @@ use crate::runs::{self, Lane};
 use kata_core::spec::PermissionMode;
 use kata_core::RunSpec;
 use kata_sdlc::ai_sdlc::state::{read_state, ChangeState};
-use kata_sdlc::ai_sdlc::{HookFailure, Place, Program, ProgramError, Reply};
+use kata_sdlc::ai_sdlc::{
+    answer_of, HookFailure, Place, Program, ProgramError, Reply, StepOutcome,
+};
 use kata_sdlc::coordinator::{
     self, BuildChoices, BuildFacts, BuildPhase, BuildState, Command, Coordinator, Input,
 };
@@ -484,19 +486,23 @@ fn could_not_run(e: &ProgramError) -> StartOutcome {
     }
 }
 
-/// Says what an answer of the plugin that did not pass came to.
-fn failure(answer: &Value) -> StartOutcome {
-    let problems = strings(&answer["problems"]);
-    match answer["outcome"].as_str() {
-        Some("refused") => StartOutcome::Refused { problems },
-        _ => StartOutcome::CouldNotRun {
-            repo: None,
-            output: if problems.is_empty() {
-                format!("the ai-sdlc program answered {}", answer["outcome"])
-            } else {
-                problems.join("\n")
+/// What a step of the plugin that did not pass came to, as `ai_sdlc::answer_of` read it; None when it
+/// passed.
+fn failure(outcome: StepOutcome) -> Option<StartOutcome> {
+    match outcome {
+        StepOutcome::Passed { .. } => None,
+        StepOutcome::Refused { problems } => Some(StartOutcome::Refused { problems }),
+        StepOutcome::Failed { problems, hook } => Some(StartOutcome::Failed { problems, hook }),
+        StepOutcome::CouldNotRun { reason, repo, hook } => Some(StartOutcome::CouldNotRun {
+            output: match hook.map(|h| h.output) {
+                Some(output) if !output.trim().is_empty() => format!(
+                    "{reason}
+{output}"
+                ),
+                _ => reason,
             },
-        },
+            repo,
+        }),
     }
 }
 
@@ -1298,24 +1304,18 @@ impl BuildHost {
         for repo in repos {
             check.extend(["--repo", repo]);
         }
-        let answer = self
-            .tools
-            .run(&check, place)
-            .map_err(|e| could_not_run(&e))?;
-        if answer["outcome"] != "passed" {
-            return Err(failure(&answer));
+        let answer = answer_of(self.tools.exec(&check, place));
+        if let Some(outcome) = failure(answer.outcome) {
+            return Err(outcome);
         }
         for repo in repos {
             let mut command: Vec<&str> = base.to_vec();
             command.extend(["--repo", repo]);
-            let answer = self
-                .tools
-                .run(&command, place)
-                .map_err(|e| could_not_run(&e))?;
-            if answer["outcome"] != "passed" {
-                return Err(failure(&answer));
+            let answer = answer_of(self.tools.exec(&command, place));
+            if let Some(outcome) = failure(answer.outcome) {
+                return Err(outcome);
             }
-            let files = strings(&answer["details"]["uncommitted"]);
+            let files = strings(&answer.json["details"]["uncommitted"]);
             if !files.is_empty() {
                 uncommitted.insert(repo.clone(), files);
             }
@@ -1881,17 +1881,7 @@ mod tests {
                     self.system_repos.iter().map(|r| (r, json!({}))).collect();
                 return Ok(json!({"repos": repos}));
             }
-            // A step asked through `run` reads as `Program::run` read it before every step had one reader.
-            self.calls.lock().unwrap().pop();
-            match self.exec(command, _place) {
-                Ok(reply) if matches!(reply.code, Some(0 | 1)) => {
-                    Ok(serde_json::from_str(reply.stdout.trim()).unwrap())
-                }
-                Ok(reply) => Err(ProgramError::CouldNotRun {
-                    message: format!("exit {}", reply.code.unwrap_or(-1)),
-                }),
-                Err(message) => Err(ProgramError::CouldNotRun { message }),
-            }
+            panic!("a step goes through exec: {command:?}")
         }
         fn exec(&self, command: &[&str], _place: &Place) -> Result<Reply, String> {
             self.calls

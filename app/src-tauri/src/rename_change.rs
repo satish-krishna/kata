@@ -1,7 +1,7 @@
 //! Renaming a change's branch: the plugin renames it in the master, the change's copy and every product
 //! repository that has it, all or nothing. Kata renames no branch itself; a refusal is the plugin's own
 //! reasons, as it printed them.
-use kata_sdlc::ai_sdlc::{Place, Program};
+use kata_sdlc::ai_sdlc::{Place, Program, StepOutcome};
 use kata_sdlc::prs::PrEntry;
 use kata_sdlc::pull_requests::{recorded, RecordedPullRequest};
 use serde::Serialize;
@@ -46,7 +46,15 @@ pub fn rename_change(
     let command = [
         "change", "rename", "--json", "--system", system, "--change", change, "--to", to,
     ];
-    let answer = program.run(&command, place).map_err(|e| e.to_string())?;
+    let answer = program.step(&command, place);
+    match answer.outcome {
+        StepOutcome::Passed { .. } => {}
+        StepOutcome::Refused { problems } | StepOutcome::Failed { problems, .. } => {
+            return Ok(RenameOutcome::Refused { problems })
+        }
+        StepOutcome::CouldNotRun { reason, .. } => return Err(reason),
+    }
+    let answer = answer.json;
     let text = |key: &str| answer[key].as_str().map(str::to_string);
     let list = |key: &str| -> Vec<String> {
         answer[key]
@@ -58,10 +66,6 @@ pub fn rename_change(
             })
             .unwrap_or_default()
     };
-    let problems = list("problems");
-    if !problems.is_empty() {
-        return Ok(RenameOutcome::Refused { problems });
-    }
     match (text("from"), text("to")) {
         (Some(from), Some(to)) => Ok(RenameOutcome::Renamed {
             from,

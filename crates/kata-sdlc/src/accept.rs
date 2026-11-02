@@ -2,10 +2,9 @@
 //! line; the plugin commits it (`commit --kind accept-<doc>` or `reject-intent` / `reject-fix`), runs the
 //! `doc.accept` event and removes the rejected change's copy. Kata makes no commit and runs no hook.
 use crate::ai_sdlc::state::{ChangeState, ChangeTrack};
-use crate::ai_sdlc::{Place, Program, ProgramError};
+use crate::ai_sdlc::{Answer, Place, Program, StepOutcome};
 use crate::frontmatter;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 /// A document of the full pipeline that is accepted by the engineer.
@@ -106,17 +105,7 @@ pub fn apply(
         "--document",
         file,
     ];
-    match program.run(&command, &at) {
-        Ok(answer) => event_outcome(&answer),
-        Err(ProgramError::Refused { stdout }) => AcceptOutcome::AcceptedHookFailed {
-            hook: None,
-            output: stdout,
-            problems: Vec::new(),
-        },
-        Err(e) => AcceptOutcome::AcceptedHookCouldNotRun {
-            output: e.to_string(),
-        },
-    }
+    event_outcome(&program.step(&command, &at))
 }
 
 /// Rejects `change` the way the plugin's own `intent --reject` and `fix --reject` do (section 13 of its
@@ -183,19 +172,15 @@ pub fn reject(
         &change.change,
         "--abandon",
     ];
-    match program.run(&command, place) {
-        Ok(answer) => {
-            let problems = strings(&answer["problems"]);
-            if problems.is_empty() {
-                RejectOutcome::Rejected {
-                    record_branch: branch,
-                }
-            } else {
-                RejectOutcome::RejectedNotRemoved { problems }
-            }
+    match program.step(&command, place).outcome {
+        StepOutcome::Passed { .. } => RejectOutcome::Rejected {
+            record_branch: branch,
+        },
+        StepOutcome::Refused { problems } | StepOutcome::Failed { problems, .. } => {
+            RejectOutcome::RejectedNotRemoved { problems }
         }
-        Err(e) => RejectOutcome::RejectedNotRemoved {
-            problems: vec![e.to_string()],
+        StepOutcome::CouldNotRun { reason, .. } => RejectOutcome::RejectedNotRemoved {
+            problems: vec![reason],
         },
     }
 }
@@ -284,65 +269,48 @@ fn commit(
         "commit", "--json", "--kind", kind, "--system", system, "--change", change, "--",
     ];
     command.extend(paths.iter().map(String::as_str));
-    match program.run(&command, at) {
-        Ok(answer) if answer["committed"] == true => Committed::Yes,
-        Ok(answer) if answer["reason"] == "nothing changed" => Committed::Yes,
-        Ok(answer) => {
-            let mut problems = strings(&answer["problems"]);
-            if problems.is_empty() {
-                problems.push(
-                    answer["reason"]
-                        .as_str()
-                        .unwrap_or("the plugin did not commit")
-                        .to_string(),
-                );
-            }
-            Committed::No(problems)
+    // Exit 0 is committed, or nothing differed from `HEAD`.
+    match program.step(&command, at).outcome {
+        StepOutcome::Passed { .. } => Committed::Yes,
+        StepOutcome::Refused { problems } | StepOutcome::Failed { problems, .. } => {
+            Committed::No(if problems.is_empty() {
+                vec!["the plugin did not commit".to_string()]
+            } else {
+                problems
+            })
         }
-        Err(ProgramError::Refused { stdout }) => Committed::No(vec![stdout]),
-        Err(e) => Committed::CouldNotRun(e.to_string()),
+        StepOutcome::CouldNotRun { reason, .. } => Committed::CouldNotRun(reason),
     }
 }
 
-fn strings(value: &Value) -> Vec<String> {
-    value
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// What the `doc.accept` event's answer means for the acceptance that is already committed.
-fn event_outcome(answer: &Value) -> AcceptOutcome {
-    let problems = strings(&answer["problems"]);
-    match answer["outcome"].as_str() {
-        Some("passed") => AcceptOutcome::Accepted {
-            warnings: Vec::new(),
+fn event_outcome(answer: &Answer) -> AcceptOutcome {
+    match &answer.outcome {
+        StepOutcome::Passed { problems } => AcceptOutcome::Accepted {
+            warnings: problems.clone(),
         },
-        Some("failed" | "refused") => {
-            let failed = &answer["failed"];
-            AcceptOutcome::AcceptedHookFailed {
-                hook: failed["id"].as_str().map(String::from),
-                output: failed["output"].as_str().unwrap_or_default().to_string(),
-                problems,
-            }
-        }
-        _ => {
-            let hooks = answer["hooks"].as_array().cloned().unwrap_or_default();
-            let mut output: Vec<String> = hooks
+        StepOutcome::Failed { problems, hook } => AcceptOutcome::AcceptedHookFailed {
+            hook: hook.as_ref().map(|h| h.id.clone()),
+            output: hook.as_ref().map(|h| h.output.clone()).unwrap_or_default(),
+            problems: problems.clone(),
+        },
+        StepOutcome::Refused { problems } => AcceptOutcome::AcceptedHookFailed {
+            hook: None,
+            output: String::new(),
+            problems: problems.clone(),
+        },
+        StepOutcome::CouldNotRun { reason, hook, .. } => AcceptOutcome::AcceptedHookCouldNotRun {
+            output: hook
                 .iter()
-                .filter(|h| h["outcome"] == "could-not-run")
-                .filter_map(|h| h["output"].as_str())
-                .map(String::from)
-                .collect();
-            output.extend(problems);
-            AcceptOutcome::AcceptedHookCouldNotRun {
-                output: output.join("\n"),
-            }
-        }
+                .map(|h| h.output.clone())
+                .chain([reason.clone()])
+                .filter(|s| !s.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join(
+                    "
+",
+                ),
+        },
     }
 }
 

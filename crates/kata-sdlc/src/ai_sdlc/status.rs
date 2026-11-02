@@ -84,6 +84,13 @@ pub struct ConfiguredHook {
     pub repos: Option<Vec<String>>,
     pub blocking: bool,
     pub on_failure: OnFailure,
+    /// Its time limit in seconds; the plugin's default is 600.
+    #[serde(default = "default_hook_timeout")]
+    pub timeout: u64,
+}
+
+fn default_hook_timeout() -> u64 {
+    600
 }
 
 /// The program's `hooks` answer.
