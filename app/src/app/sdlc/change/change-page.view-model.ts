@@ -828,19 +828,16 @@ export class ChangePageViewModel {
     const key = this.runKey();
     return key === null ? null : this.runner.leftoversOn(key);
   });
-  /** Where the run the session view shows was started: this change's key for its own run, null for a run that took the screen, undefined for none. */
-  private readonly shownPlace = computed<string | null | undefined>(() => {
-    if (this.ownRun() !== null) return this.runKey();
-    return this.session() === null ? undefined : null;
-  });
   /**
-   * The session view's Close waits for the after-run work of the run it shows, and for this change's own leftover decision; it never
-   * waits on a run it does not show. A run that took the screen offers its leftovers on the home; the toast that ends it counts them.
+   * The session view's Close waits for the after-run work of the run it shows, read by that run's id, and for this change's own leftover
+   * decision; it never waits on a run it does not show. The run on show is this change's own session (its document run, or the intent
+   * run that started it) or the solo run that took the screen. A run that took the screen offers its leftovers on the home, and so does
+   * the intent run; the toast that ends each counts them.
    */
   readonly closeBlocked = computed(() => {
-    const place = this.shownPlace();
-    if (place === undefined) return false;
-    return this.runner.settlingOn(place) || (place !== null && this.leftovers() !== null);
+    const own = this.ownRun();
+    if (own !== null) return (own.runId !== null && this.runner.settlingRun(own.runId)) || this.leftovers() !== null;
+    return this.session() !== null && this.runner.settlingRun(this.runs.lastRunId());
   });
 
   constructor() {

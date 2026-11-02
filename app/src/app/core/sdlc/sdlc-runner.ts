@@ -89,6 +89,12 @@ export type ChangeTarget = { workspace: WorkspaceEntry; master: string; productR
  */
 type Batch = { id: number; place: string | null; entries: RepoLeftovers[] };
 
+/**
+ * One run from before it ends until its after-run work is done. `place` is where it was started (as for its leftovers), `change` the
+ * change run's key it belongs to (null for a solo run of no change), `runId` the backend's id of a change run once it has one.
+ */
+type Settling = { seq: number; place: string | null; change: string | null; runId: string | null };
+
 /** The master repo a stopped run is compared against, with its pre-run snapshot. */
 type Baseline = { master: string; snapshot: Snapshot; productRepos: string[] };
 type PendingLink = { workspace_id: string; system: string; change: string; stage: string; started_at: number };
@@ -162,22 +168,45 @@ export class SdlcRunner {
     return this.shownBatch(place)?.entries ?? null;
   }
 
-  /** Whether a run started on `place` has ended and its after-run work is still going: that page's session view cannot close yet. */
+  /**
+   * Whether the run `runId` (the backend's id) has ended and its after-run work is still going: a session view showing that run cannot
+   * close yet. A run no view shows never answers for another. The solo run's id is `RunStore.lastRunId()`, null when its engine never
+   * spawned; a change run's id is its session's `runId`, and before the backend gives one that run is live, so it matches no id.
+   */
+  settlingRun(runId: string | null): boolean {
+    return this.afterRun().some((r) => (r.change === null ? this.runs.lastRunId() : (r.runId ?? undefined)) === runId);
+  }
+
+  /** Whether a run started on `place` is still in its after-run work. Where a run settles is not what a Close waits on; `settlingRun` is. */
   settlingOn(place: string | null): boolean {
-    return (this.afterRun().get(place) ?? 0) > 0;
+    return this.afterRun().some((r) => r.place === place);
+  }
+
+  /** Whether a run belonging to the change `key` (null: a solo run of no change) is still in its after-run work. */
+  private settlingFor(key: string | null): boolean {
+    return this.afterRun().some((r) => r.change === key);
   }
 
   private shownBatch(place: string | null): Batch | undefined {
     return this.pending().find((b) => b.place === place);
   }
 
-  /** The runs whose after-run work is still going, by the place they show on. */
-  private readonly afterRun = signal<ReadonlyMap<string | null, number>>(new Map());
-  /** A run of no change has ended but its after-run work (engine exit, report) is still going: the session view cannot close yet. */
+  /** Every run whose after-run work is still going, one entry per run. */
+  private readonly afterRun = signal<readonly Settling[]>([]);
+  private settleSeq = 0;
+  /** A run started on the home has ended but its after-run work (engine exit, report) is still going. */
   readonly settling = computed(() => this.settlingOn(null));
 
-  private settle(place: string | null, by: 1 | -1): void {
-    this.afterRun.update((m) => new Map(m).set(place, (m.get(place) ?? 0) + by));
+  private beginSettling(place: string | null, change: string | null): number {
+    const seq = ++this.settleSeq;
+    this.afterRun.update((all) => [...all, { seq, place, change, runId: null }]);
+    return seq;
+  }
+  private settlingId(seq: number, runId: string): void {
+    this.afterRun.update((all) => all.map((r) => (r.seq === seq ? { ...r, runId } : r)));
+  }
+  private endSettling(seq: number): void {
+    this.afterRun.update((all) => all.filter((r) => r.seq !== seq));
   }
   private readonly request = signal<NameRequest | null>(null);
   /** The branch name confirmation on show; null when none is open. */
@@ -260,9 +289,10 @@ export class SdlcRunner {
     return this.transport.sdlcRunChange(change.ref, change.kind, documentForm(spec));
   }
 
+  /** A solo run is live, holds the screen, or is still in its after-run work. */
   private isBusy(): boolean {
     const busy = this.runs.state();
-    return this.lock.active() !== null || busy === 'running' || busy === 'awaiting';
+    return this.lock.active() !== null || busy === 'running' || busy === 'awaiting' || this.settlingFor(null);
   }
 
   async run(title: string, spec: RunSpec, target: RunTarget, change?: ChangeLaunch): Promise<RunOutcome> {
@@ -278,9 +308,10 @@ export class SdlcRunner {
     target: RunTarget,
     change?: ChangeLaunch,
   ): Promise<RunOutcome & { batch: number | null }> {
-    // A change's document run has a session of its own: only that change's own live run refuses it, and the backend refuses what needs a folder another run holds.
+    // A change's document run has a session of its own: only that change's own run refuses it, live, on show or still in its after-run
+    // work (wherever it was started: a new change's intent run starts on the home), and the backend refuses what needs a folder another run holds.
     const key = change ? changeRunKey(change.ref) : null;
-    if (key === null ? this.isBusy() : this.changeRuns.has(key)) {
+    if (key === null ? this.isBusy() : this.changeRuns.has(key) || this.settlingFor(key)) {
       this.toasts.error('Another task is already running.');
       return { state: 'error', runId: null, snapshot: null, exited: true, batch: null };
     }
@@ -300,7 +331,7 @@ export class SdlcRunner {
       link: target.link ? { workspace_id: target.workspaceId, ...target.link, started_at: Math.floor(Date.now() / 1000) } : (null as PendingLink | null),
     };
     // Settling from before the run ends, so the finished view never shows an enabled Close ahead of the work below.
-    this.settle(place, 1);
+    const settling = this.beginSettling(place, key);
     // The run being watched: the solo run, or the backend's id of the change's run once it has launched.
     let backendId: string | null = null;
     let watch = null as { destroy(): void } | null;
@@ -316,6 +347,7 @@ export class SdlcRunner {
         const via = async (confirmed: RunSpec): Promise<string> => {
           const id = await this.launchChangeRun(change, confirmed);
           backendId = id;
+          this.settlingId(settling, id);
           // Link the transcript the moment its id shows up, not at the end: a run that never ends still gets linked.
           watch = effect(() => {
             const transcript = transcriptRunId(this.runs.snapshot(id)().events);
@@ -329,7 +361,7 @@ export class SdlcRunner {
         state = await this.lock.runAgent(title, spec);
       }
     } catch (e) {
-      this.settle(place, -1);
+      this.endSettling(settling);
       watch?.destroy();
       throw e;
     }
@@ -355,7 +387,7 @@ export class SdlcRunner {
       }
       return { state, runId: transcript, snapshot, exited: true, batch };
     } finally {
-      this.settle(place, -1);
+      this.endSettling(settling);
       await this.lock.dismissed(key ?? undefined);
     }
   }

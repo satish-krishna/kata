@@ -303,8 +303,13 @@ export class SdlcHomeViewModel {
     return w ? `Remove ${w.name} from the list? Nothing on disk is touched.` : null;
   });
   readonly leftovers = this.runner.leftovers;
-  /** The session view's Close waits for the run's after-run work and for any leftover decision. */
-  readonly closeBlocked = computed(() => this.runner.settling() || this.runner.leftovers() !== null);
+  /**
+   * The session view's Close waits for the after-run work of the run it shows (the solo run that holds the screen, read by its id) and for
+   * any leftover decision of a run started here. A change run started here, such as a new change's intent run, is never on show here.
+   */
+  readonly closeBlocked = computed(
+    () => (this.session() !== null && this.runner.settlingRun(this.runs.lastRunId())) || this.runner.leftovers() !== null,
+  );
 
   // --- the lock: Kata's own checks in the overlay, an agent run as the session view
   readonly locked = computed(() => this.lock.active() !== null);

@@ -38,8 +38,8 @@ export class RunStore {
   private readonly early = new Map<string, KataEvent[]>();
   private counter = 0;
   private messageCounter = 0;
-  /** The id of the latest solo run, kept after it ends. */
-  private lastId: string | null = null;
+  /** The id of the latest solo run, kept after it ends; a signal, so a view that reads it follows the id once the backend gives it. */
+  private readonly lastId = signal<string | null>(null);
 
   private readonly solo = computed(() => {
     const key = this.soloKey();
@@ -182,7 +182,7 @@ export class RunStore {
     this.recs.set(rec.key, rec);
     if (group === undefined) {
       this.soloKey.set(rec.key);
-      this.lastId = null;
+      this.lastId.set(null);
     }
     this.setSnap(rec, { ...IDLE, state: 'running' });
     const gen = rec.gen;
@@ -195,7 +195,7 @@ export class RunStore {
     try {
       const id = via ? await via(spec) : group === undefined ? await this.transport.runSpec(spec) : await this.transport.runSpec(spec, group);
       this.product(rec, gen, id);
-      if (group === undefined && this.soloKey() === rec.key) this.lastId = id;
+      if (group === undefined && this.soloKey() === rec.key) this.lastId.set(id);
       // A cancel landed while run_spec was spawning; the backend had no child to signal then.
       if (rec.cancelledGen === gen) void this.transport.cancelRun(id);
       return id;
@@ -279,7 +279,7 @@ export class RunStore {
 
   /** The id of the latest solo run, or null before the backend has answered. Stays set after the run ends. */
   lastRunId(): string | null {
-    return this.lastId;
+    return this.lastId();
   }
 
   /** Stop following a finished run and free its snapshot. A live run is kept. */
