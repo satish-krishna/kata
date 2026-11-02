@@ -107,9 +107,10 @@ pub fn other_change_branches(master: &Path) -> Vec<OtherBranch> {
     };
     let current = repo.current_branch();
     let base = diff::base_branch(master).and_then(|b| diff::compare_ref(master, &b));
+    let held = repo.worktree_branches();
     let mut found = Vec::new();
     for name in repo.local_branches() {
-        if Some(name.as_str()) == current.as_deref() {
+        if Some(name.as_str()) == current.as_deref() || held.contains_key(&name) {
             continue;
         }
         // A `change/pending-*` branch is one an older Kata made before a change was named; it is not a change.
@@ -184,11 +185,29 @@ pub(crate) fn ensure_clean(master: &Path) -> Result<(), BranchError> {
     }
 }
 
-/// Switch branches. Refuses a dirty working tree.
+/// The change a copy folder belongs to: its folder name when it sits in `.ai-sdlc/copies`, else the path.
+fn copy_change_name(folder: &Path) -> String {
+    let in_copies = folder
+        .parent()
+        .is_some_and(|p| p.ends_with(".ai-sdlc/copies"));
+    match folder.file_name() {
+        Some(name) if in_copies => name.to_string_lossy().into_owned(),
+        _ => folder.display().to_string(),
+    }
+}
+
+/// Switch branches. Refuses a dirty working tree, and a branch a change's copy holds.
 pub fn checkout(master: &Path, branch: &str) -> Result<(), BranchError> {
     require_local_branch(master, branch)?;
+    let repo = git::Repo::open(master)?;
+    if let Some(folder) = repo.worktree_branches().get(branch) {
+        return Err(BranchError::HeldByCopy {
+            branch: branch.to_string(),
+            change: copy_change_name(folder),
+        });
+    }
     ensure_clean(master)?;
-    git::Repo::open(master)?.checkout_branch(branch)?;
+    repo.checkout_branch(branch)?;
     Ok(())
 }
 
