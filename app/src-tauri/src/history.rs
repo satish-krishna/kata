@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
 /// What a run is waiting on. `since_ms` is the unix time in milliseconds the request was pushed.
@@ -33,6 +33,8 @@ pub const KEPT_ENDED: usize = 8;
 #[derive(Default)]
 pub struct RunHistory {
     runs: Mutex<HashMap<u64, Vec<(u64, Value)>>>,
+    /// The ended runs whose history is still kept, oldest first.
+    ended: Mutex<VecDeque<u64>>,
 }
 
 fn now_ms() -> u64 {
@@ -73,7 +75,19 @@ impl RunHistory {
 
     /// The run ended and its reader took its last replay. Its history is kept for the latest
     /// [`KEPT_ENDED`] ended runs, then dropped.
-    pub fn finish(&self, _run_id: u64) {}
+    pub fn finish(&self, run_id: u64) {
+        let mut ended = self.ended.lock().unwrap();
+        if ended.contains(&run_id) {
+            return;
+        }
+        ended.push_back(run_id);
+        let mut runs = self.runs.lock().unwrap();
+        while ended.len() > KEPT_ENDED {
+            if let Some(old) = ended.pop_front() {
+                runs.remove(&old);
+            }
+        }
+    }
 
     /// The question or permission the run is waiting on, if its last request has no answer or decision.
     pub fn pending(&self, run_id: u64) -> Option<Pending> {

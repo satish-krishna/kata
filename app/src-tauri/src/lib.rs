@@ -292,6 +292,8 @@ fn start_run(
             // The host's work is blocking (it runs the plugin and takes locks).
             let _ = tauri::async_runtime::spawn_blocking(move || ended(end)).await;
         }
+        // The run's last replay is taken; its events are in the transcript the engine wrote.
+        history.finish(id);
         announce_running(&app);
     });
 
