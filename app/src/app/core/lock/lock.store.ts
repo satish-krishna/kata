@@ -1,6 +1,7 @@
 import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { AskRecord, PermissionRecord, RunState } from '../../lib/events';
+import { ChangeRunStore } from '../run/change-run.store';
 import { RunStore } from '../run/run.store';
 import { ToastStore } from '../toast/toast.store';
 
@@ -28,6 +29,7 @@ const finishedRun = (v: LockView | null): boolean => v?.kind === 'run' && v.fini
 export class LockStore {
   private readonly runs = inject(RunStore);
   private readonly toasts = inject(ToastStore);
+  private readonly changeRuns = inject(ChangeRunStore);
 
   private readonly view = signal<LockView | null>(null);
   private readonly elapsed = signal(0);
@@ -126,7 +128,12 @@ export class LockStore {
     }
   }
 
-  async runAgent(title: string, spec: RunSpec, via?: (spec: RunSpec) => Promise<string>): Promise<RunState> {
+  /**
+   * Run an agent. With a `key` it is a change's document run: it has a session of its own and takes no lock, so runs of
+   * different changes go at once (`via` starts it, the backend decides what conflicts). Without one it holds the lock.
+   */
+  async runAgent(title: string, spec: RunSpec, via?: (spec: RunSpec) => Promise<string>, key?: string): Promise<RunState> {
+    if (key !== undefined && via) return this.changeRuns.start(key, title, spec, via);
     const busy = this.runs.state();
     if (this.view() !== null || busy === 'running' || busy === 'awaiting') {
       this.toasts.error('Another task is already running.');
@@ -150,7 +157,8 @@ export class LockStore {
   }
 
   /** Resolves once the operator has closed the finished run; at once when no finished run is held. */
-  dismissed(): Promise<void> {
+  dismissed(key?: string): Promise<void> {
+    if (key !== undefined) return this.changeRuns.dismissed(key);
     if (!finishedRun(this.view())) return Promise.resolve();
     return new Promise((resolve) => this.closeWaiters.push(resolve));
   }

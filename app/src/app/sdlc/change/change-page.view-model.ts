@@ -33,6 +33,7 @@ import type { RunSpec } from '@bindings/RunSpec';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
+import { ChangeRunStore, changeRunKey } from '../../core/run/change-run.store';
 import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
@@ -195,6 +196,7 @@ function docFor(c: ChangeView): Tab {
 export class ChangePageViewModel {
   private readonly transport = inject(KataTransport);
   private readonly lock = inject(LockStore);
+  private readonly changeRuns = inject(ChangeRunStore);
   /** The preview every document run goes through; the template mounts its dialog. */
   readonly preview = inject(RunPreviewViewModel);
   private readonly givens = inject(GivenStore);
@@ -723,28 +725,50 @@ export class ChangePageViewModel {
     else this.doneReport.set(before);
   }
 
-  // --- the lock: Kata's own checks in the overlay, an agent run as the session view
-  readonly locked = computed(() => this.lock.active() !== null);
+  // --- the lock: Kata's own checks in the overlay; an agent run as the session view
+  /** The session of this change's own document run, which no other page shows and which does not lock any other change. */
+  private readonly runKey = computed(() => {
+    const w = this.current();
+    return w ? changeRunKey({ workspace: w.folder, system: this.system(), change: this.changeName() }) : null;
+  });
+  private readonly ownRun = computed(() => {
+    const key = this.runKey();
+    return key === null ? null : this.changeRuns.session(key);
+  });
+  /** What holds this page: Kata's own checks, a run that took the screen, or this change's own live document run. */
+  readonly locked = computed(() => this.lock.active() !== null || this.ownRun() !== null);
   readonly lockView = computed(() => {
     const v = this.lock.active();
     return v?.kind === 'steps' ? v : null;
   });
-  readonly lockElapsed = this.lock.elapsedSecs;
-  readonly lockDeadline = this.lock.deadlineSecs;
-  /** The agent run that holds the page, live or finished, or null. */
+  /** The agent run the page shows, live or finished: this change's own, else a run that took the screen; or null. */
   readonly session = computed(() => {
+    const own = this.ownRun();
+    if (own) return { kind: 'run' as const, title: own.title, finished: own.finished, spec: own.spec };
     const v = this.lock.active();
     const spec = this.lock.spec();
     return v?.kind === 'run' && spec ? { ...v, spec } : null;
   });
-  readonly runState = this.runs.state;
-  readonly events = this.runs.events;
-  readonly summary = this.runs.summary;
-  readonly asks = this.runs.asks;
-  readonly messages = this.runs.messages;
-  readonly messageRefusal = this.runs.refusal;
-  readonly permissions = this.runs.permissions;
-  readonly given = this.runs.given;
+  private readonly ownSnap = computed(() => {
+    const key = this.runKey();
+    return this.ownRun() !== null && key !== null ? this.changeRuns.snapshot(key) : null;
+  });
+  readonly lockElapsed = (): number => {
+    const key = this.runKey();
+    return this.ownRun() !== null && key !== null ? this.changeRuns.elapsedSecs(key) : this.lock.elapsedSecs();
+  };
+  readonly lockDeadline = (): number | null => {
+    const key = this.runKey();
+    return this.ownRun() !== null && key !== null ? this.changeRuns.deadlineSecs(key) : this.lock.deadlineSecs();
+  };
+  readonly runState = computed(() => this.ownSnap()?.state ?? this.runs.state());
+  readonly events = computed(() => this.ownSnap()?.events ?? this.runs.events());
+  readonly summary = computed(() => this.ownSnap()?.summary ?? this.runs.summary());
+  readonly asks = computed(() => this.ownSnap()?.asks ?? this.runs.asks());
+  readonly messages = computed(() => this.ownSnap()?.messages ?? this.runs.messages());
+  readonly messageRefusal = computed(() => this.ownSnap()?.refusal ?? this.runs.refusal());
+  readonly permissions = computed(() => this.ownSnap()?.permissions ?? this.runs.permissions());
+  readonly given = computed(() => this.ownSnap() === null ? this.runs.given() : this.ownSnap()!.given);
   readonly leftovers = this.runner.leftovers;
   /** The session view's Close waits for the run's after-run work and for any leftover decision. */
   readonly closeBlocked = computed(() => this.runner.settling() || this.runner.leftovers() !== null);
@@ -1108,23 +1132,33 @@ export class ChangePageViewModel {
   // --- the lock overlay and leftovers
 
   cancelLock(): void {
-    this.lock.cancel();
+    const key = this.runKey();
+    if (this.ownRun() !== null && key !== null) this.changeRuns.cancel(key);
+    else this.lock.cancel();
   }
 
   closeSession(): void {
-    this.lock.close();
+    const key = this.runKey();
+    if (this.ownRun() !== null && key !== null) this.changeRuns.close(key);
+    else this.lock.close();
   }
 
   answer(e: { id: string; answers: string[][] }): void {
-    this.lock.answer(e.id, e.answers);
+    const key = this.runKey();
+    if (this.ownRun() !== null && key !== null) this.changeRuns.answer(key, e.id, e.answers);
+    else this.lock.answer(e.id, e.answers);
   }
 
   say(text: string): void {
-    this.lock.say(text);
+    const key = this.runKey();
+    if (this.ownRun() !== null && key !== null) this.changeRuns.say(key, text);
+    else this.lock.say(text);
   }
 
   decide(e: { id: string; allow: boolean; message: string | null }): void {
-    this.lock.decide(e.id, e.allow, e.message);
+    const key = this.runKey();
+    if (this.ownRun() !== null && key !== null) this.changeRuns.decide(key, e.id, e.allow, e.message);
+    else this.lock.decide(e.id, e.allow, e.message);
   }
 
   async discardLeftovers(choices: DiscardChoice[]): Promise<void> {
@@ -1148,7 +1182,7 @@ export class ChangePageViewModel {
   // --- internals
 
   private refuseWhileLocked(): boolean {
-    if (this.lock.active() === null) return false;
+    if (!this.locked()) return false;
     this.toasts.error(BUSY);
     return true;
   }

@@ -102,10 +102,6 @@ describe('WorkspaceSwitcher', () => {
     expect(items().map((i) => i.textContent!.trim())).toEqual(['Add workspace…']);
   });
 
-  it('disables the trigger while locked', async () => {
-    const { container } = await render(WorkspaceSwitcher, { ...base, locked: true });
-    expect(trigger(container).disabled).toBe(true);
-  });
 });
 
 describe('WorkspaceSwitcher without counts (R3.1)', () => {

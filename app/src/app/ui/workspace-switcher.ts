@@ -20,8 +20,6 @@ export class WorkspaceSwitcher {
   readonly current = input.required<WorkspaceEntry | null>();
   /** Ids of workspaces whose folder no longer exists. */
   readonly missing = input<string[]>([]);
-  /** A run or locked operation is in progress. */
-  readonly locked = input(false);
 
   /** The name the trigger shows. It is cut with an ellipsis when the toolbar is short of room, so the trigger repeats it in its title and accessible name. */
   protected readonly name = computed(() => this.current()?.name ?? 'No workspace');

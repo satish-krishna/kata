@@ -10,7 +10,8 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunState } from '../../lib/events';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import { documentForm, type DocumentKind } from '../../lib/build-host';
-import type { RunSnapshot } from '../run/reduce';
+import { IDLE, type RunSnapshot } from '../run/reduce';
+import { ChangeRunStore, changeRunKey } from '../run/change-run.store';
 import { restrictedFor, specFor, transcriptRunId, type StartTrack } from '../../lib/sdlc';
 import { masterPath, masterRepo, productRepos as productReposOf } from '../../lib/sdlc-workspace';
 import { LockStore } from '../lock/lock.store';
@@ -142,20 +143,22 @@ export class SdlcRunner {
   private readonly transport = inject(KataTransport);
   private readonly lock = inject(LockStore);
   private readonly runs = inject(RunStore);
+  private readonly changeRuns = inject(ChangeRunStore);
   private readonly toasts = inject(ToastStore);
   private readonly router = inject(Router);
 
   private readonly injector = inject(Injector);
   private readonly pending = signal<RepoLeftovers[]>([]);
   private closeWaiters: (() => void)[] = [];
-  private linkTarget: PendingLink | null = null;
+  /** The link of the solo run in flight; a change run keeps its own, so runs of different changes link apart. */
+  private linkTarget: { link: PendingLink | null } | null = null;
 
   /** What the last non-successful run left behind; the screen's leftover dialog renders it. */
   readonly leftovers = computed<RepoLeftovers[] | null>(() => (this.pending().length === 0 ? null : this.pending()));
 
-  private readonly afterRun = signal(false);
+  private readonly afterRun = signal(0);
   /** A run has ended but its after-run work (engine exit, report) is still going: the session view cannot close yet. */
-  readonly settling = this.afterRun.asReadonly();
+  readonly settling = computed(() => this.afterRun() > 0);
   private readonly picked = signal<WorkType | null>(null);
   /** The work type picked for the change being started, kept for the confirmation of its branch name; null without a naming setting. */
   readonly pickedWorkType = this.picked.asReadonly();
@@ -302,7 +305,7 @@ export class SdlcRunner {
     // Link the transcript the moment its id shows up, not at the end: a run that never ends still gets linked.
     effect(() => {
       const id = transcriptRunId(this.runs.events());
-      untracked(() => this.linkOnce(id));
+      untracked(() => this.linkOnce(this.linkTarget, id));
     });
   }
 
@@ -317,7 +320,9 @@ export class SdlcRunner {
   }
 
   async run(title: string, spec: RunSpec, target: RunTarget, change?: ChangeLaunch): Promise<RunOutcome> {
-    if (this.isBusy()) {
+    // A change's document run has a session of its own: only that change's own live run refuses it, and the backend refuses what needs a folder another run holds.
+    const key = change ? changeRunKey(change.ref) : null;
+    if (key === null ? this.isBusy() : this.changeRuns.has(key)) {
       this.toasts.error('Another task is already running.');
       return { state: 'error', runId: null, snapshot: null, exited: true };
     }
@@ -333,40 +338,66 @@ export class SdlcRunner {
     } else if (target.firstSetup) {
       candidates = await this.snapshotAll(target.firstSetup);
     }
-    this.linkTarget = target.link
-      ? { workspace_id: target.workspaceId, ...target.link, started_at: Math.floor(Date.now() / 1000) }
-      : null;
+    const holder = {
+      link: target.link ? { workspace_id: target.workspaceId, ...target.link, started_at: Math.floor(Date.now() / 1000) } : (null as PendingLink | null),
+    };
     // Settling from before the run ends, so the finished view never shows an enabled Close ahead of the work below.
-    this.afterRun.set(true);
+    this.afterRun.update((n) => n + 1);
+    // The run being watched: the solo run, or the backend's id of the change's run once it has launched.
+    let backendId: string | null = null;
+    let watch = null as { destroy(): void } | null;
+    const view = (): RunSnapshot =>
+      change
+        ? backendId === null
+          ? IDLE
+          : this.runs.snapshot(backendId)()
+        : { ...IDLE, events: this.runs.events(), summary: this.runs.summary() };
     let state: RunState;
     try {
-      state = await (change ? this.lock.runAgent(title, spec, (confirmed) => this.launchChangeRun(change, confirmed)) : this.lock.runAgent(title, spec));
+      if (change && key !== null) {
+        const via = async (confirmed: RunSpec): Promise<string> => {
+          const id = await this.launchChangeRun(change, confirmed);
+          backendId = id;
+          // Link the transcript the moment its id shows up, not at the end: a run that never ends still gets linked.
+          watch = effect(() => {
+            const transcript = transcriptRunId(this.runs.snapshot(id)().events);
+            untracked(() => this.linkOnce(holder, transcript));
+          }, { injector: this.injector });
+          return id;
+        };
+        state = await this.lock.runAgent(title, spec, via, key);
+      } else {
+        this.linkTarget = holder;
+        state = await this.lock.runAgent(title, spec);
+      }
     } catch (e) {
-      this.afterRun.set(false);
+      this.afterRun.update((n) => n - 1);
+      watch?.destroy();
       throw e;
     }
-    const runId = transcriptRunId(this.runs.events());
-    this.linkOnce(runId);
-    this.linkTarget = null;
+    const transcript = transcriptRunId(view().events);
+    this.linkOnce(holder, transcript);
+    watch?.destroy();
+    if (this.linkTarget === holder) this.linkTarget = null;
     // The session view stays up after the run: the after-run work below happens under it, and the caller
     // (finish a branch, navigate) carries on only once the operator has closed it.
     try {
       // The terminal event reaches the UI before the engine process is gone; a cancelled engine may still be
       // writing. Nothing reads or changes the repo until it has exited.
-      if (!(await this.engineExited())) {
+      if (!(await this.engineExited(change ? (backendId ?? undefined) : undefined, change !== undefined))) {
         this.toasts.error(stillStopping(target.pendingBranch));
-        return { state, runId, snapshot, exited: false };
+        return { state, runId: transcript, snapshot, exited: false };
       }
       const label = target.label ?? title;
       if (state === 'success') {
-        this.toasts.success(`${label} finished · ${summarize(this.runs.summary()?.result)}`);
+        this.toasts.success(`${label} finished · ${summarize(view().summary?.result)}`);
       } else {
-        await this.reportStopped(label, state, target, snapshot, candidates);
+        await this.reportStopped(label, state, target, snapshot, candidates, view());
       }
-      return { state, runId, snapshot, exited: true };
+      return { state, runId: transcript, snapshot, exited: true };
     } finally {
-      this.afterRun.set(false);
-      await this.lock.dismissed();
+      this.afterRun.update((n) => n - 1);
+      await this.lock.dismissed(key ?? undefined);
     }
   }
 
@@ -567,8 +598,9 @@ export class SdlcRunner {
     target: RunTarget,
     snapshot: Snapshot | null,
     candidates: Map<string, Snapshot> | null,
+    ended: RunSnapshot,
   ): Promise<void> {
-    const why = this.failureReason();
+    const why = this.failureReason(ended);
     const verb = `${state === 'warning' ? 'stopped' : 'failed'}${why ? ` · ${why}` : ''}`;
     let where: Baseline | null =
       target.master !== null && snapshot !== null ? { master: target.master, snapshot, productRepos: target.productRepos } : null;
@@ -585,9 +617,9 @@ export class SdlcRunner {
   }
 
   /** Why the run ended, in its own words: claude's result, else the engine's last error log; null when neither says. */
-  private failureReason(): string | null {
-    const result = this.runs.summary()?.result;
-    const errors = this.runs.events().flatMap((ev) => (ev.type === 'log' && ev.level === 'error' ? [ev.message] : []));
+  private failureReason(ended: RunSnapshot): string | null {
+    const result = ended.summary?.result;
+    const errors = ended.events.flatMap((ev) => (ev.type === 'log' && ev.level === 'error' ? [ev.message] : []));
     const text = result || (errors.at(-1) ?? '');
     return text ? summarize(text) : null;
   }
@@ -619,8 +651,8 @@ export class SdlcRunner {
   }
 
   /** Wait for the engine process to exit. A failed wait counts as "still running": better to touch nothing. */
-  private async engineExited(id?: string): Promise<boolean> {
-    const runId = id ?? this.runs.lastRunId();
+  private async engineExited(id?: string, own = false): Promise<boolean> {
+    const runId = own ? (id ?? null) : (this.runs.lastRunId());
     // No id means the engine was never spawned, so there is no process to wait for.
     if (runId === null) return true;
     try {
@@ -648,10 +680,10 @@ export class SdlcRunner {
     return { repo: repoName(master), path: master, snapshot, data };
   }
 
-  private linkOnce(runId: string | null): void {
-    const link = this.linkTarget;
-    if (!link || !runId) return;
-    this.linkTarget = null;
+  private linkOnce(holder: { link: PendingLink | null } | null, runId: string | null): void {
+    const link = holder?.link;
+    if (!holder || !link || !runId) return;
+    holder.link = null;
     this.transport.sdlcLinkRun({ ...link, run_id: runId }).catch((e: unknown) => {
       this.toasts.error(`Could not link the run to the change: ${message(e)}`);
     });
