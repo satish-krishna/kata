@@ -726,22 +726,20 @@ fn sdlc_branches(master: String) -> sdlc::branch::BranchInfo {
 }
 
 #[tauri::command(async)]
-fn sdlc_read_doc(master: String, system: String, change: String, doc: String) -> Option<String> {
-    sdlc::changes::read_doc(Path::new(&master), &system, &change, &doc)
+fn sdlc_read_doc(change: build_host::ChangeRef, doc: String) -> Result<Option<String>, String> {
+    let (_, home) = resolved(&change)?;
+    Ok(read_doc_in(&home, &doc))
 }
 
 /// The spec or plan of a change read by the format program, for the Workbench's list views. An error
 /// (no plugin, no Node.js) is the caller's cue to show the document as plain text.
 #[tauri::command(async)]
 fn sdlc_read_parsed(
-    master: String,
-    system: String,
-    change: String,
+    change: build_host::ChangeRef,
     doc: String,
 ) -> Result<Option<sdlc::format::ReadResult>, String> {
-    let plugin = ai_sdlc_dir(&master)?;
-    sdlc::changes::read_parsed(&plugin, Path::new(&master), &system, &change, &doc)
-        .map_err(|e| e.to_string())
+    let (plugin, home) = resolved(&change)?;
+    read_parsed_in(&home, &plugin, &change.system, &doc).map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -1029,13 +1027,10 @@ fn sdlc_task_links() -> Vec<sdlc::store::TaskLink> {
 // ---- AI-SDLC mode: the build, the diff, checks and publishing ----
 
 #[tauri::command(async)]
-fn sdlc_build_status(
-    master: String,
-    system: String,
-    change: String,
-) -> Result<sdlc::build::BuildStatus, String> {
-    let plugin = ai_sdlc_dir(&master)?;
-    sdlc::build::status(&plugin, Path::new(&master), &system, &change).map_err(|e| e.to_string())
+fn sdlc_build_status(change: build_host::ChangeRef) -> Result<sdlc::build::BuildStatus, String> {
+    let (plugin, home) = resolved(&change)?;
+    sdlc::build::status(&plugin, &home.master, &change.system, &change.change)
+        .map_err(|e| e.to_string())
 }
 
 /// The build page's tasks area for the repositories asked for: where each stands and what each task's row shows, from the build log's
@@ -1073,31 +1068,27 @@ fn sdlc_review_standing(
 
 #[tauri::command(async)]
 fn sdlc_review_record(
-    master: String,
-    system: String,
-    change: String,
+    change: build_host::ChangeRef,
 ) -> Result<Option<sdlc::review::ReviewRecord>, String> {
-    let plugin = ai_sdlc_dir(&master)?;
-    sdlc::review::record(&plugin, Path::new(&master), &system, &change).map_err(|e| e.to_string())
+    let (plugin, home) = resolved(&change)?;
+    sdlc::review::record(&plugin, &home.master, &change.system, &change.change)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
 fn sdlc_build_heads(
-    folder: String,
-    master_repo: String,
-    system: String,
+    change: build_host::ChangeRef,
     repos: Vec<String>,
-    change: String,
 ) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let (_, home) = resolved(&change)?;
     sdlc::branch::heads(
-        Path::new(&folder),
-        &Path::new(&folder).join(&master_repo),
-        &master_repo,
-        &system,
+        &home.place.workspace,
+        &home.master,
+        &master_repo_of(&home),
+        &change.system,
         &repos,
-        &change,
+        &change.change,
     )
-    .map_err(|e| e.to_string())
 }
 
 /// What the run table knows about a change: any of its runs (build, review or document) makes it live, and
@@ -1252,17 +1243,8 @@ fn ai_sdlc_readiness(workdir: Option<&str>) -> sdlc::plugin::Readiness {
 }
 
 /// The ai-sdlc plugin folder the format program is read from, or why the build cannot be read. It is
-/// found from the workspace folder (the master repository's parent), the same place `sdlc_plugin_readiness`
-/// is asked about, so a project-scoped plugin there is the one every command uses.
-fn ai_sdlc_dir(master: &str) -> Result<std::path::PathBuf, String> {
-    let folder = Path::new(master)
-        .parent()
-        .and_then(Path::to_str)
-        .unwrap_or(master);
-    ai_sdlc_dir_in(folder)
-}
-
-/// [`ai_sdlc_dir`] for a command that is given the workspace folder itself.
+/// found from the workspace folder, the same place `sdlc_plugin_readiness` is asked about, so a
+/// project-scoped plugin there is the one every command uses.
 fn ai_sdlc_dir_in(folder: &str) -> Result<std::path::PathBuf, String> {
     match ai_sdlc_readiness(Some(folder)) {
         sdlc::plugin::Readiness::Ready { plugin, .. } => Ok(plugin.dir),
@@ -1304,8 +1286,29 @@ pub struct ReadFailure {
 
 /// The text of a document as the change's own master holds it, uncommitted edits included.
 fn read_doc_in(home: &sdlc::home::ChangeHome, doc: &str) -> Option<String> {
-    let _ = (home, doc);
-    None
+    if !matches!(doc, "intent" | "spec" | "plan") {
+        return None;
+    }
+    std::fs::read_to_string(home.folder.join(format!("{doc}.md"))).ok()
+}
+
+/// The format program's read of a spec or plan in the change's own master.
+fn read_parsed_in(
+    home: &sdlc::home::ChangeHome,
+    plugin: &Path,
+    system: &str,
+    doc: &str,
+) -> Result<Option<sdlc::format::ReadResult>, sdlc::format::FormatError> {
+    sdlc::changes::read_parsed(plugin, &home.master, system, &home.state.change, doc)
+}
+
+/// The name of the workspace's master checkout, the folder the diff and branch reads call the master repository.
+fn master_repo_of(home: &sdlc::home::ChangeHome) -> String {
+    home.place
+        .master
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// The change page's first read: one resolution, the change's view, the document and the build and review.
@@ -1314,45 +1317,95 @@ fn open_change_in(
     plugin: &Path,
     readiness: &sdlc::plugin::Readiness,
     live: sdlc::offer::LiveFacts,
+    system: &str,
     doc: &str,
 ) -> Result<OpenedChange, String> {
-    let _ = (home, plugin, readiness, live, doc);
-    Err("not implemented".into())
+    let change = &home.state.change;
+    let parsed = match read_parsed_in(home, plugin, system, doc) {
+        Ok(read) => read.map(ParsedRead::Read),
+        Err(e) => Some(ParsedRead::Failed(ReadFailure {
+            kind: "error".into(),
+            message: e.to_string(),
+        })),
+    };
+    let planned = home.state.documents.plan.exists;
+    let status = if planned {
+        Some(sdlc::build::status(plugin, &home.master, system, change).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+    let review = if planned {
+        sdlc::review::record(plugin, &home.master, system, change).map_err(|e| e.to_string())?
+    } else {
+        None
+    };
+    Ok(OpenedChange {
+        view: sdlc_state::view_of(home.state.clone(), readiness, live),
+        text: read_doc_in(home, doc),
+        parsed,
+        status,
+        review,
+    })
+}
+
+/// The plugin folder and where the change lives, resolved once for a command.
+fn resolved(
+    change: &build_host::ChangeRef,
+) -> Result<(std::path::PathBuf, sdlc::home::ChangeHome), String> {
+    let plugin = ai_sdlc_dir_in(&change.workspace)?;
+    let home = change_home(&sdlc::ai_sdlc::Program::locate(&plugin), change)?;
+    Ok((plugin, home))
+}
+
+/// Open a change: its view, the document asked for and the build and review, from one resolution.
+#[tauri::command(async)]
+fn sdlc_open_change(
+    control: State<'_, RunControl>,
+    change: build_host::ChangeRef,
+    doc: String,
+) -> Result<OpenedChange, String> {
+    let readiness = ai_sdlc_readiness(Some(&change.workspace));
+    let plugin_dir = match &readiness {
+        sdlc::plugin::Readiness::Ready { plugin, .. } => plugin.dir.clone(),
+        sdlc::plugin::Readiness::Blocked { message, .. } => return Err(message.clone()),
+    };
+    let program = sdlc::ai_sdlc::Program::locate(&plugin_dir);
+    let home = change_home(&program, &change)?;
+    let live = live_facts(&control, &change.system, &change.change);
+    let mut opened = open_change_in(&home, &plugin_dir, &readiness, live, &change.system, &doc)?;
+    drop_declare_done_after_earlier_declaration(
+        &program,
+        &change.workspace,
+        &change.system,
+        &change.change,
+        &mut opened.view,
+    );
+    Ok(opened)
 }
 
 #[tauri::command(async)]
-fn sdlc_change_repos(
-    folder: String,
-    master_repo: String,
-    system: String,
-    change: String,
-) -> Result<Vec<sdlc::diff::ChangeRepo>, String> {
+fn sdlc_change_repos(change: build_host::ChangeRef) -> Result<Vec<sdlc::diff::ChangeRepo>, String> {
+    let (_, home) = resolved(&change)?;
     sdlc::diff::change_repos(
-        Path::new(&folder),
-        &Path::new(&folder).join(&master_repo),
-        &master_repo,
-        &system,
-        &change,
+        &home.place.workspace,
+        &home.master,
+        &master_repo_of(&home),
+        &change.system,
+        &change.change,
     )
 }
 
 #[tauri::command(async)]
-fn sdlc_missing_change_branches(
-    folder: String,
-    master_repo: String,
-    system: String,
-    change: String,
-) -> Result<Vec<String>, String> {
-    let plugin = ai_sdlc_dir_in(&folder)?;
+fn sdlc_missing_change_branches(change: build_host::ChangeRef) -> Result<Vec<String>, String> {
+    let (plugin, home) = resolved(&change)?;
     sdlc::branch::missing_change_branches(
         &plugin,
-        Path::new(&folder),
-        &Path::new(&folder).join(&master_repo),
-        &master_repo,
-        &system,
-        &change,
+        &home.place.workspace,
+        &home.master,
+        &master_repo_of(&home),
+        &change.system,
+        &change.change,
     )
-    .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -1927,6 +1980,7 @@ pub fn run() {
             sdlc_build_board,
             sdlc_review_standing,
             sdlc_change_state,
+            sdlc_open_change,
             sdlc_change_repos,
             sdlc_missing_change_branches,
             sdlc_diff_files,
@@ -2199,7 +2253,7 @@ name: build
         }
 
         let readiness = ai_sdlc_readiness(Some(workspace.to_str().unwrap()));
-        let resolved = ai_sdlc_dir(master.to_str().unwrap());
+        let resolved = ai_sdlc_dir_in(workspace.to_str().unwrap());
 
         for (k, v) in saved {
             match v {
@@ -2407,6 +2461,7 @@ name: build
                 &fx.plugin,
                 &ready(&fx.plugin),
                 sdlc::offer::LiveFacts::default(),
+                SYSTEM,
                 "plan",
             )
             .unwrap();

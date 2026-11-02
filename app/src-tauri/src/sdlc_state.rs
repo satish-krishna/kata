@@ -39,7 +39,7 @@ fn refused(mut offer: ChangeOffer, message: &str) -> ChangeOffer {
     offer
 }
 
-fn view_of(state: ChangeState, readiness: &Readiness, live: LiveFacts) -> ChangeView {
+pub fn view_of(state: ChangeState, readiness: &Readiness, live: LiveFacts) -> ChangeView {
     let mut offer = kata_sdlc::offer::of(&state, &live);
     if let Readiness::Blocked { message, .. } = readiness {
         offer = refused(offer, message);
