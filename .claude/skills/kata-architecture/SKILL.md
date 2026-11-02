@@ -19,6 +19,8 @@ A TypeScript ViewModel may:
 - format text for display (truncate, pluralize, label);
 - map backend data onto presentational components.
 
+A rule the ai-sdlc plugin owns is asked of the plugin by the backend through `ai_sdlc` and passed on as data; it is never re-derived in Rust or TypeScript.
+
 The test: if the answer is the same whatever the screen state, and a spec scenario or a context rule asserts it, it is a decision and belongs in Rust. "Most serious first" is a decision; "the low findings are folded until clicked" is arrangement.
 
 ## 2. One computation per decision
@@ -35,7 +37,7 @@ An operation that touches several repositories (preparing a build, creating bran
 
 ## 5. Existing logic in TypeScript
 
-Some decisions predate this policy and still live in TypeScript: the build driver (`app/src/app/sdlc/build/build-driver.ts`) and helpers under `app/src/app/lib/` such as the build permission rules in `sdlc.ts`. The build tab findings and rounds change (2026-10-30) added more before this policy existed: the round offer, default picks, round plan and finding keys in `app/src/app/lib/build-round.ts`, and the review rows' severity order, counts and low split in `reviewRows` (`app/src/app/lib/build-task-list.ts`). They are debt, recorded here so nobody copies them as precedent. A change may not add a new decision to them. Moving one is a change of its own, unless the change at hand already rewrites that decision. The build driver and the decisions above move to Rust with the per-change worktree change.
+The debt list is one item. `rulePath` and `productRepoRules` in `app/src/app/lib/sdlc.ts` still build deny rules for setup, context and new-change runs, and duplicate `kata_sdlc::permissions::rule_path`, the owner of the rule shape. Do not copy them as precedent and do not add a decision to them. Moving them is a change of its own, unless the change at hand already rewrites those runs.
 
 ## Checking a document or a diff
 

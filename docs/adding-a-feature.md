@@ -89,7 +89,7 @@ Work test-first. TDD is the workflow, not a suggestion.
 
 ## E. Change an AI-SDLC backend type
 
-1. **Change the type** in `crates/kata-sdlc/src/` (for example `changes.rs`, `store.rs`, `plugin.rs`). A type the frontend reads carries the `ts-rs` derive behind the `ts` feature and exports to `app/src/bindings/`.
+1. **Change the type** in `crates/kata-sdlc/src/` (for example `offer.rs`, `view.rs`, `store.rs`, `plugin.rs`). A type the frontend reads carries the `ts-rs` derive behind the `ts` feature and exports to `app/src/bindings/`.
 
 2. **Regenerate the bindings** and never hand-edit them:
 

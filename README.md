@@ -33,17 +33,17 @@ Before any run starts, Run opens a preview of what the run will start with: its 
 
 ## AI-SDLC mode
 
-The same app has a second mode for taking a change from an idea to open pull requests inside a workspace of git repos: one master repo holds the intents, specs, plans, build logs and reviews, and the product repos hold the code they describe. Kata drives the `ai-sdlc` plugin through the same `kata run` path, locks the screen while the agent works, and shows what a stopped run left behind before anything is discarded. Pick the mode on first launch and switch any time from the toolbar.
+The same app has a second mode for taking a change from an idea to open pull requests inside a workspace of git repos: one master repo holds the intents, specs, plans, build logs and reviews, and the product repos hold the code they describe. Kata drives the `ai-sdlc` plugin through the same `kata run` path and shows what a stopped run left behind before anything is discarded. The plugin (1.1.0 or later) owns the workflow itself: it starts, renames and removes changes, commits, accepts documents, finishes builds and declares changes done. Kata starts the agent runs, shows the plugin's answers and keeps the rules a run is held to. Pick the mode on first launch and switch any time from the toolbar.
 
 The workspace home lists your workspaces (add or remove one, switch between them) and each system's changes; the AI-SDLC settings dialog holds the mode's own preferences. One change has one page, and it follows the change through these steps:
 
-- **Start.** New change takes a description and a track. With `ai-sdlc` 0.13.0 or later, "Let the workflow decide" triages the description, says why, and routes it to the light track or the full pipeline; before 0.13.0 only the full pipeline is offered.
+- **Start.** New change takes a description and a track. "Let the workflow decide" triages the description, says why, and routes it to the light track or the full pipeline. The plugin makes the change's branch and its own copy of the master repository.
 - **Intent, spec and plan.** The full pipeline. Each document opens on its own tab, and you accept it (or reject the intent, or send feedback) before the next step. A spec or plan that no longer matches the document above it is marked out of date.
-- **Fix.** The light track for a bug or a small enhancement in one repository: one run writes a short intent, spec and plan, which you accept once. It needs `ai-sdlc` 0.13.0 or later.
+- **Fix.** The light track for a bug or a small enhancement in one repository: one run writes a short intent, spec and plan, which you accept once.
 - **Build.** One agent per repository, several at once, on a build page whose four areas (tasks, activity, changed files, findings) you can arrange; `Ctrl+1` to `Ctrl+4` pick the overview, watch, changes and review arrangements.
 - **Changes.** The files each commit on a change branch touched, with a side-by-side diff against the base branch.
 - **Review.** One reviewer per repository plus one across them. Findings are grouped by repository and read from the change's `build/review.md`.
-- **Done.** Declaring a change done runs your checks, then opens one pull request per touched repository through GitHub's API, the master last.
+- **Done.** Declaring a change done is the plugin's step: it verifies the change, pushes every touched repository and opens one pull request per repository through `gh`, the master last, and records them in the change. A change declared done before the plugin recorded pull requests is shown as done, read only.
 
 | The workspace's changes | Triage routes a new change |
 | --- | --- |
@@ -59,29 +59,18 @@ The workspace home lists your workspaces (add or remove one, switch between them
 
 Building and declaring a change done have prerequisites beyond an authenticated `claude` on your `PATH`:
 
-- A GitHub sign-in on this machine: Git Credential Manager, or the GitHub CLI's `gh auth login`. Kata finds the sign-in, uses it for the push and the pull request as you, and stores no token. Neither `git` nor `gh` needs to be installed; Kata reads and writes repositories itself.
-- The `ai-sdlc` plugin at version 0.9.0 or later (0.13.0 or later for start triage and the light fix track), and Node.js 20 or later on your `PATH`: Kata reads specs, plans, build logs and reviews through the plugin's format program, which runs on Node.
+- The `ai-sdlc` plugin at version 1.1.0 or later, and Node.js 22.18 or later on your `PATH`. Kata reads and changes a change through the plugin's program, which runs on Node. Below that version the mode is blocked and says why.
+- `git` and `gh` on your `PATH`, signed in to GitHub. The plugin starts them for commits, pushes and pull requests as you, and Kata stores no token. The Workbench mode needs neither.
 
-A build runs one agent per repository, inside that repository, with several running at once. Each run has its own time limit. Builds always run under `permissions.mode = "auto"` with deny rules (no `git push`, `gh` or `git remote`, no edits to the checks folder, no edits to another repository's work), whatever permission setting the rest of the app uses, because deny rules do not exist under the default bypass posture.
+A build runs one agent per repository, inside that repository, with several running at once. Each run has its own time limit. Builds always run under `permissions.mode = "auto"` with deny rules (no `git push`, `gh` or `git remote`, no edits to another repository's work), whatever permission setting the rest of the app uses, because deny rules do not exist under the default bypass posture. The build runs in the Workbench's backend, so leaving the build page does not stop it.
 
-Checks that judge a change when you declare it done live in `<kata home>/workbench/checks/<system>.toml`, one file per system, outside every workspace so no agent can edit the gate it is checked against. Kata refuses the file when the checks folder and the workspace contain one another. The file is TOML and unknown keys are refused:
+**Several changes at once.** Each change runs in its own copy of the master repository, so changes do not share a working tree. They run side by side unless two of them need the same product repository folder; a repository is held by one change at a time for its build and review, and the one that asks second is told which change holds it. The running strip lists every change that is working or needs you, and picking an entry opens the session that waits. Closing the Workbench with runs live asks first, names every running change, and cancels them all if you confirm.
 
-```toml
-[[checks]]
-repo = "api"
-name = "unit tests"
-argv = ["dotnet", "test", "--nologo"]
-timeout_secs = 600
+**Team checks.** The checks that judge a change are the team's `build.finish` hooks, committed to the master repository and run by the plugin when a repository's build finishes, so every engineer runs the same gate. The change page shows what each repository's checks came to: passed, failed and what to fix, failed and stopped, could not run, out of date, or not run yet. Checks you kept in the earlier per-machine file (`<kata home>/workbench/checks/<system>.toml`) are not run any more and are not converted; the workspace home tells you once what that file held, read only.
 
-[[checks]]
-repo = "product-intent"
-argv = ["npx", "markdownlint-cli2", "intent/**/*.md"]
-timeout_secs = 120
-```
+**An accepted gap.** The deny rules apply to Claude's editing tools. A write made from a shell inside a run is not covered by them, and the plugin's guard covers shell commands only for the paths it guards (its hook configuration, the change record, the ledger and pushes). One change's agent could therefore write into another change's copy from a shell; the only layer left there is Claude's own classifier.
 
-`repo` is required and must be one of the system's repositories or the master repository. `argv` is required, non-empty, and never passes through a shell. `timeout_secs` is required, from 1 to 86,400. `name` is optional and defaults to the joined argv. A missing file means no repository has checks. Any problem fails the whole file with its `file:line:col`, and declaring done runs nothing until it is fixed.
-
-Two costs to know about. Checks are per machine and unversioned: each engineer writes their own file, a new teammate starts with none, and two engineers can declare the same change done against different gates. And the review is only as portable as what was committed: findings are read from `build/review.md` as committed in the master repository, and only when the review wrote none does Kata fall back to the closing words of the review run recorded on this machine.
+The review is only as portable as what was committed: findings are read from `build/review.md` as committed in the master repository, and only when the review wrote none does Kata fall back to the closing words of the review run recorded on this machine.
 
 ## Quickstart
 
