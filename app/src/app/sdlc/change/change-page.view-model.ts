@@ -35,7 +35,7 @@ import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
 import { ChangeRunStore, changeRunKey } from '../../core/run/change-run.store';
-import { RunLandingStore, folderKey } from '../../core/run/run-landing.store';
+import { RunLandingStore } from '../../core/run/run-landing.store';
 import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
@@ -1560,7 +1560,7 @@ export class ChangePageViewModel {
   private async openAskedWorkspace(workspaces: WorkspaceEntry[], system: string, change: string): Promise<void> {
     const asked = this.landing.pending();
     if (asked === null || asked.system !== system || asked.change !== change) return;
-    const target = workspaces.find((w) => folderKey(w.folder) === asked.workspaceId);
+    const target = workspaces.find((w) => w.id === asked.workspaceId);
     if (target === undefined || target.id === this.current()?.id) return;
     const next = workspaces.map((w) => (w.id === target.id ? { ...w, last_opened: nowSecs() } : w));
     this.workspaces.set(next);

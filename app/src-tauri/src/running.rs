@@ -5,10 +5,11 @@ use crate::build_host::BuildView;
 use crate::build_host::REVIEW;
 use crate::history::{Pending, RunHistory};
 use crate::runs::{Lane, LiveSummary, RunKind};
-use kata_sdlc::holds::ChangeKey;
+use kata_sdlc::holds::{ChangeKey, RepoKey};
 use kata_sdlc::store::WorkspaceEntry;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Mutex;
 
 /// The channel the strip is announced on.
@@ -365,8 +366,19 @@ pub fn entries(
 }
 
 /// Name each entry's workspace by its id in the workspace list, so the webview compares equal strings
-/// instead of normalizing folder paths itself. Stub: the rule is not written yet.
-pub fn with_workspace_ids(strip: RunningStrip, _workspaces: &[WorkspaceEntry]) -> RunningStrip {
+/// instead of normalizing folder paths itself. A change's workspace key is lexical, so it matches a folder
+/// however the list spells it (separators, case, trailing slash).
+pub fn with_workspace_ids(mut strip: RunningStrip, workspaces: &[WorkspaceEntry]) -> RunningStrip {
+    let ids: Vec<(RepoKey, &str)> = workspaces
+        .iter()
+        .map(|w| (RepoKey::of(Path::new(&w.folder)), w.id.as_str()))
+        .collect();
+    for e in strip.shown.iter_mut().chain(strip.all.iter_mut()) {
+        e.workspace_id = ids
+            .iter()
+            .find(|(key, _)| *key == e.change.workspace)
+            .map(|(_, id)| (*id).to_string());
+    }
     strip
 }
 

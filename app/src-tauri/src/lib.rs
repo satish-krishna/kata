@@ -307,7 +307,10 @@ fn running_strip(app: &AppHandle) -> running::RunningStrip {
         .unwrap_or_default();
     let history = app.state::<Arc<history::RunHistory>>();
     let marks = app.state::<Arc<running::OpenedMarks>>();
-    running::entries(&live, &builds, &history, &marks)
+    running::with_workspace_ids(
+        running::entries(&live, &builds, &history, &marks),
+        &sdlc::store::load_workspaces(),
+    )
 }
 
 /// Tell the webview the running changes may have changed.

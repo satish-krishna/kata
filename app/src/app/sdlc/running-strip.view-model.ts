@@ -14,7 +14,8 @@ export type RunChoice = { run: number; kind: RunKind; repo: string | null; waiti
 /** One entry as the strip draws it. Everything but the run lists is formatting of what the backend sent. */
 export type StripRow = {
   id: string;
-  workspace: string;
+  /** The workspace's id in the workspace list; null when the backend found none. */
+  workspaceId: string | null;
   system: string;
   change: string;
   /** The change's name without its date prefix. */
@@ -63,7 +64,7 @@ export class RunningStripViewModel {
 
   /** Open the change page; with a run, ask its page to show that run's session, where a question is answered. */
   open(row: StripRow, choice: RunChoice | null): void {
-    if (choice !== null) this.landing.ask({ workspaceId: null, system: row.system, change: row.change, run: choice.open });
+    if (choice !== null) this.landing.ask({ workspaceId: row.workspaceId, system: row.system, change: row.change, run: choice.open });
     void this.router.navigate(['/sdlc', row.system, row.change]);
   }
 }
@@ -76,7 +77,7 @@ function toRow(e: RunningEntry): StripRow {
   // What picking the entry opens is the backend's answer; this only follows it.
   const direct = e.opens.kind === 'session' ? choice(e.opens.run) : null;
   const choices = e.opens.kind === 'list' ? e.opens.runs.map(choice) : [];
-  const base = { id: `${e.change.workspace.key}|${e.change.system}|${e.change.change}`, workspace: e.change.workspace.key, system: e.change.system, change: e.change.change, name: short(e.change), direct, choices };
+  const base = { id: `${e.change.workspace.key}|${e.change.system}|${e.change.change}`, workspaceId: e.workspaceId, system: e.change.system, change: e.change.change, name: short(e.change), direct, choices };
   const row = (state: string, tone: StripRow['tone'], text: string | null): StripRow => ({ ...base, state, tone, text, title: text === null ? state : `${state}: ${text}` });
   switch (e.state) {
     case 'needsAnswer':
