@@ -874,13 +874,8 @@ fn sdlc_rename_branch(
     change: String,
     to: String,
 ) -> Result<rename_change::RenameOutcome, String> {
-    if control
-        .state
-        .lock()
-        .unwrap()
-        .group_live(&format!("build:{system}/{change}"))
-    {
-        return Err("A build run of this change is live. Rename the branch after it ends.".into());
+    if let Some(refused) = rename_refusal(&control.state.lock().unwrap(), &system, &change) {
+        return Err(refused);
     }
     let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&folder)?);
     let place = program
@@ -1080,16 +1075,24 @@ fn sdlc_build_heads(
 /// has none, so it is not attributed to a change. No build host exists yet to know a stopped build
 /// (T16), so `build_stopped` is false.
 fn live_facts(control: &RunControl, system: &str, change: &str) -> sdlc::offer::LiveFacts {
-    let live = control
-        .state
-        .lock()
-        .unwrap()
-        .group_live(&format!("build:{system}/{change}"));
+    live_facts_of(&control.state.lock().unwrap(), system, change)
+}
+
+/// The live facts of a change in `table`.
+fn live_facts_of<C>(table: &RunTable<C>, system: &str, change: &str) -> sdlc::offer::LiveFacts {
+    let live = table.group_live(&format!("build:{system}/{change}"));
     sdlc::offer::LiveFacts {
         run_live: live,
         build_stopped: false,
         build_live: live,
     }
+}
+
+/// Why the change's branch cannot be renamed now: a run of the change is live in `table`.
+fn rename_refusal<C>(table: &RunTable<C>, system: &str, change: &str) -> Option<String> {
+    table
+        .group_live(&format!("build:{system}/{change}"))
+        .then(|| "A build run of this change is live. Rename the branch after it ends.".to_string())
 }
 
 /// The program to ask, and the readiness, for a workspace folder. Only a ready mode has a program.
@@ -1961,6 +1964,36 @@ mod tests {
             repo: None,
             child: None,
         }
+    }
+
+    // The rename design (R2.4): a live document run of the change (here its spec run) refuses the rename,
+    // and the change's live facts carry it, which takes the rename off the offer.
+    #[test]
+    fn a_live_document_run_refuses_the_rename_and_removes_the_offer() {
+        let mut table = RunTable::<()>::default();
+        table.insert(LiveRun {
+            id: 1,
+            workdir: std::path::PathBuf::from("D:/ws/.ai-sdlc/copies/c/ai-sdlc"),
+            group: Some("document:s/c".into()),
+            lane: runs::Lane::Change {
+                key: kata_sdlc::holds::ChangeKey {
+                    workspace: kata_sdlc::holds::RepoKey::of(Path::new("D:/ws")),
+                    system: "s".into(),
+                    change: "c".into(),
+                },
+                build: false,
+            },
+            kind: runs::RunKind::Spec,
+            repo: None,
+            child: None,
+        });
+        assert!(rename_refusal(&table, "s", "c").is_some());
+        let facts = live_facts_of(&table, "s", "c");
+        assert!(facts.run_live, "a run of the change is live");
+        assert!(!facts.build_live, "it is not a build run");
+        // Another change is not affected.
+        assert_eq!(rename_refusal(&table, "s", "other"), None);
+        assert!(!live_facts_of(&table, "s", "other").run_live);
     }
 
     #[test]
