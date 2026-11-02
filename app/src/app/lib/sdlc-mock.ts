@@ -602,7 +602,7 @@ export class SdlcMock {
   /** The long demo's change whose plan the format program cannot read, so the reading rows show a reason. */
   private readonly unreadable: string | null;
 
-  /** `?demo=naming` puts the build demo change on a pending branch that waits for a name; `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` leave the finished change undeclared and give each answer of the plugin to declaring it done. */
+  /** `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` leave the finished change undeclared and give each answer of the plugin to declaring it done. */
   private readonly demo: string | null;
 
   constructor(long = false, demo: string | null = null) {
