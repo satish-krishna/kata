@@ -321,6 +321,27 @@ mod tests {
     }
 
     #[test]
+    fn switching_a_checkout_is_refused_while_a_document_run_works_in_a_folder_inside_it() {
+        // A pre-copy change's intent, spec or plan run works in its change folder inside the master checkout
+        // (`runspec::change_spec`), not in the checkout's root.
+        let t = table(vec![live(
+            1,
+            r"D:\ws\ai-sdlc\intent\kata\2026-10-12-photos",
+            change("2026-10-12-photos", false),
+        )]);
+        assert_eq!(
+            t.may_switch(Path::new("D:/ws/ai-sdlc")).unwrap_err(),
+            "The change 2026-10-12-photos has a run working in D:/ws/ai-sdlc. Switch the branch after the run ends."
+        );
+        assert!(t.may_switch(Path::new(r"D:\ws\ai-sdlc\")).is_err());
+        // Paths are compared by component: a sibling whose name starts with the other's is not inside it.
+        let t = table(vec![live(1, r"D:\ws\kata2", change("c", false))]);
+        assert!(t.may_switch(Path::new("D:/ws/kata")).is_ok());
+        let t = table(vec![live(1, r"D:\ws\kata2\intent", change("c", false))]);
+        assert!(t.may_switch(Path::new("D:/ws/kata")).is_ok());
+    }
+
+    #[test]
     fn claim_allows_two_build_runs_in_different_folders() {
         let t = table(vec![live(1, "D:/ws/app", change("c", true))]);
         assert!(t.claim(Path::new("D:/ws/api"), &change("c", true)).is_ok());
