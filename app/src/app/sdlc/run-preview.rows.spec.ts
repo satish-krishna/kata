@@ -93,7 +93,7 @@ async function continuing(): Promise<Scenario> {
   TestBed.configureTestingModule({ providers: [provideRouter([]), BuildPageViewModel, RunPreviewViewModel, { provide: KataTransport, useValue: transport }] });
   const vm = TestBed.inject(BuildPageViewModel);
   const ctx: BuildContext = { workspaceId: 'acme-commerce', folder: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: BUILD, systemRepos: [] };
-  const status = await transport.sdlcBuildStatus(MOCK_WORKSPACE_FOLDER, 'commerce', BUILD);
+  const status = await transport.sdlcBuildStatus({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: BUILD });
   const [change] = (await readAllChanges(transport)).filter((c) => c.state.change === BUILD);
   await vm.load({ ctx, master: { repo: MOCK_MASTER, path: `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}` }, change, status, done: false, review: null });
   const ref = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: BUILD };

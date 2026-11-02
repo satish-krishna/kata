@@ -199,8 +199,8 @@ describe('ChangePage layout', () => {
       const transport = new MockTransport();
       transport.patchChange(MOCK_BUILD_CHANGE, { stage: 'build-finished' as const });
       const status = transport.sdlcBuildStatus.bind(transport);
-      vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, sys, c) => {
-        const got = await status(m, sys, c);
+      vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (r) => {
+        const got = await status(r);
         return {
           ...got,
           repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })),

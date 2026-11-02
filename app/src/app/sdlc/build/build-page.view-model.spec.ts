@@ -92,7 +92,7 @@ const state = (over: Partial<BuildState> = {}): BuildState => ({ phase: 'buildin
 
 /** The page opened on the mock build change, as the change page would give it. */
 async function opened(s: ReturnType<typeof setup>, over: { stage?: OfferStage; built?: boolean; review?: ReviewRecord | null; done?: boolean } = {}) {
-  const status = await s.transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
+  const status = await s.transport.sdlcBuildStatus({ workspace: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE });
   const [found] = (await readAllChanges(s.transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
   const change = over.stage === undefined ? found : atStage(found, over.stage);
   const load = () => s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change, status, done: over.done ?? false, review: over.review ?? null });
@@ -282,7 +282,7 @@ describe('the build page shows tasks and sessions from the build log, the run li
     vi.spyOn(s.transport, 'sdlcRunLinks').mockResolvedValue(over.links ?? []);
     vi.spyOn(s.transport, 'sdlcTaskLinks').mockResolvedValue(over.taskLinks ?? []);
     vi.spyOn(s.transport, 'listRuns').mockResolvedValue(over.records ?? []);
-    const base = await s.transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
+    const base = await s.transport.sdlcBuildStatus({ workspace: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE });
     const status: BuildStatus = (over.built ?? true) ? { ...base, tasks: base.tasks.map((t) => (t.id === 'T1' ? { ...t, row: T1_ROW } : t)) } : base;
     vi.spyOn(s.transport, 'sdlcBuildStatus').mockResolvedValue(status);
     return opened(s, over.stage === undefined ? {} : { stage: over.stage });
@@ -800,7 +800,7 @@ describe('the layout follows the real build page through a finish, whatever orde
     ]);
 
   const loadLayout = async (transport: MockTransport, vm: BuildPageViewModel) => {
-    const status = await transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
+    const status = await transport.sdlcBuildStatus({ workspace: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE });
     const [found] = (await readAllChanges(transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
     await vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: found, status, done: false, review: null });
   };
@@ -861,7 +861,7 @@ describe('the layout follows the real build page through a finish, whatever orde
 
   it('R10.5, R16.1: a finished change whose review exists only as a run opens in Review, without a move or an announcement, however late its sessions are read', async () => {
     const { vm, transport, layout, stages, said } = layoutSetup();
-    const heads = await transport.sdlcBuildHeads(FOLDER, MOCK_MASTER, 'commerce', [MOCK_MASTER, 'commerce-core', 'customer-portal'], MOCK_BUILD_CHANGE);
+    const heads = await transport.sdlcBuildHeads({ workspace: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE }, [MOCK_MASTER, 'commerce-core', 'customer-portal']);
     const review: RunLink = { workspace_id: 'acme-commerce', system: 'commerce', change: MOCK_BUILD_CHANGE, stage: 'review', run_id: 'review-1', started_at: 1, heads };
     const gate = deferred();
     vi.spyOn(transport, 'sdlcRunLinks').mockImplementation(async () => {
@@ -870,7 +870,7 @@ describe('the layout follows the real build page through a finish, whatever orde
     });
     vi.spyOn(transport, 'sdlcTaskLinks').mockResolvedValue([]);
     vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: 'review-1', kata: 'review', started_at: 0, isolation: 'none', steered: false, exit: 0, turns: 1, cost_usd: 0 }]);
-    const status = await transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
+    const status = await transport.sdlcBuildStatus({ workspace: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE });
     const [found] = (await readAllChanges(transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
     const loading = vm.load({
       ctx: CTX,
@@ -1011,7 +1011,7 @@ describe('the build page reads the backend\'s build and starts it through the ho
   /** A page opened on the mock build change, with nothing hosted by the backend yet. */
   async function opened() {
     const s = setup();
-    const status = await s.transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
+    const status = await s.transport.sdlcBuildStatus({ workspace: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE });
     const [found] = (await readAllChanges(s.transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
     const input = { ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: found, status, done: false, review: null };
     const load = () => s.vm.load(input);
@@ -1194,7 +1194,7 @@ describe('moving the page from one change to another (F1)', () => {
       ctx: { ...CTX, change: name },
       master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` },
       change: await s.transport.sdlcChangeState(FOLDER, 'commerce', name),
-      status: await s.transport.sdlcBuildStatus(FOLDER, 'commerce', name),
+      status: await s.transport.sdlcBuildStatus({ workspace: FOLDER, system: 'commerce', change: name }),
       done: false,
       review: null,
     });

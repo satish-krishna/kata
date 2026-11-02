@@ -36,7 +36,7 @@ type Setup = {
 async function open(setup: Setup) {
   const transport = new MockTransport();
   if (!setup.logLayouts) transport.patchChange(MOCK_BUILD_CHANGE, { stage: 'plan-awaiting' });
-  vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_m, _s, _c, stem) => PROSE(stem));
+  vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_r, stem) => PROSE(stem));
   vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(setup.readiness ?? READY);
   if (setup.logLayouts) {
     const status = transport.sdlcBuildStatus.bind(transport);
@@ -45,7 +45,7 @@ async function open(setup: Setup) {
     );
   }
   const documents: Record<string, ReadResult> = { spec: setup.spec ?? parsedSpec(), plan: setup.plan ?? parsedPlan() };
-  vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_m, _s, _c, stem) => {
+  vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_r, stem) => {
     if (setup.unreadable?.[stem] !== undefined) throw new Error(setup.unreadable[stem]);
     return documents[stem] ?? null;
   });

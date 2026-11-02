@@ -106,7 +106,7 @@ describe('ChangePageViewModel', () => {
     const read = vi.spyOn(transport, 'sdlcReadDoc');
     const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
-    expect(read).toHaveBeenCalledWith(expect.any(String), 'commerce', PHOTOS_CHANGE, 'spec');
+    expect(read).toHaveBeenCalledWith({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: PHOTOS_CHANGE }, 'spec');
   });
 
   it('a message typed and the tab opened on a change come back when its page is opened again (R13.6)', async () => {

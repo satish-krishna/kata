@@ -488,7 +488,7 @@ describe('ChangesView progress line', () => {
   it('names the repository being read while what changed loads (R7.1)', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     const { transport, release } = slow();
-    const repos = await transport.sdlcChangeRepos(MOCK_WORKSPACE_FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE);
+    const repos = await transport.sdlcChangeRepos({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE });
     const second = repos[1].repo;
     const { container, fixture } = await mount(transport);
     expect(container.querySelector('app-progress-line')).toBeNull();

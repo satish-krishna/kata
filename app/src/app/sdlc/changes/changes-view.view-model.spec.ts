@@ -24,7 +24,7 @@ describe('ChangesViewModel', () => {
 
   it('names each product repository that has no change branch, so its absence from the list is explained', async () => {
     const { vm, transport } = setup();
-    expect(await transport.sdlcMissingChangeBranches(CTX.folder, CTX.masterRepo, CTX.system, CTX.change)).toEqual([]);
+    expect(await transport.sdlcMissingChangeBranches({ workspace: CTX.folder, system: CTX.system, change: CTX.change })).toEqual([]);
     vi.spyOn(transport, 'sdlcMissingChangeBranches').mockResolvedValue(['billing']);
     await vm.open(CTX);
     expect(vm.missingBranches()).toEqual(['billing']);

@@ -148,11 +148,11 @@ const status = (tasks: TaskStatus[]): BuildStatus => ({ tasks, repos: [], depart
  */
 async function mount(change: string, docs: Record<string, string | null>, tasks: TaskStatus[] = [], parsed: { spec?: ReadResult; plan?: ParsedTask[] } = {}) {
   const transport = new MockTransport();
-  vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_m, _s, _c, stem) => docs[stem] ?? null);
+  vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_r, stem) => docs[stem] ?? null);
   vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(status(tasks));
   const spec = parsed.spec ?? specOf(docs['spec']?.includes('```gherkin') ? REQUIREMENTS : []);
   const plan = parsed.plan ?? tasks.map((t) => PLANNED[t.id] ?? planned(t.id, t.name, t.repo, t.dependsOn, []));
-  vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_m, _s, _c, stem) => {
+  vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_r, stem) => {
     if (docs[stem] == null) return null;
     if (stem === 'spec') return spec;
     return { kind: 'plan', layout: 1, document: { tasks: plan, shared_decisions: [] }, problems: [] };
@@ -498,8 +498,8 @@ describe('ChangePage opens an existing change on the build page', () => {
     const transport = new MockTransport();
     transport.patchChange(MOCK_BUILD_CHANGE, { stage });
     const status = transport.sdlcBuildStatus.bind(transport);
-    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => {
-      const got = await status(m, s, c);
+    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (r) => {
+      const got = await status(r);
       const all = built.length === got.tasks.length;
       return { ...got, repos: all ? got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })) : got.repos, tasks: got.tasks.map((t) => (built.includes(t.id) ? { ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } } : t)) };
     });
