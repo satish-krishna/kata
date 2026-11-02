@@ -158,6 +158,8 @@ pub enum BranchError {
     Dirty(Vec<String>),
     #[error("invalid branch name: {0}")]
     InvalidName(String),
+    #[error("`{branch}` is held by the copy of `{change}`; open that change instead.")]
+    HeldByCopy { branch: String, change: String },
     #[error(transparent)]
     Git(#[from] GitError),
 }
@@ -769,5 +771,55 @@ mod copy_tests {
         let got = heads(&folder, &copy, "m", "s", &["app".into()], change).unwrap();
         let want = git::run(&app, &["rev-parse", "feat/x"]).unwrap();
         assert_eq!(got["app"], want);
+    }
+
+    /// A master with `change/a` checked out in a copy under `<ws>/.ai-sdlc/copies/a` and `change/b` only a branch.
+    fn master_with_copy() -> (tempfile::TempDir, std::path::PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = testutil::repo(tmp.path(), "m");
+        git::run(&master, &["branch", "change/b"]).unwrap();
+        let copies = tmp.path().join(".ai-sdlc").join("copies");
+        std::fs::create_dir_all(&copies).unwrap();
+        let copy = copies.join("a");
+        git::run(
+            &master,
+            &["worktree", "add", "-b", "change/a", &copy.to_string_lossy()],
+        )
+        .unwrap();
+        (tmp, master)
+    }
+
+    #[test]
+    fn other_change_branches_leave_out_branches_held_by_a_copy() {
+        let (_tmp, master) = master_with_copy();
+        assert_eq!(
+            other_change_branches(&master),
+            [OtherBranch {
+                branch: "change/b".into(),
+                change: "b".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn checkout_refuses_a_branch_held_by_a_copy() {
+        let (_tmp, master) = master_with_copy();
+        let err = checkout(&master, "change/a").unwrap_err();
+        assert!(
+            matches!(&err, BranchError::HeldByCopy { branch, change } if branch == "change/a" && change == "a"),
+            "{err:?}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "`change/a` is held by the copy of `a`; open that change instead."
+        );
+        assert_eq!(current_branch(&master).as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn checkout_switches_to_a_branch_no_copy_holds() {
+        let (_tmp, master) = master_with_copy();
+        checkout(&master, "change/b").unwrap();
+        assert_eq!(current_branch(&master).as_deref(), Some("change/b"));
     }
 }
