@@ -21,6 +21,7 @@ import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { Offender } from '@bindings/Offender';
 import type { PrResult } from '@bindings/PrResult';
+import type { DeclareView } from '@bindings/DeclareView';
 import type { DoneView } from '@bindings/DoneView';
 import type { PrLink } from '@bindings/PrLink';
 import type { LeftBehind } from '../../ui/pr-list-dialog';
@@ -708,6 +709,14 @@ export class ChangePageViewModel {
   private doneBranch: string | null = null;
   /** The results of opening the pull requests, shown in a dialog that is open exactly while this is set. */
   readonly prList = signal<PrResult[] | null>(null);
+  /** What the plugin answered to declaring done; the result dialog is open while this is set. */
+  readonly declareView = signal<DeclareView | null>(null);
+  closeDeclareView(): void {
+    this.declareView.set(null);
+  }
+  async declareAgain(): Promise<void> {
+    // Not built yet.
+  }
   /** The pull requests an earlier branch name left open on GitHub, shown with the list. */
   readonly prLeftBehind = signal<LeftBehind[]>([]);
 

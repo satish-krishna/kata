@@ -5,6 +5,7 @@ import { runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, seedSpe
 import type { KataEvent } from '../../lib/events';
 import { stageName, transcriptRunId } from '../../lib/sdlc';
 import type { RunSpec } from '@bindings/RunSpec';
+import type { DoneStep } from '@bindings/DoneStep';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { Resolved } from '@bindings/Resolved';
 import type { BuildEvent } from '@bindings/BuildEvent';
@@ -539,5 +540,62 @@ describe('MockTransport branch naming demos', () => {
     await withDemo('clash-push', async (t) => {
       expect((await publish(t)).results).toEqual([{ repo: 'commerce-core', outcome: { kind: 'clash', branch: `change/${MOCK_DONE_CHANGE}` } }]);
     });
+  });
+});
+
+describe('MockTransport declaring-done demos', () => {
+  const ref: ChangeRef = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_DONE_CHANGE };
+  /** Run `body` with `?demo=<demo>` in the address, the way the browser checks reach a demo. */
+  const withDemo = async (demo: string | null, body: (t: MockTransport) => Promise<void>) => {
+    window.history.replaceState({}, '', demo === null ? '/' : `/?demo=${demo}`);
+    try {
+      await body(new MockTransport());
+    } finally {
+      window.history.replaceState({}, '', '/');
+    }
+  };
+
+  it('declares done with every pull request, the master last, naming each step it is on (R7.1 passes, R7.3)', async () => {
+    await withDemo(null, async (t) => {
+      const steps: DoneStep[] = [];
+      await t.onDoneStep((step) => steps.push(step));
+      const view = await t.sdlcDeclareDone(ref);
+      expect(view.kind).toBe('done');
+      const repos = view.kind === 'done' ? view.pullRequests.map((p) => p.repo) : [];
+      expect(repos.at(-1)).toBe('commerce-docs');
+      expect(steps.map((s) => s.label)).toEqual([
+        'Declaring done: the plugin is verifying the change',
+        ...repos.flatMap((r) => [`Pushing ${r}`, `Opening a pull request in ${r}`]),
+      ]);
+    });
+  });
+
+  it.each([
+    ['done-refused', 'notReady'],
+    ['done-gh', 'notReady'],
+    ['done-cannot', 'couldNotRun'],
+  ] as const)("?demo=%s gives the plugin's %s answer (R7.1, R9.1)", async (demo, kind) => {
+    await withDemo(demo, async (t) => {
+      const view = await t.sdlcDeclareDone(ref);
+      expect(view.kind).toBe(kind);
+      if (view.kind === 'notReady' && demo === 'done-gh') expect(view.problems).toEqual(["Declaring done needs GitHub's command-line tool, gh. Install it from https://cli.github.com and reopen."]);
+      if (view.kind === 'notReady' && demo === 'done-refused') expect(view.problems.join(' ')).toContain('has unresolved high findings');
+    });
+  });
+
+  it('?demo=done-partial stops part way, and declaring done again carries on to done (R7.1 fails)', async () => {
+    await withDemo('done-partial', async (t) => {
+      const first = await t.sdlcDeclareDone(ref);
+      expect(first.kind).toBe('partial');
+      expect((await t.sdlcDeclareDone(ref)).kind).toBe('done');
+    });
+  });
+
+  it('the done demos have nothing uncommitted, so declaring done is offered at once', async () => {
+    for (const demo of [null, 'done-refused']) {
+      await withDemo(demo, async (t) => {
+        expect((await t.sdlcDiffFiles('/w', 'uncommitted')).files.length > 0).toBe(demo === null);
+      });
+    }
   });
 });

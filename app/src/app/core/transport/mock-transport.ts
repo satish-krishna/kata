@@ -39,6 +39,8 @@ import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { OldChecks } from '@bindings/OldChecks';
 import type { PublishSummary } from '@bindings/PublishSummary';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
+import type { DeclareView } from '@bindings/DeclareView';
+import type { DoneStep } from '@bindings/DoneStep';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
 import type { DoneView } from '@bindings/DoneView';
@@ -335,6 +337,7 @@ export class MockTransport extends KataTransport {
   sdlcOldChecks(_folder: string, system: string): Promise<OldChecks | null> { return Promise.resolve(this.sdlc.oldChecks(system)); }
   sdlcOldChecksSeen(system: string): Promise<void> { this.sdlc.oldChecksSeen(system); return Promise.resolve(); }
   sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]> { return Promise.resolve(this.sdlc.checksView(change.change)); }
+  sdlcDeclareDone(_change: ChangeRef): Promise<DeclareView> { return Promise.reject(new Error('declaring done is not scripted yet')); }
   sdlcGhSignedIn(_repos: PublishRepo[]): Promise<string> { return Promise.resolve('demo-user'); }
   sdlcGhOrigins(_repos: PublishRepo[]): Promise<void> { return Promise.resolve(); }
   sdlcPublish(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, change: string, repos: PublishRepo[]): Promise<PublishSummary> {
@@ -368,6 +371,8 @@ export class MockTransport extends KataTransport {
   pickDirectory(): Promise<string | null> { return Promise.resolve(null); }
   pickOpenSpec(): Promise<string | null> { return Promise.resolve(null); }
   pickSaveSpec(): Promise<string | null> { return Promise.resolve(null); }
+
+  async onDoneStep(_cb: (step: DoneStep) => void): Promise<() => void> { return () => undefined; }
 
   async onPublishStep(cb: (step: PublishStep) => void): Promise<() => void> {
     this.publishListeners.add(cb);

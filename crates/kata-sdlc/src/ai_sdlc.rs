@@ -134,6 +134,17 @@ impl Program {
         self.call(&args, &place.workspace)
     }
 
+    /// [`Program::run`] that hands each whole stdout line to `on_line` while the command runs, within `limit`.
+    pub fn run_streaming(
+        &self,
+        _command: &[&str],
+        _place: &Place,
+        _limit: Duration,
+        _on_line: kata_core::proc::LineSink,
+    ) -> Result<Value, ProgramError> {
+        todo!()
+    }
+
     /// Finds the master repository of `workspace` as the program's `resolve` does, with no master given.
     /// A workspace with no master, or with several, is `CouldNotRun` with the program's reason.
     pub fn resolve(&self, workspace: &Path) -> Result<Place, ProgramError> {

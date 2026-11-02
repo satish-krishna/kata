@@ -1,5 +1,6 @@
 import { TauriTransport, type TauriIpc } from './tauri-transport';
 import { seedSpec } from '../../lib/mock';
+import type { DoneStep } from '@bindings/DoneStep';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { KataEvent } from '../../lib/events';
 import type { Settings } from '@bindings/Settings';
@@ -135,6 +136,7 @@ const rows: Row[] = [
   ['sdlcOldChecksSeen', (t) => t.sdlcOldChecksSeen('s'), 'sdlc_old_checks_seen', { system: 's' }],
   ['sdlcGhSignedIn', (t) => t.sdlcGhSignedIn([publishRepo]), 'sdlc_gh_signed_in', { repos: [publishRepo] }],
   ['sdlcGhOrigins', (t) => t.sdlcGhOrigins([publishRepo]), 'sdlc_gh_origins', { repos: [publishRepo] }],
+  ['sdlcDeclareDone', (t) => t.sdlcDeclareDone({ workspace: '/w', system: 's', change: 'c' }), 'sdlc_declare_done', { change: { workspace: '/w', system: 's', change: 'c' } }],
   ['sdlcPublish', (t) => t.sdlcPublish('/w', 'w1', 'm', 's', 'c', [publishRepo]), 'sdlc_publish', { folder: '/w', workspaceId: 'w1', masterRepo: 'm', system: 's', change: 'c', repos: [publishRepo] }],
   ['sdlcDoneView', (t) => t.sdlcDoneView('/w', 'm', 'w1', 's', 'c', true), 'sdlc_done_view', { folder: '/w', masterRepo: 'm', workspaceId: 'w1', system: 's', change: 'c', buildFinished: true }],
   ['sdlcRefreshPrStates', (t) => t.sdlcRefreshPrStates('/w', 'm', 'w1', 's', 'c', false), 'sdlc_refresh_pr_states', { folder: '/w', masterRepo: 'm', workspaceId: 'w1', system: 's', change: 'c', buildFinished: false }],
@@ -192,6 +194,17 @@ describe('TauriTransport', () => {
     const event = { type: 'turn', n: 1 } as KataEvent;
     handler({ payload: { runId: 7, seq: 12, event } });
     expect(seen).toEqual([['7', event, 12]]);
+  });
+
+  it('hands the payload of sdlc://done-step over as the step', async () => {
+    const ipc = fakeIpc();
+    const t = new TauriTransport(asIpc(ipc));
+    const seen: DoneStep[] = [];
+    await t.onDoneStep((step) => seen.push(step));
+    const [event, handler] = ipc.listen.mock.calls[0] as unknown as [string, (e: { payload: DoneStep }) => void];
+    expect(event).toBe('sdlc://done-step');
+    handler({ payload: { kind: 'push', label: 'Pushing commerce-core' } });
+    expect(seen).toEqual([{ kind: 'push', label: 'Pushing commerce-core' }]);
   });
 
   it('hands the payload of sdlc://publish-step over as the step', async () => {

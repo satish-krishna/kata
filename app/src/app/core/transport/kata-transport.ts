@@ -36,6 +36,8 @@ import type { PublishRepo } from '@bindings/PublishRepo';
 import type { Offender } from '@bindings/Offender';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { OldChecks } from '@bindings/OldChecks';
+import type { DeclareView } from '@bindings/DeclareView';
+import type { DoneStep } from '@bindings/DoneStep';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
 import type { PublishSummary } from '@bindings/PublishSummary';
@@ -210,6 +212,8 @@ export abstract class KataTransport {
   abstract sdlcOldChecks(folder: string, system: string): Promise<OldChecks | null>;
   /** Record that the engineer has been told about a system's old checks file. */
   abstract sdlcOldChecksSeen(system: string): Promise<void>;
+  /** Declare the change done through the plugin: it verifies, pushes every touched repository and opens the pull requests. Resolves to what it came to; progress arrives through `onDoneStep`. */
+  abstract sdlcDeclareDone(change: ChangeRef): Promise<DeclareView>;
   abstract sdlcGhSignedIn(repos: PublishRepo[]): Promise<string>;
   abstract sdlcGhOrigins(repos: PublishRepo[]): Promise<void>;
   abstract sdlcPublish(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]): Promise<PublishSummary>;
@@ -225,6 +229,8 @@ export abstract class KataTransport {
   abstract openUrl(url: string): Promise<void>;
   /** Step the window's zoom. Resolves to the new level, which the backend remembers for the next launch. */
   abstract zoom(step: ZoomStep): Promise<number>;
+  /** Register for the step the plugin is on while a change is declared done. Resolves to the unlisten function. */
+  abstract onDoneStep(cb: (step: DoneStep) => void): Promise<() => void>;
   /** Register for what publishing is doing (pushing or opening a pull request, per repository). Resolves to the unlisten function. */
   abstract onPublishStep(cb: (step: PublishStep) => void): Promise<() => void>;
   /** Register for a change's build state each time it changes. Resolves to the unlisten function. */

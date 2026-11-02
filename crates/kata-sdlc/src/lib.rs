@@ -12,6 +12,7 @@ pub mod commits;
 pub mod coordinator;
 pub mod copy_removal;
 pub mod diff;
+pub mod done;
 pub mod format;
 pub mod frontmatter;
 pub mod git;

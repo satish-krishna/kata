@@ -53,6 +53,13 @@ describe('DoneDialog', () => {
     expect(button('Open pull requests')!.disabled).toBe(false);
   });
 
+  it("no tick box for a high finding: whether it is refused is the plugin's answer (R7.2)", async () => {
+    await open(report({ review: { at: Date.UTC(2026, 9, 19, 9, 30, 0), findings: [{ severity: 'high', text: 'The change cannot do what it was built for.' }] } }));
+    expect(dialog().querySelector('[role="checkbox"]')).toBeNull();
+    expect(text()).not.toContain('unresolved');
+    expect(button('Open pull requests')!.disabled).toBe(false);
+  });
+
   it('asks for no acknowledgement when no finding is high', async () => {
     await open(report({ review: { at: Date.UTC(2026, 9, 19, 9, 30, 0), findings: [{ severity: 'medium', text: 'x' }] } }));
     expect(dialog().querySelector('[role="checkbox"]')).toBeNull();

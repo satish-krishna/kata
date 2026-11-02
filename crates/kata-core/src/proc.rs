@@ -173,6 +173,14 @@ pub fn run_limited(spec: &Limited) -> Outcome {
     }
 }
 
+/// Where [`run_limited_streaming`] sends each whole stdout line as it is read.
+pub type LineSink = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// [`run_limited`] that also hands each whole stdout line to `on_line` while the child runs.
+pub fn run_limited_streaming(_spec: &Limited, _on_line: LineSink) -> Outcome {
+    todo!()
+}
+
 const MAX_LINES: usize = 50;
 const MAX_BYTES: usize = 64 * 1024;
 /// How often the runner checks whether the child has exited.

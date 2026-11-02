@@ -1,4 +1,5 @@
 import { Component, computed, input, output } from '@angular/core';
+import type { DeclareView } from '@bindings/DeclareView';
 import type { PrResult } from '@bindings/PrResult';
 import type { BrnDialogState } from '@spartan-ng/brain/dialog';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
@@ -25,7 +26,11 @@ export class PrListDialog {
   readonly openLink = output<string>();
   /** The pull requests an earlier branch name left open on GitHub. */
   readonly leftBehind = input<LeftBehind[]>([]);
+  /** The plugin's answer to declaring done; the dialog is open while this is set. */
+  readonly view = input<DeclareView | null>(null);
   readonly renameBranch = output<string>();
+  readonly runReview = output<void>();
+  readonly anotherRound = output<void>();
   readonly retry = output<void>();
   readonly close = output<void>();
 

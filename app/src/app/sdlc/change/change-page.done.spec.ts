@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import { render } from '../../../testing/render';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { DeclareView } from '@bindings/DeclareView';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { PrEntry } from '@bindings/PrEntry';
 import type { PrLink } from '@bindings/PrLink';
@@ -612,5 +613,99 @@ describe('a branch name, after a rename or a push that met another change', () =
     expect(vm.prLeftBehind()).toEqual([old]);
     vm.closePrList();
     expect(vm.prLeftBehind()).toEqual([]);
+  });
+});
+
+describe("declaring done is the plugin's step", () => {
+  const link = (repo: string, number: number) => ({ repo, url: `https://github.com/acme/${repo}/pull/${number}`, number, source: 'plugin' as const });
+  const ASKED = { workspace: expect.any(String), system: 'commerce', change: BUILD };
+
+  it('confirming runs the plugin once for the change and shows its pull requests, the master last, and the change as done (R7.1 passes)', async () => {
+    const { vm, transport } = await finished();
+    const declare = vi.spyOn(transport, 'sdlcDeclareDone');
+    await vm.act('declare-done');
+    await vm.confirmDone();
+    expect(declare).toHaveBeenCalledTimes(1);
+    expect(declare).toHaveBeenCalledWith(ASKED);
+    const view = vm.declareView();
+    expect(view?.kind).toBe('done');
+    expect(view?.kind === 'done' && view.pullRequests.map((p) => p.repo)).toEqual([...REPOS, 'commerce-docs']);
+    expect(vm.done()).toBe(true);
+    vm.closeDeclareView();
+    expect(vm.declareView()).toBeNull();
+  });
+
+  it.each([
+    ['refuses, listing what is not ready', { kind: 'notReady', problems: ['customer-portal has uncommitted files: a.rs'] }],
+    ['fails part way', { kind: 'partial', pushed: ['commerce-core'], opened: [], failed: ['opening the pull request in commerce-core failed: boom'] }],
+    ['cannot run on this machine', { kind: 'couldNotRun', message: 'ai-sdlc needs Node.js 22.18 or later' }],
+  ] satisfies [string, DeclareView][])('the plugin %s: the engineer sees exactly that answer (R7.1)', async (_row, view) => {
+    const { vm, transport } = await finished((t) => vi.spyOn(t, 'sdlcDeclareDone').mockResolvedValue(view));
+    await vm.act('declare-done');
+    await vm.confirmDone();
+    expect(vm.declareView()).toEqual(view);
+    expect(vm.done()).toBe(false);
+    expect(transport.sdlcDeclareDone).toHaveBeenCalledTimes(1);
+  });
+
+  it('declaring done again after a part-way failure asks the plugin again, which carries on (R7.1 fails)', async () => {
+    const partial: DeclareView = { kind: 'partial', pushed: ['commerce-core'], opened: [], failed: ['opening the pull request in commerce-core failed: boom'] };
+    const { vm, transport } = await finished();
+    const declare = vi.spyOn(transport, 'sdlcDeclareDone').mockResolvedValueOnce(partial);
+    await vm.act('declare-done');
+    await vm.confirmDone();
+    expect(vm.declareView()).toEqual(partial);
+    await vm.declareAgain();
+    expect(declare).toHaveBeenCalledTimes(2);
+    expect(vm.declareView()?.kind).toBe('done');
+  });
+
+  it('a high finding asks for no tick box and does not hold the plugin: whether it is refused is its answer (R7.2)', async () => {
+    const { vm, transport } = await finished();
+    const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
+    const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
+    const finding = { id: 'F1', severity: 'high' as const, file: 'src/a.ts', line: 4, text: 'The limit is not enforced on retry.' };
+    vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({ layout: 2, problems: [], master_moved: [], reviews: [{ number: 1, reviewed_at: '2026-10-22', commits, findings: [finding] }] });
+    const declare = vi.spyOn(transport, 'sdlcDeclareDone');
+    await vm.act('declare-done');
+    expect(vm).not.toHaveProperty('doneAcknowledged');
+    await vm.confirmDone();
+    expect(declare).toHaveBeenCalledTimes(1);
+  });
+
+  it('each step the plugin reports becomes the lock\'s progress line, named by what it is (R7.3)', async () => {
+    const { vm } = await finished();
+    const progress = TestBed.inject(ProgressStore);
+    const begin = vi.spyOn(progress, 'begin');
+    await vm.act('declare-done');
+    await vm.confirmDone();
+    const lines = begin.mock.calls.filter((c) => c[2] === 'lock').map((c) => [c[0], c[1]]);
+    expect(lines).toEqual([
+      ['running-checks', 'Declaring done: the plugin is verifying the change'],
+      ...[...REPOS, 'commerce-docs'].flatMap((r) => [['pushing', `Pushing ${r}`], ['opening-prs', `Opening a pull request in ${r}`]]),
+    ]);
+    expect(progress.view('lock')()).toBeNull();
+  });
+
+  it('a call that fails outright clears the progress line before it raises its error (R7.1)', async () => {
+    const { vm, transport } = await finished();
+    const progress = TestBed.inject(ProgressStore);
+    vi.spyOn(transport, 'sdlcDeclareDone').mockImplementation(async () => {
+      progress.begin('pushing', 'Pushing commerce-core', 'lock');
+      throw new Error('the backend is gone');
+    });
+    const fail = vi.spyOn(progress, 'fail');
+    await vm.act('declare-done');
+    await vm.confirmDone();
+    expect(fail).toHaveBeenCalledWith('lock');
+    expect(progress.view('lock')()).toBeNull();
+    expect(toastText()).toContain('the backend is gone');
+  });
+
+  it('what Kata used to check itself is not asked any more (R7.1)', async () => {
+    const { vm, transport } = await finished();
+    for (const gone of ['sdlcTouchedRepos', 'sdlcGhSignedIn', 'sdlcGhOrigins', 'sdlcCommitOffenders', 'sdlcPublish']) expect(transport).not.toHaveProperty(gone);
+    await vm.act('declare-done');
+    expect(vm.doneReport()!.repos.map((r) => r.repo)).toEqual(['commerce-docs', ...REPOS]);
   });
 });
