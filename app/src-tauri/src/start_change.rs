@@ -197,10 +197,10 @@ pub fn started_by_run(events: &[kata_core::event::KataEvent], system: &str) -> O
             kata_core::event::KataEvent::ToolResult {
                 output: Some(output),
                 ..
-            } => started(output).or_else(|| output.lines().filter_map(started).last()),
+            } => started(output).or_else(|| output.lines().filter_map(started).next_back()),
             _ => None,
         })
-        .last()
+        .next_back()
 }
 
 #[cfg(test)]
