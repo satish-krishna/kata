@@ -75,6 +75,16 @@ impl RepoKey {
         }
     }
 
+    /// Whether `inner` is this folder or a folder inside it, compared by whole path components, so
+    /// `D:\ws\kata2` is not inside `D:\ws\kata`.
+    pub fn contains(&self, inner: &RepoKey) -> bool {
+        inner.key == self.key
+            || inner
+                .key
+                .strip_prefix(&self.key)
+                .is_some_and(|rest| rest.starts_with('/') || self.key.ends_with('/'))
+    }
+
     /// The repository's folder name, for messages.
     pub fn name(&self) -> &str {
         &self.name
