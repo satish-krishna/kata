@@ -30,7 +30,6 @@ import {
   lastRunTimes,
   masterPath,
   masterRepo,
-  productRepos,
   readContextStates,
   repoRows,
   systemNames,
@@ -567,7 +566,7 @@ export class SdlcHomeViewModel {
       return;
     }
     try {
-      const target = { workspace, master, productRepos: productRepos(scan) };
+      const target = { workspace, master };
       const confirm = (spec: RunSpec) => this.confirm(spec);
       const more: [PickedNaming?, string?] = branch ? [picked ?? undefined, branch] : picked ? [picked] : [];
       const outcome = await this.runner.newChange(target, system, idea, track, confirm, ...more);
@@ -788,8 +787,7 @@ export class SdlcHomeViewModel {
     if (!spec) return;
     await this.runner.run(title, spec, {
       workspaceId: workspace.id,
-      master,
-      productRepos: productRepos(scan),
+      target: { kind: 'workspace', master },
       link: null,
       label,
     });
@@ -806,8 +804,7 @@ export class SdlcHomeViewModel {
     if (!spec) return null;
     const out = await this.runner.run('Running setup', spec, {
       workspaceId: folderName(folder),
-      master,
-      productRepos: productRepos(scan),
+      target: master === null ? null : { kind: 'workspace', master },
       link: null,
       label: 'Setup',
       // No master yet: snapshot every repo so a stopped setup can still report what it left in the master it made.

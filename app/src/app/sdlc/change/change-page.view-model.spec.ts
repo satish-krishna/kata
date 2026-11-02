@@ -1360,7 +1360,7 @@ describe('ChangePageViewModel document runs of different changes (R11)', () => {
     const cancel = vi.spyOn(transport, 'cancelRun');
     await ready(vm);
     // Change A's run goes through the runner, as its own page would start it.
-    void TestBed.inject(SdlcRunner).run('Starting spec of A', { ...seedSpec(), name: 'sdlc-commerce-a-spec' }, { workspaceId: 'w', master: null, productRepos: [], link: null }, { ref: OTHER, kind: 'spec' });
+    void TestBed.inject(SdlcRunner).run('Starting spec of A', { ...seedSpec(), name: 'sdlc-commerce-a-spec' }, { workspaceId: 'w', target: null, link: null }, { ref: OTHER, kind: 'spec' });
     await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(1));
     void vm.act('start-spec');
     await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(2));
@@ -1407,7 +1407,7 @@ describe('ChangePageViewModel document runs of different changes (R11)', () => {
 describe("ChangePageViewModel: the session view's Close waits on the run it shows (F30)", () => {
   /** A run of no change, as the home starts a triage, setup or context run: it takes the screen and settles on place null. */
   const homeRun = (master: string | null = null) =>
-    TestBed.inject(SdlcRunner).run('Triage', { ...seedSpec(), name: 'sdlc-triage' }, { workspaceId: 'w', master, productRepos: [], link: null });
+    TestBed.inject(SdlcRunner).run('Triage', { ...seedSpec(), name: 'sdlc-triage' }, { workspaceId: 'w', target: master === null ? null : { kind: 'workspace', master }, link: null });
   /** Hold the engine's exit of the next run that waits on it, so its after-run work stays going until the test lets it go. */
   const holdExit = (transport: MockTransport) => {
     let exit!: (v: boolean) => void;
@@ -1521,7 +1521,7 @@ describe("ChangePageViewModel: Close waits on the settling of the run on show, t
   /** A run of no change (a triage) that takes the screen, cancelled; it has no master, so it leaves nothing to decide. */
   const lockRun = async ({ transport }: Ctx, settling: boolean) => {
     const lock = TestBed.inject(LockStore);
-    void TestBed.inject(SdlcRunner).run('Triage', { ...seedSpec(), name: 'sdlc-triage' }, { workspaceId: 'w', master: null, productRepos: [], link: null });
+    void TestBed.inject(SdlcRunner).run('Triage', { ...seedSpec(), name: 'sdlc-triage' }, { workspaceId: 'w', target: null, link: null });
     await vi.waitFor(() => expect(lock.active()?.kind).toBe('run'));
     const held = settling ? holdExit(transport) : null;
     lock.cancel();
@@ -1532,7 +1532,7 @@ describe("ChangePageViewModel: Close waits on the settling of the run on show, t
   /** The full-track start of a new change that the plugin names this page's change: its intent run lives in this change's session. */
   const intentRun = async ({ vm, transport }: Ctx, settling: boolean) => {
     vi.spyOn(transport, 'sdlcStartChange').mockResolvedValue({ outcome: 'started', change: PHOTOS_CHANGE, branch: `change/${PHOTOS_CHANGE}`, copy: '/copy' });
-    void TestBed.inject(SdlcRunner).newChange({ workspace: vm.current()!, master: '/ws/commerce-docs', productRepos: [] }, 'commerce', 'flag prices', 'full');
+    void TestBed.inject(SdlcRunner).newChange({ workspace: vm.current()!, master: '/ws/commerce-docs' }, 'commerce', 'flag prices', 'full');
     await vi.waitFor(() => expect(LIVE).toContain(vm.runState()));
     expect(vm.session()?.title).toBe('Starting a change');
     const held = settling ? holdExit(transport) : null;
@@ -1550,12 +1550,12 @@ describe("ChangePageViewModel: Close waits on the settling of the run on show, t
     const runner = TestBed.inject(SdlcRunner);
     if (other === 'home') {
       const lock = TestBed.inject(LockStore);
-      void runner.run('Context', { ...seedSpec(), name: 'sdlc-context' }, { workspaceId: 'w', master: null, productRepos: [], link: null });
+      void runner.run('Context', { ...seedSpec(), name: 'sdlc-context' }, { workspaceId: 'w', target: null, link: null });
       await vi.waitFor(() => expect(lock.active()?.kind).toBe('run'));
       lock.cancel();
     } else {
       const runs = TestBed.inject(ChangeRunStore);
-      void runner.run('Starting spec of B', { ...seedSpec(), name: 'sdlc-commerce-b-spec' }, { workspaceId: 'w', master: null, productRepos: [], link: null }, { ref: OTHER, kind: 'spec' });
+      void runner.run('Starting spec of B', { ...seedSpec(), name: 'sdlc-commerce-b-spec' }, { workspaceId: 'w', target: null, link: null }, { ref: OTHER, kind: 'spec' });
       await vi.waitFor(() => expect(runs.session(changeRunKey(OTHER))?.runId).toBeTruthy());
       runs.cancel(changeRunKey(OTHER));
     }

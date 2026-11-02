@@ -74,7 +74,7 @@ import { section } from '../../lib/doc';
 import { fullPipelineIdea } from '../../lib/sdlc-fix';
 import { inTauri } from '../../lib/mock';
 import { taskRecord, withRows, type TaskView } from '../../lib/task-view';
-import { masterPath, masterRepo, productRepos } from '../../lib/sdlc-workspace';
+import { masterPath, masterRepo } from '../../lib/sdlc-workspace';
 import { namingRefusal } from '../../lib/sdlc-naming';
 
 export type ChangeState = 'loading' | 'ready' | 'not-found';
@@ -1041,7 +1041,7 @@ export class ChangePageViewModel {
         this.toasts.error(namingRefusal(system, branches.default_base, naming.message));
         return;
       }
-      outcome = await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, 'full', (spec) => this.confirmRun(spec));
+      outcome = await this.runner.newChange({ workspace, master }, system, idea, 'full', (spec) => this.confirmRun(spec));
     } catch (e) {
       this.toasts.error(`Could not start the change: ${message(e)}`);
       return;
@@ -1369,8 +1369,7 @@ export class ChangePageViewModel {
     }
     const workspace = this.current();
     const scan = this.scan();
-    const master = this.masterDir();
-    if (!workspace || !scan || !master) return;
+    if (!workspace || !scan) return;
     let built;
     try {
       const settings = this.modes.settings() ?? (await this.modes.load());
@@ -1397,8 +1396,7 @@ export class ChangePageViewModel {
     if (!spec) return;
     await this.runner.run(run.title, spec, {
       workspaceId: workspace.id,
-      master,
-      productRepos: productRepos(scan),
+      target: { kind: 'change', ...ref },
       link: { system: this.system(), change: this.changeName(), stage: run.kind },
       label: run.label,
     }, { ref, kind: run.kind });

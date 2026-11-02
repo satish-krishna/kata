@@ -6,6 +6,7 @@ import type { Leftovers } from '@bindings/Leftovers';
 import type { RecordedPullRequest } from '@bindings/RecordedPullRequest';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { Snapshot } from '@bindings/Snapshot';
+import type { SnapshotTarget } from '@bindings/SnapshotTarget';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunState } from '../../lib/events';
 import type { ChangeRef } from '@bindings/ChangeRef';
@@ -14,19 +15,20 @@ import { documentForm, type DocumentKind } from '../../lib/build-host';
 import { IDLE, type RunSnapshot } from '../run/reduce';
 import { ChangeRunStore, changeRunKey } from '../run/change-run.store';
 import { restrictedFor, specFor, transcriptRunId, type StartTrack } from '../../lib/sdlc';
-import { masterPath, masterRepo, productRepos as productReposOf } from '../../lib/sdlc-workspace';
+import { masterPath, masterRepo } from '../../lib/sdlc-workspace';
 import { LockStore } from '../lock/lock.store';
 import { RunStore } from '../run/run.store';
 import { ToastStore } from '../toast/toast.store';
 import { KataTransport } from '../transport/kata-transport';
 
-/** What a run is about: where the master repo is, which product repos to watch, and what to link the transcript to. */
+/** What a run is about: where it is measured, and what to link the transcript to. */
 export type RunTarget = {
   workspaceId: string;
-  /** Absolute path of the master repo, or null before one exists (first setup): nothing is snapshotted then. */
-  master: string | null;
-  /** Folder names of the product repos checked for stray writes after a failed run. */
-  productRepos: string[];
+  /**
+   * Where the run's folder is snapshotted and its leftovers listed and discarded: the change for a run of a change, a master repo's folder
+   * for setup and context runs, or null before a master exists (first setup): nothing is snapshotted then. The backend works out the product repos.
+   */
+  target: SnapshotTarget | null;
   /** The change and stage the transcript belongs to, or null when the caller links it later. */
   link: { system: string; change: string; stage: string } | null;
   /** Names the run in the finished/failed toast; defaults to the lock title. */
@@ -81,7 +83,7 @@ export type Renamed = { branch: string; change: string; from: string; oldPullReq
 /** What the engineer picked when the system has a naming setting. */
 export type PickedNaming = { workType: WorkType; scope: string };
 
-export type ChangeTarget = { workspace: WorkspaceEntry; master: string; productRepos: string[] };
+export type ChangeTarget = { workspace: WorkspaceEntry; master: string };
 
 /**
  * What one stopped run left behind, offered on the page it belongs to: `place` is the change run's key for a change's own run, null for a
@@ -96,12 +98,12 @@ type Batch = { id: number; place: string | null; entries: RepoLeftovers[] };
 type Settling = { seq: number; place: string | null; change: string | null; runId: string | null };
 
 /** The master repo a stopped run is compared against, with its pre-run snapshot. */
-type Baseline = { master: string; snapshot: Snapshot; productRepos: string[] };
+type Baseline = { target: SnapshotTarget; snapshot: Snapshot };
 type PendingLink = { workspace_id: string; system: string; change: string; stage: string; started_at: number };
 
 /** One repository's uncommitted edits left by a run, with the snapshot that run started from. */
 /** What one repository's run left behind. `build` is set when the run belonged to a build: only that change's build log rows are build log data. */
-export type RepoLeftovers = { repo: string; path: string; snapshot: Snapshot; data: Leftovers; build?: BuildScope };
+export type RepoLeftovers = { repo: string; path: string; target: SnapshotTarget; snapshot: Snapshot; data: Leftovers; build?: BuildScope };
 /** The change a document run belongs to, when the change exists: the backend then composes the run-spec and claims the change's lane. */
 export type ChangeLaunch = { ref: ChangeRef; kind: DocumentKind };
 export type DiscardChoice = { repo: string; paths: string[] };
@@ -113,6 +115,8 @@ const EXIT_WAIT_MS = 15000;
 const TERMINAL: readonly RunState[] = ['success', 'warning', 'error'];
 const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
 
+/** Placeholder until the runner passes a change target through: every target is taken as a checkout. */
+const asWorkspace = (t: SnapshotTarget): SnapshotTarget => (t.kind === 'workspace' ? t : { kind: 'workspace', master: '' });
 const repoName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path;
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
@@ -312,9 +316,9 @@ export class SdlcRunner {
     }
     let snapshot: Snapshot | null = null;
     let candidates: Map<string, Snapshot> | null = null;
-    if (target.master !== null) {
+    if (target.target !== null) {
       try {
-        snapshot = await this.transport.sdlcSnapshot({ kind: 'workspace', master: target.master });
+        snapshot = await this.transport.sdlcSnapshot(asWorkspace(target.target));
       } catch (e) {
         this.toasts.error(`Could not read the master repo before the run: ${message(e)}`);
         return { state: 'error', runId: null, snapshot: null, exited: true, batch: null };
@@ -410,7 +414,7 @@ export class SdlcRunner {
     const entry = this.pending().find((b) => b.id === id)?.entries.find((p) => p.repo === repo);
     if (!entry) return false;
     try {
-      await this.transport.sdlcDiscard({ kind: 'workspace', master: entry.path }, entry.snapshot, paths, ...(entry.build ? [entry.build] : []));
+      await this.transport.sdlcDiscard(asWorkspace(entry.target), entry.snapshot, paths, ...(entry.build ? [entry.build] : []));
     } catch (e) {
       this.toasts.error(`Could not discard: ${message(e)}`);
       return false;
@@ -479,7 +483,7 @@ export class SdlcRunner {
     naming?: PickedNaming,
     branch?: string,
   ): Promise<NewChangeOutcome> {
-    const { workspace, master, productRepos } = target;
+    const { workspace, master } = target;
     if (this.isBusy()) {
       this.toasts.error('Another task is already running.');
       return { kind: 'refused' };
@@ -508,15 +512,14 @@ export class SdlcRunner {
       spec = confirmed;
     }
     return decide
-      ? this.triage(workspace, master, productRepos, system, idea, spec)
-      : this.startAndRun(workspace, master, productRepos, system, idea, spec, previewed, naming, branch);
+      ? this.triage(workspace, master, system, idea, spec)
+      : this.startAndRun(workspace, master, system, idea, spec, previewed, naming, branch);
   }
 
   /** Full track: ask the plugin to start the change, then run the intent skill in it. */
   private async startAndRun(
     workspace: WorkspaceEntry,
     master: string,
-    productRepos: string[],
     system: string,
     idea: string,
     confirmed: RunSpec,
@@ -559,7 +562,7 @@ export class SdlcRunner {
       null,
       'Starting a change',
       spec,
-      { workspaceId: workspace.id, master, productRepos, link: null, label: 'Intent' },
+      { workspaceId: workspace.id, target: { kind: 'workspace', master }, link: null, label: 'Intent' },
       { ref: { workspace: workspace.folder, system, change }, kind: 'intent' },
     );
     if (!out.exited) return { kind: 'stopped' };
@@ -572,12 +575,11 @@ export class SdlcRunner {
   private async triage(
     workspace: WorkspaceEntry,
     master: string,
-    productRepos: string[],
     system: string,
     idea: string,
     spec: RunSpec,
   ): Promise<NewChangeOutcome> {
-    const out = await this.runAt(null, 'Starting a change', spec, { workspaceId: workspace.id, master, productRepos, link: null, label: 'Triage' });
+    const out = await this.runAt(null, 'Starting a change', spec, { workspaceId: workspace.id, target: { kind: 'workspace', master }, link: null, label: 'Triage' });
     if (!out.exited) return { kind: 'stopped' };
     await this.leftoversClosed(out.batch);
     // The change is the one the triage's own run started, as the backend reads its record; another change made meanwhile is never it.
@@ -620,20 +622,20 @@ export class SdlcRunner {
     const why = this.failureReason(ended);
     const verb = `${state === 'warning' ? 'stopped' : 'failed'}${why ? ` · ${why}` : ''}`;
     let where: Baseline | null =
-      target.master !== null && snapshot !== null ? { master: target.master, snapshot, productRepos: target.productRepos } : null;
+      target.target !== null && snapshot !== null ? { target: target.target, snapshot } : null;
     if (where === null && target.firstSetup && candidates) where = await this.masterAfterSetup(target.firstSetup.folder, candidates);
     if (where === null) {
       this.toasts.error(`${label} ${verb} · there was no master repo to compare against`);
       return null;
     }
-    const data = await this.readLeftovers(where.master, where.snapshot, where.productRepos);
+    const data = await this.readLeftovers(where.target, where.snapshot);
     const commits = plural(data.new_commits.length, 'commit', 'commits');
     const files = plural(data.discardable.length + data.touched_dirty.length + data.created.length, 'file', 'files');
     this.toasts.error(`${label} ${verb} · ${commits} landed, ${files} left uncommitted`);
     if (!hasLeftovers(data)) return null;
     // Added beside every batch not yet decided, never in place of one.
     const id = ++this.batchSeq;
-    this.pending.update((all) => [...all, { id, place, entries: [this.entry(where.master, where.snapshot, data)] }]);
+    this.pending.update((all) => [...all, { id, place, entries: [this.entry(where.target, where.snapshot, data)] }]);
     return id;
   }
 
@@ -665,7 +667,7 @@ export class SdlcRunner {
       const repo = masterRepo(scan);
       const snapshot = repo === null ? undefined : candidates.get(repo);
       if (repo === null || snapshot === undefined) return null;
-      return { master: masterPath(folder, repo), snapshot, productRepos: productReposOf(scan) };
+      return { target: { kind: 'workspace', master: masterPath(folder, repo) }, snapshot };
     } catch {
       return null;
     }
@@ -683,9 +685,9 @@ export class SdlcRunner {
     }
   }
 
-  private async readLeftovers(master: string, snapshot: Snapshot, _productRepos: string[]): Promise<Leftovers> {
+  private async readLeftovers(target: SnapshotTarget, snapshot: Snapshot): Promise<Leftovers> {
     try {
-      return await this.transport.sdlcLeftovers({ kind: 'workspace', master }, snapshot);
+      return await this.transport.sdlcLeftovers(asWorkspace(target), snapshot);
     } catch (e) {
       this.toasts.error(`Could not read what the run left behind: ${message(e)}`);
       return EMPTY;
@@ -698,8 +700,8 @@ export class SdlcRunner {
     return new Promise((resolve) => this.closeWaiters.set(id, [...(this.closeWaiters.get(id) ?? []), resolve]));
   }
 
-  private entry(master: string, snapshot: Snapshot, data: Leftovers): RepoLeftovers {
-    return { repo: repoName(master), path: master, snapshot, data };
+  private entry(target: SnapshotTarget, snapshot: Snapshot, data: Leftovers): RepoLeftovers {
+    return { repo: repoName(snapshot.folder), path: snapshot.folder, target, snapshot, data };
   }
 
   private linkOnce(holder: { link: PendingLink | null } | null, runId: string | null): void {

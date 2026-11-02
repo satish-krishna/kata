@@ -16,13 +16,13 @@ import { KataTransport } from '../transport/kata-transport';
 import { changeRunKey } from '../run/change-run.store';
 import { SdlcRunner, type RunTarget } from './sdlc-runner';
 
-const SNAPSHOT = { head: 'abc', dirty: {} };
+const SNAPSHOT = { folder: '/ws/commerce-docs', head: 'abc', dirty: {} };
+const WS = (master: string) => ({ kind: 'workspace' as const, master });
 const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
 const WORKSPACE: WorkspaceEntry = { id: 'acme', name: 'acme', folder: '/ws', last_opened: 1 };
 const TARGET: RunTarget = {
   workspaceId: 'acme',
-  master: '/ws/commerce-docs',
-  productRepos: ['commerce-core'],
+  target: WS('/ws/commerce-docs'),
   link: { system: 'commerce', change: '2026-10-12-photos', stage: 'spec' },
 };
 const transcript = (path: string): KataEvent => ({ type: 'log', level: 'info', message: `transcript: ${path}` }) as KataEvent;
@@ -192,7 +192,7 @@ describe('SdlcRunner.run', () => {
     fake.leftovers = { ...EMPTY, new_commits: ['docs: a'], discardable: ['intent.md', 'x.txt'] };
     await runner.run('Running setup', seedSpec(), TARGET);
     expect(fake.calls).toEqual(['snapshot', 'agent', 'wait', 'leftovers', 'dismissed']);
-    expect(fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/commerce-docs', SNAPSHOT, ['/ws/commerce-core']);
+    expect(fake.sdlcLeftovers).toHaveBeenCalledWith(WS('/ws/commerce-docs'), SNAPSHOT);
     expect(runner.leftovers()?.[0].data.discardable).toEqual(['intent.md', 'x.txt']);
     expect(toasts.error).toHaveBeenCalledWith('Running setup stopped · 1 commit landed, 2 files left uncommitted');
   });
@@ -281,7 +281,7 @@ describe('SdlcRunner.run', () => {
       ctx.events.set([{ type: 'log', level: 'error', message: 'claude not found on PATH' }]);
       return 'error';
     });
-    await ctx.runner.run('Running setup', seedSpec(), { ...TARGET, master: null, link: null });
+    await ctx.runner.run('Running setup', seedSpec(), { ...TARGET, target: null, link: null });
     expect(ctx.toasts.error).toHaveBeenCalledWith(
       'Running setup failed · claude not found on PATH · there was no master repo to compare against',
     );
@@ -289,7 +289,7 @@ describe('SdlcRunner.run', () => {
 
   it('skips the snapshot and the leftover report when no master repo exists yet', async () => {
     const { runner, fake, toasts } = setup(() => 'error');
-    await runner.run('Running setup', seedSpec(), { ...TARGET, master: null, link: null });
+    await runner.run('Running setup', seedSpec(), { ...TARGET, target: null, link: null });
     expect(fake.sdlcSnapshot).not.toHaveBeenCalled();
     expect(fake.sdlcLeftovers).not.toHaveBeenCalled();
     expect(runner.leftovers()).toBeNull();
@@ -298,20 +298,20 @@ describe('SdlcRunner.run', () => {
 
   it('first setup snapshots every repo and reports leftovers against the master it created', async () => {
     const { runner, fake, toasts } = setup(() => 'warning');
-    const before = { a: { head: 'a1', dirty: {} }, b: { head: 'b1', dirty: {} } };
+    const before = { a: { folder: '/ws/a-intent', head: 'a1', dirty: {} }, b: { folder: '/ws/a-core', head: 'b1', dirty: {} } };
     fake.sdlcSnapshot.mockImplementation(async (...a: unknown[]) => {
       fake.calls.push('snapshot');
-      return a[0] === '/ws/a-intent' ? before.a : before.b;
+      return (a[0] as { master: string }).master === '/ws/a-intent' ? before.a : before.b;
     });
     fake.scan = { folder: '/ws', repos: ['a-intent', 'a-core'], master: { kind: 'one', repo: 'a-intent', committed: false }, marker: null, marker_error: null };
     fake.leftovers = { ...EMPTY, discardable: ['.ai-sdlc.json'] };
     await runner.run('Running setup', seedSpec(), {
-      ...TARGET, master: null, link: null, productRepos: [], firstSetup: { folder: '/ws', repos: ['a-intent', 'a-core'] },
+      ...TARGET, target: null, link: null, firstSetup: { folder: '/ws', repos: ['a-intent', 'a-core'] },
     });
-    expect(fake.sdlcSnapshot.mock.calls.map((c) => c[0])).toEqual(['/ws/a-intent', '/ws/a-core']);
+    expect(fake.sdlcSnapshot.mock.calls.map((c) => c[0])).toEqual([WS('/ws/a-intent'), WS('/ws/a-core')]);
     expect(fake.calls).toEqual(['snapshot', 'snapshot', 'agent', 'wait', 'scan', 'leftovers', 'dismissed']);
     expect(fake.sdlcScan).toHaveBeenCalledWith('/ws');
-    expect(fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/a-intent', before.a, ['/ws/a-core']);
+    expect(fake.sdlcLeftovers).toHaveBeenCalledWith(WS('/ws/a-intent'), before.a);
     expect(runner.leftovers()?.[0].data.discardable).toEqual(['.ai-sdlc.json']);
     expect(toasts.error).toHaveBeenCalledWith('Running setup stopped · 0 commits landed, 1 file left uncommitted');
   });
@@ -320,7 +320,7 @@ describe('SdlcRunner.run', () => {
     const { runner, fake, toasts } = setup(() => 'error');
     fake.scan = { folder: '/ws', repos: ['a-intent', 'a-core'], master: { kind: 'none' }, marker: null, marker_error: null };
     await runner.run('Running setup', seedSpec(), {
-      ...TARGET, master: null, link: null, productRepos: [], firstSetup: { folder: '/ws', repos: ['a-intent', 'a-core'] },
+      ...TARGET, target: null, link: null, firstSetup: { folder: '/ws', repos: ['a-intent', 'a-core'] },
     });
     expect(fake.sdlcLeftovers).not.toHaveBeenCalled();
     expect(toasts.error).toHaveBeenCalledWith('Running setup failed · there was no master repo to compare against');
@@ -329,7 +329,7 @@ describe('SdlcRunner.run', () => {
   it('a first setup that succeeds does not rescan', async () => {
     const { runner, fake } = setup();
     await runner.run('Running setup', seedSpec(), {
-      ...TARGET, master: null, link: null, productRepos: [], firstSetup: { folder: '/ws', repos: ['a-intent'] },
+      ...TARGET, target: null, link: null, firstSetup: { folder: '/ws', repos: ['a-intent'] },
     });
     expect(fake.sdlcScan).not.toHaveBeenCalled();
   });
@@ -339,7 +339,7 @@ describe('SdlcRunner.run', () => {
     fake.leftovers = { ...EMPTY, discardable: ['a.md', 'b.md'] };
     await runner.run('Running setup', seedSpec(), TARGET);
     await runner.discard('commerce-docs', ['b.md']);
-    expect(fake.sdlcDiscard).toHaveBeenCalledWith('/ws/commerce-docs', SNAPSHOT, ['b.md']);
+    expect(fake.sdlcDiscard).toHaveBeenCalledWith(WS('/ws/commerce-docs'), SNAPSHOT, ['b.md']);
     expect(runner.leftovers()).toBeNull();
   });
 
@@ -354,7 +354,7 @@ describe('SdlcRunner.run', () => {
 });
 
 describe('SdlcRunner.newChange', () => {
-  const target = { workspace: WORKSPACE, master: '/ws/commerce-docs', productRepos: [] as string[] };
+  const target = { workspace: WORKSPACE, master: '/ws/commerce-docs' };
   const CHANGE = '2026-10-18-flag-prices';
   const REF = { workspace: '/ws', system: 'commerce', change: CHANGE };
   it('starts the change through the plugin, then runs intent inside it and opens it', async () => {
@@ -365,6 +365,24 @@ describe('SdlcRunner.newChange', () => {
     expect(fake.sdlcRunChange).toHaveBeenCalledWith(REF, 'intent', expect.objectContaining({ name: 'sdlc-commerce-2026-10-18-flag-prices-intent' }));
     expect(outcome).toEqual({ kind: 'opened', change: CHANGE, branch: `change/${CHANGE}` });
     expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', CHANGE]);
+  });
+
+  it('new_change_snapshot_is_taken_in_the_new_copy', async () => {
+    const { runner, fake } = setup();
+    await runner.newChange(target, 'commerce', 'flag prices', 'full');
+    expect(fake.calls.indexOf('snapshot')).toBeGreaterThan(fake.calls.indexOf('start'));
+    expect(fake.sdlcSnapshot).toHaveBeenCalledWith({ kind: 'change', ...REF });
+  });
+
+  it('a stopped first intent run is measured and discarded in the new copy', async () => {
+    const { runner, fake } = setup(() => 'warning');
+    fake.leftovers = { ...EMPTY, discardable: ['intent.md'] };
+    const done = runner.newChange(target, 'commerce', 'idea', 'full');
+    await vi.waitFor(() => expect(runner.leftovers()).not.toBeNull());
+    expect(fake.sdlcLeftovers).toHaveBeenCalledWith({ kind: 'change', ...REF }, SNAPSHOT);
+    await runner.discard('commerce-docs', ['intent.md']);
+    expect(fake.sdlcDiscard).toHaveBeenCalledWith({ kind: 'change', ...REF }, SNAPSHOT, ['intent.md']);
+    await done;
   });
 
   it('the intent run names the change folder and carries the idea', async () => {
@@ -553,7 +571,7 @@ describe('SdlcRunner.newChange', () => {
 });
 
 describe('SdlcRunner.newChange track', () => {
-  const target = { workspace: WORKSPACE, master: '/ws/commerce-docs', productRepos: ['commerce-core'] };
+  const target = { workspace: WORKSPACE, master: '/ws/commerce-docs' };
   const SCAN = {
     folder: '/ws',
     repos: ['commerce-docs', 'commerce-core'],
@@ -675,7 +693,30 @@ describe('SdlcRunner leftovers', () => {
     const { runner, fake } = setup(() => 'warning');
     fake.leftovers = { ...EMPTY, new_commits: ['docs: a'], discardable: ['x.txt'] };
     await runner.run('Running setup', seedSpec(), TARGET);
-    expect(runner.leftovers()).toEqual([{ repo: 'commerce-docs', path: '/ws/commerce-docs', snapshot: SNAPSHOT, data: fake.leftovers }]);
+    expect(runner.leftovers()).toEqual([{ repo: 'commerce-docs', path: '/ws/commerce-docs', target: WS('/ws/commerce-docs'), snapshot: SNAPSHOT, data: fake.leftovers }]);
+  });
+});
+
+describe('SdlcRunner discards where the change lives', () => {
+  const ref = { workspace: '/ws', system: 'commerce', change: '2026-10-12-photos' };
+  const inCopy = { workspaceId: 'acme', target: { kind: 'change' as const, ...ref }, link: null };
+
+  it('a run of a change is measured in the change, not in a checkout', async () => {
+    const { runner, fake } = setup(() => 'error');
+    fake.leftovers = { ...EMPTY, discardable: ['spec.md'] };
+    await runner.run('Starting spec', seedSpec(), inCopy, { ref, kind: 'spec' });
+    expect(fake.sdlcSnapshot).toHaveBeenCalledWith({ kind: 'change', ...ref });
+    expect(fake.sdlcLeftovers).toHaveBeenCalledWith({ kind: 'change', ...ref }, SNAPSHOT);
+  });
+
+  it('discard_refusal_keeps_the_leftovers', async () => {
+    const { runner, fake, toasts } = setup(() => 'error');
+    fake.leftovers = { ...EMPTY, discardable: ['spec.md'] };
+    await runner.run('Starting spec', seedSpec(), inCopy, { ref, kind: 'spec' });
+    fake.sdlcDiscard.mockRejectedValueOnce(new Error('Nothing discarded: the change copy is gone'));
+    expect(await runner.discard('commerce-docs', ['spec.md'], changeRunKey(ref))).toBe(false);
+    expect(toasts.error).toHaveBeenCalledWith(expect.stringContaining('Nothing discarded: the change copy is gone'));
+    expect(runner.leftoversOn(changeRunKey(ref))?.[0].data.discardable).toEqual(['spec.md']);
   });
 });
 
@@ -707,7 +748,7 @@ describe('SdlcRunner leftovers are held per change run (F4)', () => {
     expect(files(runner.leftoversOn(keyB))).toEqual(['b.md']);
     // Discarding on A discards A's file against A's own snapshot, and B's stay offered.
     expect(await runner.discardAll([{ repo: 'commerce-docs', paths: ['a.md'] }], keyA)).toBe(true);
-    expect(fake.sdlcDiscard).toHaveBeenCalledWith('/ws/commerce-docs', SNAPSHOT, ['a.md']);
+    expect(fake.sdlcDiscard).toHaveBeenCalledWith(WS('/ws/commerce-docs'), SNAPSHOT, ['a.md']);
     expect(runner.leftoversOn(keyA)).toBeNull();
     expect(files(runner.leftoversOn(keyB))).toEqual(['b.md']);
     runner.closeLeftovers(keyB);
@@ -727,7 +768,7 @@ describe('SdlcRunner leftovers are held per change run (F4)', () => {
 });
 
 describe("SdlcRunner shows a run's leftovers and settling only where it was started (F27)", () => {
-  const target = { workspace: WORKSPACE, master: '/ws/commerce-docs', productRepos: ['commerce-core'] };
+  const target = { workspace: WORKSPACE, master: '/ws/commerce-docs' };
   const SCAN = {
     folder: '/ws',
     repos: ['commerce-docs', 'commerce-core'],
@@ -782,7 +823,7 @@ describe("SdlcRunner shows a run's leftovers and settling only where it was star
 });
 
 describe('SdlcRunner settles per run (F32)', () => {
-  const target = { workspace: WORKSPACE, master: '/ws/commerce-docs', productRepos: ['commerce-core'] };
+  const target = { workspace: WORKSPACE, master: '/ws/commerce-docs' };
   // The change the plugin starts for the idea; its intent run belongs to it although the home started it.
   const refC = { workspace: '/ws', system: 'commerce', change: '2026-10-18-flag-prices' };
 
