@@ -1,17 +1,20 @@
 import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import type { ChangeKey } from '@bindings/ChangeKey';
+import type { OpenRun } from '@bindings/OpenRun';
 import type { RunKind } from '@bindings/RunKind';
 import type { RunningEntry } from '@bindings/RunningEntry';
 import type { RunningStrip } from '@bindings/RunningStrip';
+import { RunLandingStore } from '../core/run/run-landing.store';
 import { KataTransport } from '../core/transport/kata-transport';
 
 /** One run of a change the engineer can open: its repository (null for a review) and whether it waits on the engineer. */
-export type RunChoice = { run: number; kind: RunKind; repo: string | null; waiting: boolean; label: string; action: 'Answer' | 'Watch' };
+export type RunChoice = { run: number; kind: RunKind; repo: string | null; waiting: boolean; label: string; action: 'Answer' | 'Watch'; open: OpenRun };
 
 /** One entry as the strip draws it. Everything but the run lists is formatting of what the backend sent. */
 export type StripRow = {
   id: string;
+  workspace: string;
   system: string;
   change: string;
   /** The change's name without its date prefix. */
@@ -20,9 +23,9 @@ export type StripRow = {
   tone: 'running' | 'awaiting' | 'warning' | 'error' | 'success';
   /** The question or the action asked for, or the reason a run stopped; null when the state has none. */
   text: string | null;
-  /** The run an entry opens at once: set only when exactly one run of the change waits on the engineer. */
+  /** The run an entry opens at once: the backend's `opens` is a session. */
   direct: RunChoice | null;
-  /** The change's runs a list offers; empty for a state with no run to open. */
+  /** The change's runs a list offers: the backend's `opens` is a list; empty when it is a session or the change. */
   choices: RunChoice[];
   /** The entry's whole line, for the hover text. */
   title: string;
@@ -36,6 +39,7 @@ const short = (c: ChangeKey): string => c.change.replace(DATE_PREFIX, '');
 export class RunningStripViewModel {
   private readonly transport = inject(KataTransport);
   private readonly router = inject(Router);
+  private readonly landing = inject(RunLandingStore);
 
   private readonly strip = signal<RunningStrip>({ shown: [], all: [] });
 
@@ -57,21 +61,22 @@ export class RunningStripViewModel {
     });
   }
 
-  /** Open the change page, with the run's session picked when a run is given. The session is where the question is answered. */
+  /** Open the change page; with a run, ask its page to show that run's session, where a question is answered. */
   open(row: StripRow, choice: RunChoice | null): void {
-    void this.router.navigate(['/sdlc', row.system, row.change], { queryParams: choice === null ? {} : { run: choice.run } });
+    if (choice !== null) this.landing.ask({ workspace: row.workspace, system: row.system, change: row.change, run: choice.open });
+    void this.router.navigate(['/sdlc', row.system, row.change]);
   }
 }
 
-function choice(run: number, kind: RunKind, repo: string | null, waiting: boolean): RunChoice {
-  return { run, kind, repo, waiting, label: repo ?? kind, action: waiting ? 'Answer' : 'Watch' };
+function choice(open: OpenRun): RunChoice {
+  return { ...open, label: open.repo ?? open.kind, action: open.waiting ? 'Answer' : 'Watch', open };
 }
 
 function toRow(e: RunningEntry): StripRow {
-  const waiting = e.waiting.map((w) => choice(w.run, w.kind, w.repo, true));
-  let choices = waiting;
-  if (waiting.length === 0 && e.state === 'working') choices = [choice(e.run, e.stage, e.repo, false)];
-  const base = { id: `${e.change.workspace.key}|${e.change.system}|${e.change.change}`, system: e.change.system, change: e.change.change, name: short(e.change), direct: waiting.length === 1 ? waiting[0] : null, choices };
+  // What picking the entry opens is the backend's answer; this only follows it.
+  const direct = e.opens.kind === 'session' ? choice(e.opens.run) : null;
+  const choices = e.opens.kind === 'list' ? e.opens.runs.map(choice) : [];
+  const base = { id: `${e.change.workspace.key}|${e.change.system}|${e.change.change}`, workspace: e.change.workspace.key, system: e.change.system, change: e.change.change, name: short(e.change), direct, choices };
   const row = (state: string, tone: StripRow['tone'], text: string | null): StripRow => ({ ...base, state, tone, text, title: text === null ? state : `${state}: ${text}` });
   switch (e.state) {
     case 'needsAnswer':

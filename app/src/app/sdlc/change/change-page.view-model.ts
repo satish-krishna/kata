@@ -1,6 +1,7 @@
 import { Injectable, computed, effect, inject, linkedSignal, signal, untracked } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
+import type { OpenRun } from '@bindings/OpenRun';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { BuildRow } from '@bindings/BuildRow';
@@ -34,6 +35,7 @@ import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
 import { ChangeRunStore, changeRunKey } from '../../core/run/change-run.store';
+import { RunLandingStore, folderKey } from '../../core/run/run-landing.store';
 import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
@@ -197,6 +199,7 @@ export class ChangePageViewModel {
   private readonly transport = inject(KataTransport);
   private readonly lock = inject(LockStore);
   private readonly changeRuns = inject(ChangeRunStore);
+  private readonly landing = inject(RunLandingStore);
   /** The preview every document run goes through; the template mounts its dialog. */
   readonly preview = inject(RunPreviewViewModel);
   private readonly givens = inject(GivenStore);
@@ -779,6 +782,18 @@ export class ChangePageViewModel {
       this.system();
       this.changeName();
       untracked(() => void this.load());
+    });
+    // A run picked from the running changes is shown once the change it belongs to is on the page.
+    effect(() => {
+      const asked = this.landing.pending();
+      const ready = this.state() === 'ready';
+      const system = this.system();
+      const change = this.changeName();
+      untracked(() => {
+        if (asked === null || !ready || asked.system !== system || asked.change !== change) return;
+        this.landing.clear();
+        this.land(asked.run);
+      });
     });
     // A confirmation names the branch, whoever opened it (this page, or the start of the change): read the change again.
     effect(() => {
@@ -1541,6 +1556,29 @@ export class ChangePageViewModel {
   }
 
   /** Read the change from disk. A newer call supersedes an older one still in flight. */
+  /** A run picked from the running changes may belong to another workspace than the open one: make that workspace the open one, as picking it in the switcher does, before the page reads the change. */
+  private async openAskedWorkspace(workspaces: WorkspaceEntry[], system: string, change: string): Promise<void> {
+    const asked = this.landing.pending();
+    if (asked === null || asked.system !== system || asked.change !== change) return;
+    const target = workspaces.find((w) => folderKey(w.folder) === asked.workspace);
+    if (target === undefined || target.id === this.current()?.id) return;
+    const next = workspaces.map((w) => (w.id === target.id ? { ...w, last_opened: nowSecs() } : w));
+    this.workspaces.set(next);
+    try {
+      await this.transport.sdlcSaveWorkspaces(next);
+    } catch (e) {
+      this.toasts.error(`Could not save the workspace list: ${message(e)}`);
+    }
+  }
+
+  /** Show the run the engineer picked from the running changes: a build or review run on the Build tab with its repository (or the review) picked, where its question waits; a document run is this change's own session, already on show. */
+  private land(run: OpenRun): void {
+    if (run.kind === 'review') this.build.choose({ kind: 'review' });
+    else if (run.kind === 'build' && run.repo !== null) this.build.choose({ kind: 'repo', repo: run.repo });
+    else return;
+    this.picked.set('build');
+  }
+
   private async load(): Promise<void> {
     const seq = ++this.loadSeq;
     const system = this.system();
@@ -1573,6 +1611,8 @@ export class ChangePageViewModel {
     }
     if (seq !== this.loadSeq) return;
     this.workspaces.set(workspaces);
+    await this.openAskedWorkspace(workspaces, system, name);
+    if (seq !== this.loadSeq) return;
     const w = this.current();
     if (!w) {
       finish('not-found', null, null);

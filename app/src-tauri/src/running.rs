@@ -180,9 +180,32 @@ fn pending_since(p: &Pending) -> u64 {
     }
 }
 
-/// What picking a change's entry opens. Stub: the rule is not written yet.
-fn opens_of(_f: &Facts) -> Opens {
-    Opens::Change
+/// What picking a change's entry opens (R13.2): the session of its one run that waits on the engineer,
+/// else a list of its runs (the waiting ones when two or more wait, every live one when none does), else
+/// the change's page when it has no live run.
+fn opens_of(f: &Facts) -> Opens {
+    let open = |(r, p): &(&LiveSummary, Option<Pending>)| OpenRun {
+        run: r.id,
+        kind: r.kind,
+        repo: r.repo.clone(),
+        waiting: p.is_some(),
+    };
+    let mut waiting: Vec<OpenRun> = f
+        .runs
+        .iter()
+        .filter(|(_, p)| p.is_some())
+        .map(open)
+        .collect();
+    match waiting.len() {
+        0 if f.runs.is_empty() => Opens::Change,
+        0 => Opens::List {
+            runs: f.runs.iter().map(open).collect(),
+        },
+        1 => Opens::Session {
+            run: waiting.remove(0),
+        },
+        _ => Opens::List { runs: waiting },
+    }
 }
 
 /// The entry for one change: the first row that holds, or none (rows 7 and 8).

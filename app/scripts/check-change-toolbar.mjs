@@ -149,6 +149,7 @@ function measure() {
     strip: strip
       ? {
           width: stripBox.width,
+          focus: strip ? Array.from(strip.querySelectorAll('.k-running__entry'), (e) => ({ text: e.textContent.trim().replace(/s+/g, ' '), cut: e.getBoundingClientRect().top >= stripBox.bottom - 1, inert: e.hasAttribute('inert') })) : [],
           allText: stripAll ? stripAll.textContent.trim() : null,
           allClipped: stripAll ? textClipped(stripAll) : 0,
           allInside: stripAll ? isInside(stripAll, header) && isInside(stripAll, strip) : false,
@@ -247,6 +248,13 @@ export function runningStripFails(m, fixture, width, at) {
     if (!e.title) fails.push(`${at}: the entry "${e.text}" has no title with its whole text`);
     if (e.textClipped > 0 && !e.textTitle) fails.push(`${at}: the entry's question is cut off and its title does not carry it whole`);
   }
+  // Focus only reaches what is on show: an entry cut off by the strip is inert, one on show is not.
+  for (const e of s.focus) {
+    if (e.cut && !e.inert) fails.push(`${at}: the cut-off entry "${e.text}" can still take focus (it is not inert)`);
+    if (!e.cut && e.inert) fails.push(`${at}: the entry "${e.text}" is on show but inert`);
+  }
+  // At 1280 the strip has no room for an entry, so the check above would pass with nothing cut; a cut entry must exist there.
+  if (width === 1280 && !s.focus.some((e) => e.cut)) fails.push(`${at}: expected an entry cut off by the strip at 1280, found none, so the focus check proved nothing`);
   // From 1600 up the strip has room for its entry, unless a long workspace or change name has taken it.
   if (width >= 1600 && !(fixture.change || fixture.workspace) && s.entries.length === 0) fails.push(`${at}: from 1600 the strip shows no entry, only the All running button`);
   return fails;
