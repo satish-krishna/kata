@@ -1,7 +1,7 @@
 //! What closing the Workbench does while runs are live: ask first, naming every running change,
 //! then cancel them all on a confirm. Pure, so the table of outcomes is tested without a window;
 //! the `CloseRequested` handler and `sdlc_close_answer` in `lib.rs` are thin wrappers.
-use crate::runs::{Lane, LiveSummary, RunKind};
+use crate::runs::{Lane, Launching, LiveSummary, RunKind};
 use serde::Serialize;
 
 /// The channel the question is announced on.
@@ -94,9 +94,14 @@ fn lines(live: &[LiveSummary]) -> Vec<RunningLine> {
     out.into_iter().map(|(_, line)| line).collect()
 }
 
-/// Decide what closing the window does. The question is asked only while runs are live; a confirm
-/// that arrives after they ended closes at once, as a confirm with nothing to cancel.
-pub fn on_close(live: &[LiveSummary], answer: CloseAnswer) -> CloseOutcome {
+/// Decide what closing the window does. The question is asked only while runs are live, a build being
+/// started or launched (`launching`) counting as live; a confirm that arrives after they ended closes at
+/// once, as a confirm with nothing to cancel.
+pub fn on_close(
+    live: &[LiveSummary],
+    _launching: &[Launching],
+    answer: CloseAnswer,
+) -> CloseOutcome {
     match answer {
         CloseAnswer::NotAsked if live.is_empty() => CloseOutcome::Close,
         CloseAnswer::NotAsked => CloseOutcome::Ask {
@@ -134,6 +139,15 @@ mod tests {
         }
     }
 
+    impl LiveSummary {
+        fn lane_key(&self) -> ChangeKey {
+            match &self.lane {
+                Lane::Change { key, .. } => key.clone(),
+                Lane::Solo => unreachable!(),
+            }
+        }
+    }
+
     fn a_and_b() -> Vec<LiveSummary> {
         vec![
             run(1, "A", RunKind::Build, Some("kata")),
@@ -155,18 +169,63 @@ mod tests {
             running: vec![line("A", "building in kata"), line("B", "reviewing")],
         };
         // R16.1 example 3 and row 1: nothing live, not asked.
-        assert_eq!(on_close(&[], CloseAnswer::NotAsked), CloseOutcome::Close);
+        assert_eq!(
+            on_close(&[], &[], CloseAnswer::NotAsked),
+            CloseOutcome::Close
+        );
         // Row 2: live runs, not asked yet.
-        assert_eq!(on_close(&live, CloseAnswer::NotAsked), asked);
+        assert_eq!(on_close(&live, &[], CloseAnswer::NotAsked), asked);
         // R16.1 example 1 and row 3: confirm cancels every live run, then closes.
         assert_eq!(
-            on_close(&live, CloseAnswer::Confirm),
+            on_close(&live, &[], CloseAnswer::Confirm),
             CloseOutcome::CancelThenClose { ids: vec![1, 2] }
         );
         // R16.1 example 2 and row 4: decline changes nothing.
-        assert_eq!(on_close(&live, CloseAnswer::Decline), CloseOutcome::Stay);
+        assert_eq!(
+            on_close(&live, &[], CloseAnswer::Decline),
+            CloseOutcome::Stay
+        );
         // Row 5: a confirm after the runs ended closes at once.
-        assert_eq!(on_close(&[], CloseAnswer::Confirm), CloseOutcome::Close);
+        assert_eq!(
+            on_close(&[], &[], CloseAnswer::Confirm),
+            CloseOutcome::Close
+        );
+    }
+
+    // R16.1, R16.2: a build the host is starting or launching is live for the close question.
+    #[test]
+    fn closing_with_only_a_launching_build_asks() {
+        let launching = vec![
+            Launching {
+                change: run(1, "A", RunKind::Build, None).lane_key(),
+                kind: RunKind::Build,
+                repo: Some("kata".into()),
+            },
+            Launching {
+                change: run(2, "B", RunKind::Build, None).lane_key(),
+                kind: RunKind::Build,
+                repo: None,
+            },
+        ];
+        assert_eq!(
+            on_close(&[], &launching, CloseAnswer::NotAsked),
+            CloseOutcome::Ask {
+                running: vec![line("A", "building in kata"), line("B", "building")],
+            }
+        );
+        // A confirm stops the host and waits for what it launched; nothing is in the table yet.
+        assert_eq!(
+            on_close(&[], &launching, CloseAnswer::Confirm),
+            CloseOutcome::CancelThenClose { ids: vec![] }
+        );
+        // A run already in the table and still listed as launching is named once.
+        let live = vec![run(3, "A", RunKind::Build, Some("kata"))];
+        assert_eq!(
+            on_close(&live, &launching[..1], CloseAnswer::NotAsked),
+            CloseOutcome::Ask {
+                running: vec![line("A", "building in kata")],
+            }
+        );
     }
 
     #[test]
@@ -176,7 +235,7 @@ mod tests {
             run(2, "B", RunKind::Spec, None),
         ];
         assert_eq!(
-            on_close(&live, CloseAnswer::NotAsked),
+            on_close(&live, &[], CloseAnswer::NotAsked),
             CloseOutcome::Ask {
                 running: vec![line("A", "building in kata"), line("B", "writing its spec")],
             }
@@ -197,7 +256,7 @@ mod tests {
             },
         ];
         assert_eq!(
-            on_close(&live, CloseAnswer::NotAsked),
+            on_close(&live, &[], CloseAnswer::NotAsked),
             CloseOutcome::Ask {
                 running: vec![
                     line("A", "building in kata and building in ai-sdlc"),

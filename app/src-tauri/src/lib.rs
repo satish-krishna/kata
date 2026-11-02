@@ -1392,7 +1392,7 @@ fn cancel_by_id(control: &RunControl, id: u64) {
 /// window (a plain `close` would ask again). No lock is held across the wait.
 fn close_window(app: &AppHandle, answer: close_guard::CloseAnswer) {
     let live = app.state::<RunControl>().state.lock().unwrap().live();
-    match close_guard::on_close(&live, answer) {
+    match close_guard::on_close(&live, &[], answer) {
         close_guard::CloseOutcome::Close => destroy_main(app),
         ask @ close_guard::CloseOutcome::Ask { .. } => {
             let _ = app.emit(close_guard::CLOSE_ASKED_EVENT, ask);

@@ -59,6 +59,16 @@ pub struct LiveSummary {
     pub repo: Option<String>,
 }
 
+/// A run of a build the build host is starting or launching: it has no id in the table yet, but closing
+/// the Workbench counts it as live.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Launching {
+    pub change: ChangeKey,
+    pub kind: RunKind,
+    /// The product repository, when the launch has one; none for a review or a start still preparing.
+    pub repo: Option<String>,
+}
+
 /// Every live run, keyed by id.
 pub struct RunTable<C = CommandChild> {
     runs: BTreeMap<u64, LiveRun<C>>,

@@ -801,6 +801,15 @@ impl BuildHost {
         taken.map_err(held_repos)
     }
 
+    /// Stop the host for closing the Workbench: no further run of any change is launched, and every
+    /// build is cancelled. Not undone; the Workbench is closing.
+    pub fn stop_all(self: &Arc<Self>) {}
+
+    /// The runs of builds being started or launched that have no run id yet, for the close question.
+    pub fn launching(&self) -> Vec<runs::Launching> {
+        Vec::new()
+    }
+
     /// Stop every run of `change`'s build.
     pub fn cancel(self: &Arc<Self>, change: &ChangeRef) {
         self.drive(&key_of(change), None, Input::CancelAll);
@@ -3049,6 +3058,75 @@ mod tests {
         r.host.cancel_run(&cref("A"), "kata");
         assert_eq!(*r.launcher.cancelled.lock().unwrap(), vec![kata]);
         assert!(!r.launcher.cancelled.lock().unwrap().contains(&bob));
+    }
+
+    // R16.1: closing stops the build host first. A run the close cancels ends with exit 130; the
+    // coordinator would read the state and launch the repository that was waiting on it, a run the close
+    // never named. Stopped, the host launches nothing more for any change, and a new start launches nothing.
+    #[test]
+    fn closing_stops_the_build_host_so_nothing_more_launches() {
+        let r = rig();
+        r.change(
+            "A",
+            &[("kata", &["T1"], &[]), ("bob", &["T2"], &[])],
+            &[("T1", "kata", &[]), ("T2", "bob", &["T1"])],
+        );
+        r.simple("B", &["api"]);
+        r.host.start(&cref("A"), form());
+        let kata = r.launcher.launched("kata")[0];
+        // kata recorded T1 just before the close, so bob is ready.
+        r.tools.log("A", "kata", "T1");
+        r.host.stop_all();
+        assert_eq!(
+            *r.launcher.cancelled.lock().unwrap(),
+            vec![kata],
+            "stopping the host cancels the build's live run"
+        );
+        r.launcher.finish(kata, 130);
+        assert!(
+            r.launcher.launched("bob").is_empty(),
+            "no follow-on repository is launched while closing"
+        );
+        assert!(r.launcher.reviews().is_empty(), "no review is launched");
+        r.host.start(&cref("B"), form());
+        assert_eq!(
+            r.launcher.count(),
+            1,
+            "a start after the stop launches nothing"
+        );
+    }
+
+    // R16.1, R16.2: a build whose start is under way has no run in the table yet, and still counts as
+    // live for the close question; once its run has an id, it is no longer launching.
+    #[test]
+    fn a_build_being_started_is_launching() {
+        use std::sync::mpsc::channel;
+        use std::time::Duration;
+        let r = rig();
+        r.simple("A", &["kata"]);
+        let (entered_tx, entered_rx) = channel();
+        let (release_tx, release_rx) = channel();
+        *r.tools.gate.lock().unwrap() = Some((entered_tx, release_rx));
+        let host = r.host.clone();
+        let starting = std::thread::spawn(move || host.start(&cref("A"), form()));
+        entered_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("A's start reached the plugin");
+        assert_eq!(
+            r.host.launching(),
+            vec![runs::Launching {
+                change: key("A"),
+                kind: runs::RunKind::Build,
+                repo: None,
+            }]
+        );
+        release_tx.send(()).unwrap();
+        assert!(matches!(
+            starting.join().unwrap(),
+            StartOutcome::Started { .. }
+        ));
+        assert_eq!(r.launcher.launched("kata").len(), 1);
+        assert!(r.host.launching().is_empty());
     }
 
     // The page learns which runs are the build's from the announcement, not from a launch of its own.
