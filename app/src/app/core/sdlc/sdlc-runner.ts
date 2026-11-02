@@ -154,21 +154,21 @@ export class SdlcRunner {
   readonly leftovers = computed<RepoLeftovers[] | null>(() => this.leftoversOn(null));
 
   /**
-   * What the leftover dialog of a page shows: the oldest undecided batch of the page's change run (`place`, its key) or of a run of no
-   * change. Null for the home (`place` null) shows only runs of no change. Each batch stays until it is decided, so none is lost.
+   * What the leftover dialog of a page shows: the oldest undecided batch of a run started there, the page's change run (`place`, its
+   * key), or for the home (`place` null) a run of no change (setup, context, a new change's intent run, the triage). A run's
+   * leftovers show only where it was started. Each batch stays until it is decided, so none is lost.
    */
   leftoversOn(place: string | null): RepoLeftovers[] | null {
     return this.shownBatch(place)?.entries ?? null;
   }
 
-  /** Whether a run shown on `place` has ended and its after-run work is still going: that page's session view cannot close yet. */
+  /** Whether a run started on `place` has ended and its after-run work is still going: that page's session view cannot close yet. */
   settlingOn(place: string | null): boolean {
-    const counts = this.afterRun();
-    return (counts.get(null) ?? 0) > 0 || (place !== null && (counts.get(place) ?? 0) > 0);
+    return (this.afterRun().get(place) ?? 0) > 0;
   }
 
   private shownBatch(place: string | null): Batch | undefined {
-    return this.pending().find((b) => b.place === null || b.place === place);
+    return this.pending().find((b) => b.place === place);
   }
 
   /** The runs whose after-run work is still going, by the place they show on. */
