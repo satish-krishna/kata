@@ -332,8 +332,8 @@ export class MockTransport extends KataTransport {
   sdlcDiffBase(_repoPath: string): Promise<BaseInfo> { return Promise.resolve(this.sdlc.diffBase()); }
   sdlcTouchedRepos(folder: string, _masterRepo: string, _system: string, _change: string): Promise<PublishRepo[]> { return Promise.resolve(this.sdlc.touchedRepos(folder)); }
   sdlcCommitOffenders(_folder: string, _masterRepo: string, _system: string, _change: string): Promise<Offender[]> { return Promise.resolve([]); }
-  sdlcOldChecks(_folder: string, _system: string): Promise<OldChecks | null> { return Promise.resolve(null); }
-  sdlcOldChecksSeen(_system: string): Promise<void> { return Promise.resolve(); }
+  sdlcOldChecks(_folder: string, system: string): Promise<OldChecks | null> { return Promise.resolve(this.sdlc.oldChecks(system)); }
+  sdlcOldChecksSeen(system: string): Promise<void> { this.sdlc.oldChecksSeen(system); return Promise.resolve(); }
   sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]> { return Promise.resolve(this.sdlc.checksView(change.change)); }
   sdlcGhSignedIn(_repos: PublishRepo[]): Promise<string> { return Promise.resolve('demo-user'); }
   sdlcGhOrigins(_repos: PublishRepo[]): Promise<void> { return Promise.resolve(); }

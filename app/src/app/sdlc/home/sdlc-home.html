@@ -145,6 +145,17 @@
                 <span class="k-status k-status--warning"><span class="k-status__dot"></span>{{ notice.text }}</span>
               </div>
             }
+            @for (old of vm.oldChecks(); track old.system) {
+              <section class="k-oldchecks" data-testid="old-checks" role="status" [attr.aria-label]="'Old checks for ' + old.system">
+                <p>
+                  These checks no longer run. Checks are now team settings in the master repository; check them in with the ai-sdlc setup skill's
+                  <code class="k-mono">--hooks</code>.
+                </p>
+                <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.dismissOldChecks(old.system)">Dismiss</button>
+                <p class="k-oldchecks__path k-mono">{{ old.path }}</p>
+                <pre class="k-check__tail k-mono" data-testid="old-checks-text" tabindex="0">{{ old.text }}</pre>
+              </section>
+            }
             @if (vm.triageNotice(); as t) {
               <div class="wb-banner wb-banner--quiet" data-testid="triage-notice" role="status">
                 <span>No change was created. The triage's verdict is in the run's record.</span>

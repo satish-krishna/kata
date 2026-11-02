@@ -932,7 +932,25 @@ export class SdlcHomeViewModel {
     }
   }
 
-  dismissOldChecks(_system: string): void {}
+  /** The notice was read: drop it. The backend recorded it as told when it was first shown, so it does not come back. */
+  dismissOldChecks(system: string): void {
+    this.oldChecks.update((l) => l.filter((n) => n.system !== system));
+  }
+
+  /** Ask the backend which systems have an old checks file the engineer has not been told about, and say so once. */
+  private async readOldChecks(folder: string, systems: string[]): Promise<void> {
+    for (const system of systems) {
+      try {
+        const old = await this.transport.sdlcOldChecks(folder, system);
+        if (old === null) continue;
+        // Shown from here on, so it is recorded as told now: closing the app without a click does not bring it back.
+        await this.transport.sdlcOldChecksSeen(system);
+        this.oldChecks.update((l) => (l.some((n) => n.system === system) ? l : [...l, { system, ...old }]));
+      } catch (e) {
+        this.toasts.error(`Could not check for old checks: ${message(e)}`);
+      }
+    }
+  }
 
   private clearDetail(): void {
     this.scan.set(null);
@@ -1015,5 +1033,6 @@ export class SdlcHomeViewModel {
     if (seq !== this.loadSeq) return;
     this.contexts.set(contexts);
     this.instructions.set(instructions);
+    if (isSetUp(scan)) await this.readOldChecks(w.folder, systemNames(scan));
   }
 }

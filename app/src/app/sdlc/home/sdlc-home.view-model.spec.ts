@@ -1180,7 +1180,7 @@ describe('SdlcHomeViewModel old per-machine checks', () => {
     const [shown] = vm.oldChecks();
     expect(vm.oldChecks().length).toBe(1);
     expect(shown.system).toBe('commerce');
-    expect(shown.path).toMatch(/workbench[\/]checks[\/]commerce\.toml$/);
+    expect(shown.path).toMatch(/workbench.checks.commerce\.toml$/);
     expect(shown.text).toContain('command');
     // Told once: the backend is asked to remember it, and nothing else is written or run.
     expect(seen).toHaveBeenCalledWith('commerce');

@@ -1,6 +1,7 @@
 /* In-memory AI-SDLC fixtures for the browser demo. Each MockTransport owns one
  * instance, mutated by mock decisions and branch operations, so the demo
  * reflects what the operator did. Deterministic: no clocks, no randomness. */
+import type { OldChecks } from '@bindings/OldChecks';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { BuildState } from '@bindings/BuildState';
 import type { BuildPhase } from '@bindings/BuildPhase';
@@ -618,6 +619,15 @@ export class SdlcMock {
     this.pairs = long ? LONG_DIFF_PAIRS : DIFF_PAIRS;
     this.reviewFindings = long ? LONG_REVIEW_FINDINGS : REVIEW_FINDINGS;
   }
+
+  /** Systems whose old checks file the mock engineer has been told about. */
+  private readonly oldChecksTold = new Set<string>();
+  /** `?demo=old-checks`: the demo system has an old per-machine checks file until the engineer has been told. Same rule as `old_checks::notice`. */
+  oldChecks(system: string): OldChecks | null {
+    if (this.demo !== 'old-checks' || system !== MOCK_SYSTEM || this.oldChecksTold.has(system)) return null;
+    return { path: `C:/Users/demo/.kata/workbench/checks/${system}.toml`, text: ['[[check]]', 'name = "tests"', 'command = "npm test"', ''].join(String.fromCharCode(10)) };
+  }
+  oldChecksSeen(system: string): void { this.oldChecksTold.add(system); }
 
   private settings: Settings = { mode: 'workbench', remember: true, permission_mode: 'auto' };
   private workspaces: WorkspaceEntry[] = [{

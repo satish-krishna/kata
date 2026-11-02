@@ -646,7 +646,24 @@ fn save_build_layout(layout: serde_json::Value) -> Result<(), String> {
 
 #[tauri::command]
 fn sdlc_save_settings(settings: sdlc::store::Settings) -> Result<(), String> {
+    // The screens never carry the list of systems already told about their old checks; saving keeps it.
+    let settings = sdlc::old_checks::keep_shown(&sdlc::store::load_settings(), settings);
     sdlc::store::save_settings(&settings).map_err(|e| e.to_string())
+}
+
+/// The old per-machine checks file of a system, when the engineer has not been told about it yet. Read to be shown,
+/// never run and never converted. `folder` is the workspace the engineer opened; the file is per machine, not per workspace.
+#[tauri::command]
+fn sdlc_old_checks(folder: String, system: String) -> Option<sdlc::old_checks::OldChecks> {
+    let _ = folder;
+    let home = sdlc::old_checks::kata_home()?;
+    sdlc::old_checks::notice(&home, &system, &sdlc::store::load_settings())
+}
+
+/// Record that the engineer has been told about a system's old checks file.
+#[tauri::command]
+fn sdlc_old_checks_seen(system: String) -> Result<(), String> {
+    sdlc::old_checks::record_shown(&system).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1855,6 +1872,8 @@ pub fn run() {
             export_bundle,
             sdlc_settings,
             sdlc_save_settings,
+            sdlc_old_checks,
+            sdlc_old_checks_seen,
             load_build_layout,
             save_build_layout,
             sdlc_workspaces,

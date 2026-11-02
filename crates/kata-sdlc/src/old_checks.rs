@@ -17,22 +17,56 @@ pub struct OldChecks {
 }
 
 /// The old checks file of `system` under `kata_home`, when it exists and the engineer has not been told about it yet.
+/// The file is read to be shown and nothing else: it is never parsed into anything that runs.
 pub fn notice(kata_home: &Path, system: &str, settings: &Settings) -> Option<OldChecks> {
-    let _ = (kata_home, system, settings);
-    None
+    if !is_name(system) || settings.old_checks_shown.iter().any(|s| s == system) {
+        return None;
+    }
+    let path = kata_home
+        .join("workbench")
+        .join("checks")
+        .join(format!("{system}.toml"));
+    let text = std::fs::read_to_string(&path).ok()?;
+    Some(OldChecks {
+        path: path.to_string_lossy().into_owned(),
+        text,
+    })
+}
+
+/// A system name is a file stem, never a path.
+fn is_name(system: &str) -> bool {
+    !system.is_empty() && system != ".." && system != "." && !system.contains(['/', '\\', ':'])
 }
 
 /// `settings` with `system` recorded as told.
 pub fn mark_shown(settings: &Settings, system: &str) -> Settings {
-    let _ = system;
-    settings.clone()
+    let mut out = settings.clone();
+    if !out.old_checks_shown.iter().any(|s| s == system) {
+        out.old_checks_shown.push(system.to_string());
+    }
+    out
 }
 
 /// `incoming` with the systems already told about, as `stored` records them: a screen that saves its settings never
 /// carries that list, and saving must not make a notice come back.
-pub fn keep_shown(stored: &Settings, incoming: Settings) -> Settings {
-    let _ = stored;
+pub fn keep_shown(stored: &Settings, mut incoming: Settings) -> Settings {
+    for system in &stored.old_checks_shown {
+        if !incoming.old_checks_shown.contains(system) {
+            incoming.old_checks_shown.push(system.clone());
+        }
+    }
     incoming
+}
+
+/// Record on this machine that the engineer has been told about `system`'s old checks file.
+pub fn record_shown(system: &str) -> Result<(), crate::store::StoreError> {
+    let settings = crate::store::load_settings();
+    crate::store::save_settings(&mark_shown(&settings, system))
+}
+
+/// Where the Kata home is: the parent of the `workbench` folder.
+pub fn kata_home() -> Option<std::path::PathBuf> {
+    crate::store::workbench_dir().and_then(|d| d.parent().map(Path::to_path_buf))
 }
 
 #[cfg(test)]

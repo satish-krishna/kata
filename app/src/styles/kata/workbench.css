@@ -339,6 +339,12 @@
 .k-check > p { margin: 0; }
 .k-check__tail { margin: 0; max-height: 14rem; overflow: auto; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-inset); color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
 
+/* An old per-machine checks file, shown once: the sentence and its dismiss button on one row, the path and the file's text below. */
+.k-oldchecks { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--space-3) var(--space-4); padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border-subtle); color: var(--text-secondary); flex: none; }
+.k-oldchecks > p { margin: 0; }
+.k-oldchecks__path { grid-column: 1 / -1; color: var(--text-muted); overflow-wrap: anywhere; }
+.k-oldchecks > pre { grid-column: 1 / -1; }
+
 /* ---------- AI-SDLC: change page ---------- */
 .k-change { flex: 1; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
 .k-change__doc { min-height: 0; overflow-y: auto; padding: var(--space-5); }
