@@ -1335,7 +1335,7 @@ export class BuildPageViewModel {
     const ctx = this.ctx!;
     const master = this.masterRef()!;
     const repos = [...new Set([master.repo, ...(this.status()?.repos.map((r) => r.repo) ?? [])])];
-    return this.transport.sdlcBuildHeads(ctx.folder, master.repo, ctx.system, repos, ctx.change);
+    return this.transport.sdlcBuildHeads({ workspace: ctx.folder, system: ctx.system, change: ctx.change }, repos);
   }
 
   /** Read an earlier session's transcript the first time it is shown. */
@@ -1682,7 +1682,7 @@ export class BuildPageViewModel {
     let heads: Record<string, string> | undefined;
     if (entry.key === REVIEW) {
       try {
-        heads = await this.transport.sdlcBuildHeads(ctx.folder, entry.master.repo, ctx.system, entry.repos, ctx.change);
+        heads = await this.transport.sdlcBuildHeads({ workspace: ctx.folder, system: ctx.system, change: ctx.change }, entry.repos);
       } catch (e) {
         this.toasts.error(`Could not record where each repository stood: ${message(e)}`);
       }
@@ -1777,7 +1777,7 @@ export class BuildPageViewModel {
   private async readStatus(): Promise<BuildStatus> {
     const master = this.masterRef()!;
     const ctx = this.ctx!;
-    return this.transport.sdlcBuildStatus(master.path, ctx.system, ctx.change);
+    return this.transport.sdlcBuildStatus({ workspace: ctx.folder, system: ctx.system, change: ctx.change });
   }
 
   /** Read whether any repository has changed files, the way the Changes view lists them; a failed read counts as none. */
@@ -1786,7 +1786,7 @@ export class BuildPageViewModel {
     const master = this.masterRef();
     if (ctx === null || master === null) return;
     try {
-      const repos = await this.transport.sdlcChangeRepos(ctx.folder, master.repo, ctx.system, ctx.change);
+      const repos = await this.transport.sdlcChangeRepos({ workspace: ctx.folder, system: ctx.system, change: ctx.change });
       const counts = await Promise.all(repos.map((r) => this.transport.sdlcDiffFiles(r.path, 'whole').then((l) => l.files.length, () => 0)));
       if (!this.shows(ctx)) return;
       this.changedFileTotal.set(counts.reduce((sum, n) => sum + n, 0));
@@ -1841,7 +1841,7 @@ export class BuildPageViewModel {
     const ctx = this.ctx;
     if (master === null || ctx === null) return undefined;
     try {
-      return await this.transport.sdlcReviewRecord(master.path, ctx.system, ctx.change);
+      return await this.transport.sdlcReviewRecord({ workspace: ctx.folder, system: ctx.system, change: ctx.change });
     } catch (e) {
       this.toasts.error(`Could not read the review document: ${message(e)}`);
       return undefined;

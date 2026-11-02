@@ -357,8 +357,8 @@ export class ChangesViewModel {
     this.progress.begin('reading-diff', progressLabels.findingRepos(), PROGRESS_OWNER);
     try {
       // A failure here only loses the note; the repositories with changes still list.
-      const missing = this.transport.sdlcMissingChangeBranches(ctx.folder, ctx.masterRepo, ctx.system, ctx.change).catch(() => []);
-      const found = await this.transport.sdlcChangeRepos(ctx.folder, ctx.masterRepo, ctx.system, ctx.change);
+      const missing = this.transport.sdlcMissingChangeBranches({ workspace: ctx.folder, system: ctx.system, change: ctx.change }).catch(() => []);
+      const found = await this.transport.sdlcChangeRepos({ workspace: ctx.folder, system: ctx.system, change: ctx.change });
       const repos = [...found.filter((r) => r.repo === ctx.masterRepo), ...found.filter((r) => r.repo !== ctx.masterRepo)];
       // A commit read that fails leaves that repository's files untied; it never fails the list.
       // The plain label names the first repository still being read and moves on as each one is read.

@@ -319,7 +319,7 @@ export class SdlcRunner {
     let candidates: Map<string, Snapshot> | null = null;
     if (target.master !== null) {
       try {
-        snapshot = await this.transport.sdlcSnapshot(target.master);
+        snapshot = await this.transport.sdlcSnapshot({ kind: 'workspace', master: target.master });
       } catch (e) {
         this.toasts.error(`Could not read the master repo before the run: ${message(e)}`);
         return { state: 'error', runId: null, snapshot: null, exited: true, batch: null };
@@ -415,7 +415,7 @@ export class SdlcRunner {
     const entry = this.pending().find((b) => b.id === id)?.entries.find((p) => p.repo === repo);
     if (!entry) return false;
     try {
-      await this.transport.sdlcDiscard(entry.path, entry.snapshot, paths, ...(entry.build ? [entry.build] : []));
+      await this.transport.sdlcDiscard({ kind: 'workspace', master: entry.path }, entry.snapshot, paths, ...(entry.build ? [entry.build] : []));
     } catch (e) {
       this.toasts.error(`Could not discard: ${message(e)}`);
       return false;
@@ -655,7 +655,7 @@ export class SdlcRunner {
     const out = new Map<string, Snapshot>();
     for (const repo of setup.repos) {
       try {
-        out.set(repo, await this.transport.sdlcSnapshot(masterPath(setup.folder, repo)));
+        out.set(repo, await this.transport.sdlcSnapshot({ kind: 'workspace', master: masterPath(setup.folder, repo) }));
       } catch {
         // Not a readable repo: it cannot become the master's baseline, and setup still runs.
       }
@@ -690,7 +690,7 @@ export class SdlcRunner {
 
   private async readLeftovers(master: string, snapshot: Snapshot, productRepos: string[]): Promise<Leftovers> {
     try {
-      return await this.transport.sdlcLeftovers(master, snapshot, siblingsOf(master, productRepos));
+      return await this.transport.sdlcLeftovers({ kind: 'workspace', master }, snapshot);
     } catch (e) {
       this.toasts.error(`Could not read what the run left behind: ${message(e)}`);
       return EMPTY;
