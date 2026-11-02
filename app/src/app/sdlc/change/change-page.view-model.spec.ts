@@ -1402,6 +1402,93 @@ describe('ChangePageViewModel document runs of different changes (R11)', () => {
   });
 });
 
+describe("ChangePageViewModel: the session view's Close waits on the run it shows (F30)", () => {
+  /** A run of no change, as the home starts a triage, setup or context run: it takes the screen and settles on place null. */
+  const homeRun = (master: string | null = null) =>
+    TestBed.inject(SdlcRunner).run('Triage', { ...seedSpec(), name: 'sdlc-triage' }, { workspaceId: 'w', master, productRepos: [], link: null });
+  /** Hold the engine's exit of the next run that waits on it, so its after-run work stays going until the test lets it go. */
+  const holdExit = (transport: MockTransport) => {
+    let exit!: (v: boolean) => void;
+    const wait = vi.spyOn(transport, 'sdlcWaitRunExit').mockImplementationOnce(() => new Promise<boolean>((r) => (exit = r)));
+    return { wait, exit: (v: boolean) => exit(v) };
+  };
+
+  it('a lock run (triage) shown on a change page holds Close while it settles, then lets it go', async () => {
+    const transport = new MockTransport();
+    const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+    runAgent.mockRestore();
+    await ready(vm);
+    const held = holdExit(transport);
+    const done = homeRun();
+    await vi.waitFor(() => expect(['running', 'awaiting']).toContain(vm.runState()));
+    expect(vm.session()?.title).toBe('Triage');
+    vm.cancelLock();
+    await vi.waitFor(() => expect(held.wait).toHaveBeenCalled());
+    expect(vm.session()?.finished).not.toBeNull();
+    expect(vm.closeBlocked()).toBe(true);
+    held.exit(true);
+    await vi.waitFor(() => expect(vm.closeBlocked()).toBe(false));
+    vm.closeSession();
+    await done;
+  });
+
+  it("a change page showing its own run is not held by a home run's settling", async () => {
+    const transport = new MockTransport();
+    const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+    runAgent.mockRestore();
+    await ready(vm);
+    // This change's own run is live and on show; a home run takes the lock beside it, stops and settles.
+    void vm.act('start-spec');
+    await vi.waitFor(() => expect(['running', 'awaiting']).toContain(vm.runState()));
+    const held = holdExit(transport);
+    const home = homeRun();
+    const lock = TestBed.inject(LockStore);
+    await vi.waitFor(() => expect(lock.active()?.kind).toBe('run'));
+    lock.cancel();
+    await vi.waitFor(() => expect(held.wait).toHaveBeenCalled());
+    expect(vm.session()?.title).not.toBe('Triage');
+    vm.cancelLock();
+    await vi.waitFor(() => expect(vm.session()?.finished).not.toBeNull());
+    // This change's own leftovers hold its Close until they are decided; the home run's settling never does.
+    await vi.waitFor(() => expect(vm.leftovers()).not.toBeNull());
+    vm.closeLeftovers();
+    expect(TestBed.inject(SdlcRunner).settling()).toBe(true);
+    await vi.waitFor(() => expect(vm.closeBlocked()).toBe(false));
+    vm.closeSession();
+    held.exit(true);
+    await vi.waitFor(() => expect(TestBed.inject(SdlcRunner).settling()).toBe(false));
+    lock.close();
+    await home;
+  });
+
+  it("a change page with no workspace is not held by a home run it does not show, and never shows the home's leftovers", async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([]);
+    const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+    runAgent.mockRestore();
+    await ready(vm);
+    expect(vm.current()).toBeNull();
+    const held = holdExit(transport);
+    const home = homeRun('/ws/commerce-docs');
+    const lock = TestBed.inject(LockStore);
+    await vi.waitFor(() => expect(lock.active()?.kind).toBe('run'));
+    lock.cancel();
+    await vi.waitFor(() => expect(held.wait).toHaveBeenCalled());
+    // The home run's view is closed while it settles, so this page shows no run.
+    lock.close();
+    expect(vm.session()).toBeNull();
+    expect(TestBed.inject(SdlcRunner).settling()).toBe(true);
+    expect(vm.closeBlocked()).toBe(false);
+    held.exit(true);
+    const runner = TestBed.inject(SdlcRunner);
+    await vi.waitFor(() => expect(runner.leftovers()).not.toBeNull());
+    expect(vm.leftovers()).toBeNull();
+    expect(vm.closeBlocked()).toBe(false);
+    runner.closeLeftovers();
+    await home;
+  });
+});
+
 describe('ChangePageViewModel: the change copy', () => {
   const COPY = 'C:/ws/.ai-sdlc/copies/2026-10-12-product-photo-upload';
   const REF = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: PHOTOS_CHANGE };
