@@ -58,10 +58,7 @@ pub fn resolve(
     }
     let place = program.resolve(workspace).map_err(unanswered)?;
     let answer = program
-        .run(
-            &["state", "--json", "--system", system],
-            &place,
-        )
+        .run(&["state", "--json", "--system", system], &place)
         .map_err(unanswered)?;
     let found = state::read_state(answer)
         .map_err(unanswered)?

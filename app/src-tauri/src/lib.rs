@@ -913,34 +913,18 @@ fn sdlc_checkout(
     out
 }
 
-/// Where the plugin has the change, and how it stands: the workspace's own master and the change's state.
-fn change_standing(
+/// Where the plugin has the change: `kata_sdlc::home::resolve` for the change's workspace.
+fn change_home(
     program: &sdlc::ai_sdlc::Program,
     change: &build_host::ChangeRef,
-) -> Result<(sdlc::ai_sdlc::Place, sdlc::ai_sdlc::state::ChangeState), String> {
-    let place = program
-        .resolve(Path::new(&change.workspace))
-        .map_err(|e| e.to_string())?;
-    let answer = program
-        .run(
-            &[
-                "state",
-                "--json",
-                "--system",
-                &change.system,
-                "--change",
-                &change.change,
-            ],
-            &place,
-        )
-        .map_err(|e| e.to_string())?;
-    let state = sdlc::ai_sdlc::state::read_state(answer).map_err(|e| e.to_string())?;
-    let found = state
-        .changes
-        .into_iter()
-        .find(|c| c.change == change.change)
-        .ok_or_else(|| format!("the plugin knows no change {}", change.change))?;
-    Ok((place, found))
+) -> Result<sdlc::home::ChangeHome, String> {
+    sdlc::home::resolve(
+        program,
+        Path::new(&change.workspace),
+        &change.system,
+        &change.change,
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Accept a document of a change: the status edit, the plugin's acceptance commit, then its `doc.accept` event.
@@ -950,12 +934,12 @@ fn sdlc_accept(
     doc: sdlc::accept::ChangeDocument,
 ) -> Result<sdlc::accept::AcceptOutcome, String> {
     let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
-    let (place, state) = change_standing(&program, &change)?;
+    let home = change_home(&program, &change)?;
     Ok(sdlc::accept::apply(
         &program,
-        &place,
+        &home.place,
         &change.system,
-        &state,
+        &home.state,
         doc,
     ))
 }
@@ -970,8 +954,8 @@ fn sdlc_reject(
     let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
     let key = build_host::key_of(&change);
     control.state.lock().unwrap().begin_rejecting(&key)?;
-    let outcome = change_standing(&program, &change)
-        .map(|(place, state)| sdlc::accept::reject(&program, &place, &change.system, &state));
+    let outcome = change_home(&program, &change)
+        .map(|home| sdlc::accept::reject(&program, &home.place, &change.system, &home.state));
     control.state.lock().unwrap().end_rejecting(&key);
     outcome
 }
@@ -983,8 +967,8 @@ fn sdlc_copy_removal(
     change: build_host::ChangeRef,
 ) -> Result<sdlc::copy_removal::CopyRemoval, String> {
     let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
-    let (place, state) = change_standing(&program, &change)?;
-    sdlc::copy_removal::offer(&program, &place, &state)
+    let home = change_home(&program, &change)?;
+    sdlc::copy_removal::offer(&program, &home.place, &home.state)
 }
 
 /// The branch the change's copy holds, as the plugin records it.
@@ -1007,8 +991,8 @@ fn sdlc_remove_copy(
     let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
     let key = build_host::key_of(&change);
     control.state.lock().unwrap().begin_rejecting(&key)?;
-    let outcome = change_standing(&program, &change)
-        .map(|(place, state)| sdlc::copy_removal::remove(&program, &place, &state));
+    let outcome = change_home(&program, &change)
+        .map(|home| sdlc::copy_removal::remove(&program, &home.place, &home.state));
     control.state.lock().unwrap().end_rejecting(&key);
     outcome
 }
@@ -1019,8 +1003,8 @@ fn sdlc_remove_copy(
 fn sdlc_open_copy_folder(app: AppHandle, change: build_host::ChangeRef) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
-    let (_, state) = change_standing(&program, &change)?;
-    open_copy_with(state.in_copy, &state.master, |path| {
+    let home = change_home(&program, &change)?;
+    open_copy_with(home.in_copy, &home.state.master, |path| {
         app.opener()
             .open_path(path, None::<&str>)
             .map_err(|e| e.to_string())
@@ -1344,7 +1328,8 @@ fn sdlc_checks_view(
     change: build_host::ChangeRef,
 ) -> Result<Vec<sdlc::checks_view::RepoCheckView>, String> {
     let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
-    let (place, state) = change_standing(&program, &change)?;
+    let home = change_home(&program, &change)?;
+    let (place, state) = (home.place, home.state);
     let repos: Vec<String> = state
         .tasks
         .as_ref()
@@ -1364,8 +1349,8 @@ fn sdlc_declare_done(app: AppHandle, change: build_host::ChangeRef) -> sdlc::don
         Ok(dir) => sdlc::ai_sdlc::Program::locate(&dir),
         Err(message) => return could_not_run(message),
     };
-    let (place, state) = match change_standing(&program, &change) {
-        Ok(found) => found,
+    let (place, state) = match change_home(&program, &change) {
+        Ok(home) => (home.place, home.state),
         Err(message) => return could_not_run(message),
     };
     // A change that lives in a copy is declared done from its copy.
