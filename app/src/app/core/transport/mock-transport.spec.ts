@@ -9,8 +9,10 @@ import type { DoneStep } from '@bindings/DoneStep';
 import type { Resolved } from '@bindings/Resolved';
 import type { BuildEvent } from '@bindings/BuildEvent';
 import type { ChangeRef } from '@bindings/ChangeRef';
-import { MOCK_BUILD_CHANGE, MOCK_BUILD_SECOND, MOCK_HELD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MOCK_MASTER, MOCK_STARTED_FIX, TRIAGE_LIGHT, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import type { SnapshotTarget } from '@bindings/SnapshotTarget';
+import { MOCK_BUILD_CHANGE, MOCK_COPY_CHANGE, MOCK_BUILD_SECOND, MOCK_HELD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MOCK_MASTER, MOCK_STARTED_FIX, TRIAGE_LIGHT, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 
+const ref = (change: string): ChangeRef => ({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change });
 const total = (steps: { delay: number }[]) => steps.reduce((a, s) => a + s.delay, 0);
 
 describe('MockTransport', () => {
@@ -296,7 +298,7 @@ describe('MockTransport', () => {
     it('commits each finished run into the build status, and the answer lets the paused run finish', async () => {
       const t = new MockTransport();
       await t.onRunEvent(() => undefined);
-      const status = () => t.sdlcBuildStatus('/m', 'commerce', MOCK_BUILD_CHANGE);
+      const status = () => t.sdlcBuildStatus(ref(MOCK_BUILD_CHANGE));
       expect((await status()).tasks.map((x) => x.row)).toEqual([null, null, null]);
       const core = await t.runSpec(buildSpec('commerce-core'), GROUP);
       const portal = await t.runSpec(buildSpec('customer-portal'), GROUP);
@@ -376,20 +378,57 @@ describe('MockTransport', () => {
 
     it('reports leftovers after a cancelled sdlc run, and discarding removes the chosen paths', async () => {
       const t = new MockTransport();
-      expect((await t.sdlcLeftovers('/m', { head: null, dirty: {} }, [])).discardable).toEqual([]);
+      const target: SnapshotTarget = { kind: 'workspace', master: '/m' };
+      expect((await t.sdlcLeftovers(target, { head: null, folder: '', dirty: {} })).discardable).toEqual([]);
       const id = await t.runSpec(sdlcSpec('sdlc-commerce-x-spec'));
       await t.cancelRun(id);
-      const left = await t.sdlcLeftovers('/m', { head: null, dirty: {} }, []);
+      const left = await t.sdlcLeftovers(target, { head: null, folder: '', dirty: {} });
       expect(left.discardable.length).toBe(2);
       expect(left.touched_dirty.length).toBe(1);
-      await t.sdlcDiscard('/m', { head: null, dirty: {} }, left.discardable);
-      expect((await t.sdlcLeftovers('/m', { head: null, dirty: {} }, [])).discardable).toEqual([]);
+      await t.sdlcDiscard(target, { head: null, folder: '', dirty: {} }, left.discardable);
+      expect((await t.sdlcLeftovers(target, { head: null, folder: '', dirty: {} })).discardable).toEqual([]);
     });
 
     it('reads documents by stem and rejects a file name, like the backend contract', async () => {
       const t = new MockTransport();
-      expect(await t.sdlcReadDoc('/m', 'commerce', '2026-10-12-product-photo-upload', 'spec')).toContain('# Spec: photo upload');
-      await expect(t.sdlcReadDoc('/m', 'commerce', '2026-10-12-product-photo-upload', 'spec.md')).rejects.toThrow(/stem/);
+      expect(await t.sdlcReadDoc(ref('2026-10-12-product-photo-upload'), 'spec')).toContain('# Spec: photo upload');
+      await expect(t.sdlcReadDoc(ref('2026-10-12-product-photo-upload'), 'spec.md')).rejects.toThrow(/stem/);
+    });
+
+    it('reads a change in its own copy as the copy holds it, and the same change reference through every read', async () => {
+      const t = new MockTransport();
+      const r = ref(MOCK_COPY_CHANGE);
+      expect(await t.sdlcReadDoc(r, 'spec')).toContain('copy holds this spec');
+      expect((await t.sdlcChangeState(MOCK_WORKSPACE_FOLDER, 'commerce', MOCK_COPY_CHANGE)).state.inCopy).toBe(true);
+      const opened = await t.sdlcOpenChange(r, 'spec');
+      expect(opened.view.state.change).toBe(MOCK_COPY_CHANGE);
+      expect(opened.text).toContain('copy holds this spec');
+      expect(opened.parsed?.kind).toBe('spec');
+    });
+
+    it('reads a change in the checkout from the checkout, with the master the checkout path', async () => {
+      const t = new MockTransport();
+      const r = ref('2026-10-12-product-photo-upload');
+      const opened = await t.sdlcOpenChange(r, 'spec');
+      expect(opened.view.state.master).toBe(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`);
+      expect(opened.text).toBe(await t.sdlcReadDoc(r, 'spec'));
+      expect(opened.status).toBeNull();
+    });
+
+    it('opens a planned change with its build status', async () => {
+      const t = new MockTransport();
+      const opened = await t.sdlcOpenChange(ref(MOCK_BUILD_CHANGE), 'plan');
+      expect(opened.status).toEqual(await t.sdlcBuildStatus(ref(MOCK_BUILD_CHANGE)));
+    });
+
+    it('rejects every read of a change it does not list, with the message for a removed copy', async () => {
+      const t = new MockTransport();
+      const gone = ref('2026-01-01-no-such-change');
+      const message = "This change's copy was removed and the plugin no longer lists it.";
+      await expect(t.sdlcReadDoc(gone, 'spec')).rejects.toThrow(message);
+      await expect(t.sdlcOpenChange(gone, 'spec')).rejects.toThrow(message);
+      await expect(t.sdlcBuildStatus(gone)).rejects.toThrow(message);
+      await expect(t.sdlcChangeRepos(gone)).rejects.toThrow(message);
     });
 
     it('keeps the build layout in memory: a fresh mock loads {}, and the next load returns the last save', async () => {
