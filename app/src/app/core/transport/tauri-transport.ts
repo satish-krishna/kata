@@ -130,6 +130,7 @@ export class TauriTransport extends KataTransport {
   sdlcMarkOpened(change: ChangeRef) { return this.ipc.invoke<void>('sdlc_mark_opened', { change }); }
   sdlcCloseAnswer(confirm: boolean) { return this.ipc.invoke<void>('sdlc_close_answer', { confirm }); }
   sdlcChangeName(title: string) { return this.ipc.invoke<string>('sdlc_change_name', { title }); }
+  sdlcTriageChange(transcript: string, system: string) { return this.ipc.invoke<string | null>('sdlc_triage_change', { transcript, system }); }
   sdlcStartChange(folder: string, system: string, title: string, workType: string, scope: string, branch?: string) { return this.ipc.invoke<ChangeStart>('sdlc_start_change', { folder, system, title, workType, scope, ...(branch === undefined ? {} : { branch }) }); }
   sdlcNaming(folder: string, masterRepo: string, system: string) { return this.ipc.invoke<NamingState>('sdlc_naming', { folder, masterRepo, system }); }
   sdlcRenameBranch(folder: string, workspaceId: string, system: string, change: string, to: string) { return this.ipc.invoke<RenameOutcome>('sdlc_rename_branch', { folder, workspaceId, system, change, to }); }

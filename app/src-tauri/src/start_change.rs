@@ -178,11 +178,55 @@ pub fn start_change(
     }
 }
 
+/// Stub.
+pub fn started_by_run(_events: &[kata_core::event::KataEvent], _system: &str) -> Option<String> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
     use std::process::Command;
+
+    fn tool_result(output: &str) -> kata_core::event::KataEvent {
+        kata_core::event::KataEvent::ToolResult {
+            name: "Bash".into(),
+            ok: true,
+            summary: String::new(),
+            id: None,
+            parent_id: None,
+            output: Some(output.into()),
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn the_change_a_triage_started_is_the_one_its_own_change_start_answer_names() {
+        let started = r#"{"event":"change.start","system":"commerce","change":"2026-10-18-fix-login","outcome":"passed","details":{"branch":"fix/login","copy":"/ws/.ai-sdlc/copies/2026-10-18-fix-login","created":true}}"#;
+        let events = vec![
+            tool_result("intent.md written"),
+            tool_result(started),
+            // Another system's start, a refused start and a step that is not a start name no change of this triage.
+            tool_result(r#"{"event":"change.start","system":"billing","change":"2026-10-18-other","outcome":"passed"}"#),
+            tool_result(r#"{"event":"change.start","system":"commerce","change":"2026-10-18-taken","outcome":"refused"}"#),
+            tool_result(r#"{"event":"doc.accept","system":"commerce","change":"2026-10-18-x","outcome":"passed"}"#),
+        ];
+        assert_eq!(
+            started_by_run(&events, "commerce").as_deref(),
+            Some("2026-10-18-fix-login")
+        );
+        // The answer may follow other output of the same command, one JSON object on its own line.
+        let mixed = vec![tool_result(&format!("starting
+{started}
+"))];
+        assert_eq!(
+            started_by_run(&mixed, "commerce").as_deref(),
+            Some("2026-10-18-fix-login")
+        );
+        // A triage whose run started nothing names no change, whatever else the workspace lists.
+        assert_eq!(started_by_run(&events[2..], "commerce"), None);
+    }
 
     const DATE: &str = "2026-11-01";
     const CHANGE: &str = "2026-11-01-password-reset";

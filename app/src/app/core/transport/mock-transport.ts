@@ -296,6 +296,8 @@ export class MockTransport extends KataTransport {
   sdlcLeftovers(_master: string, _before: Snapshot, _productRepos: string[], _build?: BuildScope): Promise<Leftovers> { return Promise.resolve(this.sdlc.leftovers()); }
   sdlcDiscard(_master: string, _before: Snapshot, paths: string[], _build?: BuildScope): Promise<void> { this.sdlc.discard(paths); return Promise.resolve(); }
   sdlcChangeName(title: string): Promise<string> { return Promise.resolve(this.sdlc.changeName(title)); }
+  /** Stub. */
+  sdlcTriageChange(_transcript: string, _system: string): Promise<string | null> { return Promise.resolve(null); }
   sdlcStartChange(_folder: string, _system: string, title: string, _workType: string, _scope: string, branch?: string): Promise<ChangeStart> { return Promise.resolve(this.sdlc.startChange(title, branch)); }
   sdlcNaming(_folder: string, _masterRepo: string, _system: string): Promise<NamingState> { return Promise.resolve(this.sdlc.naming()); }
   sdlcCheckScope(_folder: string, scope: string): Promise<string[]> { return Promise.resolve(scope.includes(' ') ? ['a scope cannot contain a space'] : []); }

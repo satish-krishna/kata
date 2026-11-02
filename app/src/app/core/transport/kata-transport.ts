@@ -156,6 +156,8 @@ export abstract class KataTransport {
   abstract sdlcDiscard(master: string, before: Snapshot, paths: string[], build?: BuildScope): Promise<void>;
   /** The name the plugin will give a change described by `title`, so the preview shows it. */
   abstract sdlcChangeName(title: string): Promise<string>;
+  /** The change a triage run started, named by the run's own record (the plugin's `change start` answer); null when it started none of `system`. */
+  abstract sdlcTriageChange(transcript: string, system: string): Promise<string | null>;
   /** Ask the plugin to start a change: its branch and its own copy. A refusal is an answer with the plugin's reasons, not an error. */
   abstract sdlcStartChange(folder: string, system: string, title: string, workType: string, scope: string, branch?: string): Promise<ChangeStart>;
   /** The system's naming setting, or why it cannot be used. */

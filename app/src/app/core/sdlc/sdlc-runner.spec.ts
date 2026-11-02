@@ -46,6 +46,9 @@ class FakeTransport {
   /** The changes the plugin lists right now. */
   listed: string[] = [];
   sdlcState = vi.fn(async (..._a: unknown[]) => ({ changes: this.listed.map((change) => ({ state: { change } })) }));
+  /** The change the triage run's own record names as started, as the backend reads it. */
+  triaged: string | null = null;
+  sdlcTriageChange = vi.fn(async (..._a: unknown[]) => this.triaged);
   sdlcChangeState = vi.fn(async (..._a: unknown[]) => ({ state: { track: 'full' } }));
   sdlcSettings = vi.fn(async () => ({ mode: null, remember: false, permission_mode: 'bypass' as const }));
   catalog = vi.fn(async (..._a: unknown[]) => seedCatalog);
@@ -564,6 +567,7 @@ describe('SdlcRunner.newChange track', () => {
       ctx.events.set([transcript('/k/runs/sdlc-commerce-triage-1.jsonl')]);
       TestBed.tick();
       if (creates !== null) ctx.fake.listed = [...ctx.fake.listed, creates];
+      ctx.fake.triaged = creates;
       return 'success' as const;
     });
     ctx.fake.scan = SCAN;
@@ -620,6 +624,23 @@ describe('SdlcRunner.newChange track', () => {
     ctx.fake.listed = ['2026-10-01-older'];
     const outcome = await ctx.runner.newChange(target, 'commerce', 'idea', 'decide');
     expect(outcome).toMatchObject({ kind: 'opened', change: '2026-10-18-fix-login' });
+  });
+
+  it('decide opens the change its own triage started, not another change that appeared while it ran (F6)', async () => {
+    const ctx = setup(async () => {
+      ctx.events.set([transcript('/k/runs/sdlc-commerce-triage-1.jsonl')]);
+      TestBed.tick();
+      // Another change's intent run writes its intent.md while the triage goes on, so the list shows it too, first.
+      ctx.fake.listed = [...ctx.fake.listed, '2026-10-18-other-intent', '2026-10-18-fix-login'];
+      ctx.fake.triaged = '2026-10-18-fix-login';
+      return 'success' as const;
+    });
+    ctx.fake.scan = SCAN;
+    const outcome = await ctx.runner.newChange(target, 'commerce', 'idea', 'decide');
+    expect(outcome).toEqual({ kind: 'opened', change: '2026-10-18-fix-login', branch: null });
+    expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledWith(expect.objectContaining({ change: '2026-10-18-fix-login', stage: 'start', run_id: 'sdlc-commerce-triage-1' }));
+    expect(ctx.fake.sdlcLinkRun).not.toHaveBeenCalledWith(expect.objectContaining({ change: '2026-10-18-other-intent' }));
+    expect(ctx.navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', '2026-10-18-fix-login']);
   });
 
   it('decide that created no change says nothing and goes nowhere', async () => {
