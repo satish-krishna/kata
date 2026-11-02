@@ -3,12 +3,12 @@
 //! and the last terminal event determine a `RunRecord`.
 use crate::event::KataEvent;
 use crate::fsutil;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunRecord {
     pub id: String,
     pub kata: String,

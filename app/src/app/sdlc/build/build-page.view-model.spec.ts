@@ -288,6 +288,40 @@ describe('the build page shows tasks and sessions from the build log, the run li
     return opened(s, over.stage === undefined ? {} : { stage: over.stage });
   }
 
+  it('shows where each repository stands and what each task shows as the backend decided, from the status and live state it read (F12)', async () => {
+    const s = await page({ built: false });
+    // The backend says the repository stopped on T1, though nothing in the log or the host would: the page follows the backend.
+    const board = vi.spyOn(s.transport, 'sdlcBuildBoard').mockResolvedValue([
+      { repo: 'commerce-core', situation: { kind: 'stopped', task: 'T1', reason: 'from the backend' }, tasks: [{ id: 'T1', state: { kind: 'stopped', reason: 'from the backend' } }] },
+    ]);
+    await s.load();
+    expect(board).toHaveBeenCalled();
+    const [repos, status, going, stopped] = board.mock.calls.at(-1)!;
+    expect(repos).toContain('commerce-core');
+    expect(status).toEqual(s.status);
+    expect(going).toEqual([]);
+    expect(stopped).toEqual({});
+    const area = s.vm.taskAreas().find((g) => g.repo === 'commerce-core')!;
+    expect(area.situation).toEqual({ kind: 'stopped', task: 'T1', reason: 'from the backend' });
+    expect(area.tasks.find((t) => t.id === 'T1')!.state).toEqual({ kind: 'stopped', reason: 'from the backend' });
+  });
+
+  it('judges the review by the standing the backend decided from the links, records, heads and document the page read (F12)', async () => {
+    const s = await page({ links: [link('review', 'run-r', secs(8))], records: [record('run-r', 0)] });
+    vi.spyOn(s.transport, 'sdlcBuildHeads').mockResolvedValue({ 'commerce-core': 'abc1234' });
+    const standing = vi.spyOn(s.transport, 'sdlcReviewStanding').mockResolvedValue({ kind: 'stale' });
+    await s.load();
+    expect(standing).toHaveBeenCalledWith({
+      links: [link('review', 'run-r', secs(8))],
+      records: [record('run-r', 0)],
+      heads: { 'commerce-core': 'abc1234' },
+      scope: { workspaceId: CTX.workspaceId, system: 'commerce', change: MOCK_BUILD_CHANGE },
+      document: null,
+      master: MOCK_MASTER,
+    });
+    expect(s.vm.reviewEntry()).toBe('stale');
+  });
+
   it('picking a task shows the session that recorded it', async () => {
     const { vm, load } = await page({
       links: [link('build:commerce-core', 'run-a', secs(8)), link('build:commerce-core', 'run-b', secs(9))],

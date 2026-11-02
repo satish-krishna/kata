@@ -5,6 +5,8 @@ import type { BuildRow } from '@bindings/BuildRow';
 import type { BuildRunRef } from '@bindings/BuildRunRef';
 import type { BuildState } from '@bindings/BuildState';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { RepoBoard } from '@bindings/RepoBoard';
+import type { ReviewStanding } from '@bindings/ReviewStanding';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import type { ChangeView } from '@bindings/ChangeView';
@@ -23,7 +25,6 @@ import type { StartForm } from '@bindings/StartForm';
 import type { StartOutcome } from '@bindings/StartOutcome';
 import type { Stop } from '@bindings/Stop';
 import type { TaskLink } from '@bindings/TaskLink';
-import type { TaskStatus } from '@bindings/TaskStatus';
 import { GivenStore, type BuildChoices } from '../../core/given/given.store';
 import { RunPreviewViewModel, type BuildSectionRequest } from '../../core/given/run-preview.view-model';
 import { IDLE, reduce, type RunSnapshot } from '../../core/run/reduce';
@@ -42,7 +43,7 @@ import { layoutStage as layoutStageOf, type LayoutStage } from '../../lib/build-
 import { progressLabels } from '../../lib/progress-steps';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
-import { REVIEW_MISSING_TEXT, reviewState } from '../../lib/sdlc-done';
+import { REVIEW_MISSING_TEXT } from '../../lib/sdlc-done';
 import { DEFAULT_BUILD_SECS, reviewFindings, stageName, transcriptRunId, type Finding, type StageAction } from '../../lib/sdlc';
 import { groupFindings, type FindingGroup } from '../../lib/sdlc-findings';
 import { filterCounts, taskList, type TaskFilter, type TaskLine, type TaskListView } from '../../lib/build-task-list';
@@ -290,6 +291,7 @@ function refusalOf(outcome: StartOutcome): StartRefusal | null {
 }
 
 const REVIEW = 'review';
+const NOT_STARTED: TaskState = { kind: 'not-started' };
 const RUNNING: readonly RunState[] = ['running', 'awaiting'];
 /** The time limit of a review started by hand. */
 const REVIEW_TIMEOUT_SECS = 2 * 60 * 60;
@@ -322,21 +324,6 @@ const timeOf = (at: number): string => {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 };
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-
-/** A task's state given where its repository stands. */
-function taskStateOf(task: TaskStatus, situation: Situation): TaskState {
-  if (task.row !== null) return { kind: 'done', departure: task.row.departure };
-  switch (situation.kind) {
-    case 'working':
-      return situation.task === task.id ? { kind: 'running' } : { kind: 'not-started' };
-    case 'waiting':
-      return situation.task === task.id ? { kind: 'waiting', onTask: situation.onTask, onRepo: situation.onRepo } : { kind: 'not-started' };
-    case 'stopped':
-      return situation.task === task.id ? { kind: 'stopped', reason: situation.reason } : { kind: 'not-started' };
-    default:
-      return { kind: 'not-started' };
-  }
-}
 
 /** A finding of the backend's rows as the page's finding type has it. */
 function findingOf(f: ReviewRows['groups'][number]['rows'][number]['finding']): Finding {
@@ -394,6 +381,11 @@ export class BuildPageViewModel {
   private readonly records = signal<RunRecord[]>([]);
   /** Where each repository of the change stands now, for judging whether the review is stale. */
   private readonly heads = signal<Record<string, string>>({});
+  /** Whether the latest review covers the current work, as the backend decided from the inputs above; null until it is read. */
+  private readonly standing = signal<ReviewStanding | null>(null);
+  /** The tasks area as the backend decided it from the build log's status and the host's live runs and stops. */
+  private readonly board = signal<RepoBoard[]>([]);
+  private boardSeq = 0;
   /** The final state of each earlier run whose transcript was read, by run id; 'unreadable' when it could not be. */
   private readonly details = signal<Readonly<Record<string, RunSnapshot | 'unreadable'>>>({});
   private readonly readingDetail = new Set<string>();
@@ -652,6 +644,13 @@ export class BuildPageViewModel {
       this.bashDone();
       untracked(() => void this.refresh());
     });
+    // The tasks area follows the build log's status, the repositories listed and the host's live runs and stops: the backend decides it.
+    effect(() => {
+      const status = this.status();
+      const repos = this.groupKeys();
+      const state = this.buildState();
+      if (status !== null) untracked(() => void this.readBoard(repos, status, state));
+    });
     // A run's transcript is linked to its own change as soon as its id shows up in the run's events, whichever change is on show.
     effect(() => {
       const pending = this.followed().flatMap((e) => {
@@ -830,6 +829,8 @@ export class BuildPageViewModel {
     this.changes.set({ folder: input.ctx.folder, masterRepo: input.master.repo, system: input.ctx.system, change: input.ctx.change });
     await Promise.all([this.readSessions(), this.readChanges(), this.attach(this.ref()!), this.readChecks()]);
     if (!this.shows(input.ctx)) return;
+    if (input.status !== null) await this.readBoard(this.groupKeys(), input.status, this.buildState());
+    if (!this.shows(input.ctx)) return;
     this.sessionsReadFor.set(input);
     // The findings come from the review document, or from the latest review run's words.
     await this.noteReviewNotice(input.review);
@@ -862,6 +863,9 @@ export class BuildPageViewModel {
     this.reviewDocNotice.set(null);
     this.reviewListing.set(null);
     this.heads.set({});
+    this.standing.set(null);
+    this.boardSeq++;
+    this.board.set([]);
     this.findingPlace.set(null);
     this.readingNow.set(false);
     this.heldStage = null;
@@ -1053,29 +1057,18 @@ export class BuildPageViewModel {
     return repo === undefined ? null : `This task was recorded before Kata linked tasks to runs, or on another machine. Showing every session of ${repo}.`;
   });
 
-  /** Where a repository of the build stands, from the backend's state and the build log. */
-  private situationOf(repo: string, now: BuildStatus['repos'][number] | undefined): Situation {
-    const state = now?.state;
-    if (this.going().has(repo)) return { kind: 'working', task: state?.kind === 'ready' ? state.task : null };
-    const stop = this.stopped().get(repo);
-    if (stop !== undefined) return { kind: 'stopped', task: stop.task, reason: stop.reason };
-    if (state === undefined) return { kind: 'idle' };
-    if (state.kind === 'done') return { kind: 'finished' };
-    if (state.kind === 'waiting') return { kind: 'waiting', task: state.task, onTask: state.onTask, onRepo: state.onRepo };
-    return { kind: 'not-started', task: state.task };
-  }
-
   /** The tasks area: a heading per repository from where it stands, and its tasks with what each shows. */
   readonly taskAreas = computed<TaskArea[]>(() => {
     const status = this.status();
     if (status === null) return [];
     return this.groupKeys().map((repo) => {
-      const repoStatus = status.repos.find((r) => r.repo === repo);
       // The plugin's report of this repository: the commits that name each task and the ones that name none.
       const reported = this.loaded()?.change.state.tasks?.[repo];
       const going = this.going().has(repo);
       const entry = this.latest(repo);
-      const situation = this.situationOf(repo, repoStatus);
+      // Where the repository stands and what each task shows are the backend's answer; until it is in, nothing is under way.
+      const board = this.board().find((r) => r.repo === repo);
+      const situation: Situation = board?.situation ?? { kind: 'idle' };
       const heading = situationView(situation, {
         workSecs: entry === null ? null : (this.clocks()[entry.id]?.work ?? 0),
         limitSecs: this.lastForm?.timeoutSecs ?? DEFAULT_BUILD_SECS,
@@ -1087,7 +1080,7 @@ export class BuildPageViewModel {
         situation,
         heading,
         action: going ? 'cancel' : this.stopped().has(repo) ? 'continue' : null,
-        tasks: status.tasks.filter((t) => t.repo === repo).map((t) => ({ id: t.id, name: t.name, state: taskStateOf(t, situation), commits: reported?.commits?.[t.id] ?? [] })),
+        tasks: status.tasks.filter((t) => t.repo === repo).map((t) => ({ id: t.id, name: t.name, state: board?.tasks.find((b) => b.id === t.id)?.state ?? NOT_STARTED, commits: reported?.commits?.[t.id] ?? [] })),
         untasked: reported?.untasked ?? [],
       };
     });
@@ -1101,10 +1094,9 @@ export class BuildPageViewModel {
     if (this.started() && this.phase() === 'reviewing') return 'running';
     const ctx = this.ctx;
     if (ctx === null) return 'not run';
-    const scope = { workspaceId: ctx.workspaceId, system: ctx.system, change: ctx.change };
-    const state = reviewState(this.runLinks(), this.records(), this.heads(), scope, this.reviewDoc(), this.masterRef()?.repo ?? null);
-    if (state.kind === 'current' || state.kind === 'current-document') return 'finished';
-    if (state.kind === 'stale') return 'stale';
+    const state = this.standing();
+    if (state?.kind === 'current-run' || state?.kind === 'current-document') return 'finished';
+    if (state?.kind === 'stale') return 'stale';
     const stage = this.stage();
     const justRead = (stage === 'review-finished' || stage === 'done') && this.reviews().length > 0;
     return justRead ? 'finished' : 'not run';
@@ -1303,6 +1295,38 @@ export class BuildPageViewModel {
       if (this.shows(ctx)) this.heads.set(heads);
     } catch {
       if (this.shows(ctx)) this.heads.set({});
+    }
+    await this.readStanding();
+  }
+
+  /** Ask the backend whether the latest review covers the current work, from what the page read. A failed ask leaves it unknown. */
+  private async readStanding(): Promise<void> {
+    const ctx = this.ctx;
+    if (ctx === null || !this.shows(ctx)) return;
+    try {
+      const standing = await this.transport.sdlcReviewStanding({
+        links: this.runLinks(),
+        records: this.records(),
+        heads: this.heads(),
+        scope: { workspaceId: ctx.workspaceId, system: ctx.system, change: ctx.change },
+        document: this.reviewDoc(),
+        master: this.masterRef()?.repo ?? null,
+      });
+      if (this.shows(ctx)) this.standing.set(standing);
+    } catch {
+      if (this.shows(ctx)) this.standing.set(null);
+    }
+  }
+
+  /** Ask the backend for the tasks area of the repositories the page lists. A newer ask supersedes it. */
+  private async readBoard(repos: string[], status: BuildStatus, state: BuildState | null): Promise<void> {
+    const ctx = this.ctx;
+    const seq = ++this.boardSeq;
+    try {
+      const board = await this.transport.sdlcBuildBoard(repos, status, state?.going ?? [], state?.stopped ?? {});
+      if (seq === this.boardSeq && ctx !== null && this.shows(ctx)) this.board.set(board);
+    } catch (e) {
+      if (seq === this.boardSeq) this.toasts.error(`Could not read where the build stands: ${message(e)}`);
     }
   }
 
@@ -1781,7 +1805,9 @@ export class BuildPageViewModel {
     const ctx = this.ctx;
     try {
       const status = await this.readStatus();
-      if (this.shows(ctx)) this.status.set(status);
+      if (!this.shows(ctx)) return;
+      this.status.set(status);
+      await this.readBoard(this.groupKeys(), status, this.buildState());
     } catch (e) {
       this.toasts.error(`Could not read the build log: ${message(e)}`);
     }

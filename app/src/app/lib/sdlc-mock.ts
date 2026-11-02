@@ -1,6 +1,13 @@
 /* In-memory AI-SDLC fixtures for the browser demo. Each MockTransport owns one
  * instance, mutated by mock decisions and branch operations, so the demo
  * reflects what the operator did. Deterministic: no clocks, no randomness. */
+import type { RepoBoard } from '@bindings/RepoBoard';
+import type { ReviewScope } from '@bindings/ReviewScope';
+import type { ReviewStanding } from '@bindings/ReviewStanding';
+import type { Situation } from '@bindings/Situation';
+import type { Stop } from '@bindings/Stop';
+import type { TaskState } from '@bindings/TaskState';
+import type { RunRecord } from '@bindings/RunRecord';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { BuildState } from '@bindings/BuildState';
@@ -1684,6 +1691,64 @@ export function mockRoundPlan(offer: RoundOffer, picks: RoundPicks): RoundPlan {
   }
   if (requests.length === 0) return { blocked: 'Pick a finding or write a note.', requests: [] };
   return { blocked: null, requests };
+}
+
+/**
+ * Like the backend's `sdlc_build_board` (`kata_sdlc::board::board`), for the browser fixtures: a live run first, then a stop the
+ * host recorded, then the build log. The backend's tests own the table; this stands in for it where no backend runs.
+ */
+export function mockBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }): RepoBoard[] {
+  return repos.map((repo) => {
+    const state = status.repos.find((r) => r.repo === repo)?.state;
+    const stop = stopped[repo];
+    const situation: Situation = going.includes(repo)
+      ? { kind: 'working', task: state?.kind === 'ready' ? state.task : null }
+      : stop !== undefined
+        ? { kind: 'stopped', task: stop.task, reason: stop.reason }
+        : state === undefined
+          ? { kind: 'idle' }
+          : state.kind === 'done'
+            ? { kind: 'finished' }
+            : state.kind === 'waiting'
+              ? { kind: 'waiting', task: state.task, onTask: state.onTask, onRepo: state.onRepo }
+              : { kind: 'not-started', task: state.task };
+    const tasks = status.tasks.filter((t) => t.repo === repo).map((t) => ({ id: t.id, state: mockTaskState(t, situation) }));
+    return { repo, situation, tasks };
+  });
+}
+
+function mockTaskState(task: TaskStatus, s: Situation): TaskState {
+  if (task.row !== null) return { kind: 'done', departure: task.row.departure };
+  if (s.kind === 'working' && s.task === task.id) return { kind: 'running' };
+  if (s.kind === 'waiting' && s.task === task.id) return { kind: 'waiting', onTask: s.onTask, onRepo: s.onRepo };
+  if (s.kind === 'stopped' && s.task === task.id) return { kind: 'stopped', reason: s.reason };
+  return { kind: 'not-started' };
+}
+
+/** Like the backend's `sdlc_review_standing` (`kata_sdlc::review::standing`), for the browser fixtures. */
+export function mockStanding(input: { links: RunLink[]; records: RunRecord[]; heads: Record<string, string>; scope: ReviewScope; document: ReviewRecord | null; master: string | null }): ReviewStanding {
+  const { links, records, heads, scope, document, master } = input;
+  if (document !== null) {
+    if (document.problems.length > 0) return { kind: 'invalid' };
+    const latest = document.reviews.at(-1);
+    if (latest === undefined) return { kind: 'none' };
+    const moved = Object.entries(heads).some(([repo, head]) => {
+      if (repo === master) return false;
+      const sha = latest.commits[repo];
+      return sha === undefined || sha.length < 4 || !head.startsWith(sha);
+    });
+    return moved || document.master_moved.length > 0 ? { kind: 'stale' } : { kind: 'current-document', review: document.reviews.length - 1 };
+  }
+  let latest: RunLink | null = null;
+  for (const l of links) {
+    if (l.stage !== 'review' || l.workspace_id !== scope.workspaceId || l.system !== scope.system || l.change !== scope.change) continue;
+    if (latest === null || l.started_at >= latest.started_at) latest = l;
+  }
+  if (latest === null) return { kind: 'none' };
+  if (records.find((r) => r.id === latest.run_id)?.exit !== 0) return { kind: 'unfinished' };
+  const then = latest.heads;
+  if (then === undefined || !Object.keys(heads).every((repo) => heads[repo] === then[repo])) return { kind: 'stale' };
+  return { kind: 'current-run', runId: latest.run_id };
 }
 
 /** The Review group for the latest review: most serious first, the low findings apart, counts by severity. */

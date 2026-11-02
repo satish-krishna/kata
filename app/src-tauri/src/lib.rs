@@ -1054,6 +1054,39 @@ fn sdlc_build_status(
     sdlc::build::status(&plugin, Path::new(&master), &system, &change).map_err(|e| e.to_string())
 }
 
+/// The build page's tasks area for the repositories asked for: where each stands and what each task's row shows, from the build log's
+/// status and the live runs and stops the host announced, both as the page last read them from the backend.
+#[tauri::command]
+fn sdlc_build_board(
+    repos: Vec<String>,
+    status: sdlc::build::BuildStatus,
+    going: std::collections::BTreeSet<String>,
+    stopped: std::collections::BTreeMap<String, sdlc::coordinator::Stop>,
+) -> Vec<sdlc::board::RepoBoard> {
+    sdlc::board::board(&repos, &status, &going, &stopped)
+}
+
+/// Whether the change's latest review covers its current work, from the inputs the page read: the run links, the run
+/// records, where each repository stands now, the review document and the master repository's name.
+#[tauri::command]
+fn sdlc_review_standing(
+    links: Vec<sdlc::store::RunLink>,
+    records: Vec<kata_core::history::RunRecord>,
+    heads: std::collections::BTreeMap<String, String>,
+    scope: sdlc::review::ReviewScope,
+    document: Option<sdlc::review::ReviewRecord>,
+    master: Option<String>,
+) -> sdlc::review::ReviewStanding {
+    sdlc::review::standing(
+        &links,
+        &records,
+        &heads,
+        &scope,
+        document.as_ref(),
+        master.as_deref(),
+    )
+}
+
 #[tauri::command(async)]
 fn sdlc_review_record(
     master: String,
@@ -1841,6 +1874,8 @@ pub fn run() {
             sdlc_review_record,
             sdlc_plugin_readiness,
             sdlc_state,
+            sdlc_build_board,
+            sdlc_review_standing,
             sdlc_change_state,
             sdlc_change_repos,
             sdlc_missing_change_branches,

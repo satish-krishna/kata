@@ -1,17 +1,8 @@
-export type Situation =
-  | { kind: 'working'; task: string | null }
-  | { kind: 'waiting'; task: string; onTask: string; onRepo: string }
-  | { kind: 'stopped'; task: string; reason: string | null }
-  | { kind: 'not-started'; task: string }
-  | { kind: 'finished' }
-  | { kind: 'idle' };
+import type { Situation } from '@bindings/Situation';
 
-export type TaskState =
-  | { kind: 'done'; departure: string | null }
-  | { kind: 'running' }
-  | { kind: 'waiting'; onTask: string; onRepo: string }
-  | { kind: 'stopped'; reason: string | null }
-  | { kind: 'not-started' };
+/* Where a repository stands and what a task's row shows are decided in Rust (`kata_sdlc::board`); this file only words them. */
+export type { Situation } from '@bindings/Situation';
+export type { TaskState } from '@bindings/TaskState';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 /** Seconds as `h:mm:ss`. */

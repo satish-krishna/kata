@@ -1,3 +1,7 @@
+import type { RepoBoard } from '@bindings/RepoBoard';
+import type { ReviewStanding } from '@bindings/ReviewStanding';
+import type { Stop } from '@bindings/Stop';
+import type { ReviewScope } from '@bindings/ReviewScope';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { Readiness } from '@bindings/Readiness';
@@ -72,6 +76,16 @@ export type NamingState =
  *  in a plain browser. Nothing above this class knows which one it has. The
  *  event hook is callback + unlisten on purpose: no Observable crosses the seam,
  *  so nothing above it can subscribe. */
+/** What the review's standing is decided from: the inputs the build page reads, as it reads them. */
+export type ReviewStandingInput = {
+  links: RunLink[];
+  records: RunRecord[];
+  heads: Record<string, string>;
+  scope: ReviewScope;
+  document: ReviewRecord | null;
+  master: string | null;
+};
+
 export abstract class KataTransport {
   abstract catalog(workdir: string | null): Promise<CatalogEntry[]>;
   abstract listRuns(): Promise<RunRecord[]>;
@@ -188,6 +202,10 @@ export abstract class KataTransport {
   /** Wait until the engine process of run `runId` has exited. False when it is still alive after `timeoutMs`. */
   abstract sdlcWaitRunExit(runId: string, timeoutMs: number): Promise<boolean>;
   abstract sdlcBuildStatus(master: string, system: string, change: string): Promise<BuildStatus>;
+  /** The tasks area for `repos`: where each stands and what each task's row shows, decided from the build log's status and the host's live runs and stops. */
+  abstract sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }): Promise<RepoBoard[]>;
+  /** Whether the change's latest review covers its current work, decided from what the page read. */
+  abstract sdlcReviewStanding(input: ReviewStandingInput): Promise<ReviewStanding>;
   /** A change's spec or plan as the format program reads it; null when the file is not there, and an error result with the program's own message when it cannot read it. */
   abstract sdlcReadParsed(master: string, system: string, change: string, doc: string): Promise<ReadResult | ReadError | null>;
   /** The change's review document as committed, or null when it has none. */

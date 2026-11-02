@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// What the review document of a change holds.
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct ReviewRecord {
@@ -206,8 +206,55 @@ pub fn standing(
     document: Option<&ReviewRecord>,
     master: Option<&str>,
 ) -> ReviewStanding {
-    let _ = (links, records, heads, scope, document, master);
-    unimplemented!("the standing of the latest review")
+    if let Some(document) = document {
+        // The master's head moves when the review is recorded, so its own movement is the record's master_moved, not its head.
+        let product: BTreeMap<String, String> = heads
+            .iter()
+            .filter(|(repo, _)| Some(repo.as_str()) != master)
+            .map(|(repo, head)| (repo.clone(), head.clone()))
+            .collect();
+        return match currency(document, &product) {
+            ReviewCurrency::None => ReviewStanding::None,
+            ReviewCurrency::Invalid => ReviewStanding::Invalid,
+            ReviewCurrency::Stale => ReviewStanding::Stale,
+            ReviewCurrency::Current { review } => ReviewStanding::CurrentDocument { review },
+        };
+    }
+    let mut latest: Option<&RunLink> = None;
+    for l in links {
+        if l.stage != "review"
+            || l.workspace_id != scope.workspace_id
+            || l.system != scope.system
+            || l.change != scope.change
+        {
+            continue;
+        }
+        if latest.is_none_or(|was| l.started_at >= was.started_at) {
+            latest = Some(l);
+        }
+    }
+    let Some(latest) = latest else {
+        return ReviewStanding::None;
+    };
+    let exit = records
+        .iter()
+        .find(|r| r.id == latest.run_id)
+        .and_then(|r| r.exit);
+    if exit != Some(0) {
+        return ReviewStanding::Unfinished;
+    }
+    // Every repository standing now must be where it stood when the review run started.
+    let same = latest.heads.as_ref().is_some_and(|then| {
+        heads
+            .iter()
+            .all(|(repo, head)| then.get(repo) == Some(head))
+    });
+    if !same {
+        return ReviewStanding::Stale;
+    }
+    ReviewStanding::CurrentRun {
+        run_id: latest.run_id.clone(),
+    }
 }
 
 #[cfg(test)]

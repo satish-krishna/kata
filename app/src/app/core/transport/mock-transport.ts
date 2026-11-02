@@ -1,3 +1,6 @@
+import type { RepoBoard } from '@bindings/RepoBoard';
+import type { ReviewStanding } from '@bindings/ReviewStanding';
+import type { Stop } from '@bindings/Stop';
 import type { Readiness } from '@bindings/Readiness';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
@@ -47,7 +50,7 @@ import type { OpenRun } from '@bindings/OpenRun';
 import type { Opens } from '@bindings/Opens';
 import type { RunningEntry } from '@bindings/RunningEntry';
 import type { RunRef } from '@bindings/RunRef';
-import { BUILD_REPOS_OF, MOCK_BUILD_CHANGE, MOCK_LAYOUTS, MOCK_MASTER, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockChangeKey, mockDefaultPicks, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import { BUILD_REPOS_OF, MOCK_BUILD_CHANGE, MOCK_LAYOUTS, MOCK_MASTER, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import type { BuildState } from '@bindings/BuildState';
 import type { RoundOffer } from '@bindings/RoundOffer';
@@ -68,7 +71,7 @@ import type { BuildSection } from '@bindings/BuildSection';
 import type { ReviewView } from '@bindings/ReviewView';
 import type { StartOutcome } from '@bindings/StartOutcome';
 import type { DocumentKind } from '../../lib/build-host';
-import { KataTransport, NO_BACKEND, type NamingState } from './kata-transport';
+import { KataTransport, NO_BACKEND, type NamingState, type ReviewStandingInput } from './kata-transport';
 
 /** How long the first scan of the demo setup folder takes, long enough to see the checking steps. */
 const SETUP_SCAN_MS = 1800;
@@ -347,6 +350,8 @@ export class MockTransport extends KataTransport {
   /** The scripted run has no process to wait for. */
   sdlcWaitRunExit(_runId: string, _timeoutMs: number): Promise<boolean> { return Promise.resolve(true); }
   sdlcBuildStatus(_master: string, _system: string, change: string): Promise<BuildStatus> { return Promise.resolve(this.sdlc.buildStatus(change)); }
+  sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }): Promise<RepoBoard[]> { return Promise.resolve(mockBoard(repos, status, going, stopped)); }
+  sdlcReviewStanding(input: ReviewStandingInput): Promise<ReviewStanding> { return Promise.resolve(mockStanding(input)); }
   sdlcReadParsed(_master: string, _system: string, change: string, doc: string): Promise<ReadResult | ReadError | null> { return Promise.resolve(this.sdlc.readParsed(change, doc)); }
   sdlcReviewRecord(_master: string, _system: string, _change: string): Promise<ReviewRecord | null> { return Promise.resolve(this.sdlc.reviewRecord()); }
   sdlcBuildHeads(_folder: string, _masterRepo: string, _system: string, repos: string[], _change: string): Promise<Record<string, string>> { return Promise.resolve(this.sdlc.heads(repos)); }

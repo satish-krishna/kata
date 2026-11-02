@@ -1,6 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open, save } from '@tauri-apps/plugin-dialog';
+import type { RepoBoard } from '@bindings/RepoBoard';
+import type { ReviewStanding } from '@bindings/ReviewStanding';
+import type { Stop } from '@bindings/Stop';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { Readiness } from '@bindings/Readiness';
@@ -63,7 +66,7 @@ import type { RunForm } from '@bindings/RunForm';
 import type { RunningStrip } from '@bindings/RunningStrip';
 import type { StartOutcome } from '@bindings/StartOutcome';
 import type { DocumentKind } from '../../lib/build-host';
-import { KataTransport, type NamingState } from './kata-transport';
+import { KataTransport, type NamingState, type ReviewStandingInput } from './kata-transport';
 
 /** The Tauri functions the transport needs, injectable so tests need no module mocking. */
 export interface TauriIpc {
@@ -147,6 +150,8 @@ export class TauriTransport extends KataTransport {
   sdlcTaskLinks() { return this.ipc.invoke<TaskLink[]>('sdlc_task_links'); }
   sdlcWaitRunExit(runId: string, timeoutMs: number) { return this.ipc.invoke<boolean>('sdlc_wait_run_exit', { runId, timeoutMs }); }
   sdlcBuildStatus(master: string, system: string, change: string) { return this.ipc.invoke<BuildStatus>('sdlc_build_status', { master, system, change }); }
+  sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }) { return this.ipc.invoke<RepoBoard[]>('sdlc_build_board', { repos, status, going, stopped }); }
+  sdlcReviewStanding(input: ReviewStandingInput) { return this.ipc.invoke<ReviewStanding>('sdlc_review_standing', { ...input }); }
   async sdlcReadParsed(master: string, system: string, change: string, doc: string): Promise<ReadResult | ReadError | null> {
     try {
       return await this.ipc.invoke<ReadResult | null>('sdlc_read_parsed', { master, system, change, doc });

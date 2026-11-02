@@ -1,6 +1,6 @@
 //! Where each repository of a build stands and what each of its tasks shows, from the build log's status and the
 //! build host's live state. The build page's tasks area reads this; it decides nothing about the rows itself.
-use crate::build::{BuildStatus, RepoStatus, TaskStatus};
+use crate::build::{BuildStatus, RepoState, RepoStatus, TaskStatus};
 use crate::coordinator::Stop;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -79,14 +79,57 @@ pub fn situation(
     going: &BTreeSet<String>,
     stopped: &BTreeMap<String, Stop>,
 ) -> Situation {
-    let _ = (repo, now, going, stopped);
-    Situation::Idle
+    if going.contains(repo) {
+        let task = match now.map(|n| &n.state) {
+            Some(RepoState::Ready { task }) => Some(task.clone()),
+            _ => None,
+        };
+        return Situation::Working { task };
+    }
+    if let Some(stop) = stopped.get(repo) {
+        return Situation::Stopped {
+            task: stop.task.clone(),
+            reason: Some(stop.reason.clone()),
+        };
+    }
+    match now.map(|n| &n.state) {
+        None => Situation::Idle,
+        Some(RepoState::Done) => Situation::Finished,
+        Some(RepoState::Waiting {
+            task,
+            on_task,
+            on_repo,
+        }) => Situation::Waiting {
+            task: task.clone(),
+            on_task: on_task.clone(),
+            on_repo: on_repo.clone(),
+        },
+        Some(RepoState::Ready { task }) => Situation::NotStarted { task: task.clone() },
+    }
 }
 
 /// What a task's row shows, given where its repository stands. A task in the build log is done whatever else holds.
 pub fn task_state(task: &TaskStatus, situation: &Situation) -> TaskState {
-    let _ = (task, situation);
-    TaskState::NotStarted
+    if let Some(row) = &task.row {
+        return TaskState::Done {
+            departure: row.departure.clone(),
+        };
+    }
+    match situation {
+        Situation::Working { task: Some(on) } if *on == task.id => TaskState::Running,
+        Situation::Waiting {
+            task: on,
+            on_task,
+            on_repo,
+        } if *on == task.id => TaskState::Waiting {
+            on_task: on_task.clone(),
+            on_repo: on_repo.clone(),
+        },
+        Situation::Stopped { task: on, reason } if *on == task.id => TaskState::Stopped {
+            reason: reason.clone(),
+        },
+        _ => TaskState::NotStarted,
+    }
 }
 
 /// The tasks area for `repos`, in the order given.
@@ -96,14 +139,33 @@ pub fn board(
     going: &BTreeSet<String>,
     stopped: &BTreeMap<String, Stop>,
 ) -> Vec<RepoBoard> {
-    let _ = (repos, status, going, stopped);
-    Vec::new()
+    repos
+        .iter()
+        .map(|repo| {
+            let now = status.repos.iter().find(|r| &r.repo == repo);
+            let situation = situation(repo, now, going, stopped);
+            let tasks = status
+                .tasks
+                .iter()
+                .filter(|t| &t.repo == repo)
+                .map(|t| TaskBoard {
+                    id: t.id.clone(),
+                    state: task_state(t, &situation),
+                })
+                .collect();
+            RepoBoard {
+                repo: repo.clone(),
+                situation,
+                tasks,
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::build::{BuildRow, RepoState};
+    use crate::build::BuildRow;
 
     fn repo_status(repo: &str, state: RepoState) -> RepoStatus {
         RepoStatus {
