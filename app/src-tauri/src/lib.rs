@@ -656,19 +656,22 @@ fn sdlc_save_settings(settings: sdlc::store::Settings) -> Result<(), String> {
     sdlc::store::save_settings(&settings).map_err(|e| e.to_string())
 }
 
-/// The old per-machine checks file of a system, when the engineer has not been told about it yet. Read to be shown,
-/// never run and never converted. `folder` is the workspace the engineer opened; the file is per machine, not per workspace.
+/// The old per-machine checks files of the systems the home lists, for each the engineer has not been told about yet, in
+/// one answer. Read to be shown, never run and never converted. `folder` is the workspace the engineer opened; the files
+/// are per machine, not per workspace.
 #[tauri::command]
-fn sdlc_old_checks(folder: String, system: String) -> Option<sdlc::old_checks::OldChecks> {
+fn sdlc_old_checks(folder: String, systems: Vec<String>) -> Vec<sdlc::old_checks::OldChecksNotice> {
     let _ = folder;
-    let home = sdlc::old_checks::kata_home()?;
-    sdlc::old_checks::notice(&home, &system, &sdlc::store::load_settings())
+    let Some(home) = sdlc::old_checks::kata_home() else {
+        return Vec::new();
+    };
+    sdlc::old_checks::notices(&home, &systems, &sdlc::store::load_settings())
 }
 
-/// Record that the engineer has been told about a system's old checks file.
+/// Record that the engineer has been told about the old checks files of these systems.
 #[tauri::command]
-fn sdlc_old_checks_seen(system: String) -> Result<(), String> {
-    sdlc::old_checks::record_shown(&system).map_err(|e| e.to_string())
+fn sdlc_old_checks_seen(systems: Vec<String>) -> Result<(), String> {
+    sdlc::old_checks::record_shown(&systems).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1108,22 +1111,43 @@ fn state_inputs(folder: &str) -> (Option<sdlc::ai_sdlc::Program>, sdlc::plugin::
     (program, readiness)
 }
 
-/// Every change of a system, with its stage, what it offers and its live facts, from one `state` call.
+/// Every change of every system the home lists, with its stage, what it offers and its live facts, from one `state`
+/// call per system made side by side, and whether a new change may be started across the set. One system's failed read
+/// fails the answer.
 #[tauri::command(async)]
 fn sdlc_state(
     control: State<'_, RunControl>,
     folder: String,
-    system: String,
-) -> Result<sdlc_state::SystemView, String> {
+    systems: Vec<String>,
+) -> Result<sdlc_state::WorkspaceView, String> {
     let (program, readiness) = state_inputs(&folder);
-    let source = program.as_ref().map(|p| p as &dyn sdlc_state::StateSource);
-    sdlc_state::system_view(
-        source,
-        &readiness,
-        &|s, c| live_facts(&control, s, c),
-        Path::new(&folder),
-        &system,
-    )
+    let control: &RunControl = &control;
+    let views = std::thread::scope(|scope| {
+        let reads: Vec<_> = systems
+            .iter()
+            .map(|system| {
+                let (program, readiness, folder) = (&program, &readiness, &folder);
+                scope.spawn(move || {
+                    let source = program.as_ref().map(|p| p as &dyn sdlc_state::StateSource);
+                    sdlc_state::system_view(
+                        source,
+                        readiness,
+                        &|s, c| live_facts(control, s, c),
+                        Path::new(folder),
+                        system,
+                    )
+                })
+            })
+            .collect();
+        reads
+            .into_iter()
+            .map(|read| {
+                read.join()
+                    .unwrap_or_else(|_| Err("reading a system's changes failed".to_string()))
+            })
+            .collect::<Result<Vec<_>, String>>()
+    })?;
+    Ok(sdlc_state::workspace_view(views))
 }
 
 /// One change of a system, as [`sdlc_state`] shows it.

@@ -8,7 +8,7 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
-import type { SystemView } from '@bindings/SystemView';
+import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { ChangeView } from '@bindings/ChangeView';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildScope } from '@bindings/BuildScope';
@@ -33,7 +33,7 @@ import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
-import type { OldChecks } from '@bindings/OldChecks';
+import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { DoneStep } from '@bindings/DoneStep';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
@@ -142,8 +142,8 @@ export abstract class KataTransport {
   abstract sdlcInstructions(folder: string, masterRepo: string): Promise<InstructionsState>;
   /** The text of `intent/<system>/context/<repo>.md` in the master, or null when the file is not there. */
   abstract sdlcReadContext(master: string, system: string, repo: string): Promise<string | null>;
-  /** Every change of a system as the plugin reports it, with what each shows and offers, from one read. */
-  abstract sdlcState(folder: string, system: string): Promise<SystemView>;
+  /** Every change of each of the systems as the plugin reports it, with what each shows and offers, and whether a new change may be started across the set, from one call. */
+  abstract sdlcState(folder: string, systems: string[]): Promise<WorkspaceView>;
   /** One change as the plugin reports it, with what it shows and offers, from one read. Rejects with the reason when the change cannot be read. */
   abstract sdlcChangeState(folder: string, system: string, change: string): Promise<ChangeView>;
   /** Which of the folders no longer exist. A folder existence check only. */
@@ -205,10 +205,10 @@ export abstract class KataTransport {
   abstract sdlcDiffBase(repoPath: string): Promise<BaseInfo>;
   /** What each repository of the change's checks came to, as the plugin recorded it. */
   abstract sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]>;
-  /** The old per-machine checks file of a system when the engineer has not been told about it yet, else null. */
-  abstract sdlcOldChecks(folder: string, system: string): Promise<OldChecks | null>;
-  /** Record that the engineer has been told about a system's old checks file. */
-  abstract sdlcOldChecksSeen(system: string): Promise<void>;
+  /** The old per-machine checks files of the systems the engineer has not been told about yet, in the order asked; empty when none. */
+  abstract sdlcOldChecks(folder: string, systems: string[]): Promise<OldChecksNotice[]>;
+  /** Record that the engineer has been told about the old checks files of these systems. */
+  abstract sdlcOldChecksSeen(systems: string[]): Promise<void>;
   /** Declare the change done through the plugin: it verifies, pushes every touched repository and opens the pull requests. Resolves to what it came to; progress arrives through `onDoneStep`. */
   abstract sdlcDeclareDone(change: ChangeRef): Promise<DeclareView>;
   /** The change's pull requests as the page shows them: the plugin's record, else what an earlier version of Kata saved. With `refresh` the plugin also asks GitHub for each state, which is slow; the page reads without it first. */

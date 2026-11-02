@@ -103,10 +103,11 @@ pub fn system_view(
 /// One answer for the systems the home lists: each system's view, and whether a new change may be started across the
 /// set. It may only when at least one system was read and every one may; the reason is the first refusing system's.
 pub fn workspace_view(systems: Vec<SystemView>) -> WorkspaceView {
+    let refusing = systems.iter().find(|s| !s.can_start_change);
     WorkspaceView {
+        can_start_change: !systems.is_empty() && refusing.is_none(),
+        start_change_reason: refusing.and_then(|s| s.start_change_reason.clone()),
         systems,
-        can_start_change: false,
-        start_change_reason: None,
     }
 }
 

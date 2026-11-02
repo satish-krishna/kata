@@ -476,7 +476,7 @@ describe('MockTransport previewRun', () => {
       window.history.replaceState({}, '', '/?demo=build-long');
       try {
         const t = new MockTransport();
-        const system = await t.sdlcState(MOCK_WORKSPACE_FOLDER, 'commerce');
+        const [system] = (await t.sdlcState(MOCK_WORKSPACE_FOLDER, ['commerce'])).systems;
         const unreadable = system.changes.filter((c) => c.offer.stage === 'plan-unreadable');
         expect(unreadable).toHaveLength(1);
         expect(system.problems.length).toBeGreaterThan(0);

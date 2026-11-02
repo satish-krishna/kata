@@ -12,7 +12,7 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ChangeView } from '@bindings/ChangeView';
-import type { SystemView } from '@bindings/SystemView';
+import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
@@ -36,7 +36,7 @@ import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
-import type { OldChecks } from '@bindings/OldChecks';
+import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { DoneStep } from '@bindings/DoneStep';
 import type { PullRequestsView } from '@bindings/PullRequestsView';
@@ -103,7 +103,7 @@ export class TauriTransport extends KataTransport {
   sdlcContextHealth(folder: string, master: string, system: string, repo: string) { return this.ipc.invoke<ContextState>('sdlc_context_health', { folder, master, system, repo }); }
   sdlcReadContext(master: string, system: string, repo: string) { return this.ipc.invoke<string | null>('sdlc_read_context', { master, system, repo }); }
   sdlcInstructions(folder: string, masterRepo: string) { return this.ipc.invoke<InstructionsState>('sdlc_instructions', { folder, masterRepo }); }
-  sdlcState(folder: string, system: string) { return this.ipc.invoke<SystemView>('sdlc_state', { folder, system }); }
+  sdlcState(folder: string, systems: string[]) { return this.ipc.invoke<WorkspaceView>('sdlc_state', { folder, systems }); }
   sdlcChangeState(folder: string, system: string, change: string) { return this.ipc.invoke<ChangeView>('sdlc_change_state', { folder, system, change }); }
   sdlcMissingFolders(folders: string[]) { return this.ipc.invoke<string[]>('sdlc_missing_folders', { folders }); }
   sdlcBranches(master: string) { return this.ipc.invoke<BranchInfo>('sdlc_branches', { master }); }
@@ -164,8 +164,8 @@ export class TauriTransport extends KataTransport {
   sdlcCommitFiles(repoPath: string) { return this.ipc.invoke<CommitFiles[]>('sdlc_commit_files', { repoPath }); }
   sdlcDiffPair(repoPath: string, part: Part, path: string) { return this.ipc.invoke<FilePair>('sdlc_diff_pair', { repoPath, part, path }); }
   sdlcDiffBase(repoPath: string) { return this.ipc.invoke<BaseInfo>('sdlc_diff_base', { repoPath }); }
-  sdlcOldChecks(folder: string, system: string) { return this.ipc.invoke<OldChecks | null>('sdlc_old_checks', { folder, system }); }
-  sdlcOldChecksSeen(system: string) { return this.ipc.invoke<void>('sdlc_old_checks_seen', { system }); }
+  sdlcOldChecks(folder: string, systems: string[]) { return this.ipc.invoke<OldChecksNotice[]>('sdlc_old_checks', { folder, systems }); }
+  sdlcOldChecksSeen(systems: string[]) { return this.ipc.invoke<void>('sdlc_old_checks_seen', { systems }); }
   sdlcChecksView(change: ChangeRef) { return this.ipc.invoke<RepoCheckView[]>('sdlc_checks_view', { change }); }
   sdlcDeclareDone(change: ChangeRef) { return this.ipc.invoke<DeclareView>('sdlc_declare_done', { change }); }
   sdlcPullRequestsView(folder: string, workspaceId: string, system: string, change: string, refresh: boolean) { return this.ipc.invoke<PullRequestsView>('sdlc_pull_requests_view', { folder, workspaceId, system, change, refresh }); }

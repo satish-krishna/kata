@@ -200,7 +200,7 @@ describe('SdlcHome old per-machine checks', () => {
     await settle();
     expect(container.querySelector('[data-testid="old-checks"]')).toBeNull();
     // A later visit: the backend no longer offers it.
-    expect(await transport.sdlcOldChecks('D:/Work/acme-commerce', 'commerce')).toBeNull();
+    expect(await transport.sdlcOldChecks('D:/Work/acme-commerce', ['commerce'])).toEqual([]);
   });
 
   it('shows no notice when the system has no old checks file', async () => {

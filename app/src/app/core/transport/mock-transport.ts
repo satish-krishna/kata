@@ -10,7 +10,7 @@ import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ChangeInfo } from '../../lib/sdlc-mock-types';
 import type { ChangeView } from '@bindings/ChangeView';
-import type { SystemView } from '@bindings/SystemView';
+import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
@@ -34,7 +34,7 @@ import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
-import type { OldChecks } from '@bindings/OldChecks';
+import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { DoneStep } from '@bindings/DoneStep';
@@ -290,8 +290,8 @@ export class MockTransport extends KataTransport {
   sdlcReadContext(_master: string, _system: string, repo: string): Promise<string | null> { return Promise.resolve(this.sdlc.readContext(repo)); }
   sdlcInstructions(_folder: string, _masterRepo: string): Promise<InstructionsState> { return Promise.resolve(this.sdlc.instructions()); }
   /** Scripted from the same fixtures the change page reads; the readiness is the one `sdlcPluginReadiness` answers. */
-  async sdlcState(folder: string, system: string): Promise<SystemView> {
-    return this.sdlc.systemView(system, await this.sdlcPluginReadiness(folder));
+  async sdlcState(folder: string, systems: string[]): Promise<WorkspaceView> {
+    return this.sdlc.workspaceView(systems, await this.sdlcPluginReadiness(folder));
   }
   /** Scripted from the same fixtures as `sdlcState`; rejects a change the workspace does not have. */
   async sdlcChangeState(folder: string, _system: string, change: string): Promise<ChangeView> {
@@ -357,8 +357,8 @@ export class MockTransport extends KataTransport {
   sdlcCommitFiles(repoPath: string): Promise<CommitFiles[]> { return Promise.resolve(this.sdlc.commitFiles(repoPath)); }
   sdlcDiffPair(_repoPath: string, _part: Part, path: string): Promise<FilePair> { return Promise.resolve(this.sdlc.diffPair(path)); }
   sdlcDiffBase(_repoPath: string): Promise<BaseInfo> { return Promise.resolve(this.sdlc.diffBase()); }
-  sdlcOldChecks(_folder: string, system: string): Promise<OldChecks | null> { return Promise.resolve(this.sdlc.oldChecks(system)); }
-  sdlcOldChecksSeen(system: string): Promise<void> { this.sdlc.oldChecksSeen(system); return Promise.resolve(); }
+  sdlcOldChecks(_folder: string, systems: string[]): Promise<OldChecksNotice[]> { return Promise.resolve(this.sdlc.oldChecks(systems)); }
+  sdlcOldChecksSeen(systems: string[]): Promise<void> { this.sdlc.oldChecksSeen(systems); return Promise.resolve(); }
   sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]> { return Promise.resolve(this.sdlc.checksView(change.change)); }
   /** The plugin's answer to declaring the change done, with the steps it reports on the way; `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` give each of the other answers. */
   async sdlcDeclareDone(change: ChangeRef): Promise<DeclareView> {

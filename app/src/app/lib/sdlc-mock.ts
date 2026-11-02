@@ -1,7 +1,7 @@
 /* In-memory AI-SDLC fixtures for the browser demo. Each MockTransport owns one
  * instance, mutated by mock decisions and branch operations, so the demo
  * reflects what the operator did. Deterministic: no clocks, no randomness. */
-import type { OldChecks } from '@bindings/OldChecks';
+import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { BuildState } from '@bindings/BuildState';
 import type { BuildPhase } from '@bindings/BuildPhase';
@@ -63,6 +63,7 @@ import type { Readiness } from '@bindings/Readiness';
 import type { ReadyGate } from '@bindings/ReadyGate';
 import type { StateDocument } from '@bindings/StateDocument';
 import type { SystemView } from '@bindings/SystemView';
+import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
@@ -619,12 +620,12 @@ export class SdlcMock {
 
   /** Systems whose old checks file the mock engineer has been told about. */
   private readonly oldChecksTold = new Set<string>();
-  /** `?demo=old-checks`: the demo system has an old per-machine checks file until the engineer has been told. Same rule as `old_checks::notice`. */
-  oldChecks(system: string): OldChecks | null {
-    if (this.demo !== 'old-checks' || system !== MOCK_SYSTEM || this.oldChecksTold.has(system)) return null;
-    return { path: `C:/Users/demo/.kata/workbench/checks/${system}.toml`, text: ['[[check]]', 'name = "tests"', 'command = "npm test"', ''].join(String.fromCharCode(10)) };
+  /** `?demo=old-checks`: the demo system has an old per-machine checks file until the engineer has been told; no other system has one. Like `old_checks::notices`. */
+  oldChecks(systems: string[]): OldChecksNotice[] {
+    if (this.demo !== 'old-checks' || !systems.includes(MOCK_SYSTEM) || this.oldChecksTold.has(MOCK_SYSTEM)) return [];
+    return [{ system: MOCK_SYSTEM, path: `C:/Users/demo/.kata/workbench/checks/${MOCK_SYSTEM}.toml`, text: ['[[check]]', 'name = "tests"', 'command = "npm test"', ''].join(String.fromCharCode(10)) }];
   }
-  oldChecksSeen(system: string): void { this.oldChecksTold.add(system); }
+  oldChecksSeen(systems: string[]): void { for (const s of systems) this.oldChecksTold.add(s); }
 
   private settings: Settings = { mode: 'workbench', remember: true, permission_mode: 'auto' };
   private workspaces: WorkspaceEntry[] = [{
@@ -721,6 +722,15 @@ export class SdlcMock {
       startChangeReason: blocked ? readiness.message : null,
       changes: found.map((c) => changeViewOf(c, readiness, this.tasksOf(c), {}, this.copyOf(c.change))),
       problems: found.flatMap((c) => (c.plan_unreadable && c.plan_unreadable_reason !== null ? [c.plan_unreadable_reason] : [])),
+    };
+  }
+  /** Like the backend's `sdlc_state` for several systems: every fixture system shares one readiness, so the set may start a change exactly when it is not blocked. */
+  workspaceView(systems: string[], readiness: Readiness): WorkspaceView {
+    const blocked = readiness.kind === 'blocked';
+    return {
+      systems: systems.map((system) => this.systemView(system, readiness)),
+      canStartChange: systems.length > 0 && !blocked,
+      startChangeReason: blocked ? readiness.message : null,
     };
   }
   /** Like the backend's `sdlc_change_state`: one change from the plugin's answer; refuses a change the workspace does not have. */

@@ -2,7 +2,7 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
-import type { SystemView } from '@bindings/SystemView';
+import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { Readiness } from '@bindings/Readiness';
@@ -97,8 +97,9 @@ export class SdlcHomeViewModel {
   readonly scan = signal<WorkspaceScan | null>(null);
   readonly scanError = signal<string | null>(null);
   readonly branches = signal<BranchInfo | null>(null);
-  /** The plugin's answer for each system of the workspace, from one read per system. */
-  private readonly views = signal<SystemView[]>([]);
+  /** The backend's answer for every system of the workspace, from one read; null until it is in. */
+  private readonly workspace = signal<WorkspaceView | null>(null);
+  private readonly views = computed(() => this.workspace()?.systems ?? []);
   /** The reading-changes progress line while the plugin is being asked, or null while nothing should show. */
   readonly readingProgress = this.progress.view(PROGRESS_OWNER);
   /** How many plugin reads are in flight; the line shows from the first start to the last end. */
@@ -119,10 +120,10 @@ export class SdlcHomeViewModel {
       problems.length > 0 ? problems : unreadable.map(() => null),
     );
   });
-  /** Whether a new change may be started, as the plugin's answer says; false until the answer is in. */
-  readonly canStartChange = computed(() => this.views().length > 0 && this.views().every((v) => v.canStartChange));
-  /** Why a new change may not be started, in the plugin's words; null when it may. */
-  readonly startChangeReason = computed(() => this.views().find((v) => !v.canStartChange)?.startChangeReason ?? null);
+  /** Whether a new change may be started across the workspace's systems, as the backend decided; false until the answer is in. */
+  readonly canStartChange = computed(() => this.workspace()?.canStartChange ?? false);
+  /** Why a new change may not be started, as the backend gave it; null when it may. */
+  readonly startChangeReason = computed(() => this.workspace()?.startChangeReason ?? null);
   /** This machine's workspace instructions against the master's; null when the plugin cannot report it. */
   readonly instructions = signal<InstructionsState | null>(null);
   /** Old per-machine checks files the backend says the engineer has not been told about, shown until dismissed. */
@@ -457,7 +458,7 @@ export class SdlcHomeViewModel {
         label: 'List changes',
         run: async () => {
           if (!found.scan || !isSetUp(found.scan)) return 'skipped';
-          return plural((await this.readViews(dir, found.scan)).flatMap((v) => v.changes).length, 'change', 'changes');
+          return plural((await this.readViews(dir, found.scan)).systems.flatMap((v) => v.changes).length, 'change', 'changes');
         },
       },
     ]);
@@ -886,13 +887,13 @@ export class SdlcHomeViewModel {
     return readContextStates(scan, (master, system, repo) => this.transport.sdlcContextHealth(folder, master, system, repo));
   }
 
-  /** The plugin's answer for every system of the workspace: one read per system, none of them started by a change. */
-  private async readViews(folder: string, scan: WorkspaceScan): Promise<SystemView[]> {
-    return Promise.all(systemNames(scan).map((system) => this.transport.sdlcState(folder, system)));
+  /** The backend's answer for every system of the workspace, in one call, none of it started by a change. */
+  private readViews(folder: string, scan: WorkspaceScan): Promise<WorkspaceView> {
+    return this.transport.sdlcState(folder, systemNames(scan));
   }
 
   /** `readViews` with the progress line shown while it runs. */
-  private async readViewsShown(folder: string, scan: WorkspaceScan): Promise<SystemView[]> {
+  private async readViewsShown(folder: string, scan: WorkspaceScan): Promise<WorkspaceView> {
     if (this.reads++ === 0) this.progress.begin('reading-stages', 'Reading changes', PROGRESS_OWNER);
     try {
       return await this.readViews(folder, scan);
@@ -909,7 +910,7 @@ export class SdlcHomeViewModel {
     if (!w || !scan) return;
     try {
       const views = await this.readViewsShown(w.folder, scan);
-      if (seq === this.viewSeq) this.views.set(views);
+      if (seq === this.viewSeq) this.workspace.set(views);
     } catch (e) {
       if (seq === this.viewSeq) this.toasts.error(`Could not read the changes: ${message(e)}`);
     }
@@ -935,25 +936,23 @@ export class SdlcHomeViewModel {
     this.oldChecks.update((l) => l.filter((n) => n.system !== system));
   }
 
-  /** Ask the backend which systems have an old checks file the engineer has not been told about, and say so once. */
+  /** Ask the backend, in one call, which systems have an old checks file the engineer has not been told about, and say so once. */
   private async readOldChecks(folder: string, systems: string[]): Promise<void> {
-    for (const system of systems) {
-      try {
-        const old = await this.transport.sdlcOldChecks(folder, system);
-        if (old === null) continue;
-        // Shown from here on, so it is recorded as told now: closing the app without a click does not bring it back.
-        await this.transport.sdlcOldChecksSeen(system);
-        this.oldChecks.update((l) => (l.some((n) => n.system === system) ? l : [...l, { system, ...old }]));
-      } catch (e) {
-        this.toasts.error(`Could not check for old checks: ${message(e)}`);
-      }
+    try {
+      const found = await this.transport.sdlcOldChecks(folder, systems);
+      if (found.length === 0) return;
+      // Shown from here on, so it is recorded as told now: closing the app without a click does not bring it back.
+      await this.transport.sdlcOldChecksSeen(found.map((n) => n.system));
+      this.oldChecks.update((l) => [...l, ...found.filter((n) => !l.some((o) => o.system === n.system))]);
+    } catch (e) {
+      this.toasts.error(`Could not check for old checks: ${message(e)}`);
     }
   }
 
   private clearDetail(): void {
     this.scan.set(null);
     this.branches.set(null);
-    this.views.set([]);
+    this.workspace.set(null);
     this.contexts.set({});
     this.lastRuns.set({});
     this.instructions.set(null);
@@ -982,7 +981,7 @@ export class SdlcHomeViewModel {
       return;
     }
     let branches: BranchInfo | null = null;
-    let views: SystemView[] = [];
+    let views: WorkspaceView | null = null;
     let lastRuns: Record<string, number> = {};
     const repo = masterRepo(scan);
     let readiness: Readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
@@ -1007,7 +1006,7 @@ export class SdlcHomeViewModel {
     this.scanFailed.update((l) => l.filter((x) => x !== w.id));
     this.scan.set(scan);
     this.branches.set(branches);
-    this.views.set(views);
+    this.workspace.set(views);
     this.readiness.set(readiness);
     this.lastRuns.set(lastRuns);
     this.currentRead.set(true);

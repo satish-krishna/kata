@@ -31,14 +31,27 @@ pub struct OldChecksNotice {
 /// The notices for `systems`, in the order given, each system once: those with an old checks file the engineer has
 /// not been told about.
 pub fn notices(kata_home: &Path, systems: &[String], settings: &Settings) -> Vec<OldChecksNotice> {
-    let _ = (kata_home, systems, settings);
-    Vec::new()
+    let mut out: Vec<OldChecksNotice> = Vec::new();
+    for system in systems {
+        if out.iter().any(|n| &n.system == system) {
+            continue;
+        }
+        if let Some(old) = notice(kata_home, system, settings) {
+            out.push(OldChecksNotice {
+                system: system.clone(),
+                path: old.path,
+                text: old.text,
+            });
+        }
+    }
+    out
 }
 
 /// `settings` with every one of `systems` recorded as told.
 pub fn mark_all_shown(settings: &Settings, systems: &[String]) -> Settings {
-    let _ = systems;
-    settings.clone()
+    systems
+        .iter()
+        .fold(settings.clone(), |told, system| mark_shown(&told, system))
 }
 
 /// The old checks file of `system` under `kata_home`, when it exists and the engineer has not been told about it yet.
@@ -83,10 +96,10 @@ pub fn keep_shown(stored: &Settings, mut incoming: Settings) -> Settings {
     incoming
 }
 
-/// Record on this machine that the engineer has been told about `system`'s old checks file.
-pub fn record_shown(system: &str) -> Result<(), crate::store::StoreError> {
+/// Record on this machine that the engineer has been told about the old checks files of `systems`.
+pub fn record_shown(systems: &[String]) -> Result<(), crate::store::StoreError> {
     let settings = crate::store::load_settings();
-    crate::store::save_settings(&mark_shown(&settings, system))
+    crate::store::save_settings(&mark_all_shown(&settings, systems))
 }
 
 /// Where the Kata home is: the parent of the `workbench` folder.

@@ -3,6 +3,7 @@ import { Router, provideRouter } from '@angular/router';
 import type { ChangeState } from '@bindings/ChangeState';
 import type { ChangeView } from '@bindings/ChangeView';
 import type { SystemView } from '@bindings/SystemView';
+import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { Readiness } from '@bindings/Readiness';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunSpec } from '@bindings/RunSpec';
@@ -583,7 +584,7 @@ describe('SdlcHomeViewModel navigation', () => {
     await vm.init();
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
     // After the checkout the change exists on the branch just checked out, so the plugin's answer lists it.
-    vi.spyOn(transport, 'sdlcState').mockResolvedValue({ ...systemViewOf(0), changes: [viewOf('2026-10-17-product-notes', 'Intent · awaiting acceptance', READY)] });
+    vi.spyOn(transport, 'sdlcState').mockResolvedValue(oneSystem({ ...systemViewOf(0), changes: [viewOf('2026-10-17-product-notes', 'Intent · awaiting acceptance', READY)] }));
     await vm.openOtherBranch('2026-10-17-product-notes');
     expect(checkout).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'change/2026-10-17-product-notes');
     expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', '2026-10-17-product-notes']);
@@ -698,7 +699,7 @@ describe('SdlcHomeViewModel plan notice (F20)', () => {
     const answer = systemViewOf(2, READY);
     answer.changes[0].offer = { ...answer.changes[0].offer, stage: 'plan-unreadable', label: { step: 'plan', text: 'Plan · could not be read', tone: 'warning' } };
     answer.problems = reason === null ? [] : [reason];
-    vi.spyOn(transport, 'sdlcState').mockResolvedValue(answer);
+    vi.spyOn(transport, 'sdlcState').mockResolvedValue(oneSystem(answer));
   };
 
   it('says to install the plugin on the change list when a plan could not be read and the plugin is missing', async () => {
@@ -828,13 +829,16 @@ const systemViewOf = (n: number, readiness: Readiness = READY): SystemView => ({
   problems: [],
 });
 
+/** The backend's answer for a workspace of one system: the set may start a change exactly when that system may. */
+const oneSystem = (v: SystemView): WorkspaceView => ({ systems: [v], canStartChange: v.canStartChange, startChangeReason: v.startChangeReason });
+
 const second: WorkspaceEntry = { id: 'second', name: 'second', folder: '/second', last_opened: 1 };
 
 describe('SdlcHomeViewModel changes list', () => {
   it('names show at once and every stage fills in from one state read (R1.4)', async () => {
     const { vm, transport } = setup();
     const answer = systemViewOf(20);
-    const read = vi.spyOn(transport, 'sdlcState').mockResolvedValue(answer);
+    const read = vi.spyOn(transport, 'sdlcState').mockResolvedValue(oneSystem(answer));
     // The slow reads never finish: the names must be on screen without them.
     const health = vi.spyOn(transport, 'sdlcContextHealth').mockImplementation(() => new Promise(() => undefined));
     void vm.init();
@@ -847,7 +851,7 @@ describe('SdlcHomeViewModel changes list', () => {
 
   it('a blocked readiness offers no new change (R10.1)', async () => {
     const { vm, transport } = setup();
-    vi.spyOn(transport, 'sdlcState').mockResolvedValue(systemViewOf(2, BLOCKED));
+    vi.spyOn(transport, 'sdlcState').mockResolvedValue(oneSystem(systemViewOf(2, BLOCKED)));
     await vm.init();
     await vi.waitFor(() => expect(vm.rows().length).toBe(2));
     expect(vm.canStartChange()).toBe(false);
@@ -857,9 +861,20 @@ describe('SdlcHomeViewModel changes list', () => {
     expect(toastText()).toContain('1.1.0');
   });
 
+  it('reads every system in one call and shows whether a change may start as the backend decided for the set (F11)', async () => {
+    const { vm, transport } = setup();
+    // Each system says it may, yet the backend refuses for the set: the page follows the backend, it merges nothing itself.
+    const read = vi.spyOn(transport, 'sdlcState').mockResolvedValue({ systems: [systemViewOf(1), { ...systemViewOf(1), system: 'other' }], canStartChange: false, startChangeReason: 'other: refused' });
+    await vm.init();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read.mock.calls[0][1]).toEqual(['commerce']);
+    expect(vm.canStartChange()).toBe(false);
+    expect(vm.startChangeReason()).toBe('other: refused');
+  });
+
   it('a ready readiness offers a new change (R10.1)', async () => {
     const { vm, transport } = setup();
-    vi.spyOn(transport, 'sdlcState').mockResolvedValue(systemViewOf(1));
+    vi.spyOn(transport, 'sdlcState').mockResolvedValue(oneSystem(systemViewOf(1)));
     await vm.init();
     expect(vm.canStartChange()).toBe(true);
     expect(vm.startChangeReason()).toBeNull();
@@ -931,25 +946,25 @@ describe('SdlcHomeViewModel changes list', () => {
       const line = TestBed.inject(ProgressStore).view('home');
       await vm.init();
       expect(line()).toBeNull();
-      let answer: (v: SystemView) => void = () => undefined;
-      state.mockImplementation(() => new Promise<SystemView>((ok) => (answer = ok)));
+      let answer: (v: WorkspaceView) => void = () => undefined;
+      state.mockImplementation(() => new Promise<WorkspaceView>((ok) => (answer = ok)));
       vm.windowFocused();
       vi.advanceTimersByTime(300);
       expect(line()).toBeNull();
       vi.advanceTimersByTime(200);
       expect(line()?.label).toBe('Reading changes');
       expect(PROGRESS_STEPS['reading-stages'].lines).toContain(line()!.line);
-      answer(systemViewOf(1));
+      answer(oneSystem(systemViewOf(1)));
       await vi.waitFor(() => expect(line()).toBeNull());
     });
   });
 
   describe('reads the state again on each trigger (R5.1)', () => {
     const C = '2026-10-12-product-photo-upload';
-    const relabeled = (text: string): SystemView => {
+    const relabeled = (text: string): WorkspaceView => {
       const answer = systemViewOf(0);
       answer.changes = [viewOf(C, text, READY)];
-      return answer;
+      return oneSystem(answer);
     };
     const labelOf = (vm: SdlcHomeViewModel) => vm.rows().find((r) => r.change === C)?.offer.label.text;
 
@@ -989,8 +1004,8 @@ describe('SdlcHomeViewModel changes list', () => {
       const { vm, transport } = setup();
       const state = vi.spyOn(transport, 'sdlcState').mockResolvedValue(relabeled('Plan · ready to start'));
       await vm.init();
-      let release: (v: SystemView) => void = () => undefined;
-      state.mockImplementationOnce(() => new Promise<SystemView>((ok) => (release = ok)));
+      let release: (v: WorkspaceView) => void = () => undefined;
+      state.mockImplementationOnce(() => new Promise<WorkspaceView>((ok) => (release = ok)));
       vm.windowFocused();
       state.mockResolvedValueOnce(relabeled('Plan · superseded'));
       vm.windowFocused();
@@ -1195,7 +1210,7 @@ describe('SdlcHomeViewModel old per-machine checks', () => {
     expect(shown.path).toMatch(/workbench.checks.commerce\.toml$/);
     expect(shown.text).toContain('command');
     // Told once: the backend is asked to remember it, and nothing else is written or run.
-    expect(seen).toHaveBeenCalledWith('commerce');
+    expect(seen).toHaveBeenCalledWith(['commerce']);
     expect(saveSettings).not.toHaveBeenCalled();
     expect(runAgent).not.toHaveBeenCalled();
   });
@@ -1209,7 +1224,7 @@ describe('SdlcHomeViewModel old per-machine checks', () => {
     vm.dismissOldChecks('commerce');
     expect(vm.oldChecks()).toEqual([]);
     // Opening the system again: the backend has it as told.
-    expect(await transport.sdlcOldChecks('D:/Work/acme-commerce', 'commerce')).toBeNull();
+    expect(await transport.sdlcOldChecks('D:/Work/acme-commerce', ['commerce'])).toEqual([]);
     await vm.init();
     await flush();
     expect(vm.oldChecks()).toEqual([]);
