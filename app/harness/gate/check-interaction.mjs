@@ -225,20 +225,14 @@ const reviewed = async (page) => {
   }
   throw new Error('the scripted review never made declaring done offer the pull requests');
 };
-const declare = async (page) => {
-  await page.getByRole('button', { name: 'Declare done' }).click();
-  await page.locator('hlm-dialog-content:visible').first().waitFor();
-};
 const DONE = 'sdlc/commerce/2026-10-18-photo-limits-shipped';
 const DIALOG_STEPS = {
-  [`${DONE}?demo=clash`]: [
-    { label: 'done dialog, clash row', text: 'Branch is taken on GitHub', run: declare },
+  ['sdlc/commerce/2026-10-19-build-demo']: [
     {
       label: 'branch name dialog, rename mode',
       text: 'The change moves to this branch',
       run: async (page) => {
-        await declare(page);
-        await page.getByRole('button', { name: 'Pick a new branch name' }).click();
+        await page.getByRole('button', { name: 'Rename branch' }).click();
       },
     },
   ],

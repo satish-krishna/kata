@@ -311,7 +311,7 @@ describe('ChangePageViewModel', () => {
       expect(accept).toHaveBeenCalledWith(ref(PHOTOS_CHANGE), 'spec');
       expect(toastText()).toContain('Accepted spec · committed');
       expect(vm.change()?.offer.stage).toBe('plan-ready');
-      expect(vm.actions()).toEqual(['start-plan', 'reopen-spec', 'reopen-intent']);
+      expect(vm.actions()).toEqual(['start-plan', 'reopen-spec', 'reopen-intent', 'rename']);
     });
 
     it('accept plan opens the build (R1.2)', async () => {
@@ -848,7 +848,7 @@ describe('ChangePageViewModel', () => {
       const onBuild = vm.actions();
       await vm.showDoc('plan');
       expect(vm.actions()).toEqual(onBuild);
-      expect(vm.actions()).toEqual(['continue-build', 'another-round', 'reopen-spec', 'reopen-intent']);
+      expect(vm.actions()).toEqual(['continue-build', 'another-round', 'reopen-spec', 'reopen-intent', 'rename']);
     });
 
     it('offers Reopen intent and Reopen spec once each on the build step of a full-pipeline change (R1.2)', async () => {
@@ -858,7 +858,7 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       expect(vm.actions().filter((a) => a === 'reopen-intent')).toHaveLength(1);
       expect(vm.actions().filter((a) => a === 'reopen-spec')).toHaveLength(1);
-      expect(vm.barExtras().map((e) => e.action)).toEqual(['reopen-spec', 'reopen-intent']);
+      expect(vm.barExtras().map((e) => e.action)).toEqual(['reopen-spec', 'reopen-intent', 'rename']);
     });
 
     it('leaves the reopen actions to the change page at build-ready, offering each once in the change\'s order (R1.2)', async () => {
@@ -866,8 +866,8 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       expect(vm.change()!.offer.stage).toBe('build-ready');
       expect(TestBed.inject(BuildPageViewModel).actions()).not.toContain('reopen-intent');
-      expect(vm.actions()).toEqual(['start-build', 'reopen-spec', 'reopen-intent']);
-      expect(vm.barExtras().map((e) => e.action)).toEqual(['reopen-spec', 'reopen-intent']);
+      expect(vm.actions()).toEqual(['start-build', 'reopen-spec', 'reopen-intent', 'rename']);
+      expect(vm.barExtras().map((e) => e.action)).toEqual(['reopen-spec', 'reopen-intent', 'rename']);
     });
 
     it('turns both reopen actions off at build-ready while a check of Kata holds the lock (R1.3)', async () => {

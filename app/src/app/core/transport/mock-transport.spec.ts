@@ -526,14 +526,8 @@ describe('MockTransport branch naming demos', () => {
     });
   });
 
-  it('?demo=clash leaves the finished change undeclared', async () => {
-    await withDemo('clash', async (t) => {
-      expect((await t.sdlcPullRequests('commerce-docs', 'commerce', REPOS, MOCK_DONE_CHANGE))[0].url).toBeNull();
-    });
-  });
-
-  it('the clash demos have nothing uncommitted, so declaring done gets past its first check', async () => {
-    for (const demo of [null, 'clash', 'clash-push']) {
+  it('the clash-push demo has nothing uncommitted, so declaring done gets past its first check', async () => {
+    for (const demo of [null, 'clash-push']) {
       await withDemo(demo, async (t) => {
         const left = (await t.sdlcDiffFiles('/w', 'uncommitted')).files.length;
         expect(left > 0).toBe(demo === null);

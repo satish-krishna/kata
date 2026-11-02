@@ -545,7 +545,9 @@ function offerOf(c: ChangeInfo, refused: Partial<Record<StageAction, string>> = 
   const specPin = typeof stage !== 'string' && stage['plan-out-of-date'].cause === 'spec-pin';
   const listed = c.track === 'fix' ? (FIX_OFFERS[name] ?? []) : specPin ? (['reopen-spec'] as StageAction[]) : (FULL_OFFERS[name] ?? []);
   // A fix awaiting acceptance may be closed by the full pipeline only at row 6 of the fix-state table.
-  const actions: StageAction[] = c.track === 'fix' && name === 'fix-awaiting' && c.fix_row === 6 ? [...listed, 'full-pipeline-instead'] : listed;
+  const staged: StageAction[] = c.track === 'fix' && name === 'fix-awaiting' && c.fix_row === 6 ? [...listed, 'full-pipeline-instead'] : listed;
+  // Like offer.rs: every stage after the intent is accepted offers Rename branch, last; nothing here is refused for a live run.
+  const actions: StageAction[] = ['intent-in-progress', 'intent-awaiting', 'rejected'].includes(name) ? staged : [...staged, 'rename'];
   // A fix is reopened without feedback only when its plan is out of date.
   const feedback = (a: StageAction) => a === 'change-fix' || (a === 'reopen-fix' && name !== 'plan-out-of-date');
   return {
@@ -601,7 +603,7 @@ export class SdlcMock {
   /** The long demo's change whose plan the format program cannot read, so the reading rows show a reason. */
   private readonly unreadable: string | null;
 
-  /** `?demo=naming` puts the build demo change on a pending branch that waits for a name; `?demo=clash` and `?demo=clash-push` leave the finished change undeclared with its branch taken on GitHub, found by the readiness check or only by the push. */
+  /** `?demo=naming` puts the build demo change on a pending branch that waits for a name; `?demo=clash-push` leaves the finished change undeclared and finds its branch taken on GitHub only at the push. */
   private readonly demo: string | null;
 
   constructor(long = false, demo: string | null = null) {
@@ -733,7 +735,7 @@ export class SdlcMock {
   private copyOf(changeName: string): string | null {
     return this.copies.has(changeName) ? `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${changeName}` : null;
   }
-  /** Removal is offered for the finished change with its pull requests merged; the clash demos leave it undeclared, so nothing is offered. */
+  /** Removal is offered for the finished change with its pull requests merged; the clash-push demo leaves it undeclared, so nothing is offered. */
   copyRemoval(changeName: string): CopyRemoval {
     return this.copies.has(changeName) && !this.demo?.startsWith('clash') ? { outcome: 'offer' } : { outcome: 'notOffered' };
   }
@@ -964,7 +966,7 @@ export class SdlcMock {
 
   diffFiles(part: Part): DiffListing {
     // Once the scripted build has logged every task, its agents have committed what they left.
-    // The clash demos declare a finished change done, so its work is all committed too.
+    // The clash-push demo declares a finished change done, so its work is all committed too.
     const built = this.rows.size >= this.plan.length || (this.demo?.startsWith('clash') ?? false);
     const files = this.diff.map((f) => (built ? { ...f, uncommitted: false } : f)).filter((f) => part === 'whole' || (part === 'uncommitted') === f.uncommitted);
     const byType = new Map<string, { extension: string; files: number; added: number; removed: number }>();
@@ -1027,7 +1029,7 @@ export class SdlcMock {
   }
 
   pullRequests(repos: PublishRepo[], changeName: string): PrState[] {
-    // The clash demos leave the finished change without pull requests, so Declare done is offered.
+    // The clash-push demo leaves the finished change without pull requests, so Declare done is offered.
     const open = (repo: string) => (changeName === MOCK_DONE_CHANGE && !this.demo?.startsWith('clash')) || this.published.has(repo);
     return repos.map((r) => ({ repo: r.repo, url: open(r.repo) ? prUrl(r.repo) : null }));
   }

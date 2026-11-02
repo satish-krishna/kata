@@ -523,14 +523,14 @@ describe('ChangePage opens an existing change on the build page', () => {
   it('an existing change accepted but not built opens on the build page at its stage', async () => {
     const { container } = await existing('build-ready', [], false);
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
-    expect(actions(container)).toEqual(['Start build', 'Reopen spec', 'Reopen intent']);
+    expect(actions(container)).toEqual(['Start build', 'Reopen spec', 'Reopen intent', 'Rename branch']);
     expect(taskLine(container, 'T1')).toContain('Not started');
   });
 
   it('an existing change stopped partway opens on the build page with its log and earlier run', async () => {
     const { container } = await existing('build-stopped', ['T1'], false);
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
-    expect(actions(container)).toEqual(['Continue build', 'Another round', 'Reopen spec', 'Reopen intent']);
+    expect(actions(container)).toEqual(['Continue build', 'Another round', 'Reopen spec', 'Reopen intent', 'Rename branch']);
     container.querySelector<HTMLButtonElement>('app-build-page [data-fold]')!.click();
     await settle();
     expect(taskLine(container, 'T1')).toContain('Done');
@@ -542,7 +542,7 @@ describe('ChangePage opens an existing change on the build page', () => {
   it('an existing finished change opens on the build page with its log, earlier run and review', async () => {
     const { container } = await existing('build-finished', ['T1', 'T2', 'T3'], true);
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
-    expect(actions(container)).toEqual(['Declare done', 'Another round', 'Run review', 'Reopen spec', 'Reopen intent']);
+    expect(actions(container)).toEqual(['Declare done', 'Another round', 'Run review', 'Reopen spec', 'Reopen intent', 'Rename branch']);
     for (const f of Array.from(container.querySelectorAll<HTMLButtonElement>('app-build-page [data-fold]'))) f.click();
     await settle();
     expect(container.querySelectorAll('app-build-page [data-task]').length).toBeGreaterThan(0);
