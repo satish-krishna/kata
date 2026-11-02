@@ -288,6 +288,25 @@ for (const [path, steps] of Object.entries(DIALOG_STEPS)) {
   }
 }
 
+// The close question is asked by the window, not by a button: `?demo=close` makes the mock ask it. It must name each running change,
+// keep the page open on Escape, and leave the page open and quiet after Keep working.
+if (targetRoutes.includes('?demo=close')) {
+  consoleErrors = [];
+  await page.goto(`http://localhost:${port}/?demo=close`, { waitUntil: 'networkidle' });
+  const asked = page.locator('[role="alertdialog"]:visible', { hasText: 'building in kata' });
+  try {
+    await asked.first().waitFor({ timeout: 5000 });
+    if (!(await asked.first().textContent()).includes('writing its spec')) throw new Error('the second change is not named');
+    checks.push({ label: 'close dialog', opened: true });
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(350);
+    if ((await asked.count()) > 0) findings.push({ route: '?demo=close', kind: 'dialog', detail: 'the close dialog did not close on Escape' });
+  } catch (e) {
+    findings.push({ route: '?demo=close', kind: 'dialog', detail: `no visible close dialog naming both changes (${String(e.message).split('\n')[0]})` });
+  }
+  if (consoleErrors.length) findings.push({ route: '?demo=close', kind: 'dialog', detail: `console error: ${consoleErrors[0]}` });
+}
+
 await browser.close();
 server.close();
 

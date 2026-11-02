@@ -1,1 +1,15 @@
-
+<hlm-alert-dialog [state]="running() !== null ? 'open' : 'closed'" (stateChanged)="onState($event)">
+  <hlm-alert-dialog-content *hlmAlertDialogPortal="let ctx">
+    <div hlmAlertDialogTitle>Stop everything that is running and close?</div>
+    <p hlmAlertDialogDescription>Closing the Workbench stops these, and each leaves its leftovers for Continue.</p>
+    <ul class="grid gap-1" aria-label="Running changes">
+      @for (r of running(); track $index) {
+        <li class="k-mono">{{ r.change !== null ? r.change + ': ' + r.what : r.what }}</li>
+      }
+    </ul>
+    <hlm-alert-dialog-footer>
+      <button hlmAlertDialogAction variant="danger" size="sm" (click)="stopAll.emit()">Stop all and close</button>
+      <button hlmAlertDialogCancel variant="primary" size="sm">Keep working</button>
+    </hlm-alert-dialog-footer>
+  </hlm-alert-dialog-content>
+</hlm-alert-dialog>

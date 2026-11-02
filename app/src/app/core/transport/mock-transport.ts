@@ -383,6 +383,8 @@ export class MockTransport extends KataTransport {
   }
   async onCloseAsked(cb: (ask: CloseOutcome) => void): Promise<() => void> {
     this.closeListeners.add(cb);
+    // `?demo=close` (browser only) asks the close question once the app shell listens, so the browser checks can see the dialog.
+    if (demoParam() === 'close') queueMicrotask(() => cb({ type: 'ask', running: [{ change: 'A', what: 'building in kata' }, { change: 'B', what: 'writing its spec' }] }));
     return () => { this.closeListeners.delete(cb); };
   }
   async sdlcRunHistory(runId: string): Promise<HistoryEntry[]> { return [...(this.histories.get(runId) ?? [])]; }
