@@ -820,10 +820,28 @@ export class ChangePageViewModel {
   readonly messageRefusal = computed(() => this.ownSnap()?.refusal ?? this.runs.refusal());
   readonly permissions = computed(() => this.ownSnap()?.permissions ?? this.runs.permissions());
   readonly given = computed(() => this.ownSnap() === null ? this.runs.given() : this.ownSnap()!.given);
-  /** What a stopped run of this change (or of no change) left behind; another change's leftovers show on that change. */
-  readonly leftovers = computed(() => this.runner.leftoversOn(this.runKey()));
-  /** The session view's Close waits for this change's run's after-run work and for its leftover decision. */
-  readonly closeBlocked = computed(() => this.runner.settlingOn(this.runKey()) || this.leftovers() !== null);
+  /**
+   * What a stopped run of this change left behind. A run of no change offers its leftovers on the home, where it was started, and
+   * another change's on that change; neither shows here, even while this page has no workspace and so no change key.
+   */
+  readonly leftovers = computed(() => {
+    const key = this.runKey();
+    return key === null ? null : this.runner.leftoversOn(key);
+  });
+  /** Where the run the session view shows was started: this change's key for its own run, null for a run that took the screen, undefined for none. */
+  private readonly shownPlace = computed<string | null | undefined>(() => {
+    if (this.ownRun() !== null) return this.runKey();
+    return this.session() === null ? undefined : null;
+  });
+  /**
+   * The session view's Close waits for the after-run work of the run it shows, and for this change's own leftover decision; it never
+   * waits on a run it does not show. A run that took the screen offers its leftovers on the home; the toast that ends it counts them.
+   */
+  readonly closeBlocked = computed(() => {
+    const place = this.shownPlace();
+    if (place === undefined) return false;
+    return this.runner.settlingOn(place) || (place !== null && this.leftovers() !== null);
+  });
 
   constructor() {
     // The router reuses this screen when only the change param moves, so the load follows the params, not a snapshot.
