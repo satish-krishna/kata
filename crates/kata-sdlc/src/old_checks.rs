@@ -16,6 +16,31 @@ pub struct OldChecks {
     pub text: String,
 }
 
+/// One system's old checks notice, in a list for several systems.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct OldChecksNotice {
+    pub system: String,
+    /// Where the file is, as a display string.
+    pub path: String,
+    /// The file's text, verbatim.
+    pub text: String,
+}
+
+/// The notices for `systems`, in the order given, each system once: those with an old checks file the engineer has
+/// not been told about.
+pub fn notices(kata_home: &Path, systems: &[String], settings: &Settings) -> Vec<OldChecksNotice> {
+    let _ = (kata_home, systems, settings);
+    Vec::new()
+}
+
+/// `settings` with every one of `systems` recorded as told.
+pub fn mark_all_shown(settings: &Settings, systems: &[String]) -> Settings {
+    let _ = systems;
+    settings.clone()
+}
+
 /// The old checks file of `system` under `kata_home`, when it exists and the engineer has not been told about it yet.
 /// The file is read to be shown and nothing else: it is never parsed into anything that runs.
 pub fn notice(kata_home: &Path, system: &str, settings: &Settings) -> Option<OldChecks> {
@@ -148,6 +173,36 @@ mod tests {
         assert!(notice(home.path(), "bob", &reread).is_some());
         // Marking twice records the system once.
         assert_eq!(mark_shown(&told, "kata"), told);
+    }
+
+    /// R6.1 for a workspace of several systems: one answer for the set, each untold system once, in the order asked.
+    #[test]
+    fn the_notices_for_several_systems_come_in_one_answer() {
+        let home = home_with("kata", OLD);
+        let dir = home.path().join("workbench").join("checks");
+        std::fs::write(dir.join("bob.toml"), "bob").unwrap();
+        std::fs::write(dir.join("told.toml"), "told").unwrap();
+        let settings = mark_shown(&Settings::default(), "told");
+        let systems: Vec<String> = ["bob", "none", "told", "kata", "bob"]
+            .map(String::from)
+            .to_vec();
+
+        let found = notices(home.path(), &systems, &settings);
+
+        assert_eq!(
+            found
+                .iter()
+                .map(|n| (n.system.as_str(), n.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("bob", "bob"), ("kata", OLD)]
+        );
+        // Recording the set as told silences every one of them, each recorded once.
+        let told = mark_all_shown(&settings, &systems[..]);
+        assert!(notices(home.path(), &systems, &told).is_empty());
+        assert_eq!(
+            told.old_checks_shown,
+            ["told", "bob", "none", "kata"].map(String::from).to_vec()
+        );
     }
 
     #[test]

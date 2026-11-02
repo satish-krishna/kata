@@ -5,7 +5,7 @@ use kata_sdlc::ai_sdlc::state::{ChangeState, SystemState};
 use kata_sdlc::ai_sdlc::{Program, ProgramError};
 use kata_sdlc::offer::{ChangeOffer, LiveFacts};
 use kata_sdlc::plugin::Readiness;
-pub use kata_sdlc::view::{ChangeView, SystemView};
+pub use kata_sdlc::view::{ChangeView, SystemView, WorkspaceView};
 use std::path::Path;
 
 /// Where the answer about a system's changes comes from; the plugin's program in the app, a fake in tests.
@@ -100,6 +100,16 @@ pub fn system_view(
     })
 }
 
+/// One answer for the systems the home lists: each system's view, and whether a new change may be started across the
+/// set. It may only when at least one system was read and every one may; the reason is the first refusing system's.
+pub fn workspace_view(systems: Vec<SystemView>) -> WorkspaceView {
+    WorkspaceView {
+        systems,
+        can_start_change: false,
+        start_change_reason: None,
+    }
+}
+
 /// The view of one change; an error when the plugin's report does not hold it.
 pub fn change_view(
     source: Option<&dyn StateSource>,
@@ -190,6 +200,57 @@ mod tests {
         git(&ws.join("app"), &["add", "."]);
         git(&ws.join("app"), &["commit", "-q", "-m", "init"]);
         (dir, ws)
+    }
+
+    fn system(name: &str, reason: Option<&str>) -> SystemView {
+        SystemView {
+            system: name.into(),
+            readiness: ready(),
+            can_start_change: reason.is_none(),
+            start_change_reason: reason.map(String::from),
+            changes: vec![],
+            problems: vec![],
+        }
+    }
+
+    fn merged(systems: Vec<SystemView>) -> (Vec<String>, bool, Option<String>) {
+        let view = workspace_view(systems);
+        let names = view.systems.iter().map(|s| s.system.clone()).collect();
+        (names, view.can_start_change, view.start_change_reason)
+    }
+
+    /// Whether the home may start a change, over every system of the workspace: every row of the merge.
+    #[test]
+    fn a_change_may_be_started_only_when_every_system_may() {
+        // No system read: nothing to start a change in.
+        assert_eq!(merged(vec![]), (vec![], false, None));
+        // Every system can: it may, with no reason.
+        assert_eq!(
+            merged(vec![system("a", None), system("b", None)]),
+            (vec!["a".into(), "b".into()], true, None)
+        );
+        // One cannot: it may not, with that system's reason.
+        assert_eq!(
+            merged(vec![system("a", None), system("b", Some("b is blocked"))]),
+            (
+                vec!["a".into(), "b".into()],
+                false,
+                Some("b is blocked".into())
+            )
+        );
+        // Several cannot: the first refusing system's reason, in the order the systems were asked.
+        assert_eq!(
+            merged(vec![
+                system("a", None),
+                system("b", Some("b is blocked")),
+                system("c", Some("c is blocked")),
+            ]),
+            (
+                vec!["a".into(), "b".into(), "c".into()],
+                false,
+                Some("b is blocked".into())
+            )
+        );
     }
 
     #[test]

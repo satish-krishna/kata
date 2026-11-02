@@ -31,3 +31,17 @@ pub struct SystemView {
     pub changes: Vec<ChangeView>,
     pub problems: Vec<String>,
 }
+
+/// Every system of a workspace the home lists, from one read, and whether a new change may be started in it.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct WorkspaceView {
+    /// One view per system asked for, in the order asked.
+    pub systems: Vec<SystemView>,
+    /// True only when at least one system was read and every one of them may start a change.
+    pub can_start_change: bool,
+    /// Why a new change may not be started: the first refusing system's reason; null when it may.
+    pub start_change_reason: Option<String>,
+}
