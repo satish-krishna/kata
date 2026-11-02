@@ -1807,6 +1807,34 @@ describe('ChangePageViewModel: where the change lives', () => {
     expect(toastText()).not.toContain('Could not read the change');
   });
 
+  it('change_page_reads_review_and_pull_requests_of_a_copy_change_from_its_copy', async () => {
+    const transport = new MockTransport();
+    const COPY_ONLY_FINDING = "Only this copy's review record has this finding.";
+    const record = {
+      layout: 2,
+      problems: [],
+      master_moved: [],
+      reviews: [{ number: 1, reviewed_at: '2026-11-02', commits: {}, findings: [{ id: 'F1', severity: 'high', file: 'src/a.ts', line: 4, text: COPY_ONLY_FINDING }] }],
+    } as unknown as NonNullable<Awaited<ReturnType<MockTransport['sdlcReviewRecord']>>>;
+    const review = vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(record);
+    const pulls = vi.spyOn(transport, 'sdlcPullRequestsView');
+    const { vm } = setup(MOCK_DONE_CHANGE, transport);
+    await ready(vm);
+    // The review record is read with the copy change's reference, and the build page is handed that record.
+    expect(review).toHaveBeenCalledWith(copyRef(MOCK_DONE_CHANGE));
+    const build = TestBed.inject(BuildPageViewModel);
+    const input = build.loaded();
+    expect(input?.review).toBe(record);
+    await build.load(input!);
+    expect(build.findings().map((f) => f.text)).toEqual([COPY_ONLY_FINDING]);
+    // The pull requests are read for the copy change by name, and shown as the fixture holds them.
+    expect(pulls).toHaveBeenCalledWith(MOCK_WORKSPACE_FOLDER, vm.current()!.id, 'commerce', MOCK_DONE_CHANGE, false);
+    const held = await transport.sdlcPullRequestsView(MOCK_WORKSPACE_FOLDER, vm.current()!.id, 'commerce', MOCK_DONE_CHANGE, false);
+    expect(held.links.length).toBeGreaterThan(0);
+    expect(vm.pullLinks().map((l) => l.repo)).toEqual(held.links.map((l) => l.repo));
+    expect(vm.done()).toBe(true);
+  });
+
   it('tab_switch_after_copy_removed_shows_the_backend_message', async () => {
     const transport = new MockTransport();
     const { vm } = setup(MOCK_COPY_CHANGE, transport);
