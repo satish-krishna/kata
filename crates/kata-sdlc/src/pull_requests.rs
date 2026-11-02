@@ -94,13 +94,19 @@ pub struct PullRequestsView {
 }
 
 /// Whether the plugin's `change.done` passed for the change, from its ledger (`status --json`).
-pub fn declared_done(_status: &Status) -> bool {
-    false
+/// The plugin records the master's pull request before its final push, so only a passed run says the
+/// declaration went all the way.
+pub fn declared_done(status: &Status) -> bool {
+    status
+        .repos
+        .iter()
+        .flat_map(|r| &r.runs)
+        .any(|run| run.event == "change.done" && run.outcome == "passed")
 }
 
 /// The pull requests as the page shows them, from `show` (read with or without `--refresh`) and the
 /// `legacy` entries. `declared` is [`declared_done`] of the change's ledger.
-pub fn view(show: &ChangeShow, legacy: &[PrEntry], _declared: bool) -> PullRequestsView {
+pub fn view(show: &ChangeShow, legacy: &[PrEntry], declared: bool) -> PullRequestsView {
     let recorded = recorded(show, legacy);
     let source = recorded.first().map(|p| p.source);
     let links = recorded
@@ -138,12 +144,9 @@ pub fn view(show: &ChangeShow, legacy: &[PrEntry], _declared: bool) -> PullReque
         })
         .collect::<Vec<_>>();
     PullRequestsView {
-        // The plugin records the master's pull request last: until it is there, the declaration stopped part way.
-        done: match source {
-            Some(PullRequestSource::Plugin) => links.iter().any(|l| l.repo == "master"),
-            Some(PullRequestSource::Legacy) => true,
-            None => false,
-        },
+        // An earlier version of Kata recorded the declaration itself; otherwise only the plugin's passed
+        // `change.done` says it went all the way (the master's pull request is recorded before the last push).
+        done: source == Some(PullRequestSource::Legacy) || declared,
         declare_offered: source != Some(PullRequestSource::Legacy),
         source,
         links,
