@@ -1140,6 +1140,24 @@ describe('the arranged build page from the keyboard', () => {
     expect(sizeOf(page, 'left')).toBe(1011);
   });
 
+  it('F33: presses made before the page has drawn the last one step from the size last asked for', async () => {
+    const page = await mountArranged();
+    await page.mode('watch');
+    measure(page);
+    page.tabTo(separator(page, 'left'));
+    await page.press('Home');
+    expect(sizeOf(page, 'left')).toBe(160);
+    const before = page.host.arranges.length;
+    for (const [key, shiftKey] of [['ArrowRight', false], ['ArrowRight', true], ['ArrowRight', true]] as const) {
+      separator(page, 'left').dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey, bubbles: true, cancelable: true }));
+    }
+    expect(page.host.arranges.slice(before)).toEqual([
+      { kind: 'resize', side: 'left', px: 176 },
+      { kind: 'resize', side: 'left', px: 240 },
+      { kind: 'resize', side: 'left', px: 304 },
+    ]);
+  });
+
   it('R13.1: makes an area larger and smaller: the right separator moves left to grow', async () => {
     const page = await mountArranged();
     await page.mode('overview');
