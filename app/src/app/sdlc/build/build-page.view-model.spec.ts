@@ -18,6 +18,7 @@ import type { TaskLink } from '@bindings/TaskLink';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { ProgressStore } from '../../core/progress/progress.store';
+import { ChangeDraftStore } from '../../core/sdlc/change-draft.store';
 import { RunStore } from '../../core/run/run.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
@@ -946,8 +947,9 @@ describe('the build page reads the backend\'s build and starts it through the ho
     const s = setup();
     const status = await s.transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
     const [found] = (await readAllChanges(s.transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
-    const load = () => s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: found, status, done: false, review: null });
-    return { ...s, load, status };
+    const input = { ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: found, status, done: false, review: null };
+    const load = () => s.vm.load(input);
+    return { ...s, load, status, input };
   }
 
   it('the page shows the state the backend sends', async () => {
@@ -1053,5 +1055,34 @@ describe('the build page reads the backend\'s build and starts it through the ho
     expect(planned).toHaveBeenLastCalledWith(REF, { ...sent, picked: ['F1', 'F2'] });
     expect(preview.plannedRound()).toEqual(blocked);
     expect(preview.canStart()).toBe(false);
+  });
+
+  it('R13.6: the round dialog starts from the picks and notes the engineer left in it, and cancelling clears them', async () => {
+    const first = await opened();
+    await first.load();
+    const finding = (key: string) => ({ key, repo: null, finding: { severity: 'high' as const, text: `Finding ${key}.` } });
+    const offer: RoundOffer = { review: 1, repos: ['commerce-core', 'customer-portal'], findings: [finding('F1'), finding('F2')] };
+    vi.spyOn(first.transport, 'sdlcRoundOffer').mockResolvedValue([offer, { picked: ['F1'], assigned: {}, notes: {} }]);
+    vi.spyOn(first.transport, 'sdlcReviewView').mockResolvedValue({ rows: { counts: [], total: 2, groups: [] }, groups: [] });
+    const planned = vi.spyOn(first.transport, 'sdlcRoundPlan').mockResolvedValue({ blocked: null, requests: [] });
+
+    void first.vm.openRound();
+    await advance(100);
+    first.preview.buildForm()!.model.update((m) => ({ ...m, picked: ['F1', 'F2'], assigned: { F2: 'commerce-core' }, notes: { ...m.notes, 'commerce-core': 'mind the tests' } }));
+    await advance(100);
+    // The engineer leaves with the dialog open: the page and its dialog go.
+    first.host.destroy();
+
+    const host = openHost();
+    const vm = host.debugElement.injector.get(BuildPageViewModel);
+    await vm.load(first.input);
+    planned.mockClear();
+    void vm.openRound();
+    await advance(100);
+    expect(planned).toHaveBeenCalledWith(REF, { picked: ['F1', 'F2'], assigned: { F2: 'commerce-core' }, notes: { 'commerce-core': 'mind the tests', 'customer-portal': '' } });
+
+    vm.cancelPreview();
+    await advance(100);
+    expect(TestBed.inject(ChangeDraftStore).round(REF)).toBeNull();
   });
 });

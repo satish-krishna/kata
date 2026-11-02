@@ -1,5 +1,7 @@
 import { Injectable, signal } from '@angular/core';
 import type { ChangeRef } from '@bindings/ChangeRef';
+import type { RoundPicks } from '@bindings/RoundPicks';
+import type { LayoutMode } from '../../lib/build-layout';
 import type { Pick } from '../../lib/build-sessions';
 import { changeRunKey } from '../run/change-run.store';
 
@@ -58,6 +60,20 @@ export class ChangeDraftStore {
   setPick(ref: ChangeRef, pick: Pick | null): void {
     this.put(ref, { pick });
   }
+
+  /** The build page's mode the engineer picked, or null. */
+  mode(_ref: ChangeRef): LayoutMode | null {
+    return null;
+  }
+
+  setMode(_ref: ChangeRef, _mode: LayoutMode | null): void {}
+
+  /** The round dialog's picks and notes while it is open, or null. */
+  round(_ref: ChangeRef): RoundPicks | null {
+    return null;
+  }
+
+  setRound(_ref: ChangeRef, _round: RoundPicks | null): void {}
 
   private of(ref: ChangeRef): Draft {
     return this.all()[changeRunKey(ref)] ?? EMPTY;

@@ -3,6 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { LockStore } from '../../core/lock/lock.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
+import { RunLandingStore } from '../../core/run/run-landing.store';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { defaultArrangement, type AreaId, type LayoutMode } from '../../lib/build-layout';
 import { readLayoutFile } from '../../lib/build-layout-file';
@@ -98,6 +99,27 @@ describe('BuildLayoutViewModel', () => {
     expect(second.vm.mode()).toBe('watch');
     expect(second.vm.arrangement().left).toEqual(['activity']);
     expect(second.vm.arrangement().sizes.left).toBe(420);
+  });
+
+  it('R13.6: the mode picked on a change comes back when its page is opened again, unless a run was asked for', async () => {
+    const transport = setup();
+    const ctx = { folder: 'D:/ws', system: 'shop', change: 'A' };
+    const first = await make(transport);
+    first.standIn.loaded.set({ ctx });
+    first.vm.open('A');
+    first.vm.pickMode('review');
+
+    const second = await make(transport);
+    second.standIn.loaded.set({ ctx });
+    second.vm.open('A');
+    expect(second.vm.mode()).toBe('review');
+
+    // A run the engineer just asked for is shown in the stage's own mode, not the remembered one.
+    TestBed.inject(RunLandingStore).ask({ workspaceId: null, system: 'shop', change: 'A', run: { run: 1, kind: 'build', repo: 'kata', waiting: true } });
+    const third = await make(transport);
+    third.standIn.loaded.set({ ctx });
+    third.vm.open('A');
+    expect(third.vm.mode()).toBe('watch');
   });
 
   it('R8.2: one arrangement per mode is shared by every change', async () => {

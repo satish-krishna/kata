@@ -39,4 +39,18 @@ describe('ChangeDraftStore', () => {
     expect(drafts.tab(C)).toBeNull();
     expect(drafts.pick(C)).toBeNull();
   });
+
+  it('the build mode and the round dialog picks come back, and a round draft is cleared', () => {
+    const drafts = store();
+    const picks = { picked: ['F1'], assigned: { F2: 'kata' }, notes: { kata: 'mind the tests' } };
+    drafts.setMode(B, 'watch');
+    drafts.setRound(B, picks);
+    expect(drafts.mode(B)).toBe('watch');
+    expect(drafts.round(B)).toEqual(picks);
+    expect(drafts.mode(C)).toBeNull();
+    expect(drafts.round(C)).toBeNull();
+    drafts.setRound(B, null);
+    expect(drafts.round(B)).toBeNull();
+    expect(drafts.mode(B)).toBe('watch');
+  });
 });
