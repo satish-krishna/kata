@@ -6,7 +6,9 @@
 use crate::build::{change_dir, program, put, reading, staging_dir, unreadable};
 use crate::format::{self, FormatError, ParsedReviewSection, Problem, ReadResult};
 use crate::git::{self, GitError};
-use serde::Serialize;
+use crate::store::RunLink;
+use kata_core::history::RunRecord;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -157,6 +159,57 @@ pub fn currency(record: &ReviewRecord, heads: &BTreeMap<String, String>) -> Revi
     }
 }
 
+/// The change a review belongs to, as run links name it.
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct ReviewScope {
+    pub workspace_id: String,
+    pub system: String,
+    pub change: String,
+}
+
+/// Whether the change's latest review covers its current work, for the build page.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum ReviewStanding {
+    /// The change has not been reviewed.
+    None,
+    /// The latest review run did not exit 0.
+    Unfinished,
+    /// The work changed since it was reviewed.
+    Stale,
+    /// The review document does not pass its checks.
+    Invalid,
+    /// With no review document: the latest review run, whose heads are where the repositories stand now.
+    CurrentRun { run_id: String },
+    /// The review document's latest review covers the change; `review` is its index in `reviews`.
+    CurrentDocument { review: usize },
+}
+
+/// The standing of the change's latest review. With a review document, its latest review decides: the commits it
+/// records against where the product repositories stand now (`heads` without `master`), whatever the review run's
+/// exit code was. Without one, the review run does, as its run link records it: none when it was never run,
+/// unfinished when it did not exit 0, stale when a repository moved since it started, otherwise current.
+pub fn standing(
+    links: &[RunLink],
+    records: &[RunRecord],
+    heads: &BTreeMap<String, String>,
+    scope: &ReviewScope,
+    document: Option<&ReviewRecord>,
+    master: Option<&str>,
+) -> ReviewStanding {
+    let _ = (links, records, heads, scope, document, master);
+    unimplemented!("the standing of the latest review")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,5 +277,303 @@ mod tests {
         // 4: all match, the master did not move; the latest review is judged
         let r = record_of(vec![section(&[("kata", "zzzz")]), good], 0, &[]);
         assert_eq!(currency(&r, &h), ReviewCurrency::Current { review: 1 });
+    }
+
+    // --- the standing of the latest review: every row the build page's `reviewState` had
+
+    fn scope() -> ReviewScope {
+        ReviewScope {
+            workspace_id: "w1".into(),
+            system: "commerce".into(),
+            change: "c1".into(),
+        }
+    }
+
+    fn link(run_id: &str, started_at: u64, heads_at: Option<&[(&str, &str)]>) -> RunLink {
+        RunLink {
+            workspace_id: "w1".into(),
+            system: "commerce".into(),
+            change: "c1".into(),
+            stage: "review".into(),
+            run_id: run_id.into(),
+            started_at,
+            heads: heads_at.map(heads),
+        }
+    }
+
+    fn run(id: &str, exit: Option<i32>) -> RunRecord {
+        RunRecord {
+            id: id.into(),
+            kata: "k".into(),
+            started_at: 100,
+            isolation: "none".into(),
+            exit,
+            turns: None,
+            cost_usd: None,
+            duration_ms: None,
+            result: None,
+            steered: false,
+        }
+    }
+
+    const A1: &[(&str, &str)] = &[("a", "1111111")];
+
+    #[test]
+    fn standing_is_none_when_the_change_has_no_review_link() {
+        let h = heads(A1);
+        assert_eq!(
+            standing(&[], &[], &h, &scope(), None, None),
+            ReviewStanding::None
+        );
+        let mut build = link("r1", 100, Some(A1));
+        build.stage = "build:a".into();
+        let mut other_change = link("r1", 100, Some(A1));
+        other_change.change = "other".into();
+        let mut other_workspace = link("r1", 100, Some(A1));
+        other_workspace.workspace_id = "w2".into();
+        let mut other_system = link("r1", 100, Some(A1));
+        other_system.system = "bob".into();
+        assert_eq!(
+            standing(
+                &[build, other_change, other_workspace, other_system],
+                &[run("r1", Some(0))],
+                &h,
+                &scope(),
+                None,
+                None
+            ),
+            ReviewStanding::None
+        );
+    }
+
+    #[test]
+    fn standing_is_unfinished_when_the_review_run_did_not_exit_0() {
+        let h = heads(A1);
+        let l = [link("r1", 100, Some(A1))];
+        for records in [vec![run("r1", Some(1))], vec![run("r1", None)], vec![]] {
+            assert_eq!(
+                standing(&l, &records, &h, &scope(), None, None),
+                ReviewStanding::Unfinished
+            );
+        }
+    }
+
+    #[test]
+    fn standing_is_stale_when_the_heads_differ_from_the_heads_at_review_time() {
+        let ok = [run("r1", Some(0))];
+        assert_eq!(
+            standing(
+                &[link("r1", 100, Some(A1))],
+                &ok,
+                &heads(&[("a", "2222222")]),
+                &scope(),
+                None,
+                None
+            ),
+            ReviewStanding::Stale
+        );
+        assert_eq!(
+            standing(
+                &[link("r1", 100, None)],
+                &ok,
+                &heads(A1),
+                &scope(),
+                None,
+                None
+            ),
+            ReviewStanding::Stale
+        );
+        // A repository the review run did not record counts as moved.
+        assert_eq!(
+            standing(
+                &[link("r1", 100, Some(A1))],
+                &ok,
+                &heads(&[("a", "1111111"), ("b", "3333333")]),
+                &scope(),
+                None,
+                None
+            ),
+            ReviewStanding::Stale
+        );
+    }
+
+    #[test]
+    fn standing_is_current_for_the_latest_review_whose_heads_match() {
+        let older = link("r0", 50, Some(&[("a", "0000000")]));
+        let got = standing(
+            &[link("r1", 100, Some(A1)), older],
+            &[run("r1", Some(0)), run("r0", Some(0))],
+            &heads(A1),
+            &scope(),
+            None,
+            None,
+        );
+        assert_eq!(
+            got,
+            ReviewStanding::CurrentRun {
+                run_id: "r1".into()
+            }
+        );
+    }
+
+    #[test]
+    fn standing_judges_only_the_latest_review() {
+        let older = link("r0", 50, Some(A1));
+        let newer = link("r2", 200, Some(A1));
+        assert_eq!(
+            standing(
+                &[older, newer],
+                &[run("r0", Some(0)), run("r2", Some(1))],
+                &heads(A1),
+                &scope(),
+                None,
+                None
+            ),
+            ReviewStanding::Unfinished
+        );
+        // Of two links started at the same second, the later one in the list is the latest.
+        let first = link("r0", 100, Some(A1));
+        let second = link("r2", 100, Some(A1));
+        assert_eq!(
+            standing(
+                &[first, second],
+                &[run("r0", Some(0)), run("r2", Some(1))],
+                &heads(A1),
+                &scope(),
+                None,
+                None
+            ),
+            ReviewStanding::Unfinished
+        );
+    }
+
+    #[test]
+    fn standing_with_a_document_that_passes_is_current() {
+        let doc = record_of(vec![section(&[("a", "1111111")])], 0, &[]);
+        assert_eq!(
+            standing(&[], &[], &heads(A1), &scope(), Some(&doc), Some("m")),
+            ReviewStanding::CurrentDocument { review: 0 }
+        );
+    }
+
+    /// F6: a review document with problems is not a current review, so done stays blocked.
+    #[test]
+    fn standing_with_a_document_with_problems_is_invalid() {
+        let doc = record_of(vec![section(&[("a", "1111111")])], 1, &[]);
+        assert_eq!(
+            standing(&[], &[], &heads(A1), &scope(), Some(&doc), Some("m")),
+            ReviewStanding::Invalid
+        );
+        assert_eq!(
+            standing(
+                &[link("r1", 100, Some(A1))],
+                &[run("r1", Some(0))],
+                &heads(A1),
+                &scope(),
+                Some(&doc),
+                Some("m")
+            ),
+            ReviewStanding::Invalid
+        );
+    }
+
+    const FULL: &[(&str, &str)] = &[
+        ("a", "1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        ("master", "9999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+    ];
+
+    #[test]
+    fn standing_reads_the_latest_review_commits_against_the_heads_and_not_the_run_exit_code() {
+        let doc = record_of(
+            vec![section(&[("a", "0000000")]), section(&[("a", "1111111")])],
+            0,
+            &[],
+        );
+        assert_eq!(
+            standing(
+                &[link("r1", 100, Some(A1))],
+                &[run("r1", Some(1))],
+                &heads(FULL),
+                &scope(),
+                Some(&doc),
+                Some("master")
+            ),
+            ReviewStanding::CurrentDocument { review: 1 }
+        );
+    }
+
+    #[test]
+    fn standing_is_stale_when_a_reviewed_repository_moved_since_the_review() {
+        let doc = record_of(vec![section(&[("a", "1111111")])], 0, &[]);
+        assert_eq!(
+            standing(
+                &[],
+                &[],
+                &heads(&[("a", "2222222cccccccccccccccccccccccccccccccc")]),
+                &scope(),
+                Some(&doc),
+                Some("master")
+            ),
+            ReviewStanding::Stale
+        );
+    }
+
+    #[test]
+    fn standing_does_not_judge_the_master_by_its_head() {
+        let doc = record_of(
+            vec![section(&[("a", "1111111"), ("master", "0123456")])],
+            0,
+            &[],
+        );
+        assert_eq!(
+            standing(&[], &[], &heads(FULL), &scope(), Some(&doc), Some("master")),
+            ReviewStanding::CurrentDocument { review: 0 }
+        );
+    }
+
+    #[test]
+    fn standing_is_none_when_the_document_holds_no_review() {
+        let doc = record_of(vec![], 0, &[]);
+        assert_eq!(
+            standing(
+                &[link("r1", 100, Some(A1))],
+                &[run("r1", Some(0))],
+                &heads(FULL),
+                &scope(),
+                Some(&doc),
+                Some("master")
+            ),
+            ReviewStanding::None
+        );
+    }
+
+    /// F17: the master is judged by what it committed since the review, not by its head.
+    #[test]
+    fn standing_judges_the_master_by_what_it_committed_since_the_review() {
+        let reviewed = || vec![section(&[("a", "1111111"), ("master", "0123456")])];
+        let product = record_of(reviewed(), 0, &["plugin/tools/ai-sdlc.ts"]);
+        assert_eq!(
+            standing(
+                &[],
+                &[],
+                &heads(FULL),
+                &scope(),
+                Some(&product),
+                Some("master")
+            ),
+            ReviewStanding::Stale
+        );
+        let only_review = record_of(reviewed(), 0, &[]);
+        assert_eq!(
+            standing(
+                &[],
+                &[],
+                &heads(FULL),
+                &scope(),
+                Some(&only_review),
+                Some("master")
+            ),
+            ReviewStanding::CurrentDocument { review: 0 }
+        );
     }
 }

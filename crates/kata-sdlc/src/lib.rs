@@ -3,6 +3,7 @@
 
 pub mod accept;
 pub mod ai_sdlc;
+pub mod board;
 pub mod branch;
 pub mod build;
 pub mod changes;
