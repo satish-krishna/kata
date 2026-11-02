@@ -18,6 +18,8 @@ import type { ChangeStart } from '@bindings/ChangeStart';
 import type { AcceptOutcome } from '@bindings/AcceptOutcome';
 import type { ChangeDocument } from '@bindings/ChangeDocument';
 import type { RejectOutcome } from '@bindings/RejectOutcome';
+import type { CopyRemoval } from '@bindings/CopyRemoval';
+import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
@@ -169,6 +171,14 @@ export abstract class KataTransport {
   abstract sdlcAccept(change: ChangeRef, doc: ChangeDocument): Promise<AcceptOutcome>;
   /** Reject a change through the plugin, which commits the rejection and removes the change's copy. */
   abstract sdlcReject(change: ChangeRef): Promise<RejectOutcome>;
+  /** Whether the change's copy may be removed, from the backend: it asks GitHub for the pull request states, so it is slow. */
+  abstract sdlcCopyRemoval(change: ChangeRef): Promise<CopyRemoval>;
+  /** The branch the change's copy holds, as the plugin records it. */
+  abstract sdlcCopyBranch(change: ChangeRef): Promise<string>;
+  /** Remove the change's copy on the engineer's confirmation; the answer says what came of it. */
+  abstract sdlcRemoveCopy(change: ChangeRef): Promise<RemoveOutcome>;
+  /** Open the folder of the change's copy in the file manager. Rejects when the change is not in a copy. */
+  abstract sdlcOpenCopyFolder(change: ChangeRef): Promise<void>;
   abstract sdlcRunLinks(): Promise<RunLink[]>;
   abstract sdlcLinkRun(link: RunLink): Promise<void>;
   /** Which run recorded each task, in the order they were linked. */

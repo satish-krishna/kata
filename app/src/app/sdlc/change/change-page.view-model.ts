@@ -235,6 +235,23 @@ export class ChangePageViewModel {
   readonly prCheckFailed = signal(false);
   /** The backend says the change is done: it has no actions left. */
   readonly done = signal(false);
+
+  // --- the change's own copy: where it is, whether it may be removed, and what removing it came to
+
+  /** Where the change's copy is and the branch it holds; null when the change is not in a copy. */
+  readonly copy = computed<{ folder: string; branch: string | null } | null>(() => null);
+  /** The backend offered to remove the copy. Never true before the backend answered. */
+  readonly removalOffered = computed(() => false);
+  /** The uncommitted files that keep the copy, as the backend named them; none when it names none. */
+  readonly keepFiles = computed<string[]>(() => []);
+  /** The removal confirmation is on show. */
+  readonly removeAsked = signal(false);
+  /** What the last removal or check came to, for the page to show; null when there is nothing to say. */
+  readonly copyNote = computed<DocNotice | null>(() => null);
+  askRemoveCopy(): void {}
+  declineRemoveCopy(): void {}
+  async confirmRemoveCopy(): Promise<void> {}
+  async openCopyFolder(): Promise<void> {}
   private readonly linksFrom = signal<DoneView['linksFrom']>('none');
   /** When the last background refresh of the link states began, in seconds; null until one has ended. A link last seen before it could not be asked about. */
   private readonly refreshedAt = signal<number | null>(null);

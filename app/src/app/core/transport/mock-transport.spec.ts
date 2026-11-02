@@ -151,6 +151,28 @@ describe('MockTransport', () => {
     expect((await readAllChanges(t)).find((x) => x.state.change === '2026-10-16-price-flag')).toBeUndefined();
   });
 
+
+  it('the finished change has its own copy: the mock offers its removal, and removing it takes the copy away', async () => {
+    const t = new MockTransport();
+    const ref = { workspace: '/ws', system: 'commerce', change: MOCK_DONE_CHANGE };
+    expect((await t.sdlcChangeState('/ws', 'commerce', MOCK_DONE_CHANGE)).state.inCopy).toBe(true);
+    expect(await t.sdlcCopyBranch(ref)).toBe(`change/${MOCK_DONE_CHANGE}`);
+    expect(await t.sdlcCopyRemoval(ref)).toEqual({ outcome: 'offer' });
+    await expect(t.sdlcOpenCopyFolder(ref)).resolves.toBeUndefined();
+    const out = await t.sdlcRemoveCopy(ref);
+    expect(out.outcome).toBe('removed');
+    expect((await t.sdlcChangeState('/ws', 'commerce', MOCK_DONE_CHANGE)).state.inCopy).toBe(false);
+    expect(await t.sdlcCopyRemoval(ref)).toEqual({ outcome: 'notOffered' });
+  });
+
+  it('a change with no copy has nothing to remove or open', async () => {
+    const t = new MockTransport();
+    const ref = { workspace: '/ws', system: 'commerce', change: '2026-10-16-price-flag' };
+    expect((await t.sdlcChangeState('/ws', 'commerce', ref.change)).state.inCopy).toBe(false);
+    expect(await t.sdlcCopyRemoval(ref)).toEqual({ outcome: 'notOffered' });
+    await expect(t.sdlcOpenCopyFolder(ref)).rejects.toThrow(/not in a copy/);
+  });
+
   it('accepting the photos spec moves its change to plan-ready', async () => {
     const t = new MockTransport();
     const before = (await readAllChanges(t)).find((c) => c.state.change === '2026-10-12-product-photo-upload');

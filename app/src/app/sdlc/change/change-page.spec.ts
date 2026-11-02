@@ -1,4 +1,6 @@
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { CopyRemoval } from '@bindings/CopyRemoval';
+import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
@@ -841,5 +843,152 @@ describe('ChangePage way back', () => {
       expect(container.querySelector('app-sdlc-session')).toBeNull();
       expect(back(container)!.disabled).toBe(false);
     });
+  });
+});
+
+describe('ChangePage: the change copy', () => {
+  const COPY = 'C:/ws/.ai-sdlc/copies/2026-10-12-product-photo-upload';
+  const BRANCH = `change/${PHOTOS_CHANGE}`;
+  let draw: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    draw = vi.spyOn(diagrams, 'render').mockResolvedValue('<svg></svg>');
+  });
+  afterEach(() => draw.mockRestore());
+
+  /** The change as the plugin reports it from inside its own copy; the backend answers as the test says. */
+  function inCopy(removal: CopyRemoval, remove: RemoveOutcome = { outcome: 'removed', kept: [] }) {
+    const transport = new MockTransport();
+    const real = transport.sdlcChangeState.bind(transport);
+    const state = vi.spyOn(transport, 'sdlcChangeState').mockImplementation(async (...args) => {
+      const view = await real(...args);
+      return { ...view, state: { ...view.state, inCopy: true, master: COPY } };
+    });
+    vi.spyOn(transport, 'sdlcCopyRemoval').mockResolvedValue(removal);
+    vi.spyOn(transport, 'sdlcCopyBranch').mockResolvedValue(BRANCH);
+    const removed = vi.spyOn(transport, 'sdlcRemoveCopy').mockResolvedValue(remove);
+    const opened = vi.spyOn(transport, 'sdlcOpenCopyFolder').mockResolvedValue();
+    return { transport, state, real, removed, opened };
+  }
+  const line = (c: HTMLElement) => c.querySelector<HTMLElement>('[data-testid="copy-line"]');
+  const buttonIn = (root: ParentNode, label: string) => Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.trim() === label);
+  const alert = () => document.body.querySelector('[role="alertdialog"]');
+
+  // R17.1
+  it('the copy line shows the folder, the branch and Open folder', async () => {
+    const { transport, opened } = inCopy({ outcome: 'notOffered' });
+    const { container } = await mount(PHOTOS_CHANGE, transport);
+    await vi.waitFor(() => expect(line(container)?.textContent).toContain(BRANCH));
+    const copy = line(container)!;
+    expect(copy.textContent).toContain(COPY);
+    expect(copy.textContent).toContain(`on ${BRANCH}`);
+    expect(copy.querySelector('.k-mono')?.textContent).toContain(COPY);
+    const open = buttonIn(copy, 'Open folder')!;
+    expect(open).toBeDefined();
+    open.click();
+    await vi.waitFor(() => expect(opened).toHaveBeenCalledTimes(1));
+  });
+
+  it('a change that is not in a copy has no copy line', async () => {
+    const { container } = await mount();
+    expect(line(container)).toBeNull();
+    expect(container.textContent).not.toContain('Open folder');
+  });
+
+  // R17.2
+  it('the copy line says the checkout cannot switch to the branch', async () => {
+    const { transport } = inCopy({ outcome: 'notOffered' });
+    const { container } = await mount(PHOTOS_CHANGE, transport);
+    await vi.waitFor(() => expect(line(container)).not.toBeNull());
+    expect(line(container)!.textContent).toContain(
+      "This branch is held by this change's own copy, so your own checkout cannot switch to it while the copy exists.",
+    );
+  });
+
+  it('offers Remove this copy only when the backend offers it, and asks first', async () => {
+    const none = inCopy({ outcome: 'notOffered' });
+    const first = await mount(PHOTOS_CHANGE, none.transport);
+    await vi.waitFor(() => expect(line(first.container)).not.toBeNull());
+    await settle();
+    expect(buttonIn(first.container, 'Remove this copy')).toBeUndefined();
+
+    const offered = inCopy({ outcome: 'offer' });
+    const { container } = await mount(PHOTOS_CHANGE, offered.transport);
+    await vi.waitFor(() => expect(buttonIn(container, 'Remove this copy')).toBeDefined());
+    buttonIn(container, 'Remove this copy')!.click();
+    await vi.waitFor(() => expect(alert()).not.toBeNull());
+    expect(offered.removed).not.toHaveBeenCalled();
+    expect(alert()!.textContent).toContain(COPY);
+  });
+
+  it('confirming removes the copy: the copy line goes and the branches kept are shown', async () => {
+    const kept = [`${BRANCH}: kept in the master repository`];
+    const { transport, state, real, removed } = inCopy({ outcome: 'offer' }, { outcome: 'removed', kept });
+    const { container } = await mount(PHOTOS_CHANGE, transport);
+    await vi.waitFor(() => expect(buttonIn(container, 'Remove this copy')).toBeDefined());
+    buttonIn(container, 'Remove this copy')!.click();
+    await vi.waitFor(() => expect(alert()).not.toBeNull());
+    state.mockImplementation(real);
+    buttonIn(alert()!, 'Remove copy')!.click();
+    await vi.waitFor(() => expect(line(container)).toBeNull());
+    expect(removed).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-testid="copy-note"]')!.textContent).toContain(kept[0]);
+    expect(buttonIn(container, 'Remove this copy')).toBeUndefined();
+  });
+
+  it('declining keeps the copy and leaves the offer on the page', async () => {
+    const { transport, removed } = inCopy({ outcome: 'offer' });
+    const { container } = await mount(PHOTOS_CHANGE, transport);
+    await vi.waitFor(() => expect(buttonIn(container, 'Remove this copy')).toBeDefined());
+    buttonIn(container, 'Remove this copy')!.click();
+    await vi.waitFor(() => expect(alert()).not.toBeNull());
+    buttonIn(alert()!, 'Cancel')!.click();
+    await vi.waitFor(() => expect(alert()).toBeNull());
+    expect(removed).not.toHaveBeenCalled();
+    expect(line(container)).not.toBeNull();
+    expect(buttonIn(container, 'Remove this copy')).toBeDefined();
+  });
+
+  it('a copy with uncommitted files offers no removal and names the files', async () => {
+    const { transport } = inCopy({ outcome: 'keep', uncommitted: ['src/a.ts', 'notes.txt'] });
+    const { container } = await mount(PHOTOS_CHANGE, transport);
+    await vi.waitFor(() => expect(line(container)?.textContent).toContain('notes.txt'));
+    expect(line(container)!.textContent).toContain('src/a.ts');
+    expect(buttonIn(container, 'Remove this copy')).toBeUndefined();
+  });
+
+  it('work that appeared after the offer keeps the copy and names the file', async () => {
+    const { transport } = inCopy({ outcome: 'offer' }, { outcome: 'keep', uncommitted: ['src/new.ts'] });
+    const { container } = await mount(PHOTOS_CHANGE, transport);
+    await vi.waitFor(() => expect(buttonIn(container, 'Remove this copy')).toBeDefined());
+    buttonIn(container, 'Remove this copy')!.click();
+    await vi.waitFor(() => expect(alert()).not.toBeNull());
+    buttonIn(alert()!, 'Remove copy')!.click();
+    await vi.waitFor(() => expect(line(container)?.textContent).toContain('src/new.ts'));
+    expect(line(container)).not.toBeNull();
+    expect(buttonIn(container, 'Remove this copy')).toBeUndefined();
+  });
+
+  it("a refusal shows the plugin's problems as they are", async () => {
+    const { transport } = inCopy({ outcome: 'offer' }, { outcome: 'refused', problems: ['the branch is checked out', 'run ai-sdlc doctor'] });
+    const { container } = await mount(PHOTOS_CHANGE, transport);
+    await vi.waitFor(() => expect(buttonIn(container, 'Remove this copy')).toBeDefined());
+    buttonIn(container, 'Remove this copy')!.click();
+    await vi.waitFor(() => expect(alert()).not.toBeNull());
+    buttonIn(alert()!, 'Remove copy')!.click();
+    await vi.waitFor(() => expect(container.querySelector('[data-testid="copy-note"]')).not.toBeNull());
+    const note = container.querySelector('[data-testid="copy-note"]')!.textContent!;
+    expect(note).toContain('the branch is checked out');
+    expect(note).toContain('run ai-sdlc doctor');
+    expect(line(container)).not.toBeNull();
+  });
+
+  it('a removal that could not run says why', async () => {
+    const { transport } = inCopy({ outcome: 'offer' }, { outcome: 'couldNotRun', message: 'node was not found' });
+    const { container } = await mount(PHOTOS_CHANGE, transport);
+    await vi.waitFor(() => expect(buttonIn(container, 'Remove this copy')).toBeDefined());
+    buttonIn(container, 'Remove this copy')!.click();
+    await vi.waitFor(() => expect(alert()).not.toBeNull());
+    buttonIn(alert()!, 'Remove copy')!.click();
+    await vi.waitFor(() => expect(container.querySelector('[data-testid="copy-note"]')?.textContent).toContain('node was not found'));
   });
 });

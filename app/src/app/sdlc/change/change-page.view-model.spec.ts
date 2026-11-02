@@ -2,8 +2,10 @@ import { Injector, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { CopyRemoval } from '@bindings/CopyRemoval';
 import type { DoneView } from '@bindings/DoneView';
 import type { PrLink } from '@bindings/PrLink';
+import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { RunSpec } from '@bindings/RunSpec';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject } from 'rxjs';
@@ -1392,5 +1394,179 @@ describe('ChangePageViewModel document runs of different changes (R11)', () => {
     await vm.act('start-spec');
     await vi.waitFor(() => expect(toastText()).toContain('commerce-core is held by 2026-10-19-build-demo'));
     expect(vm.session()).toBeNull();
+  });
+});
+
+describe('ChangePageViewModel: the change copy', () => {
+  const COPY = 'C:/ws/.ai-sdlc/copies/2026-10-12-product-photo-upload';
+  const REF = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: PHOTOS_CHANGE };
+
+  /** The change as the plugin reports it from inside its own copy, with the backend's answers as the test says. */
+  function inCopy(removal: CopyRemoval | Promise<CopyRemoval>, remove?: RemoveOutcome) {
+    const transport = new MockTransport();
+    const real = transport.sdlcChangeState.bind(transport);
+    const state = vi.spyOn(transport, 'sdlcChangeState').mockImplementation(async (...args) => {
+      const view = await real(...args);
+      return { ...view, state: { ...view.state, inCopy: true, master: COPY } };
+    });
+    const asked = vi.spyOn(transport, 'sdlcCopyRemoval').mockReturnValue(Promise.resolve(removal));
+    vi.spyOn(transport, 'sdlcCopyBranch').mockResolvedValue(`change/${PHOTOS_CHANGE}`);
+    const removed = vi.spyOn(transport, 'sdlcRemoveCopy').mockResolvedValue(remove ?? { outcome: 'removed', kept: [] });
+    const opened = vi.spyOn(transport, 'sdlcOpenCopyFolder').mockResolvedValue();
+    return { transport, state, asked, removed, opened, real };
+  }
+  const removalReady = (vm: ChangePageViewModel, offered: boolean) => vi.waitFor(() => expect(vm.removalOffered()).toBe(offered));
+
+  it('removal is offered only on Offer and Keep names the files', async () => {
+    const offer = setup(PHOTOS_CHANGE, inCopy({ outcome: 'offer' }).transport);
+    await ready(offer.vm);
+    await removalReady(offer.vm, true);
+    expect(offer.vm.keepFiles()).toEqual([]);
+
+    const keep = setup(PHOTOS_CHANGE, inCopy({ outcome: 'keep', uncommitted: ['src/a.ts', 'notes.txt'] }).transport);
+    await ready(keep.vm);
+    await vi.waitFor(() => expect(keep.vm.keepFiles()).toEqual(['src/a.ts', 'notes.txt']));
+    expect(keep.vm.removalOffered()).toBe(false);
+
+    const none = setup(PHOTOS_CHANGE, inCopy({ outcome: 'notOffered' }).transport);
+    await ready(none.vm);
+    await vi.waitFor(() => expect(none.vm.copy()).not.toBeNull());
+    expect(none.vm.removalOffered()).toBe(false);
+    expect(none.vm.keepFiles()).toEqual([]);
+  });
+
+  it('knows the copy folder and, once the backend answers, the branch it holds', async () => {
+    const { vm, transport } = setup(PHOTOS_CHANGE, inCopy({ outcome: 'notOffered' }).transport);
+    await ready(vm);
+    await vi.waitFor(() => expect(vm.copy()).toEqual({ folder: COPY, branch: `change/${PHOTOS_CHANGE}` }));
+    expect(transport.sdlcCopyBranch).toHaveBeenCalledWith(REF);
+  });
+
+  it('a change that is not in a copy has no copy line and asks nothing about removal', async () => {
+    const transport = new MockTransport();
+    const asked = vi.spyOn(transport, 'sdlcCopyRemoval');
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    await ready(vm);
+    expect(vm.copy()).toBeNull();
+    expect(vm.removalOffered()).toBe(false);
+    expect(asked).not.toHaveBeenCalled();
+  });
+
+  it('the page is ready before the slow removal answer arrives, and shows no offer until it does', async () => {
+    let answer!: (r: CopyRemoval) => void;
+    const slow = new Promise<CopyRemoval>((resolve) => (answer = resolve));
+    const { vm } = setup(PHOTOS_CHANGE, inCopy(slow).transport);
+    await ready(vm);
+    expect(vm.state()).toBe('ready');
+    expect(vm.removalOffered()).toBe(false);
+    answer({ outcome: 'offer' });
+    await removalReady(vm, true);
+  });
+
+  it('marks the change opened when its page opens', async () => {
+    const transport = new MockTransport();
+    const mark = vi.spyOn(transport, 'sdlcMarkOpened');
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    await ready(vm);
+    await vi.waitFor(() => expect(mark).toHaveBeenCalledWith(REF));
+  });
+
+  it('Open folder opens the change copy folder through the backend', async () => {
+    const { transport, opened } = inCopy({ outcome: 'notOffered' });
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    await ready(vm);
+    await vm.openCopyFolder();
+    expect(opened).toHaveBeenCalledWith(REF);
+  });
+
+  it('a folder the backend would not open says why', async () => {
+    const { transport, opened } = inCopy({ outcome: 'notOffered' });
+    opened.mockRejectedValue(new Error('this change is not in a copy'));
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    await ready(vm);
+    await vm.openCopyFolder();
+    expect(toastText()).toContain('this change is not in a copy');
+  });
+
+  // R15.3, row 1: nothing uncommitted, the engineer confirms.
+  it('confirming the removal removes the copy, the copy line goes and the branches kept are shown', async () => {
+    const kept = [`change/${PHOTOS_CHANGE} (the plugin keeps the branch in the master repository)`];
+    const { transport, state, real, removed } = inCopy({ outcome: 'offer' }, { outcome: 'removed', kept });
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    await ready(vm);
+    await removalReady(vm, true);
+    vm.askRemoveCopy();
+    expect(vm.removeAsked()).toBe(true);
+    expect(removed).not.toHaveBeenCalled();
+    // Once the copy is gone the plugin reports the master again.
+    state.mockImplementation(real);
+    await vm.confirmRemoveCopy();
+    expect(removed).toHaveBeenCalledTimes(1);
+    expect(removed).toHaveBeenCalledWith(REF);
+    expect(vm.removeAsked()).toBe(false);
+    await vi.waitFor(() => expect(vm.copy()).toBeNull());
+    expect(vm.removalOffered()).toBe(false);
+    expect(vm.copyNote()?.lines).toEqual(kept);
+    expect(vm.copyNote()?.text).toContain('removed');
+  });
+
+  // R15.3, row 2: nothing uncommitted, the engineer declines.
+  it('declining the removal keeps the copy and the offer stays', async () => {
+    const { transport, removed } = inCopy({ outcome: 'offer' });
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    await ready(vm);
+    await removalReady(vm, true);
+    vm.askRemoveCopy();
+    vm.declineRemoveCopy();
+    expect(vm.removeAsked()).toBe(false);
+    expect(removed).not.toHaveBeenCalled();
+    expect(vm.copy()).not.toBeNull();
+    expect(vm.removalOffered()).toBe(true);
+  });
+
+  // R15.3, row 3: uncommitted files, the engineer looks at the copy.
+  it('a copy with uncommitted files is not offered for removal and the files are named', async () => {
+    const { vm } = setup(PHOTOS_CHANGE, inCopy({ outcome: 'keep', uncommitted: ['notes.txt'] }).transport);
+    await ready(vm);
+    await vi.waitFor(() => expect(vm.keepFiles()).toEqual(['notes.txt']));
+    expect(vm.removalOffered()).toBe(false);
+    vm.askRemoveCopy();
+    expect(vm.removeAsked()).toBe(false);
+  });
+
+  // R15.2: work appears in the copy between the offer and the confirmation.
+  it('work that appeared in the copy after the offer keeps it and names the file', async () => {
+    const { transport } = inCopy({ outcome: 'offer' }, { outcome: 'keep', uncommitted: ['src/new.ts'] });
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    await ready(vm);
+    await removalReady(vm, true);
+    vm.askRemoveCopy();
+    await vm.confirmRemoveCopy();
+    expect(vm.copy()).not.toBeNull();
+    expect(vm.removalOffered()).toBe(false);
+    expect(vm.keepFiles()).toEqual(['src/new.ts']);
+    expect(vm.copyNote()?.lines).toEqual(['src/new.ts']);
+  });
+
+  it("a removal the plugin refuses shows the plugin's problems as they are and keeps the copy", async () => {
+    const { transport } = inCopy({ outcome: 'offer' }, { outcome: 'refused', problems: ['the branch is checked out', 'run ai-sdlc doctor'] });
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    await ready(vm);
+    await removalReady(vm, true);
+    vm.askRemoveCopy();
+    await vm.confirmRemoveCopy();
+    expect(vm.copy()).not.toBeNull();
+    expect(vm.copyNote()?.lines).toEqual(['the branch is checked out', 'run ai-sdlc doctor']);
+  });
+
+  it('a removal that could not run says so and keeps the copy', async () => {
+    const { transport } = inCopy({ outcome: 'offer' }, { outcome: 'couldNotRun', message: 'node was not found' });
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    await ready(vm);
+    await removalReady(vm, true);
+    vm.askRemoveCopy();
+    await vm.confirmRemoveCopy();
+    expect(vm.copy()).not.toBeNull();
+    expect(vm.copyNote()?.text).toContain('node was not found');
   });
 });
