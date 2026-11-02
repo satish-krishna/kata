@@ -11,6 +11,8 @@ import { LockStore } from '../../core/lock/lock.store';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { RunStore } from '../../core/run/run.store';
+import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
+import { seedSpec } from '../../lib/mock';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/given';
@@ -1328,5 +1330,61 @@ describe('ChangePageViewModel leaving a change (R11.6)', () => {
     lock.cancel();
     await vi.waitFor(() => expect(lock.active()).toMatchObject({ kind: 'run', finished: expect.anything() }));
     lock.close();
+  });
+});
+
+describe('ChangePageViewModel document runs of different changes (R11)', () => {
+  const OTHER = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE };
+  const live = ['running', 'awaiting'];
+
+  it("a spec run of change B starts while change A's spec run is live", async () => {
+    const transport = new MockTransport();
+    const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+    runAgent.mockRestore();
+    const started = vi.spyOn(transport, 'sdlcRunChange');
+    const cancel = vi.spyOn(transport, 'cancelRun');
+    await ready(vm);
+    // Change A's run goes through the runner, as its own page would start it.
+    void TestBed.inject(SdlcRunner).run('Starting spec of A', { ...seedSpec(), name: 'sdlc-commerce-a-spec' }, { workspaceId: 'w', master: null, productRepos: [], link: null }, { ref: OTHER, kind: 'spec' });
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(1));
+    void vm.act('start-spec');
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(2));
+    expect(started.mock.calls[0][0]).toEqual(OTHER);
+    expect(started.mock.calls[1][0]).toMatchObject({ change: PHOTOS_CHANGE });
+    // Change B's page shows its own run.
+    await vi.waitFor(() => expect(vm.session()).not.toBeNull());
+    expect(vm.session()!.finished).toBeNull();
+    expect(live).toContain(vm.runState());
+    expect(vm.session()!.title).not.toBe('Starting spec of A');
+    expect(cancel).not.toHaveBeenCalled();
+    expect(toastText()).not.toContain('Another task is already running.');
+  });
+
+  it("a second document run of the same change is refused by that change's own live run", async () => {
+    const transport = new MockTransport();
+    const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+    runAgent.mockRestore();
+    const started = vi.spyOn(transport, 'sdlcRunChange');
+    const cancel = vi.spyOn(transport, 'cancelRun');
+    await ready(vm);
+    void vm.act('start-spec');
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(vm.session()).not.toBeNull());
+    await vm.act('start-spec');
+    expect(toastText()).toContain('Another task is already running.');
+    expect(started).toHaveBeenCalledTimes(1);
+    expect(cancel).not.toHaveBeenCalled();
+    expect(live).toContain(vm.runState());
+  });
+
+  it("a run the backend refuses says the backend's reason and leaves no session behind", async () => {
+    const transport = new MockTransport();
+    const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+    runAgent.mockRestore();
+    vi.spyOn(transport, 'sdlcRunChange').mockRejectedValue(new Error('commerce-core is held by 2026-10-19-build-demo'));
+    await ready(vm);
+    await vm.act('start-spec');
+    await vi.waitFor(() => expect(toastText()).toContain('commerce-core is held by 2026-10-19-build-demo'));
+    expect(vm.session()).toBeNull();
   });
 });
