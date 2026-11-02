@@ -259,12 +259,35 @@ export type StartKind = StartOutcome['kind'];
 /** Why a start did not go on: the reason and, one line each, what the plugin found. */
 export type StartRefusal = { reason: string; problems: string[] };
 
-/** A run the page follows: which row it belongs to and when the page first saw it. */
-type Entry = { id: string; key: string; at: number };
+/**
+ * A run the page follows: which row it belongs to, when the page first saw it, and the change it is a run of, with that change's master
+ * and repositories as the page knew them then. A run stays the run of its own change when the page moves to another one.
+ */
+type Entry = { id: string; key: string; at: number; ctx: BuildContext; master: { repo: string; path: string }; repos: string[] };
+
+/** Whether two contexts name the same change. */
+const sameCtx = (a: BuildContext, b: BuildContext): boolean => a.folder === b.folder && a.system === b.system && a.change === b.change;
 /** Seconds of a run's work (waiting for the engineer excluded), of all its waiting, and of the wait it is in now. */
 type Clock = { work: number; paused: number; current: number };
 /** A review of the whole change: one section of its review document, or the closing text of its run. */
 type Review = { at: number | null; label: string | null; number: number | null; repos: string[]; findings: Finding[] };
+
+/** Why a start that was refused, failed or could not run did not go on, as the page says it; null for any other outcome. */
+function refusalOf(outcome: StartOutcome): StartRefusal | null {
+  switch (outcome.kind) {
+    case 'refused':
+      return { reason: 'The plugin refused to start the build', problems: outcome.problems };
+    case 'failed':
+      return {
+        reason: outcome.hook === null ? "The plugin's build start failed" : `The team's hook ${outcome.hook.id} failed`,
+        problems: [...outcome.problems, ...(outcome.hook === null || outcome.hook.output.trim() === '' ? [] : [outcome.hook.output.trim()])],
+      };
+    case 'couldNotRun':
+      return { reason: outcome.repo === null ? "This machine could not run the plugin's step" : `This machine could not run the plugin's step in ${outcome.repo}`, problems: [outcome.output] };
+    default:
+      return null;
+  }
+}
 
 const REVIEW = 'review';
 const RUNNING: readonly RunState[] = ['running', 'awaiting'];
@@ -395,7 +418,13 @@ export class BuildPageViewModel {
   private readonly changedFiles = signal(false);
   /** How many files the repositories list as changed, for the area tabs. */
   private readonly changedFileTotal = signal(0);
-  private readonly log = signal<Entry[]>([]);
+  /** Every run the page has followed, of whichever change. */
+  private readonly followed = signal<Entry[]>([]);
+  /** The runs of the change on show; a run of another change never shows here. */
+  private readonly log = computed<Entry[]>(() => {
+    const ctx = this.ctxSig();
+    return ctx === null ? [] : this.followed().filter((e) => sameCtx(e.ctx, ctx));
+  });
   private readonly clocks = signal<Readonly<Record<string, Clock>>>({});
   private readonly reviews = signal<Review[]>([]);
   /** True when the findings come from a review run's closing words because the change has no review document. */
@@ -623,14 +652,9 @@ export class BuildPageViewModel {
       this.bashDone();
       untracked(() => void this.refresh());
     });
-    // A run the backend started is followed from its first event.
+    // A run's transcript is linked to its own change as soon as its id shows up in the run's events, whichever change is on show.
     effect(() => {
-      const refs = this.runRefs();
-      untracked(() => this.followRuns(refs));
-    });
-    // A run's transcript is linked to the change as soon as its id shows up in the run's events.
-    effect(() => {
-      const pending = this.log().flatMap((e) => {
+      const pending = this.followed().flatMap((e) => {
         const transcript = transcriptRunId(this.snapOf(e.id).events);
         return transcript !== null && !this.linkedTranscripts.has(transcript) ? [{ e, transcript }] : [];
       });
@@ -687,6 +711,12 @@ export class BuildPageViewModel {
 
   // --- reading the backend's build
 
+  /** Whether the page still shows the change `ctx` names: an answer read for a change the page has moved away from is dropped. */
+  private shows(ctx: BuildContext | null): boolean {
+    const now = this.ctx;
+    return ctx !== null && now !== null && sameCtx(ctx, now);
+  }
+
   /** The change this page is about, as the backend names it. */
   private ref(): ChangeRef | null {
     const ctx = this.ctx;
@@ -695,14 +725,15 @@ export class BuildPageViewModel {
 
   /** Listen to the build of the page's change and read where it stands now. */
   private async attach(ref: ChangeRef): Promise<void> {
-    const id = `${ref.workspace}|${ref.system}|${ref.change}`;
+    const id = this.attachId(ref);
     if (this.attached === id) return;
     this.detach();
     this.attached = id;
+    const ctx = this.ctx!;
     const key = await this.transport.sdlcChangeKey(ref);
     if (this.attached !== id) return;
     const unlisten = await this.transport.onBuildState((event) => {
-      if (sameChange(event.change, key)) this.apply(event.state, event.reviewWaiting, event.runs);
+      if (sameChange(event.change, key) && this.attached === id) this.apply(ctx, event.state, event.reviewWaiting, event.runs);
     });
     if (this.attached !== id) {
       unlisten();
@@ -710,6 +741,11 @@ export class BuildPageViewModel {
     }
     this.unlisten = unlisten;
     await this.readHost(ref);
+  }
+
+  /** The id the page attaches to a change under. */
+  private attachId(ref: ChangeRef): string {
+    return `${ref.workspace}|${ref.system}|${ref.change}`;
   }
 
   private detach(): void {
@@ -721,15 +757,22 @@ export class BuildPageViewModel {
   /** Read the host's answer for the change: its build state, the review's wait and the live runs. */
   private async readHost(ref: ChangeRef): Promise<void> {
     try {
+      const ctx = this.ctx;
       const [state, waiting, runs] = await Promise.all([this.transport.sdlcBuildState(ref), this.transport.sdlcReviewWaiting(ref), this.transport.sdlcBuildRuns(ref)]);
-      this.apply(state, waiting, runs);
+      // An answer about a change the page has moved away from is not this page's.
+      if (ctx === null || this.attached !== this.attachId(ref)) return;
+      this.apply(ctx, state, waiting, runs);
     } catch (e) {
       this.toasts.error(`Could not read the build: ${message(e)}`);
     }
   }
 
   /** Take what the host announced. A review leaving the build starts being read in the same step, so nothing sees a finished build with no review. */
-  private apply(state: BuildState | null, waiting: HeldRepo[], runs: BuildRunRef[]): void {
+  private apply(ctx: BuildContext, state: BuildState | null, waiting: HeldRepo[], runs: BuildRunRef[]): void {
+    const now = this.ctx;
+    if (now === null || !sameCtx(ctx, now)) return;
+    // A run the backend started is followed from its first event, as a run of this change.
+    this.followRuns(ctx, runs);
     const was = this.buildState()?.going.includes(REVIEW) ?? false;
     const is = state?.going.includes(REVIEW) ?? false;
     if (was && !is) this.readingNow.set(true);
@@ -757,8 +800,10 @@ export class BuildPageViewModel {
     try {
       do {
         this.checksAgain = false;
+        const ctx = this.ctx;
         try {
-          this.checkViews.set(await this.transport.sdlcChecksView(ref));
+          const views = await this.transport.sdlcChecksView(this.ref()!);
+          if (this.shows(ctx)) this.checkViews.set(views);
         } catch (e) {
           this.toasts.error(`Could not read the checks: ${message(e)}`);
         }
@@ -775,6 +820,8 @@ export class BuildPageViewModel {
   async load(input: BuildPageInput): Promise<void> {
     if (this.taken === input) return;
     this.taken = input;
+    const before = this.ctx;
+    if (before !== null && !sameCtx(before, input.ctx)) this.forgetChange();
     this.loaded.set(input);
     this.ctx = input.ctx;
     this.status.set(input.status);
@@ -782,12 +829,50 @@ export class BuildPageViewModel {
     this.restorePick();
     this.changes.set({ folder: input.ctx.folder, masterRepo: input.master.repo, system: input.ctx.system, change: input.ctx.change });
     await Promise.all([this.readSessions(), this.readChanges(), this.attach(this.ref()!), this.readChecks()]);
+    if (!this.shows(input.ctx)) return;
     this.sessionsReadFor.set(input);
     // The findings come from the review document, or from the latest review run's words.
     await this.noteReviewNotice(input.review);
+    if (!this.shows(input.ctx)) return;
     if (input.review !== null) this.showReviews(shownReview(input.review, null), null);
     else await this.reviewFromWords(input.ctx);
     await this.readReviewRows();
+  }
+
+  /**
+   * The page moved to another change: everything it showed about the change before goes. The runs it followed stay followed, each
+   * as a run of its own change, so a transcript that shows up later is still linked to that change.
+   */
+  private forgetChange(): void {
+    this.detach();
+    if (this.dialogMode() !== null) this.cancelPreview();
+    else this.previewSeq++;
+    this.chosen.set(null);
+    this.startHeld.set([]);
+    this.lastForm = null;
+    this.refusal.set(null);
+    this.buildState.set(null);
+    this.reviewHeld.set([]);
+    this.runRefs.set([]);
+    this.checkViews.set([]);
+    this.changedFiles.set(false);
+    this.changedFileTotal.set(0);
+    this.reviews.set([]);
+    this.fromWords.set(false);
+    this.reviewDocNotice.set(null);
+    this.reviewListing.set(null);
+    this.heads.set({});
+    this.findingPlace.set(null);
+    this.readingNow.set(false);
+    this.heldStage = null;
+    this.sessionsReadFor.set(null);
+    this.taskFilter.set('all');
+    this.openFolds.set(new Set());
+    this.openLow.set(new Set());
+    this.marks.set({});
+    this.lastOnShow = null;
+    this.announced = new Set();
+    this.announcement.set('');
   }
 
   /** Show a repository, a task or the review. */
@@ -1214,9 +1299,10 @@ export class BuildPageViewModel {
       this.toasts.error(`Could not read the earlier sessions: ${message(e)}`);
     }
     try {
-      this.heads.set(await this.readHeads());
+      const heads = await this.readHeads();
+      if (this.shows(ctx)) this.heads.set(heads);
     } catch {
-      this.heads.set({});
+      if (this.shows(ctx)) this.heads.set({});
     }
   }
 
@@ -1310,17 +1396,29 @@ export class BuildPageViewModel {
    */
   private async begin(label: string, call: () => Promise<StartOutcome>): Promise<StartKind> {
     this.progress.begin('preparing-build', label, 'build');
+    const ctx = this.ctx;
     let outcome: StartOutcome;
     try {
       outcome = await call();
     } catch (e) {
       this.progress.fail('build');
-      this.refusal.set({ reason: message(e), problems: [] });
+      this.refuse(ctx, { reason: message(e), problems: [] });
       return 'couldNotRun';
     }
     if (outcome.kind === 'refused' || outcome.kind === 'failed' || outcome.kind === 'couldNotRun') this.progress.fail('build');
     else this.progress.end('build');
-    return this.settle(outcome);
+    if (this.shows(ctx)) return this.settle(outcome);
+    // The page moved to another change while the start ran: what it came to is not shown on that change, it is said once.
+    const held = outcome.kind === 'held' ? { reason: 'The build waits for other changes', problems: outcome.held.map((h) => `${h.repo}: ${h.holder.change}`) } : null;
+    const refusal = held ?? refusalOf(outcome);
+    if (refusal !== null) this.refuse(ctx, refusal);
+    return outcome.kind;
+  }
+
+  /** Show why a start did not go on, on the change it was for; a start of a change the page moved away from says it in a toast. */
+  private refuse(ctx: BuildContext | null, refusal: StartRefusal): void {
+    if (this.shows(ctx)) this.refusal.set(refusal);
+    else this.toasts.error([`${ctx?.change ?? 'The build'}: ${refusal.reason}`, ...refusal.problems].join('\n'));
   }
 
   private settle(outcome: StartOutcome): StartKind {
@@ -1341,16 +1439,9 @@ export class BuildPageViewModel {
         this.startHeld.set(outcome.held);
         break;
       case 'refused':
-        this.refusal.set({ reason: 'The plugin refused to start the build', problems: outcome.problems });
-        break;
       case 'failed':
-        this.refusal.set({
-          reason: outcome.hook === null ? "The plugin's build start failed" : `The team's hook ${outcome.hook.id} failed`,
-          problems: [...outcome.problems, ...(outcome.hook === null || outcome.hook.output.trim() === '' ? [] : [outcome.hook.output.trim()])],
-        });
-        break;
       case 'couldNotRun':
-        this.refusal.set({ reason: outcome.repo === null ? "This machine could not run the plugin's step" : `This machine could not run the plugin's step in ${outcome.repo}`, problems: [outcome.output] });
+        this.refusal.set(refusalOf(outcome));
         break;
     }
     return outcome.kind;
@@ -1542,11 +1633,14 @@ export class BuildPageViewModel {
   // --- the runs the backend started
 
   /** Follow every run the backend names that the page has not seen, and finish with the ones that left the build. */
-  private followRuns(refs: BuildRunRef[]): void {
-    const known = new Set(this.log().map((e) => e.id));
+  private followRuns(ctx: BuildContext, refs: BuildRunRef[]): void {
+    const master = this.masterRef();
+    if (master === null) return;
+    const known = new Set(this.followed().map((e) => e.id));
+    const repos = [...new Set([master.repo, ...(this.status()?.repos.map((r) => r.repo) ?? [])])];
     for (const ref of refs) {
       if (known.has(ref.run)) continue;
-      this.log.update((l) => [...l, { id: ref.run, key: ref.key, at: Date.now() }]);
+      this.followed.update((l) => [...l, { id: ref.run, key: ref.key, at: Date.now(), ctx, master, repos }]);
       this.clocks.update((c) => ({ ...c, [ref.run]: { work: 0, paused: 0, current: 0 } }));
       const before = this.status();
       if (before !== null && ref.key !== REVIEW) this.bases.update((b) => ({ ...b, [ref.run]: before }));
@@ -1556,14 +1650,15 @@ export class BuildPageViewModel {
 
   /** Link a run's transcript to the change; a review's link records where each repository stood, which tells whether the review is current. */
   private async linkTranscript(entry: Entry, transcript: string): Promise<void> {
-    const ctx = this.ctx;
-    if (ctx === null || this.linkedTranscripts.has(transcript)) return;
+    // The run's own change, never the one on show: the page may have moved since the run started.
+    const ctx = entry.ctx;
+    if (this.linkedTranscripts.has(transcript)) return;
     this.linkedTranscripts.add(transcript);
     if (this.runLinks().some((l) => l.run_id === transcript)) return;
     let heads: Record<string, string> | undefined;
     if (entry.key === REVIEW) {
       try {
-        heads = await this.readHeads();
+        heads = await this.transport.sdlcBuildHeads(ctx.folder, entry.master.repo, ctx.system, entry.repos, ctx.change);
       } catch (e) {
         this.toasts.error(`Could not record where each repository stood: ${message(e)}`);
       }
@@ -1640,7 +1735,7 @@ export class BuildPageViewModel {
     this.lastTick = t;
     if (dt <= 0) return;
     const next: Record<string, Clock> = { ...this.clocks() };
-    for (const e of this.log()) {
+    for (const e of this.followed()) {
       if (!RUNNING.includes(this.snapOf(e.id).state)) continue;
       const c = next[e.id] ?? { work: 0, paused: 0, current: 0 };
       next[e.id] = waiting.has(e.id)
@@ -1669,9 +1764,11 @@ export class BuildPageViewModel {
     try {
       const repos = await this.transport.sdlcChangeRepos(ctx.folder, master.repo, ctx.system, ctx.change);
       const counts = await Promise.all(repos.map((r) => this.transport.sdlcDiffFiles(r.path, 'whole').then((l) => l.files.length, () => 0)));
+      if (!this.shows(ctx)) return;
       this.changedFileTotal.set(counts.reduce((sum, n) => sum + n, 0));
       this.changedFiles.set(counts.some((n) => n > 0));
     } catch {
+      if (!this.shows(ctx)) return;
       this.changedFileTotal.set(0);
       this.changedFiles.set(false);
     }
@@ -1681,8 +1778,10 @@ export class BuildPageViewModel {
     // A change with no plan has no build log to read.
     if (this.masterRef() === null || this.ctx === null || this.loaded()?.status === null) return;
     void this.readChanges();
+    const ctx = this.ctx;
     try {
-      this.status.set(await this.readStatus());
+      const status = await this.readStatus();
+      if (this.shows(ctx)) this.status.set(status);
     } catch (e) {
       this.toasts.error(`Could not read the build log: ${message(e)}`);
     }
@@ -1696,6 +1795,7 @@ export class BuildPageViewModel {
     if (ctx === null) return;
     try {
       const document = await this.readDocument();
+      if (!this.shows(ctx)) return;
       if (document !== undefined) {
         this.reviewDoc.set(document);
         await this.noteReviewNotice(document);
@@ -1726,10 +1826,12 @@ export class BuildPageViewModel {
   private async readReviewRows(): Promise<void> {
     const ref = this.ref();
     if (ref === null) return;
+    const ctx = this.ctx;
     try {
-      this.reviewListing.set((await this.transport.sdlcReviewView(ref)).rows);
+      const rows = (await this.transport.sdlcReviewView(ref)).rows;
+      if (this.shows(ctx)) this.reviewListing.set(rows);
     } catch {
-      this.reviewListing.set(null);
+      if (this.shows(ctx)) this.reviewListing.set(null);
     }
   }
 
@@ -1759,12 +1861,14 @@ export class BuildPageViewModel {
       this.reviewDocNotice.set(null);
       return;
     }
+    const ctx = this.ctx;
     let readiness: Readiness;
     try {
-      readiness = await this.transport.sdlcPluginReadiness(this.ctx!.folder);
+      readiness = await this.transport.sdlcPluginReadiness(ctx!.folder);
     } catch {
       readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
     }
+    if (!this.shows(ctx)) return;
     this.reviewDocNotice.set(shownPart({ layout: document.layout, problems: document.problems }, readiness).notice);
   }
 
@@ -1777,6 +1881,7 @@ export class BuildPageViewModel {
       const last = links.reduce<(typeof links)[number] | null>((a, l) => (a === null || l.started_at > a.started_at ? l : a), null);
       if (last === null) return;
       const words = reviewFindings(await this.transport.loadRun(last.run_id));
+      if (!this.shows(ctx)) return;
       this.reviews.set([]);
       this.showReviews(shownReview(null, words), last.started_at * 1000);
     } catch {
