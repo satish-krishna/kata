@@ -12,7 +12,9 @@
     (run)="vm.run()"
     (cancel)="vm.cancel()"
     (switchMode)="vm.switchMode()"
-  />
+  >
+    <app-running-changes />
+  </app-toolbar>
 
   <app-validation-banner [errors]="vm.errors()" />
 

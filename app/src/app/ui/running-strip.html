@@ -11,7 +11,7 @@
   <ul class="k-running__choices" [attr.aria-label]="'Runs of ' + row.name">
     @for (c of row.choices; track c.run) {
       <li>
-        <button hlmBtn [variant]="c.waiting ? 'primary' : 'secondary'" size="sm" type="button" data-testid="run-choice" (click)="vm.open(row, c)">
+        <button hlmBtn [variant]="c.waiting ? 'primary' : 'secondary'" size="sm" type="button" data-testid="run-choice" (click)="choose(row, c)">
           <span class="k-mono">{{ c.label }}</span> {{ c.action }}
         </button>
       </li>
@@ -19,18 +19,18 @@
   </ul>
 </ng-template>
 
-@if (vm.all().length > 0) {
-  <div class="k-running" role="group" aria-label="Running changes">
+@if (all().length > 0) {
+  <div #strip class="k-running" role="group" aria-label="Running changes">
     <hlm-popover sideOffset="4" align="end">
-      <button hlmPopoverTrigger hlmBtn variant="secondary" size="sm" type="button" class="k-running__all">{{ vm.allLabel() }}</button>
+      <button hlmPopoverTrigger hlmBtn variant="secondary" size="sm" type="button" class="k-running__all">{{ allLabel() }}</button>
       <hlm-popover-content *hlmPopoverPortal="let ctx" data-testid="running-all">
         <hlm-popover-header>
-          <div hlmPopoverTitle>{{ vm.allLabel() }}</div>
+          <div hlmPopoverTitle>{{ allLabel() }}</div>
         </hlm-popover-header>
         <ul class="k-running__all-list" aria-label="All running changes">
-          @for (row of vm.all(); track row.id) {
+          @for (row of all(); track row.id) {
             <li data-testid="running-all-entry">
-              <button hlmBtn variant="bare" size="bare" class="k-running__entry" type="button" [attr.title]="row.title" (click)="vm.open(row, row.direct)">
+              <button hlmBtn variant="bare" size="bare" class="k-running__entry" type="button" [attr.title]="row.title" (click)="choose(row, row.direct)">
                 <ng-container [ngTemplateOutlet]="entry" [ngTemplateOutletContext]="{ $implicit: row }" />
               </button>
               @if (!row.direct && row.choices.length > 0) {
@@ -41,7 +41,7 @@
         </ul>
       </hlm-popover-content>
     </hlm-popover>
-    @for (row of vm.shown(); track row.id) {
+    @for (row of shown(); track row.id) {
       @if (row.choices.length === 0 || row.direct) {
         <button
           hlmBtn
@@ -52,7 +52,7 @@
           data-testid="running-entry"
           [attr.data-change]="row.change"
           [attr.title]="row.title"
-          (click)="vm.open(row, row.direct)"
+          (click)="choose(row, row.direct)"
         >
           <ng-container [ngTemplateOutlet]="entry" [ngTemplateOutletContext]="{ $implicit: row }" />
         </button>

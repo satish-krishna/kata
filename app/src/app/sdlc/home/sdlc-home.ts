@@ -15,6 +15,7 @@ import { ReposTable } from '../../ui/repos-table';
 import { SdlcSettingsDialog } from '../../ui/sdlc-settings-dialog';
 import { ProgressLine } from '../../ui/progress-line';
 import { SdlcToolbar } from '../../ui/sdlc-toolbar';
+import { RunningChanges } from '../running-changes';
 import { RunPreviewDialog } from '../../ui/run-preview-dialog';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { SdlcHomeViewModel } from './sdlc-home.view-model';
@@ -26,6 +27,7 @@ import { SdlcHomeViewModel } from './sdlc-home.view-model';
     NgIcon,
     HlmButtonImports,
     SdlcToolbar,
+    RunningChanges,
     SdlcSession,
     ChangesTable,
     ProgressLine,

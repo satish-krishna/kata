@@ -22,6 +22,7 @@
         (click)="vm.runContext()"
       >{{ label }}</button>
     }
+    <app-running-changes />
   </app-sdlc-toolbar>
 
   @if (vm.state() === 'not-found') {

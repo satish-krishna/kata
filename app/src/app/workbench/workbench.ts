@@ -3,6 +3,7 @@ import { ActivatedRoute } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCircleCheck, lucideFolder, lucideHash, lucideTerminal, lucideTriangleAlert } from '@ng-icons/lucide';
 import { Toolbar } from '../ui/toolbar';
+import { RunningChanges } from '../sdlc/running-changes';
 import { ValidationBanner } from '../ui/validation-banner';
 import { ComposePane } from '../ui/compose-pane';
 import { ObservePane } from '../ui/observe-pane';
@@ -18,7 +19,7 @@ import { WorkbenchViewModel } from './workbench.view-model';
     RunPreviewViewModel,
     provideIcons({ lucideCircleCheck, lucideFolder, lucideHash, lucideTerminal, lucideTriangleAlert }),
   ],
-  imports: [NgIcon, Toolbar, ValidationBanner, ComposePane, ObservePane, ConfirmDialog, RunPreviewDialog],
+  imports: [NgIcon, Toolbar, RunningChanges, ValidationBanner, ComposePane, ObservePane, ConfirmDialog, RunPreviewDialog],
   templateUrl: './workbench.html',
   host: { '(document:keydown)': 'vm.onKey($event)' },
 })
