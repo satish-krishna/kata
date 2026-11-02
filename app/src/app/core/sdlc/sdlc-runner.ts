@@ -145,6 +145,16 @@ export class SdlcRunner {
   /** What the last non-successful run left behind; the screen's leftover dialog renders it. */
   readonly leftovers = computed<RepoLeftovers[] | null>(() => (this.pending().length === 0 ? null : this.pending()));
 
+  /** Stub: what a page on `place` shows. */
+  leftoversOn(_place: string | null): RepoLeftovers[] | null {
+    return this.leftovers();
+  }
+
+  /** Stub: whether a run shown on `place` is still settling. */
+  settlingOn(_place: string | null): boolean {
+    return this.settling();
+  }
+
   private readonly afterRun = signal(0);
   /** A run has ended but its after-run work (engine exit, report) is still going: the session view cannot close yet. */
   readonly settling = computed(() => this.afterRun() > 0);
@@ -317,7 +327,7 @@ export class SdlcRunner {
   }
 
   /** Discard what the operator chose in each repository, then close the dialog and keep the rest. False when any discard failed. */
-  async discardAll(choices: DiscardChoice[]): Promise<boolean> {
+  async discardAll(choices: DiscardChoice[], _place: string | null = null): Promise<boolean> {
     for (const c of choices) {
       if (c.paths.length === 0) continue;
       if (!(await this.discard(c.repo, c.paths))) return false;
@@ -340,7 +350,7 @@ export class SdlcRunner {
     return true;
   }
 
-  closeLeftovers(): void {
+  closeLeftovers(_place: string | null = null): void {
     this.setPending([]);
   }
 

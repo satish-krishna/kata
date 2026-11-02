@@ -13,6 +13,7 @@ import { LockStore } from '../lock/lock.store';
 import { RunStore } from '../run/run.store';
 import { ToastStore } from '../toast/toast.store';
 import { KataTransport } from '../transport/kata-transport';
+import { changeRunKey } from '../run/change-run.store';
 import { SdlcRunner, type RunTarget } from './sdlc-runner';
 
 const SNAPSHOT = { head: 'abc', dirty: {} };
@@ -654,5 +655,52 @@ describe('SdlcRunner leftovers', () => {
     fake.leftovers = { ...EMPTY, new_commits: ['docs: a'], discardable: ['x.txt'] };
     await runner.run('Running setup', seedSpec(), TARGET);
     expect(runner.leftovers()).toEqual([{ repo: 'commerce-docs', path: '/ws/commerce-docs', snapshot: SNAPSHOT, data: fake.leftovers }]);
+  });
+});
+
+describe('SdlcRunner leftovers are held per change run (F4)', () => {
+  const refA = { workspace: '/ws', system: 'commerce', change: '2026-10-12-photos' };
+  const refB = { workspace: '/ws', system: 'commerce', change: '2026-10-14-prices' };
+  const keyA = changeRunKey(refA);
+  const keyB = changeRunKey(refB);
+  const left = (file: string): Leftovers => ({ ...EMPTY, discardable: [file] });
+  const files = (shown: { data: Leftovers }[] | null) => shown?.flatMap((l) => l.data.discardable) ?? null;
+
+  it("change A's failed run shows its leftovers on A's page only, and B's Close is not blocked by it", async () => {
+    const { runner, fake } = setup(() => 'error');
+    fake.leftovers = left('a.md');
+    await runner.run('Starting spec', seedSpec(), TARGET, { ref: refA, kind: 'spec' });
+    expect(files(runner.leftoversOn(keyA))).toEqual(['a.md']);
+    expect(runner.leftoversOn(keyB)).toBeNull();
+    expect(runner.leftovers()).toBeNull();
+    expect(runner.settlingOn(keyB)).toBe(false);
+  });
+
+  it("a second change's failure keeps the first one's leftovers, each on its own change, and none is lost", async () => {
+    const { runner, fake } = setup(() => 'error');
+    fake.leftovers = left('a.md');
+    await runner.run('Starting spec', seedSpec(), TARGET, { ref: refA, kind: 'spec' });
+    fake.leftovers = left('b.md');
+    await runner.run('Starting spec', seedSpec(), TARGET, { ref: refB, kind: 'spec' });
+    expect(files(runner.leftoversOn(keyA))).toEqual(['a.md']);
+    expect(files(runner.leftoversOn(keyB))).toEqual(['b.md']);
+    // Discarding on A discards A's file against A's own snapshot, and B's stay offered.
+    expect(await runner.discardAll([{ repo: 'commerce-docs', paths: ['a.md'] }], keyA)).toBe(true);
+    expect(fake.sdlcDiscard).toHaveBeenCalledWith('/ws/commerce-docs', SNAPSHOT, ['a.md']);
+    expect(runner.leftoversOn(keyA)).toBeNull();
+    expect(files(runner.leftoversOn(keyB))).toEqual(['b.md']);
+    runner.closeLeftovers(keyB);
+    expect(runner.leftoversOn(keyB)).toBeNull();
+  });
+
+  it('two failed runs of no change are offered one after the other, the second never replacing the first', async () => {
+    const { runner, fake } = setup(() => 'error');
+    fake.leftovers = left('first.md');
+    await runner.run('Running setup', seedSpec(), TARGET);
+    fake.leftovers = left('second.md');
+    await runner.run('Running setup', seedSpec(), TARGET);
+    expect(files(runner.leftovers())).toEqual(['first.md']);
+    runner.closeLeftovers();
+    expect(files(runner.leftovers())).toEqual(['second.md']);
   });
 });
