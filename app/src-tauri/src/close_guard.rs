@@ -50,9 +50,8 @@ pub enum CloseOutcome {
 }
 
 /// What a run does, from its kind and repository.
-fn what(run: &LiveSummary) -> String {
-    let repo = run.repo.as_deref();
-    match (run.kind, repo) {
+fn what(kind: RunKind, repo: Option<&str>) -> String {
+    match (kind, repo) {
         (RunKind::Build, Some(repo)) => format!("building in {repo}"),
         (RunKind::Build, None) => "building".into(),
         (RunKind::Review, Some(repo)) => format!("reviewing {repo}"),
@@ -68,30 +67,45 @@ fn what(run: &LiveSummary) -> String {
     }
 }
 
-/// One line per change, in the order its first run appears; a run with no change gets its own line.
-fn lines(live: &[LiveSummary]) -> Vec<RunningLine> {
-    let mut out: Vec<(Option<(String, String)>, RunningLine)> = Vec::new();
-    for run in live {
+/// The system and change a line is about; none for a run outside any change.
+type Owner = Option<(String, String)>;
+
+/// One line per change, in the order its first run appears, the runs in the table before the launching
+/// ones; a run with no change gets its own line, and a change names the same doing once.
+fn lines(live: &[LiveSummary], launching: &[Launching]) -> Vec<RunningLine> {
+    let in_table = live.iter().map(|run| {
         let owner = match &run.lane {
             Lane::Change { key, .. } => Some((key.system.clone(), key.change.clone())),
-            _ => None,
+            Lane::Solo => None,
         };
-        let text = what(run);
+        (owner, what(run.kind, run.repo.as_deref()))
+    });
+    let starting = launching.iter().map(|l| {
+        (
+            Some((l.change.system.clone(), l.change.change.clone())),
+            what(l.kind, l.repo.as_deref()),
+        )
+    });
+    let mut out: Vec<(Owner, Vec<String>)> = Vec::new();
+    for (owner, text) in in_table.chain(starting) {
         let found = owner
             .as_ref()
             .and_then(|o| out.iter_mut().find(|(k, _)| k.as_ref() == Some(o)));
         match found {
-            Some((_, line)) => line.what = format!("{} and {text}", line.what),
-            None => out.push((
-                owner.clone(),
-                RunningLine {
-                    change: owner.map(|(_, change)| change),
-                    what: text,
-                },
-            )),
+            Some((_, parts)) => {
+                if !parts.contains(&text) {
+                    parts.push(text);
+                }
+            }
+            None => out.push((owner, vec![text])),
         }
     }
-    out.into_iter().map(|(_, line)| line).collect()
+    out.into_iter()
+        .map(|(owner, parts)| RunningLine {
+            change: owner.map(|(_, change)| change),
+            what: parts.join(" and "),
+        })
+        .collect()
 }
 
 /// Decide what closing the window does. The question is asked only while runs are live, a build being
@@ -99,15 +113,16 @@ fn lines(live: &[LiveSummary]) -> Vec<RunningLine> {
 /// once, as a confirm with nothing to cancel.
 pub fn on_close(
     live: &[LiveSummary],
-    _launching: &[Launching],
+    launching: &[Launching],
     answer: CloseAnswer,
 ) -> CloseOutcome {
+    let none = live.is_empty() && launching.is_empty();
     match answer {
-        CloseAnswer::NotAsked if live.is_empty() => CloseOutcome::Close,
+        CloseAnswer::NotAsked if none => CloseOutcome::Close,
         CloseAnswer::NotAsked => CloseOutcome::Ask {
-            running: lines(live),
+            running: lines(live, launching),
         },
-        CloseAnswer::Confirm if live.is_empty() => CloseOutcome::Close,
+        CloseAnswer::Confirm if none => CloseOutcome::Close,
         CloseAnswer::Confirm => CloseOutcome::CancelThenClose {
             ids: live.iter().map(|r| r.id).collect(),
         },

@@ -1387,34 +1387,48 @@ fn cancel_by_id(control: &RunControl, id: u64) {
     }
 }
 
-/// The close guard's wrapper: apply `on_close` to the live runs. A confirm cancels every live run
-/// as `cancel_run` does, waits up to ten seconds in total for the table to empty, then destroys the
-/// window (a plain `close` would ask again). No lock is held across the wait.
+/// The close guard's wrapper: apply `on_close` to the live runs and the builds being started or
+/// launched. A confirm first stops the build host, so no change launches anything more, then cancels every
+/// run the table holds, as `cancel_run` does, including one a launch under way adds later; it waits up to
+/// ten seconds in total for the table to empty and the launches to settle, then destroys the window (a
+/// plain `close` would ask again). No lock is held across the wait.
 fn close_window(app: &AppHandle, answer: close_guard::CloseAnswer) {
+    let host = app
+        .try_state::<Arc<build_host::BuildHost>>()
+        .map(|h| h.inner().clone());
+    let launching = host.as_ref().map(|h| h.launching()).unwrap_or_default();
     let live = app.state::<RunControl>().state.lock().unwrap().live();
-    match close_guard::on_close(&live, &[], answer) {
+    match close_guard::on_close(&live, &launching, answer) {
         close_guard::CloseOutcome::Close => destroy_main(app),
         ask @ close_guard::CloseOutcome::Ask { .. } => {
             let _ = app.emit(close_guard::CLOSE_ASKED_EVENT, ask);
         }
         close_guard::CloseOutcome::Stay => {}
-        close_guard::CloseOutcome::CancelThenClose { ids } => {
+        close_guard::CloseOutcome::CancelThenClose { .. } => {
             let app = app.clone();
             std::thread::spawn(move || {
-                let control = app.state::<RunControl>();
-                for id in &ids {
-                    cancel_by_id(&control, *id);
+                if let Some(host) = &host {
+                    host.stop_all();
                 }
+                let control = app.state::<RunControl>();
                 let deadline = std::time::Instant::now()
                     + std::time::Duration::from_secs(close_guard::CANCEL_WAIT_SECS);
-                for id in ids {
-                    let left = deadline.saturating_duration_since(std::time::Instant::now());
-                    wait_idle(
-                        &control.state,
-                        id,
-                        left,
-                        std::time::Duration::from_millis(50),
-                    );
+                let mut cancelled: std::collections::HashSet<u64> = Default::default();
+                loop {
+                    let live = control.state.lock().unwrap().live();
+                    let launching = host.as_ref().map(|h| h.launching()).unwrap_or_default();
+                    if live.is_empty() && launching.is_empty() {
+                        break;
+                    }
+                    for run in &live {
+                        if cancelled.insert(run.id) {
+                            cancel_by_id(&control, run.id);
+                        }
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
                 }
                 destroy_main(&app);
             });

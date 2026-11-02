@@ -423,6 +423,8 @@ struct Inner {
     /// is started again and gets its repositories.
     held_starts: HashMap<ChangeKey, (Vec<HeldRepo>, u64)>,
     next_generation: u64,
+    /// The Workbench is closing: no run of any change is launched any more.
+    stopped: bool,
 }
 
 pub struct BuildHost {
@@ -470,6 +472,16 @@ fn held_repos(held: kata_sdlc::holds::Held) -> Vec<HeldRepo> {
         .into_iter()
         .map(|(repo, holder)| HeldRepo { repo, holder })
         .collect()
+}
+
+/// Why nothing starts while the Workbench is closing.
+const CLOSING: &str = "The Workbench is closing.";
+
+fn closing() -> StartOutcome {
+    StartOutcome::CouldNotRun {
+        output: CLOSING.into(),
+        repo: None,
+    }
 }
 
 fn error_text(e: &ProgramError) -> String {
@@ -551,6 +563,7 @@ impl BuildHost {
                 starting: HashSet::new(),
                 held_starts: HashMap::new(),
                 next_generation: 0,
+                stopped: false,
             }),
         })
     }
@@ -580,6 +593,9 @@ impl BuildHost {
         kind: runs::RunKind,
         form: RunForm,
     ) -> Result<u64, String> {
+        if self.inner.lock().unwrap().stopped {
+            return Err(CLOSING.into());
+        }
         let spec = self.document_spec(change, kind, form)?;
         let key = key_of(change);
         self.launcher.launch(LaunchRequest {
@@ -803,11 +819,45 @@ impl BuildHost {
 
     /// Stop the host for closing the Workbench: no further run of any change is launched, and every
     /// build is cancelled. Not undone; the Workbench is closing.
-    pub fn stop_all(self: &Arc<Self>) {}
+    pub fn stop_all(self: &Arc<Self>) {
+        let keys: Vec<ChangeKey> = {
+            let mut guard = self.inner.lock().unwrap();
+            guard.stopped = true;
+            guard.builds.keys().cloned().collect()
+        };
+        for key in keys {
+            self.drive(&key, None, Input::CancelAll);
+        }
+    }
 
-    /// The runs of builds being started or launched that have no run id yet, for the close question.
+    /// The runs of builds being started or launched that have no run id yet, for the close question: a
+    /// start still preparing its repositories, and a launch that has not answered.
     pub fn launching(&self) -> Vec<runs::Launching> {
-        Vec::new()
+        let inner = self.inner.lock().unwrap();
+        let mut out: Vec<runs::Launching> = inner
+            .starting
+            .iter()
+            .map(|key| runs::Launching {
+                change: key.clone(),
+                kind: runs::RunKind::Build,
+                repo: None,
+            })
+            .collect();
+        for (key, build) in &inner.builds {
+            for run in build.live.values().filter(|r| r.run_id.is_none()) {
+                let review = run.key == REVIEW;
+                out.push(runs::Launching {
+                    change: key.clone(),
+                    kind: if review {
+                        runs::RunKind::Review
+                    } else {
+                        runs::RunKind::Build
+                    },
+                    repo: (!review).then(|| run.key.clone()),
+                });
+            }
+        }
+        out
     }
 
     /// Stop every run of `change`'s build.
@@ -1078,6 +1128,9 @@ impl BuildHost {
                 None => live_build,
                 Some(repo) => existing.is_some_and(|b| b.live.values().any(|r| r.key == repo)),
             };
+            if guard.stopped {
+                return closing();
+            }
             if already || guard.starting.contains(&key) {
                 return StartOutcome::AlreadyRunning;
             }
@@ -1347,6 +1400,7 @@ impl BuildHost {
                     builds,
                     holds,
                     starting,
+                    stopped,
                     ..
                 } = &mut *guard;
                 let Some(build) = builds.get_mut(key) else {
@@ -1395,6 +1449,10 @@ impl BuildHost {
                 let mut commands: Vec<Command> = Vec::new();
                 while let Some(input) = inputs.pop_front() {
                     commands.extend(build.coord.step(input));
+                }
+                // Closing: whatever the coordinator would start next is not started.
+                if *stopped {
+                    commands.retain(|c| !matches!(c, Command::Launch { .. }));
                 }
                 for command in &commands {
                     match command {
