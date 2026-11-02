@@ -6,6 +6,7 @@ use crate::build_host::REVIEW;
 use crate::history::{Pending, RunHistory};
 use crate::runs::{Lane, LiveSummary, RunKind};
 use kata_sdlc::holds::ChangeKey;
+use kata_sdlc::store::WorkspaceEntry;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -112,6 +113,8 @@ pub struct RunningEntry {
     pub waiting: Vec<RunRef>,
     /// What picking the entry opens.
     pub opens: Opens,
+    /// The id, in the workspace list, of the workspace the change belongs to; none when the list has no such workspace.
+    pub workspace_id: Option<String>,
 }
 
 /// The strip: the first entries and every entry.
@@ -234,6 +237,7 @@ fn entry_of(change: &ChangeKey, f: &Facts) -> Option<RunningEntry> {
             since,
             waiting: waiting.clone(),
             opens: opens_of(f),
+            workspace_id: None,
         })
     };
     let build = f.build;
@@ -358,6 +362,12 @@ pub fn entries(
     });
     let shown = all.iter().take(SHOWN).cloned().collect();
     RunningStrip { shown, all }
+}
+
+/// Name each entry's workspace by its id in the workspace list, so the webview compares equal strings
+/// instead of normalizing folder paths itself. Stub: the rule is not written yet.
+pub fn with_workspace_ids(strip: RunningStrip, _workspaces: &[WorkspaceEntry]) -> RunningStrip {
+    strip
 }
 
 #[cfg(test)]
@@ -708,6 +718,39 @@ mod tests {
         marks.ended(&key("A"));
         let e = only(entries(&[], &[], &RunHistory::default(), &marks));
         assert_eq!(e.opens, Opens::Change);
+    }
+
+    fn workspace(id: &str, folder: &str) -> WorkspaceEntry {
+        WorkspaceEntry {
+            id: id.into(),
+            name: id.into(),
+            folder: folder.into(),
+            last_opened: 1,
+        }
+    }
+
+    #[test]
+    fn an_entry_names_its_workspace_by_the_id_in_the_workspace_list() {
+        let live = vec![run(1, "A", RunKind::Build, Some("app"))];
+        let h = RunHistory::default();
+        // The key is lexical (separators, case, trailing slash), so the list's spelling may differ.
+        for folder in ["D:/ws", r"D:\ws\", "d:/WS/"] {
+            let list = vec![
+                workspace("other", "D:/elsewhere"),
+                workspace("mine", folder),
+            ];
+            let s = with_workspace_ids(strip(&live, &[], &h), &list);
+            let e = only(s);
+            assert_eq!(e.workspace_id.as_deref(), Some("mine"), "{folder}");
+        }
+        // The same ids on the shown and the all lists.
+        let list = vec![workspace("mine", "D:/ws")];
+        let s = with_workspace_ids(strip(&live, &[], &h), &list);
+        assert_eq!(s.shown, s.all);
+        assert_eq!(s.shown[0].workspace_id.as_deref(), Some("mine"));
+        // A workspace the list does not have: none, not a guess.
+        let none = with_workspace_ids(strip(&live, &[], &h), &[workspace("x", "D:/nope")]);
+        assert_eq!(only(none).workspace_id, None);
     }
 
     #[test]

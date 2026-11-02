@@ -2,7 +2,7 @@ import { Injectable, signal } from '@angular/core';
 import type { OpenRun } from '@bindings/OpenRun';
 
 /** A run the engineer picked from the running changes: the change page it belongs to opens that run's session once it has loaded. */
-export type Landing = { workspace: string; system: string; change: string; run: OpenRun };
+export type Landing = { workspaceId: string | null; system: string; change: string; run: OpenRun };
 
 /** The folder key of a workspace as the backend names it (`RepoKey`): separators unified, `.` and repeated or trailing separators dropped, case folded (the Workbench ships on Windows only). */
 export const folderKey = (folder: string): string => {

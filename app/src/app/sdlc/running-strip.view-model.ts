@@ -63,7 +63,7 @@ export class RunningStripViewModel {
 
   /** Open the change page; with a run, ask its page to show that run's session, where a question is answered. */
   open(row: StripRow, choice: RunChoice | null): void {
-    if (choice !== null) this.landing.ask({ workspace: row.workspace, system: row.system, change: row.change, run: choice.open });
+    if (choice !== null) this.landing.ask({ workspaceId: null, system: row.system, change: row.change, run: choice.open });
     void this.router.navigate(['/sdlc', row.system, row.change]);
   }
 }

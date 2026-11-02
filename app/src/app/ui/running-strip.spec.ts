@@ -21,6 +21,7 @@ const asking = (change: ChangeKey, text: string, waiting = [ref(7)], opens?: Ope
   change,
   since: 1,
   waiting,
+  workspaceId: 'w1',
   opens: opens ?? (waiting.length === 1 ? { kind: 'session', run: open(waiting[0], true) } : { kind: 'list', runs: waiting.map((w) => open(w, true)) }),
   state: 'needsAnswer',
   text,
@@ -30,6 +31,7 @@ const working = (change: ChangeKey, run: number): RunningEntry => ({
   change,
   since: 2,
   waiting: [],
+  workspaceId: 'w1',
   opens: { kind: 'list', runs: [open({ run, kind: 'build', repo: 'kata' }, false)] },
   state: 'working',
   stage: 'build',
@@ -90,7 +92,7 @@ describe('RunningStrip', () => {
       await settle();
       expect(navigate).toHaveBeenCalledTimes(1);
       expect(navigate).toHaveBeenCalledWith(['/sdlc', 'kata', A.change]);
-      expect(TestBed.inject(RunLandingStore).pending()).toEqual({ workspace: '/w', system: 'kata', change: A.change, run: open(ref(7), true) });
+      expect(TestBed.inject(RunLandingStore).pending()).toEqual({ workspaceId: 'w1', system: 'kata', change: A.change, run: open(ref(7), true) });
       expect(choices()).toHaveLength(0);
     });
 
@@ -104,7 +106,7 @@ describe('RunningStrip', () => {
       choices()[1].click();
       await settle();
       expect(navigate).toHaveBeenCalledWith(['/sdlc', 'kata', A.change]);
-      expect(TestBed.inject(RunLandingStore).pending()).toEqual({ workspace: '/w', system: 'kata', change: A.change, run: open(ref(9, 'ai-sdlc'), true) });
+      expect(TestBed.inject(RunLandingStore).pending()).toEqual({ workspaceId: 'w1', system: 'kata', change: A.change, run: open(ref(9, 'ai-sdlc'), true) });
     });
 
     it("no session waiting, one working: a list of the change's sessions opens, each opening in one more step", async () => {
@@ -117,7 +119,7 @@ describe('RunningStrip', () => {
       choices()[0].click();
       await settle();
       expect(navigate).toHaveBeenCalledWith(['/sdlc', 'kata', A.change]);
-      expect(TestBed.inject(RunLandingStore).pending()).toEqual({ workspace: '/w', system: 'kata', change: A.change, run: open(ref(4), false) });
+      expect(TestBed.inject(RunLandingStore).pending()).toEqual({ workspaceId: 'w1', system: 'kata', change: A.change, run: open(ref(4), false) });
     });
   });
 

@@ -163,7 +163,7 @@ export class MockTransport extends KataTransport {
       const open = (g: { runId: string; repo: string }, waits: boolean): OpenRun => ({ run: Number(g.runId), kind: g.repo === 'review' ? 'review' : 'build', repo: g.repo === 'review' ? null : g.repo, waiting: waits });
       // What the backend says picking the entry opens: the one waiting session, else a list of the runs, else the change.
       const opens: Opens = asking.length === 1 ? { kind: 'session', run: open(asking[0], true) } : asking.length > 1 ? { kind: 'list', runs: asking.map((g) => open(g, true)) } : v.going.length > 0 ? { kind: 'list', runs: v.going.map((g) => open(g, false)) } : { kind: 'change' };
-      const base = { change: v.change, since: v.changedMs, waiting, opens };
+      const base = { change: v.change, since: v.changedMs, waiting, opens, workspaceId: this.sdlc.getWorkspaces()[0]?.id ?? null };
       if (asking.length > 0) return { ...base, state: 'needsAnswer', text: this.runs.get(asking[0].runId)?.question ?? 'A question is waiting.', run: Number(asking[0].runId) };
       if (v.going.length > 0) return { ...base, state: 'working', stage: v.going[0].repo === 'review' ? 'review' : 'build', repo: v.going[0].repo === 'review' ? null : v.going[0].repo, run: Number(v.going[0].runId) };
       if (v.reviewWaiting.length > 0) return { ...base, state: 'reviewWaiting', holder: v.reviewWaiting[0].holder };

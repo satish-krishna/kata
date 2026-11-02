@@ -20,4 +20,8 @@ waiting: Array<RunRef>,
 /**
  * What picking the entry opens.
  */
-opens: Opens, } & ({ "state": "needsAnswer", text: string, run: number, } | { "state": "needsPermission", action: string, run: number, } | { "state": "stopped", repo: string, reason: string, } | { "state": "held", holder: ChangeKey, } | { "state": "reviewWaiting", holder: ChangeKey, } | { "state": "working", stage: RunKind, repo: string | null, run: number, } | { "state": "finished" });
+opens: Opens, 
+/**
+ * The id, in the workspace list, of the workspace the change belongs to; none when the list has no such workspace.
+ */
+workspaceId: string | null, } & ({ "state": "needsAnswer", text: string, run: number, } | { "state": "needsPermission", action: string, run: number, } | { "state": "stopped", repo: string, reason: string, } | { "state": "held", holder: ChangeKey, } | { "state": "reviewWaiting", holder: ChangeKey, } | { "state": "working", stage: RunKind, repo: string | null, run: number, } | { "state": "finished" });

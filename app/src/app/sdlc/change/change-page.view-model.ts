@@ -1560,7 +1560,7 @@ export class ChangePageViewModel {
   private async openAskedWorkspace(workspaces: WorkspaceEntry[], system: string, change: string): Promise<void> {
     const asked = this.landing.pending();
     if (asked === null || asked.system !== system || asked.change !== change) return;
-    const target = workspaces.find((w) => folderKey(w.folder) === asked.workspace);
+    const target = workspaces.find((w) => folderKey(w.folder) === asked.workspaceId);
     if (target === undefined || target.id === this.current()?.id) return;
     const next = workspaces.map((w) => (w.id === target.id ? { ...w, last_opened: nowSecs() } : w));
     this.workspaces.set(next);
