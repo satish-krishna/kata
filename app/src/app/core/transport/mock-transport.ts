@@ -35,8 +35,6 @@ import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { PublishRepo } from '@bindings/PublishRepo';
 import type { Offender } from '@bindings/Offender';
-import type { ChecksPlan } from '@bindings/ChecksPlan';
-import type { RepoChecks } from '@bindings/RepoChecks';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { PublishSummary } from '@bindings/PublishSummary';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
@@ -333,10 +331,7 @@ export class MockTransport extends KataTransport {
   sdlcDiffBase(_repoPath: string): Promise<BaseInfo> { return Promise.resolve(this.sdlc.diffBase()); }
   sdlcTouchedRepos(folder: string, _masterRepo: string, _system: string, _change: string): Promise<PublishRepo[]> { return Promise.resolve(this.sdlc.touchedRepos(folder)); }
   sdlcCommitOffenders(_folder: string, _masterRepo: string, _system: string, _change: string): Promise<Offender[]> { return Promise.resolve([]); }
-  sdlcChecksView(_change: ChangeRef): Promise<RepoCheckView[]> { return Promise.resolve([]); }
-  sdlcChecksDir(): Promise<string> { return Promise.resolve(this.sdlc.checksPlan().path.replace(/\/[^/]*$/, '')); }
-  sdlcChecksLoad(_folder: string, _masterRepo: string, _system: string): Promise<ChecksPlan> { return Promise.resolve(this.sdlc.checksPlan()); }
-  sdlcRunChecks(_folder: string, _masterRepo: string, _system: string, repo: PublishRepo): Promise<RepoChecks> { return Promise.resolve(this.sdlc.runChecks(repo.repo)); }
+  sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]> { return Promise.resolve(this.sdlc.checksView(change.change)); }
   sdlcGhSignedIn(_repos: PublishRepo[]): Promise<string> { return Promise.resolve('demo-user'); }
   sdlcGhOrigins(_repos: PublishRepo[]): Promise<void> { return Promise.resolve(); }
   sdlcPublish(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, change: string, repos: PublishRepo[]): Promise<PublishSummary> {

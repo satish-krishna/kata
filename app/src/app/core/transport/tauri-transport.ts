@@ -37,8 +37,6 @@ import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { PublishRepo } from '@bindings/PublishRepo';
 import type { Offender } from '@bindings/Offender';
-import type { ChecksPlan } from '@bindings/ChecksPlan';
-import type { RepoChecks } from '@bindings/RepoChecks';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
@@ -169,9 +167,6 @@ export class TauriTransport extends KataTransport {
   sdlcTouchedRepos(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<PublishRepo[]>('sdlc_touched_repos', { folder, masterRepo, system, change }); }
   sdlcCommitOffenders(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<Offender[]>('sdlc_commit_offenders', { folder, masterRepo, system, change }); }
   sdlcChecksView(change: ChangeRef) { return this.ipc.invoke<RepoCheckView[]>('sdlc_checks_view', { change }); }
-  sdlcChecksDir() { return this.ipc.invoke<string>('sdlc_checks_dir'); }
-  sdlcChecksLoad(folder: string, masterRepo: string, system: string) { return this.ipc.invoke<ChecksPlan>('sdlc_checks_load', { folder, masterRepo, system }); }
-  sdlcRunChecks(folder: string, masterRepo: string, system: string, repo: PublishRepo) { return this.ipc.invoke<RepoChecks>('sdlc_run_checks', { folder, masterRepo, system, repo }); }
   sdlcGhSignedIn(repos: PublishRepo[]) { return this.ipc.invoke<string>('sdlc_gh_signed_in', { repos }); }
   sdlcGhOrigins(repos: PublishRepo[]) { return this.ipc.invoke<void>('sdlc_gh_origins', { repos }); }
   sdlcPublish(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]) { return this.ipc.invoke<PublishSummary>('sdlc_publish', { folder, workspaceId, masterRepo, system, change, repos }); }

@@ -1,9 +1,7 @@
-import type { CheckResult } from '@bindings/CheckResult';
-import type { RepoChecks } from '@bindings/RepoChecks';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { Finding } from './sdlc';
-import { canConfirm, checkLabel, checkTone, highFindings, reviewState, type DoneReport } from './sdlc-done';
+import { canConfirm, highFindings, reviewState, type DoneReport } from './sdlc-done';
 
 const SCOPE = { workspaceId: 'w1', system: 'commerce', change: 'c1' };
 const link = (over: Partial<RunLink> = {}): RunLink => ({
@@ -12,16 +10,10 @@ const link = (over: Partial<RunLink> = {}): RunLink => ({
 const record = (id: string, exit: number | null | undefined): RunRecord => ({ id, kata: 'k', started_at: 100, isolation: 'none', steered: false, exit });
 const HEADS = { a: '1111111' };
 
-const result = (kind: 'Passed' | 'Failed' | 'CouldNotRun'): CheckResult => ({
-  name: 'cargo test', argv: ['cargo', 'test'], tail: '',
-  outcome: kind === 'Passed' ? { kind } : kind === 'Failed' ? { kind, exit: 1 } : { kind, reason: 'timed out' },
-});
-const checks = (...results: CheckResult[]): RepoChecks => ({ repo: 'a', results, none: results.length === 0 });
-
 const report = (over: Partial<DoneReport> = {}): DoneReport => ({
   account: 'demo-user', notReady: null,
-  repos: [{ repo: 'a', base: 'main', checks: [], result: checks(result('Passed')) }],
-  branch: 'feat/PROJ-123-reset', offenders: [], departures: [], review: { at: 1, findings: [] }, checksPath: '/k/commerce.toml', checksError: null, ...over,
+  repos: [{ repo: 'a', base: 'main', view: null }],
+  branch: 'feat/PROJ-123-reset', offenders: [], departures: [], review: { at: 1, findings: [] }, ...over,
 });
 
 describe('reviewState', () => {
@@ -71,23 +63,6 @@ describe('reviewState with a review document', () => {
   });
 });
 
-describe('checkLabel', () => {
-  it('names each outcome', () => {
-    expect(checkLabel(checks(result('Passed')))).toBe('passed');
-    expect(checkLabel(checks(result('Passed'), result('Failed')))).toBe('failed');
-    expect(checkLabel(checks(result('CouldNotRun')))).toBe('could not run');
-    expect(checkLabel(checks())).toBe('no checks');
-    expect(checkLabel(null)).toBe('not run');
-  });
-
-  it('colors them with the andon set', () => {
-    expect(checkTone('passed')).toBe('success');
-    expect(checkTone('failed')).toBe('error');
-    expect(checkTone('could not run')).toBe('warning');
-    expect(checkTone('no checks')).toBe('idle');
-  });
-});
-
 describe('highFindings', () => {
   it('counts a high-severity convention finding like any high finding (R8.5)', () => {
     const convention: Finding = { severity: 'high', concern: 'convention', rule: 'CONTRIBUTING.md:18', text: 'Breaks the rule.' };
@@ -115,20 +90,17 @@ describe('canConfirm', () => {
     expect(canConfirm(report({ review: { missing: 'none' } }), true)).toBe(false);
   });
 
-  it('treats no checks as passing', () => {
-    expect(canConfirm(report({ repos: [{ repo: 'a', base: 'main', checks: [], result: checks() }] }))).toBe(true);
+  it("does not judge the checks: the plugin's change.done runs the stale ones and refuses with the failing check", () => {
+    const failed = { repo: 'a', view: { kind: 'failedStop' as const, id: 'unit', output: 'x' }, summary: 'unit failed. The build stopped here.' };
+    expect(canConfirm(report({ repos: [{ repo: 'a', base: 'main', view: failed }] }))).toBe(true);
   });
 
   it.each([
     ['not ready', { notReady: 'Not signed in' }],
-    ['a checks error', { checksError: 'bad file' }],
     ['an offender', { offenders: [{ repo: 'a', hash: 'abc1234', subject: 's' }] }],
     ['no review', { review: { missing: 'none' } }],
     ['an unfinished review', { review: { missing: 'unfinished' } }],
     ['a stale review', { review: { missing: 'stale' } }],
-    ['a repository without a result', { repos: [{ repo: 'a', base: 'main', checks: [], result: null }] }],
-    ['a failed check', { repos: [{ repo: 'a', base: 'main', checks: [], result: checks(result('Failed')) }] }],
-    ['a check that could not run', { repos: [{ repo: 'a', base: 'main', checks: [], result: checks(result('CouldNotRun')) }] }],
   ] as [string, Partial<DoneReport>][])('is blocked by %s', (_name, over) => {
     expect(canConfirm(report(over))).toBe(false);
   });

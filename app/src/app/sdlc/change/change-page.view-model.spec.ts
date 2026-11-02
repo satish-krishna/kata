@@ -669,15 +669,6 @@ describe('ChangePageViewModel', () => {
       expect(vm.buildContext()).toEqual({ workspaceId: w.id, folder: w.folder, system: 'commerce', change: BUILD, systemRepos: ['commerce-core', 'customer-portal', 'billing-api'] });
     });
 
-    it('reads the checks folder once, however often the page loads', async () => {
-      const transport = new MockTransport();
-      const checks = vi.spyOn(transport, 'sdlcChecksDir');
-      const { vm } = setup(BUILD, transport);
-      await ready(vm);
-      await vm.discardLeftovers([]);
-      expect(checks).toHaveBeenCalledTimes(1);
-    });
-
     it('reads the build status once the plan exists and lists its tasks', async () => {
       const { vm, transport } = setup(BUILD);
       const status = vi.spyOn(transport, 'sdlcBuildStatus');

@@ -19,14 +19,13 @@ import type { ChangeDocument } from '@bindings/ChangeDocument';
 import type { RejectOutcome } from '@bindings/RejectOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
-import type { ChecksPlan } from '@bindings/ChecksPlan';
 import type { Offender } from '@bindings/Offender';
 import type { PrResult } from '@bindings/PrResult';
 import type { DoneView } from '@bindings/DoneView';
 import type { PrLink } from '@bindings/PrLink';
 import type { LeftBehind } from '../../ui/pr-list-dialog';
 import type { PublishRepo } from '@bindings/PublishRepo';
-import type { RepoChecks } from '@bindings/RepoChecks';
+import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ChangesContext } from '../changes/changes-view.view-model';
@@ -69,7 +68,7 @@ import {
 import { shownBuild, shownDocument, type DocNotice, type ReadError, type Shown } from '../../lib/doc-notice';
 import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy } from '../../lib/doc-rail';
 import { prNumber } from '../../lib/pull-request';
-import { REVIEW_MISSING_TEXT, canConfirm, checkLabel, reviewState, type DoneReport, type DoneReview } from '../../lib/sdlc-done';
+import { REVIEW_MISSING_TEXT, canConfirm, reviewState, type DoneReport, type DoneReview } from '../../lib/sdlc-done';
 import { section } from '../../lib/doc';
 import { fullPipelineIdea } from '../../lib/sdlc-fix';
 import { inTauri } from '../../lib/mock';
@@ -583,7 +582,6 @@ export class ChangePageViewModel {
 
   // --- the build: its dialog, the leftovers confirm, the refusal, and what is handed to the build view
   private readonly status = signal<BuildStatus | null>(null);
-  private readonly checksDir = signal<string | null>(null);
   /** The plan's tasks with their build rows, for the plan tab's Tasks view; empty when there is no plan. */
   readonly buildTasks = computed(() => this.status()?.tasks ?? []);
   // --- the spec and plan views: which one is shown and what is picked in it; all of it starts over with the tab or the change
@@ -1241,7 +1239,7 @@ export class ChangePageViewModel {
   });
 
   /**
-   * Check that GitHub, the commits, the review and every repository's checks are in order, then show the dialog.
+   * Check that GitHub, the commits and the review are in order and read what the plugin recorded for each repository's checks, then show the dialog.
    * A step that refuses is recorded and the steps after it do not run. Nothing throws.
    */
   private async declareDone(): Promise<void> {
@@ -1274,25 +1272,12 @@ export class ChangePageViewModel {
       notReady: null as string | null,
       offenders: [] as Offender[],
       review: { missing: 'none' } as DoneReview,
-      plan: null as ChecksPlan | null,
-      checksError: null as string | null,
-      results: new Map<string, RepoChecks>(),
+      views: [] as RepoCheckView[],
     };
     const refuse = (e: unknown): never => {
       got.notReady = message(e);
       throw new Error(got.notReady);
     };
-    let planLoaded = false;
-    const loadPlan = async () => {
-      if (planLoaded) return;
-      planLoaded = true;
-      try {
-        got.plan = await this.transport.sdlcChecksLoad(folder, master, system);
-      } catch (e) {
-        got.checksError = message(e);
-      }
-    };
-
     const out = await this.lock.runSteps('Declaring done', [
       {
         label: 'Signed in to GitHub',
@@ -1348,24 +1333,13 @@ export class ChangePageViewModel {
           return plural(findings.length, 'finding', 'findings');
         },
       },
-      ...touched.map((r) => ({
-        label: `Checks · ${r.repo}`,
+      {
+        label: 'Checks the plugin recorded',
         run: async () => {
-          await loadPlan();
-          if (got.checksError !== null) return 'not run';
-          this.progress.begin('running-checks', progressLabels.runningChecks(r.repo), 'lock');
-          let result: RepoChecks;
-          try {
-            result = await this.transport.sdlcRunChecks(folder, master, system, r);
-          } catch (e) {
-            this.progress.fail('lock');
-            throw e;
-          }
-          this.progress.end('lock');
-          got.results.set(r.repo, result);
-          return checkLabel(result);
+          got.views = await this.transport.sdlcChecksView({ workspace: folder, system, change });
+          return plural(got.views.length, 'repository', 'repositories');
         },
-      })),
+      },
     ]);
     if (out === 'cancelled' || (out === 'failed' && got.notReady === null)) return;
 
@@ -1380,15 +1354,11 @@ export class ChangePageViewModel {
       repos: touched.map((r) => ({
         repo: r.repo,
         base: r.base,
-        checks: (got.plan?.checks ?? []).filter((c) => c.repo === r.repo),
-        result: got.results.get(r.repo) ?? null,
-        view: null,
+        view: got.views.find((v) => v.repo === r.repo) ?? null,
       })),
       offenders: got.offenders,
       departures: this.status()?.departures ?? [],
       review: got.review,
-      checksPath: got.plan?.path ?? `${this.checksDir() ?? ''}/${system}.toml`,
-      checksError: got.checksError,
     });
   }
 
@@ -1478,9 +1448,7 @@ export class ChangePageViewModel {
       const settings = this.modes.settings() ?? (await this.modes.load());
       const ctx = { folder: workspace.folder, system: this.system(), change: this.changeName(), feedback };
       if (run.kind === 'fix') {
-        const checksDir = this.checksDir() ?? (await this.readChecksDir());
-        if (checksDir === null) throw new Error('the checks folder is not known');
-        built = specFor(run.kind, action, ctx, settings, this.catalog(), restrictedFor(workspace.folder, scan, checksDir));
+        built = specFor(run.kind, action, ctx, settings, this.catalog(), restrictedFor(workspace.folder, scan));
       } else {
         built = specFor(run.kind, action, ctx, settings, this.catalog());
       }
@@ -1578,15 +1546,6 @@ export class ChangePageViewModel {
     if (seq !== this.loadSeq) return;
     if (view !== null) this.applyDoneView(view);
     this.refreshedAt.set(started);
-  }
-
-  private async readChecksDir(): Promise<string | null> {
-    try {
-      return await this.transport.sdlcChecksDir();
-    } catch (e) {
-      this.toasts.error(`Could not read Kata's checks folder: ${message(e)}`);
-      return null;
-    }
   }
 
   /** Read this one change; a change the workspace does not have is none, any other failure is raised. */
@@ -1733,7 +1692,6 @@ export class ChangePageViewModel {
       const status = found?.state.documents.plan.exists ? await this.readStatus(master, system, name) : null;
       const readiness = await this.readReadiness(w.folder);
       const review = found?.state.documents.plan.exists ? await this.readReviewRecord(master, system, name) : null;
-      const checksDir = this.checksDir() ?? (await this.readChecksDir());
       const buildFinished = stageNameOf(found ?? null) === 'build-finished';
       const doneView: DoneView = found?.state.documents.plan.exists
         ? await this.readDoneView(w.folder, repo, w.id, system, name, buildFinished)
@@ -1744,7 +1702,6 @@ export class ChangePageViewModel {
       this.status.set(status);
       this.readiness.set(readiness);
       this.reviewRecord.set(review);
-      this.checksDir.set(checksDir);
       this.scan.set(scan);
       this.branches.set(branches);
       this.recordedBranch.set(recorded);

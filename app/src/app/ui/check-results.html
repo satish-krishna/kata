@@ -1,1 +1,16 @@
-
+@for (v of shown(); track v.repo) {
+  <section class="k-check" data-check [attr.aria-label]="v.repo + ' · checks'">
+    <p class="k-left__head k-mono">{{ v.repo }} · checks</p>
+    <p [class]="'k-status k-status--' + v.tone"><span class="k-status__dot"></span>{{ v.summary }}</p>
+    @if (v.hooks.length > 0) {
+      <ul class="k-left__list">
+        @for (h of v.hooks; track h.id) {
+          <li class="k-mono">{{ h.id }}</li>
+        }
+      </ul>
+    }
+    @if (v.output !== null) {
+      <pre class="k-check__tail k-mono" tabindex="0">{{ v.output }}</pre>
+    }
+  </section>
+}

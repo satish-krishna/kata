@@ -290,7 +290,7 @@ describe("what a build's preview asks and which runs its choices reach", () => {
   });
 
   it("the build's preview lists the safety rules read-only", () => {
-    const common = ["No push", "No use of GitHub's command-line tool", "No change of remotes", "No edit of the checks folder"];
+    const common = ["No push", "No use of GitHub's command-line tool", "No change of remotes"];
     expect(safetyRules("repo")).toEqual([...common, "No edit of another repository or its build log"]);
     expect(safetyRules("review")).toEqual([...common, "No edit of any repository or build log, except the review document"]);
   });
@@ -349,8 +349,7 @@ describe("what kind of run a spec is", () => {
 
 describe("triage and fix run-specs (T8)", () => {
   const WS = "D:\\ws";
-  const CHECKS = "C:\\Users\\u\\.kata\\workbench\\checks";
-  const restricted: Restricted = { workspaceFolder: WS, masterRepo: "intent-repo", systemRepos: ["kata", "api"], checksDir: CHECKS };
+  const restricted: Restricted = { workspaceFolder: WS, masterRepo: "intent-repo", systemRepos: ["kata", "api"] };
   const scan = (over: Partial<WorkspaceScan> = {}): WorkspaceScan => ({
     folder: WS,
     repos: ["intent-repo", "kata", "api"],
@@ -410,7 +409,6 @@ describe("triage and fix run-specs (T8)", () => {
       "Bash(git push:*)",
       "Bash(gh:*)",
       "Bash(git remote:*)",
-      "Edit(//c/Users/u/.kata/workbench/checks/**)",
       "Edit(//d/ws/kata/**)",
       "Edit(//d/ws/api/**)",
     ];
@@ -454,8 +452,8 @@ describe("triage and fix run-specs (T8)", () => {
   });
 
   it("restrictedFor names the master and the product repositories the build protects", () => {
-    expect(restrictedFor(WS, scan(), CHECKS)).toEqual(restricted);
-    expect(() => restrictedFor(WS, scan({ master: { kind: "none" } }), CHECKS)).toThrow();
-    expect(() => restrictedFor(WS, scan({ master: { kind: "many", repos: ["a", "b"] } }), CHECKS)).toThrow();
+    expect(restrictedFor(WS, scan())).toEqual(restricted);
+    expect(() => restrictedFor(WS, scan({ master: { kind: "none" } }))).toThrow();
+    expect(() => restrictedFor(WS, scan({ master: { kind: "many", repos: ["a", "b"] } }))).toThrow();
   });
 });

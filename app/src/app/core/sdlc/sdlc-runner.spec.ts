@@ -46,7 +46,6 @@ class FakeTransport {
   listed: string[] = [];
   sdlcState = vi.fn(async (..._a: unknown[]) => ({ changes: this.listed.map((change) => ({ state: { change } })) }));
   sdlcChangeState = vi.fn(async (..._a: unknown[]) => ({ state: { track: 'full' } }));
-  sdlcChecksDir = vi.fn(async () => '/kata/workbench/checks');
   sdlcSettings = vi.fn(async () => ({ mode: null, remember: false, permission_mode: 'bypass' as const }));
   catalog = vi.fn(async (..._a: unknown[]) => seedCatalog);
   readiness: Readiness = { kind: 'ready', plugin: { dir: '/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2] }, gh: 'present' };
@@ -573,7 +572,6 @@ describe('SdlcRunner.newChange track', () => {
     expect(spec.permissions.mode).toBe('auto');
     expect(spec.permissions.deny?.length).toBeGreaterThan(0);
     expect(spec.interactive.enabled).toBe(true);
-    expect(fake.sdlcChecksDir).toHaveBeenCalled();
     expect(fake.sdlcStartChange).not.toHaveBeenCalled();
     expect(toasts.success).toHaveBeenCalledWith(expect.stringMatching(/^Triage finished/));
   });

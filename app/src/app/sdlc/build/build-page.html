@@ -72,6 +72,9 @@
                 }
               }
             </div>
+            @if (g.checks; as c) {
+              <div data-checks><app-check-results [views]="[c]" /></div>
+            }
             @if (g.list.fold; as fold) {
               <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__fold" data-fold [attr.aria-expanded]="fold.open" (click)="toggleFold.emit(g.repo)">
                 <ng-icon [name]="fold.open ? 'lucideChevronDown' : 'lucideChevronRight'" size="14" />

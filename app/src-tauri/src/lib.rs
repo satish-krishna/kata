@@ -1278,50 +1278,21 @@ fn sdlc_commit_offenders(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-fn sdlc_checks_dir() -> String {
-    sdlc::checks::checks_dir()
-        .map(|d| d.display().to_string())
-        .unwrap_or_default()
-}
-
-/// The checks file of a system, with the system's repositories and the master as the names a
-/// check may target.
-fn load_checks(
-    folder: &Path,
-    master_repo: &str,
-    system: &str,
-) -> Result<sdlc::checks::ChecksPlan, String> {
-    let scan = sdlc::workspace::scan(folder).map_err(|e| e.to_string())?;
-    let mut allowed = sdlc::workspace::system_repos(&scan, system);
-    if !allowed.iter().any(|r| r == master_repo) {
-        allowed.push(master_repo.to_string());
-    }
-    sdlc::checks::load(system, folder, &allowed).map_err(|e| e.to_string())
-}
-
+/// What each repository of the change's checks came to, as the plugin recorded it on this machine against the
+/// hooks the team committed to the master's base branch. Kata runs no check and reads no checks file.
 #[tauri::command(async)]
-fn sdlc_checks_load(
-    folder: String,
-    master_repo: String,
-    system: String,
-) -> Result<sdlc::checks::ChecksPlan, String> {
-    load_checks(Path::new(&folder), &master_repo, &system)
-}
-
-#[tauri::command(async)]
-fn sdlc_run_checks(
-    folder: String,
-    master_repo: String,
-    system: String,
-    repo: sdlc::publish::PublishRepo,
-) -> Result<sdlc::checks::RepoChecks, String> {
-    let plan = load_checks(Path::new(&folder), &master_repo, &system)?;
-    Ok(sdlc::checks::run_repo(
-        &plan,
-        &repo.repo,
-        Path::new(&repo.path),
-    ))
+fn sdlc_checks_view(
+    change: build_host::ChangeRef,
+) -> Result<Vec<sdlc::checks_view::RepoCheckView>, String> {
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let (place, state) = change_standing(&program, &change)?;
+    let repos: Vec<String> = state
+        .tasks
+        .as_ref()
+        .map(|tasks| tasks.keys().cloned().collect())
+        .unwrap_or_default();
+    sdlc::checks_view::for_change(&program, &place, &change.system, &change.change, &repos)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -1928,9 +1899,7 @@ pub fn run() {
             sdlc_diff_base,
             sdlc_touched_repos,
             sdlc_commit_offenders,
-            sdlc_checks_dir,
-            sdlc_checks_load,
-            sdlc_run_checks,
+            sdlc_checks_view,
             sdlc_gh_signed_in,
             sdlc_gh_origins,
             sdlc_publish,

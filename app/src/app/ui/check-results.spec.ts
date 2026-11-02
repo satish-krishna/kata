@@ -32,7 +32,7 @@ describe('CheckResults shows what the plugin recorded, in its words (R5.1)', () 
     ['failed, to stop', { kind: 'failedStop', id: 'unit', output: OUTPUT }],
     ['could not run', { kind: 'couldNotRun', id: 'unit', output: OUTPUT }],
   ] as const)('%s: the check and its output as the plugin gave it', async (_name, v) => {
-    const { container } = await render(CheckResults, { views: [view('kata', v, 'says')] });
+    const { container } = await render(CheckResults, { views: [view('kata', v, `${v.id} says so.`)] });
     expect(container.querySelector('pre')!.textContent).toBe(OUTPUT);
     expect(text(container)).toContain('unit');
   });

@@ -735,6 +735,35 @@ export class BuildPageViewModel {
     this.reviewHeld.set(waiting);
     this.runRefs.set(runs);
     if (was && !is) void this.reloadReview();
+    void this.readChecks();
+  }
+
+  /** Every repository's checks as the plugin recorded them: read when the page opens and again whenever the host announces the build moved. */
+  private readonly checkViews = signal<RepoCheckView[]>([]);
+  private checksReading = false;
+  private checksAgain = false;
+
+  /** Reads the checks. A read asked for while one is going runs once more after it, so the page ends on the latest ledger. */
+  private async readChecks(): Promise<void> {
+    const ref = this.ref();
+    if (ref === null) return;
+    if (this.checksReading) {
+      this.checksAgain = true;
+      return;
+    }
+    this.checksReading = true;
+    try {
+      do {
+        this.checksAgain = false;
+        try {
+          this.checkViews.set(await this.transport.sdlcChecksView(ref));
+        } catch (e) {
+          this.toasts.error(`Could not read the checks: ${message(e)}`);
+        }
+      } while (this.checksAgain);
+    } finally {
+      this.checksReading = false;
+    }
   }
 
   /**
@@ -750,7 +779,7 @@ export class BuildPageViewModel {
     this.reviewDoc.set(input.review);
     this.restorePick();
     this.changes.set({ folder: input.ctx.folder, masterRepo: input.master.repo, system: input.ctx.system, change: input.ctx.change });
-    await Promise.all([this.readSessions(), this.readChanges(), this.attach(this.ref()!)]);
+    await Promise.all([this.readSessions(), this.readChanges(), this.attach(this.ref()!), this.readChecks()]);
     this.sessionsReadFor.set(input);
     // The findings come from the review document, or from the latest review run's words.
     await this.noteReviewNotice(input.review);
@@ -1064,6 +1093,7 @@ export class BuildPageViewModel {
     const hasChanges = this.changedFiles();
     const findingsArea = this.findingsAreaView();
     const filter = this.taskFilter();
+    const checkViews = this.checkViews();
     const openFolds = this.openFolds();
     const pickedTask = pick?.kind === 'task' ? pick.task : null;
     const linesOf = (g: TaskArea): TaskLine[] =>
@@ -1088,7 +1118,7 @@ export class BuildPageViewModel {
         picked: pickedRepo === g.repo,
         progress: { done: linesOf(g).filter((t) => t.finished).length, total: g.tasks.length },
         list: taskList(linesOf(g), filter, openFolds.has(g.repo), pickedTask),
-        checks: null,
+        checks: checkViews.find((v) => v.repo === g.repo) ?? null,
         tasks: g.tasks.map((t) => ({
           id: t.id,
           name: t.name,

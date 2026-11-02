@@ -10,9 +10,6 @@
             <span class="k-status__dot"></span>Signed in to github.com as {{ r.account }} · every origin is a GitHub repository
           </p>
         }
-        @if (r.checksError !== null) {
-          <p class="k-status k-status--error" role="alert"><span class="k-status__dot"></span>{{ r.checksError }}</p>
-        }
 
         <div hlmTableContainer>
           <table hlmTable>
@@ -20,7 +17,6 @@
               <tr hlmTableRow>
                 <th hlmTableHead>Repository</th>
                 <th hlmTableHead>Branch</th>
-                <th hlmTableHead>Checks</th>
               </tr>
             </thead>
             <tbody hlmTableBody>
@@ -28,33 +24,12 @@
                 <tr hlmTableRow>
                   <td hlmTableCell class="k-mono">{{ repo.repo }}</td>
                   <td hlmTableCell class="k-mono">{{ r.branch ?? 'change/' + change() }} → {{ repo.base }}</td>
-                  <td hlmTableCell>
-                    <ul class="k-left__list">
-                      @for (spec of repo.checks; track spec.name) {
-                        <li class="k-left__row">
-                          <span class="k-mono">{{ spec.name }}</span>
-                          <span class="k-mono k-faint">{{ spec.argv.join(' ') }}</span>
-                          <span [class]="'k-status k-status--' + tone(label(repo, spec))">
-                            <span class="k-status__dot"></span>{{ label(repo, spec) }}
-                          </span>
-                        </li>
-                      } @empty {
-                        <li>
-                          <span [class]="'k-status k-status--' + tone(bare(repo))">
-                            <span class="k-status__dot"></span>{{ bare(repo) }}
-                          </span>
-                        </li>
-                      }
-                    </ul>
-                  </td>
                 </tr>
               }
             </tbody>
           </table>
         </div>
-        <p class="k-left__note">Checks from <span class="k-mono">{{ r.checksPath }}</span></p>
-
-        <app-check-results [views]="[]" />
+        <app-check-results [views]="checks()" />
 
         @if (r.offenders.length > 0) {
           <section class="k-left__group" aria-labelledby="done-offenders">

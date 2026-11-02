@@ -28,7 +28,7 @@ import type { BuildStatus } from '@bindings/BuildStatus';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { ChangedFile } from '@bindings/ChangedFile';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
-import type { ChecksPlan } from '@bindings/ChecksPlan';
+import type { CheckView } from '@bindings/CheckView';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { ParsedRequirement } from '@bindings/ParsedRequirement';
@@ -43,7 +43,7 @@ import type { PrState } from '@bindings/PrState';
 import type { DoneView } from '@bindings/DoneView';
 import type { PublishRepo } from '@bindings/PublishRepo';
 import type { ReadResult } from '@bindings/ReadResult';
-import type { RepoChecks } from '@bindings/RepoChecks';
+import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { RepoState } from '@bindings/RepoState';
 import type { RepoStatus } from '@bindings/RepoStatus';
 import type { TaskStatus } from '@bindings/TaskStatus';
@@ -997,16 +997,53 @@ export class SdlcMock {
     return [MOCK_MASTER, ...this.repos].map((repo) => ({ repo, path: `${folder}/${repo}`, base: 'main' }));
   }
 
-  checksPlan(): ChecksPlan {
-    return {
-      path: `${MOCK_CHECKS_DIR}/commerce.toml`, exists: true,
-      checks: [{ repo: 'commerce-core', name: 'cargo test', argv: ['cargo', 'test'], timeout_secs: 600 }],
+  /**
+   * What each repository's checks came to, as the plugin's answer would read. The team's checks cover commerce-core (unit) and, in
+   * the long variant, billing-api (integration); customer-portal has none. Before the build has recorded every task nothing has run.
+   * `?demo=checks-fix`, `checks-stop`, `checks-cannot` and `checks-stale` give commerce-core each of the other results.
+   */
+  checksView(changeName: string): RepoCheckView[] {
+    const finished = changeName === MOCK_DONE_CHANGE || this.rows.size >= this.plan.length;
+    const output = ['running 14 tests', 'test store::keeps_the_upload ... FAILED', '', 'failures:', '    store::keeps_the_upload', '', 'test result: FAILED. 13 passed; 1 failed'].join('\n');
+    const view = (repo: string, id: string): CheckView => {
+      if (!finished) return { kind: 'notRunYet' };
+      if (repo === 'billing-api') return { kind: 'failedFix', id, output };
+      switch (this.demo) {
+        case 'checks-fix':
+          return { kind: 'failedFix', id, output };
+        case 'checks-stop':
+          return { kind: 'failedStop', id, output };
+        case 'checks-cannot':
+          return { kind: 'couldNotRun', id, output: 'cargo: command not found' };
+        case 'checks-stale':
+          return { kind: 'stale', head: '3f9a1c2' };
+        default:
+          return { kind: 'passed', hooks: [{ id, outcome: 'passed' }] };
+      }
     };
-  }
-
-  runChecks(repo: string): RepoChecks {
-    if (repo !== 'commerce-core') return { repo, results: [], none: true };
-    return { repo, none: false, results: [{ name: 'cargo test', argv: ['cargo', 'test'], outcome: { kind: 'Passed' }, tail: 'test result: ok. 14 passed; 0 failed' }] };
+    const summary = (v: CheckView): string => {
+      switch (v.kind) {
+        case 'noChecks':
+          return 'This repository has no checks.';
+        case 'notRunYet':
+          return 'The checks have not run yet.';
+        case 'stale':
+          return `Checks last ran at ${v.head}.`;
+        case 'passed':
+          return 'The checks passed.';
+        case 'failedFix':
+          return `${v.id} failed. The agent is sent back to fix it, up to the team's retry limit.`;
+        case 'failedStop':
+          return `${v.id} failed. The build stopped here.`;
+        case 'couldNotRun':
+          return `${v.id} could not run on this machine. That is a fault of the machine, not of the code.`;
+      }
+    };
+    return this.repos.map((repo): RepoCheckView => {
+      const id = repo === 'billing-api' ? 'integration' : 'unit';
+      const v: CheckView = repo === 'customer-portal' ? { kind: 'noChecks' } : view(repo, id);
+      return { repo, view: v, summary: summary(v) };
+    });
   }
 
   /** Only `?demo=clash-push` finds the branch taken at the push: the first repository refuses it, the others open their pull request. */
@@ -1035,7 +1072,6 @@ export class SdlcMock {
   }
 }
 
-const MOCK_CHECKS_DIR = 'C:/Users/demo/.kata/checks';
 const prUrl = (repo: string) => `https://github.com/acme/${repo}/pull/7`;
 
 /** The files each demo task's commit touched. */

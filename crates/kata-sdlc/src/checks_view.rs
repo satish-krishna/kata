@@ -54,31 +54,131 @@ pub struct RepoCheckView {
     pub summary: String,
 }
 
-/// The state of `repo`'s checks at `head`.
-pub fn of(_status: &Status, _repo: &str, _head: &str, _hooks: &Hooks) -> CheckView {
-    CheckView::NoChecks
+/// The state of `repo`'s checks at `head`, from the first row of this table that matches:
+///
+/// | # | hooks | latest `build.finish` run | view |
+/// |---|---|---|---|
+/// | 1 | none for the repository | any | `NoChecks` |
+/// | 2 | some | none | `NotRunYet` |
+/// | 3 | some | at an earlier head | `Stale` |
+/// | 4 | some | at the head, passed | `Passed` |
+/// | 5 | some | at the head, failed on a check marked to be fixed | `FailedFix` |
+/// | 6 | some | at the head, failed on a check marked to stop | `FailedStop` |
+/// | 7 | some | at the head, could not run | `CouldNotRun` |
+///
+/// A run the plugin refused checked nothing, and a failure that names no check has nothing to show; both
+/// read as `NotRunYet`.
+pub fn of(status: &Status, repo: &str, head: &str, hooks: &Hooks) -> CheckView {
+    let configured = hooks.hooks.iter().any(|h| {
+        h.event == EVENT
+            && h.repos
+                .as_ref()
+                .is_none_or(|repos| repos.iter().any(|r| r == repo))
+    });
+    if !configured {
+        return CheckView::NoChecks;
+    }
+    let latest = status
+        .repos
+        .iter()
+        .filter(|r| r.repo == repo)
+        .flat_map(|r| r.runs.iter())
+        .rfind(|run| run.event == EVENT);
+    let Some(run) = latest else {
+        return CheckView::NotRunYet;
+    };
+    if run.key != head {
+        return CheckView::Stale {
+            head: run.key.chars().take(7).collect(),
+        };
+    }
+    let output_of = |id: &str| {
+        run.hooks
+            .iter()
+            .find(|h| h.id == id)
+            .map(|h| h.output.clone())
+            .filter(|o| !o.is_empty())
+            .unwrap_or_else(|| {
+                run.problems.join(
+                    "
+",
+                )
+            })
+    };
+    match (run.outcome.as_str(), &run.failed) {
+        ("passed", _) => CheckView::Passed {
+            hooks: run
+                .hooks
+                .iter()
+                .map(|h| HookShown {
+                    id: h.id.clone(),
+                    outcome: h.outcome.clone(),
+                })
+                .collect(),
+        },
+        ("could-not-run", Some(f)) => CheckView::CouldNotRun {
+            id: f.id.clone(),
+            output: output_of(&f.id),
+        },
+        ("failed", Some(f)) if f.on_failure == OnFailure::Fix => CheckView::FailedFix {
+            id: f.id.clone(),
+            output: output_of(&f.id),
+        },
+        ("failed", Some(f)) => CheckView::FailedStop {
+            id: f.id.clone(),
+            output: output_of(&f.id),
+        },
+        _ => CheckView::NotRunYet,
+    }
 }
 
 /// The sentence the page shows for a view.
-pub fn summary(_view: &CheckView) -> String {
-    String::new()
+pub fn summary(view: &CheckView) -> String {
+    match view {
+        CheckView::NoChecks => "This repository has no checks.".to_string(),
+        CheckView::NotRunYet => "The checks have not run yet.".to_string(),
+        CheckView::Stale { head } => format!("Checks last ran at {head}."),
+        CheckView::Passed { .. } => "The checks passed.".to_string(),
+        CheckView::FailedFix { id, .. } => {
+            format!("{id} failed. The agent is sent back to fix it, up to the team's retry limit.")
+        }
+        CheckView::FailedStop { id, .. } => format!("{id} failed. The build stopped here."),
+        CheckView::CouldNotRun { id, .. } => format!(
+            "{id} could not run on this machine. That is a fault of the machine, not of the code."
+        ),
+    }
 }
 
-/// The checks of each of `repos` in `change`, read from the plugin.
+/// The checks of each of `repos` in `change`, read from the plugin: its ledger of what ran on this machine
+/// and the hooks the team committed to the master's base branch. Nothing here depends on this machine's
+/// Kata settings, so two machines with the same master and the same runs show the same view.
 pub fn for_change(
-    _program: &Program,
-    _place: &Place,
-    _system: &str,
-    _change: &str,
-    _repos: &[String],
+    program: &Program,
+    place: &Place,
+    system: &str,
+    change: &str,
+    repos: &[String],
 ) -> Result<Vec<RepoCheckView>, ProgramError> {
-    Err(ProgramError::CouldNotRun {
-        message: "not built".into(),
-    })
+    let status = program.status(place, change)?;
+    let hooks = program.hooks(place, system, Some(EVENT))?;
+    Ok(repos
+        .iter()
+        .map(|repo| {
+            let head = status
+                .repos
+                .iter()
+                .find(|r| &r.repo == repo)
+                .and_then(|r| r.head.clone())
+                .unwrap_or_default();
+            let view = of(&status, repo, &head, &hooks);
+            RepoCheckView {
+                repo: repo.clone(),
+                summary: summary(&view),
+                view,
+            }
+        })
+        .collect())
 }
-
-#[allow(unused)]
-fn _uses(_: OnFailure) {}
 
 #[cfg(test)]
 mod tests {

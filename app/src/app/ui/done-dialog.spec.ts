@@ -1,28 +1,23 @@
 import { TestBed } from '@angular/core/testing';
-import type { CheckResult } from '@bindings/CheckResult';
-import type { RepoChecks } from '@bindings/RepoChecks';
+import type { RepoCheckView } from '@bindings/RepoCheckView';
 import { render } from '../../testing/render';
 import type { DoneReport } from '../lib/sdlc-done';
 import { DoneDialog } from './done-dialog';
 
 const CHANGE = '2026-10-19-build-demo';
-const passed: CheckResult = { name: 'cargo test', argv: ['cargo', 'test'], outcome: { kind: 'Passed' }, tail: 'ok' };
-const checks = (repo: string, ...results: CheckResult[]): RepoChecks => ({ repo, results, none: results.length === 0 });
-const SPEC = { repo: 'commerce-core', name: 'cargo test', argv: ['cargo', 'test'], timeout_secs: 600 };
+const passed: RepoCheckView = { repo: 'commerce-core', view: { kind: 'passed', hooks: [{ id: 'unit', outcome: 'passed' }] }, summary: 'The checks passed.' };
 
 const report = (over: Partial<DoneReport> = {}): DoneReport => ({
   account: 'demo-user',
   notReady: null,
   repos: [
-    { repo: 'commerce-core', base: 'main', checks: [SPEC], result: checks('commerce-core', passed) },
-    { repo: 'customer-portal', base: 'main', checks: [], result: checks('customer-portal') },
+    { repo: 'commerce-core', base: 'main', view: passed },
+    { repo: 'customer-portal', base: 'main', view: { repo: 'customer-portal', view: { kind: 'noChecks' }, summary: 'This repository has no checks.' } },
   ],
   branch: null,
   offenders: [],
   departures: [],
   review: { at: Date.UTC(2026, 9, 19, 9, 30, 0), findings: [] },
-  checksPath: '/home/demo/.kata/checks/commerce.toml',
-  checksError: null,
   ...over,
 });
 
@@ -74,43 +69,24 @@ describe('DoneDialog', () => {
     expect(text()).toContain('Signed in to github.com as demo-user · every origin is a GitHub repository');
   });
 
-  it('lists each repository with its branch and the checks as they will run, and where they are set (R16.3)', async () => {
+  it("lists each repository with its branch, and shows the checks the plugin recorded for each", async () => {
     await open();
-    const rows = Array.from(dialog().querySelectorAll('tbody tr')).map((r) => r.textContent!.replace(/\s+/g, ' '));
+    const rows = Array.from(dialog().querySelectorAll('tbody tr')).map((r) => r.textContent!.replace(/s+/g, ' '));
     expect(rows[0]).toContain('commerce-core');
     expect(rows[0]).toContain(`change/${CHANGE} → main`);
-    expect(rows[0]).toContain('cargo test');
-    expect(rows[0]).toContain('passed');
-    expect(text()).toContain('Checks from /home/demo/.kata/checks/commerce.toml');
-  });
-
-  it('no checks counts as passing and says so (R11.3)', async () => {
-    await open();
-    const rows = Array.from(dialog().querySelectorAll('tbody tr')).map((r) => r.textContent!.replace(/\s+/g, ' '));
-    expect(rows[1]).toContain('customer-portal');
-    expect(rows[1]).toContain('no checks');
+    expect(text()).toContain('commerce-core · checks');
+    expect(text()).toContain('The checks passed.');
+    expect(text()).toContain('This repository has no checks.');
     expect(button('Open pull requests')!.disabled).toBe(false);
   });
 
-  it('a failed check blocks confirm and shows its last lines (R11.2)', async () => {
-    const failed: CheckResult = { name: 'cargo test', argv: ['cargo', 'test'], outcome: { kind: 'Failed', exit: 101 }, tail: 'assertion failed: left == right' };
-    await open(report({ repos: [{ repo: 'commerce-core', base: 'main', checks: [SPEC], result: checks('commerce-core', failed) }] }));
-    expect(text()).toContain('commerce-core · cargo test · last 50 lines');
-    expect(text()).toContain('assertion failed: left == right');
-    expect(text()).toContain('cargo test · exit 101');
-    expect(dialog().querySelector('tbody .k-status--error')).not.toBeNull();
-    expect(button('Open pull requests')!.disabled).toBe(true);
-    expect(button('Another round')).toBeTruthy();
-  });
-
-  it('could not run is amber and says fix the machine (R11.6)', async () => {
-    const lost: CheckResult = { name: 'cargo test', argv: ['cargo', 'test'], outcome: { kind: 'CouldNotRun', reason: 'cargo is not on this machine' }, tail: '' };
-    await open(report({ repos: [{ repo: 'commerce-core', base: 'main', checks: [SPEC], result: checks('commerce-core', lost) }] }));
-    expect(text()).toContain('cargo is not on this machine');
-    expect(text()).toContain('Fix the environment, not the code.');
-    expect(dialog().querySelector('tbody .k-status--warning')).not.toBeNull();
-    expect(dialog().querySelector('tbody .k-status--error')).toBeNull();
-    expect(button('Open pull requests')!.disabled).toBe(true);
+  it("a failed check is shown with its output, in the plugin's words, and does not hold the dialog: the event runs the stale ones and refuses with the check", async () => {
+    const failed: RepoCheckView = { repo: 'commerce-core', view: { kind: 'failedStop', id: 'unit', output: 'assertion failed: left == right' }, summary: 'unit failed. The build stopped here.' };
+    await open(report({ repos: [{ repo: 'commerce-core', base: 'main', view: failed }] }));
+    expect(text()).toContain('unit failed. The build stopped here.');
+    expect(dialog().querySelector('pre')!.textContent).toBe('assertion failed: left == right');
+    expect(dialog().querySelector('.k-check .k-status--error')).not.toBeNull();
+    expect(button('Open pull requests')!.disabled).toBe(false);
   });
 
   it('an offending commit blocks confirm and offers another round (R11.5)', async () => {
@@ -131,7 +107,7 @@ describe('DoneDialog', () => {
     ['app has no GitHub remote'],
     ['GitHub could not be reached. Try again later.'],
   ])('not ready blocks confirm with the reason (R12.1): %s', async (reason) => {
-    await open(report({ account: null, notReady: reason, repos: [{ repo: 'commerce-core', base: 'main', checks: [SPEC], result: null }] }));
+    await open(report({ account: null, notReady: reason, repos: [{ repo: 'commerce-core', base: 'main', view: null }] }));
     expect(text()).toContain(reason);
     expect(dialog().querySelector('.k-status--error')).not.toBeNull();
     expect(button('Open pull requests')!.disabled).toBe(true);
@@ -153,15 +129,6 @@ describe('DoneDialog', () => {
     expect(Array.from(dialog().querySelectorAll('code')).map((c) => c.textContent)).toEqual(['PhotoPicker', 'x', 'count']);
     expect(dialog().querySelector('strong')!.textContent).toBe('the existing');
     expect(text()).not.toContain('`');
-  });
-
-  it('a bad checks file blocks done and says where (R16.2)', async () => {
-    await open(report({
-      checksError: '/home/demo/.kata/checks/commerce.toml:4:1: a check has no time limit',
-      repos: [{ repo: 'commerce-core', base: 'main', checks: [], result: null }],
-    }));
-    expect(text()).toContain('/home/demo/.kata/checks/commerce.toml:4:1: a check has no time limit');
-    expect(button('Open pull requests')!.disabled).toBe(true);
   });
 
   it('done dialog shows the findings most serious first before confirm (R20.1)', async () => {

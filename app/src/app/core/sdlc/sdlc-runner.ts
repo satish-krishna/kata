@@ -409,7 +409,7 @@ export class SdlcRunner {
       const [settings, catalog] = await Promise.all([this.transport.sdlcSettings(), this.transport.catalog(workspace.folder)]);
       const ctx = { folder: workspace.folder, system, change: null, idea, ...(naming ? { scope: naming.scope } : {}) };
       if (decide) {
-        const restricted = restrictedFor(workspace.folder, await this.transport.sdlcScan(workspace.folder), await this.transport.sdlcChecksDir());
+        const restricted = restrictedFor(workspace.folder, await this.transport.sdlcScan(workspace.folder));
         spec = specFor('triage', null, ctx, settings, catalog, restricted);
       } else {
         previewed = await this.transport.sdlcChangeName(idea);

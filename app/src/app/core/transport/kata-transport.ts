@@ -34,8 +34,6 @@ import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { PublishRepo } from '@bindings/PublishRepo';
 import type { Offender } from '@bindings/Offender';
-import type { ChecksPlan } from '@bindings/ChecksPlan';
-import type { RepoChecks } from '@bindings/RepoChecks';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
@@ -207,9 +205,6 @@ export abstract class KataTransport {
   abstract sdlcCommitOffenders(folder: string, masterRepo: string, system: string, change: string): Promise<Offender[]>;
   /** What each repository of the change's checks came to, as the plugin recorded it. */
   abstract sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]>;
-  abstract sdlcChecksDir(): Promise<string>;
-  abstract sdlcChecksLoad(folder: string, masterRepo: string, system: string): Promise<ChecksPlan>;
-  abstract sdlcRunChecks(folder: string, masterRepo: string, system: string, repo: PublishRepo): Promise<RepoChecks>;
   abstract sdlcGhSignedIn(repos: PublishRepo[]): Promise<string>;
   abstract sdlcGhOrigins(repos: PublishRepo[]): Promise<void>;
   abstract sdlcPublish(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]): Promise<PublishSummary>;

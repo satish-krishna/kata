@@ -7,7 +7,6 @@ pub mod base;
 pub mod branch;
 pub mod build;
 pub mod changes;
-pub mod checks;
 pub mod checks_view;
 pub mod commits;
 pub mod coordinator;

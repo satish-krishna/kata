@@ -74,17 +74,15 @@ async function finished(tweak: (t: MockTransport) => void = () => undefined) {
 afterEach(() => toastState.reset());
 
 describe('declaring done', () => {
-  it('declare done runs checks for every touched repository and the master (R11.1)', async () => {
+  it('declare done reads the checks the plugin recorded once, for the change, and the touched repositories and the master are listed (R11.1)', async () => {
     const { vm, transport, steps } = await finished();
-    const load = vi.spyOn(transport, 'sdlcChecksLoad');
-    const run = vi.spyOn(transport, 'sdlcRunChecks');
+    const read = vi.spyOn(transport, 'sdlcChecksView');
     await vm.act('declare-done');
     expect(steps).toHaveBeenCalledWith('Declaring done', expect.any(Array));
-    expect(load).toHaveBeenCalledTimes(1);
-    expect(run.mock.calls.map((c) => c[3].repo)).toEqual(['commerce-docs', ...REPOS]);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledWith({ workspace: expect.any(String), system: 'commerce', change: BUILD });
     const report = vm.doneReport()!;
     expect(report.repos.map((r) => r.repo)).toEqual(['commerce-docs', ...REPOS]);
-    expect(report.repos.every((r) => r.result !== null)).toBe(true);
     expect(canConfirm(report)).toBe(true);
     expect(report.account).toBe('demo-user');
   });
@@ -92,24 +90,11 @@ describe('declaring done', () => {
   it("the done dialog shows each repository's checks as the plugin recorded them and Kata runs none (R5.1)", async () => {
     const failed: RepoCheckView = { repo: 'commerce-core', view: { kind: 'failedStop', id: 'unit', output: 'assertion failed' }, summary: 'unit failed. The build stopped here.' };
     const { vm, transport } = await finished((t) => vi.spyOn(t, 'sdlcChecksView').mockResolvedValue([failed]));
-    const run = vi.spyOn(transport, 'sdlcRunChecks');
     await vm.act('declare-done');
     const report = vm.doneReport()!;
     expect(report.repos.find((r) => r.repo === 'commerce-core')!.view).toEqual(failed);
     expect(report.repos.find((r) => r.repo === 'customer-portal')!.view).toBeNull();
-    expect(run).not.toHaveBeenCalled();
-  });
-
-  it('a failed check blocks confirm and publishes nothing (R11.2)', async () => {
-    const { vm, transport } = await finished();
-    const failed = { name: 'cargo test', argv: ['cargo', 'test'], outcome: { kind: 'Failed' as const, exit: 101 }, tail: 'assertion failed' };
-    vi.spyOn(transport, 'sdlcRunChecks').mockImplementation(async (_f, _m, _s, repo) => ({ repo: repo.repo, none: false, results: repo.repo === 'commerce-core' ? [failed] : [] }));
-    const publish = vi.spyOn(transport, 'sdlcPublish');
-    await vm.act('declare-done');
-    const report = vm.doneReport()!;
-    expect(canConfirm(report)).toBe(false);
-    expect(report.repos.find((r) => r.repo === 'commerce-core')!.result!.results[0].tail).toBe('assertion failed');
-    expect(publish).not.toHaveBeenCalled();
+    expect(transport).not.toHaveProperty('sdlcRunChecks');
   });
 
   it('declare done is refused while a run is going or edits are uncommitted (R11.4)', async () => {
@@ -156,14 +141,14 @@ describe('declaring done', () => {
     ['sdlcGhOrigins', 'customer-portal has no GitHub remote'],
   ] as const)('a repository that is not ready blocks done with the reason, and nothing after it runs (R12.1): %s', async (method, reason) => {
     const { vm, transport } = await finished((t) => vi.spyOn(t, method).mockRejectedValue(new Error(reason)));
-    const run = vi.spyOn(transport, 'sdlcRunChecks');
+    const read = vi.spyOn(transport, 'sdlcChecksView');
     const offenders = vi.spyOn(transport, 'sdlcCommitOffenders');
     const publish = vi.spyOn(transport, 'sdlcPublish');
     await vm.act('declare-done');
     const report = vm.doneReport()!;
     expect(report.notReady).toBe(reason);
     expect(canConfirm(report)).toBe(false);
-    expect(run).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
     expect(offenders).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();
   });
@@ -172,28 +157,6 @@ describe('declaring done', () => {
     const { vm } = await finished();
     await vm.act('declare-done');
     expect(vm.doneReport()!.departures).toEqual([DEPARTURE]);
-  });
-
-  it('a bad checks file blocks done and says where (R16.2)', async () => {
-    const message = '/home/demo/.kata/checks/commerce.toml:4:1: a check has no time limit';
-    const { vm, transport } = await finished((t) => vi.spyOn(t, 'sdlcChecksLoad').mockRejectedValue(new Error(message)));
-    const run = vi.spyOn(transport, 'sdlcRunChecks');
-    await vm.act('declare-done');
-    const report = vm.doneReport()!;
-    expect(run).not.toHaveBeenCalled();
-    expect(report.checksError).toBe(message);
-    expect(report.checksPath).toContain('commerce.toml');
-    expect(canConfirm(report)).toBe(false);
-  });
-
-  it("done dialog lists each repository's checks and the file path (R16.3)", async () => {
-    const { vm } = await finished();
-    await vm.act('declare-done');
-    const report = vm.doneReport()!;
-    expect(report.repos.find((r) => r.repo === 'commerce-core')!.checks.map((c) => c.name)).toEqual(['cargo test']);
-    expect(report.repos.find((r) => r.repo === 'customer-portal')!.checks).toEqual([]);
-    expect(report.checksPath).toBe('C:/Users/demo/.kata/checks/commerce.toml');
-    expect(report.repos[0].base).toBe('main');
   });
 
   it('done dialog shows the findings most serious first before confirm (R20.1)', async () => {
@@ -419,7 +382,6 @@ describe('declaring done from the build page', () => {
     expect(report.departures).toEqual([DEPARTURE]);
     expect(report.review).toMatchObject({ findings: [expect.objectContaining({ text: FINDING })] });
     expect(report.repos.map((r) => r.repo)).toEqual(['commerce-docs', ...REPOS]);
-    expect(report.repos.every((r) => r.result !== null)).toBe(true);
     await settle();
     const dialog = document.body.querySelector('app-done-dialog [role="dialog"], [role="dialog"]')!;
     expect(text(dialog.querySelector('[hlmDialogTitle]')!)).toBe('Declare the change done');
@@ -519,15 +481,13 @@ describe('declaring done from the build page', () => {
 });
 
 describe('declaring done reports progress', () => {
-  it('names the repository whose checks run, the branch being pushed and the pull request being opened (R7.1)', async () => {
+  it('names the branch being pushed and the pull request being opened (R7.1)', async () => {
     const { vm } = await finished();
     const progress = TestBed.inject(ProgressStore);
     const begin = vi.spyOn(progress, 'begin');
     const end = vi.spyOn(progress, 'end');
     await vm.act('declare-done');
-    const checks = begin.mock.calls.filter((c) => c[0] === 'running-checks');
-    expect(checks.map((c) => c[1])).toEqual(['commerce-docs', ...REPOS].map((r) => `Running the checks in ${r}`));
-    expect(checks.every((c) => c[2] === 'lock')).toBe(true);
+    expect(begin.mock.calls.filter((c) => c[0] === 'running-checks')).toEqual([]);
     await vm.confirmDone();
     const pushes = begin.mock.calls.filter((c) => c[0] === 'pushing').map((c) => c[1]);
     expect(pushes).toEqual(expect.arrayContaining(REPOS.map((r) => `Pushing change/${BUILD} in ${r}`)));

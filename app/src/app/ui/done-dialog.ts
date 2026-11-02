@@ -1,5 +1,5 @@
 import { Component, computed, input, model, output } from '@angular/core';
-import type { CheckSpec } from '@bindings/CheckSpec';
+import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { BrnDialogState } from '@spartan-ng/brain/dialog';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmCheckbox } from '@spartan-ng/helm/checkbox';
@@ -9,22 +9,17 @@ import { HlmTableImports } from '@spartan-ng/helm/table';
 import {
   REVIEW_MISSING_TEXT,
   canConfirm,
-  checkLabel,
-  checkTone,
   hasReview,
   highFindings,
   reviewedAt,
-  specLabel,
-  type CheckLabel,
-  type DoneRepo,
   type DoneReport,
 } from '../lib/sdlc-done';
 import { CheckResults } from './check-results';
 import { FindingsList } from './findings-list';
 import { MarkdownBody } from './markdown-body';
 
-/* The confirmation before pull requests open: whether GitHub is ready, the branch and checks of each repository as they
- * will run (and where they are set), what failed, which commits break the rules, what departed from the plan and what the
+/* The confirmation before pull requests open: whether GitHub is ready, the branch of each repository and what the plugin recorded for its
+ * checks, what failed, which commits break the rules, what departed from the plan and what the
  * review found. Open pull requests is the one primary action. It waits for everything but the medium, low and unrated
  * findings; a high-severity finding holds it until the engineer acknowledges opening the pull requests with it unresolved. */
 @Component({
@@ -76,18 +71,8 @@ export class DoneDialog {
     return r && !hasReview(r) ? r.missing : null;
   });
 
-  protected label(repo: DoneRepo, spec: CheckSpec): CheckLabel {
-    return specLabel(repo, spec);
-  }
-
-  /** What a repository without configured checks shows: no checks once it was looked at, not run before. */
-  protected bare(repo: DoneRepo): CheckLabel {
-    return checkLabel(repo.result);
-  }
-
-  protected tone(label: CheckLabel): string {
-    return checkTone(label);
-  }
+  /** The checks the plugin recorded, one for each repository that has them. */
+  protected readonly checks = computed<RepoCheckView[]>(() => (this.report()?.repos ?? []).flatMap((r) => (r.view === null ? [] : [r.view])));
 
   /** Escape closes the overlay from inside; surface that as cancel. */
   protected onState(state: BrnDialogState): void {

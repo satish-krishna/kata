@@ -64,14 +64,14 @@ export type StartTrack = "decide" | "full";
 
 export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan" | "build" | "triage" | "fix";
 
-/** What a triage or fix run is held to: the repositories it must not edit and Kata's checks folder. */
-export type Restricted = { workspaceFolder: string; masterRepo: string; systemRepos: string[]; checksDir: string };
+/** What a triage or fix run is held to: the repositories it must not edit. */
+export type Restricted = { workspaceFolder: string; masterRepo: string; systemRepos: string[] };
 
 /** The restriction of a triage or fix run, from the same lists a build uses. Throws when the workspace has no master. */
-export function restrictedFor(workspaceFolder: string, scan: WorkspaceScan, checksDir: string): Restricted {
+export function restrictedFor(workspaceFolder: string, scan: WorkspaceScan): Restricted {
   const master = masterRepoOf(scan);
   if (master === null) throw new Error("the workspace has no single master repository");
-  return { workspaceFolder, masterRepo: master, systemRepos: productReposOf(scan), checksDir };
+  return { workspaceFolder, masterRepo: master, systemRepos: productReposOf(scan) };
 }
 
 export const DEFAULT_BUILD_SECS = 7200;
@@ -95,12 +95,12 @@ function rulePath(p: string): string {
 }
 
 /**
- * What every restricted run shares: the publish and remote denies, no edit of the checks folder, no edit of any
+ * What every restricted run shares: the publish and remote denies, no edit of any
  * product repository (every system repository except the master), and read access to the workspace.
  */
-export function productRepoRules(ws: string, systemRepos: readonly string[], masterRepo: string, checksDir: string): { deny: string[]; allow: string[] } {
+export function productRepoRules(ws: string, systemRepos: readonly string[], masterRepo: string): { deny: string[]; allow: string[] } {
   const root = slashes(ws);
-  const deny = [...BUILD_DENY, `Edit(${rulePath(checksDir)}/**)`];
+  const deny = [...BUILD_DENY];
   for (const repo of new Set(systemRepos)) {
     if (repo !== masterRepo) deny.push(`Edit(${rulePath(`${root}/${repo}`)}/**)`);
   }
@@ -203,7 +203,7 @@ export function specFor(
   if (kind === "triage" || kind === "fix") {
     // Held to the change's documents whatever `settings.permission_mode` says: bypass cannot carry deny rules.
     if (!restricted) throw new Error(`a ${kind} run-spec needs its restriction`);
-    const { allow, deny } = productRepoRules(restricted.workspaceFolder, restricted.systemRepos, restricted.masterRepo, restricted.checksDir);
+    const { allow, deny } = productRepoRules(restricted.workspaceFolder, restricted.systemRepos, restricted.masterRepo);
     spec.permissions = { mode: "auto", allow, deny, ask: [], unmatched: "ask" };
     spec.interactive = { enabled: true, answer_timeout_secs: 3600 };
     spec.env_remove = [...GITHUB_TOKENS];
@@ -522,11 +522,10 @@ const DENY_WORDS: Record<string, string> = {
   "Bash(git remote:*)": "No change of remotes",
 };
 
-/** The safety rules of a build run, read-only in the build's preview: the shared deny rules, the checks folder, and what the run may edit. */
+/** The safety rules of a build run, read-only in the build's preview: the shared deny rules and what the run may edit. */
 export function safetyRules(target: "repo" | "review"): string[] {
   return [
     ...BUILD_DENY.map((rule) => DENY_WORDS[rule]),
-    "No edit of the checks folder",
     target === "repo" ? "No edit of another repository or its build log" : "No edit of any repository or build log, except the review document",
   ];
 }
