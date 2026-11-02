@@ -88,7 +88,6 @@ pub(crate) fn execute(
         stdin: None,
         limit,
         keep_stdout: true,
-        engineers_program: false,
     };
     let outcome = match on_line {
         Some(on_line) => run_limited_streaming(&spec, on_line),

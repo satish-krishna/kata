@@ -113,7 +113,6 @@ fn check_with_limit(program: &str, limit: Duration) -> Result<ClaudeVersion, Ver
         stdin: None,
         limit,
         keep_stdout: true,
-        engineers_program: false,
     });
     let unreadable = |detail: String| Err(VersionRefusal::Unreadable { detail });
     match outcome {

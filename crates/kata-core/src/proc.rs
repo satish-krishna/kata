@@ -1,6 +1,5 @@
-//! How the Workbench and kata start a child process: hidden on Windows, and never `git` or `gh`
-//! for Kata's own work. The one exception is a program the engineer chose (see
-//! [`Limited::engineers_program`]).
+//! How the Workbench and kata start a child process: hidden on Windows, and never `git` or `gh`:
+//! the ai-sdlc plugin starts those itself.
 
 use std::collections::VecDeque;
 use std::ffi::OsStr;
@@ -25,8 +24,8 @@ pub struct SpawnRefused {
 
 /// A `Command` for `program` that opens no console window on Windows.
 ///
-/// Refuses `git` and `gh` on every build, tests included: Kata does that work itself. The refusal
-/// applies to Kata's own work; only [`run_limited`] with `engineers_program` set starts them.
+/// Refuses `git` and `gh` on every build, tests included: Kata does that work in process, and the
+/// ai-sdlc plugin starts them itself.
 pub fn hidden_command(program: impl AsRef<OsStr>) -> Result<Command, SpawnRefused> {
     let program = program.as_ref();
     if is_refused(Path::new(program)) {
@@ -67,7 +66,7 @@ impl Drop for SpawnLog {
     }
 }
 
-/// The one place a child process is created: no console window on Windows, no refusal.
+/// The one place a child process is created: no console window on Windows. [`hidden_command`] refuses first.
 fn new_hidden(program: &OsStr) -> Command {
     if let Some(log) = SPAWNS.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
         let name = Path::new(program)
@@ -110,8 +109,6 @@ pub struct Limited<'a> {
     pub limit: Duration,
     /// Keep all of stdout apart (in `Outcome::Exited::stdout`) and let the tail hold stderr only.
     pub keep_stdout: bool,
-    /// The engineer chose this program; `git` and `gh` are not refused.
-    pub engineers_program: bool,
 }
 
 /// How a [`Limited`] command ended.
@@ -131,8 +128,7 @@ pub enum Outcome {
     WaitFailed(std::io::Error),
 }
 
-/// Runs `spec`: starts the program through [`hidden_command`] (or, when the engineer chose the
-/// program, without the `git` and `gh` refusal but just as hidden), waits up to the limit, and on a
+/// Runs `spec`: starts the program through [`hidden_command`], waits up to the limit, and on a
 /// timeout kills the whole process tree (a Windows job object, a process group elsewhere).
 /// Output is kept as a tail of the last 50 lines (64 KiB), with ANSI sequences stripped.
 pub fn run_limited(spec: &Limited) -> Outcome {
@@ -140,13 +136,9 @@ pub fn run_limited(spec: &Limited) -> Outcome {
 }
 
 fn run_inner(spec: &Limited, on_line: Option<LineSink>) -> Outcome {
-    let mut command = if spec.engineers_program {
-        new_hidden(spec.program.as_os_str())
-    } else {
-        match hidden_command(spec.program) {
-            Ok(command) => command,
-            Err(refused) => return Outcome::NotStarted(refused.into()),
-        }
+    let mut command = match hidden_command(spec.program) {
+        Ok(command) => command,
+        Err(refused) => return Outcome::NotStarted(refused.into()),
     };
     command
         .args(&spec.args)
@@ -659,7 +651,6 @@ mod tests {
                 stdin: None,
                 limit: Duration::from_secs(limit_secs),
                 keep_stdout: false,
-                engineers_program: false,
             }
         }
 
@@ -774,21 +765,6 @@ mod tests {
             assert!(matches!(
                 run_limited(&refused),
                 Outcome::NotStarted(StartError::Refused(_))
-            ));
-        }
-
-        #[test]
-        fn run_limited_refuses_git_unless_the_engineer_chose_it() {
-            let dir = tempfile::tempdir().unwrap();
-            let mut run = spec("git", vec![OsString::from("--version")], dir.path(), 10);
-            assert!(matches!(
-                run_limited(&run),
-                Outcome::NotStarted(StartError::Refused(_))
-            ));
-            run.engineers_program = true;
-            assert!(matches!(
-                run_limited(&run),
-                Outcome::Exited { code: Some(0), .. }
             ));
         }
     }
