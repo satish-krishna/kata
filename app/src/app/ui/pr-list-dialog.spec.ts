@@ -38,6 +38,7 @@ describe("PrListDialog, the plugin's answer to declaring done", () => {
     const warning = 'after hook announce failed with exit code 1; nothing was undone';
     await show({ kind: 'done', pullRequests: [recorded('commerce-core', 1)], warnings: [warning] });
     const warned = dialog().querySelector('.k-status--warning');
+    expect(warned).not.toBeNull();
     expect(warned!.textContent!.trim()).toBe(warning);
     expect(warned!.querySelector('.k-status__dot')).not.toBeNull();
     expect(dialog().querySelector('a')!.getAttribute('href')).toBe(url('commerce-core'));

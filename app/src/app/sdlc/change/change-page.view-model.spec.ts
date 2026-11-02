@@ -367,6 +367,16 @@ describe('ChangePageViewModel', () => {
       expect(toastText()).toContain('lint says no');
     });
 
+    it("an acceptance that passed with warnings says so, with the plugin's warnings (F22)", async () => {
+      const { vm, transport } = setup(PHOTOS_CHANGE);
+      const warning = 'after hook announce failed with exit code 1; nothing was undone';
+      vi.spyOn(transport, 'sdlcAccept').mockResolvedValue({ outcome: 'accepted', warnings: [warning] });
+      await ready(vm);
+      await vm.act('accept-spec');
+      expect(toastText()).toContain('Accepted spec · committed, with warnings from the plugin.');
+      expect(toastText()).toContain(warning);
+    });
+
     it('hooks that could not run are said, with their output', async () => {
       const { vm, transport } = setup(PHOTOS_CHANGE);
       vi.spyOn(transport, 'sdlcAccept').mockResolvedValue({ outcome: 'acceptedHookCouldNotRun', output: 'no such program' });

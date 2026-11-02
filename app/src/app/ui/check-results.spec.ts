@@ -38,9 +38,11 @@ describe('CheckResults shows what the plugin recorded, in its words (R5.1)', () 
     expect(text(container)).toContain('unit');
   });
 
-  it("a broken hook configuration shows the plugin's problems (F20)", async () => {
+  it("a broken hook configuration shows the plugin's problems under an amber status, a fault to fix before any check runs (F20)", async () => {
     const { container } = await render(CheckResults, { views: [view('kata', { kind: 'configBroken', output: OUTPUT }, 'broken')] });
-    expect(container.querySelector('pre')!.textContent).toBe(OUTPUT);
+    const section = container.querySelector('[data-check]')!;
+    expect(section.querySelector('.k-status--warning')).not.toBeNull();
+    expect(section.querySelector('pre')!.textContent).toBe(OUTPUT);
   });
 
   it('a passed run lists the checks that passed', async () => {
