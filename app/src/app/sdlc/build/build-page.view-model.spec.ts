@@ -1,4 +1,4 @@
-import { Component, effect } from '@angular/core';
+import { Component, effect, signal } from '@angular/core';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type { BuildEvent } from '@bindings/BuildEvent';
@@ -25,6 +25,7 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { GivenStore } from '../../core/given/given.store';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
+import { IDLE, type RunSnapshot } from '../../core/run/reduce';
 import { BuildLayoutViewModel } from './build-layout.view-model';
 import { BuildPageViewModel, findingsAreaOf, type BuildContext, type Departure, type FindingsView, type ReviewEntry } from './build-page.view-model';
 import { atStage, readAllChanges } from '../../../testing/read-all';
@@ -1135,5 +1136,60 @@ describe('the build page reads the backend\'s build and starts it through the ho
     vm.cancelPreview();
     await advance(100);
     expect(TestBed.inject(ChangeDraftStore).round(REF)).toBeNull();
+  });
+});
+
+describe('moving the page from one change to another (F1)', () => {
+  const SECOND_CHANGE = '2026-10-12-product-photo-upload';
+  it('nothing of change A shows on change B, and A\'s transcript arriving after the move is linked to A', async () => {
+    const s = setup();
+    let push: (e: BuildEvent) => void = () => undefined;
+    vi.spyOn(s.transport, 'onBuildState').mockImplementation(async (cb) => {
+      push = cb;
+      return () => undefined;
+    });
+    vi.spyOn(s.transport, 'sdlcBuildState').mockResolvedValue(null);
+    vi.spyOn(s.transport, 'sdlcBuildRuns').mockResolvedValue([]);
+    vi.spyOn(s.runs, 'open').mockResolvedValue();
+    // Change A's run waits on a question; the run store is the one place its events come from.
+    const aRun = signal<RunSnapshot>({ ...IDLE, state: 'awaiting', asks: [{ id: 'q1', questions: [], answers: null, at: 0 }] });
+    const real = s.runs.snapshot.bind(s.runs);
+    vi.spyOn(s.runs, 'snapshot').mockImplementation((id) => (id === 'a-run' ? aRun : real(id)));
+    const linkRun = vi.spyOn(s.transport, 'sdlcLinkRun').mockResolvedValue();
+    const inputOf = async (name: string) => ({
+      ctx: { ...CTX, change: name },
+      master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` },
+      change: await s.transport.sdlcChangeState(FOLDER, 'commerce', name),
+      status: await s.transport.sdlcBuildStatus(FOLDER, 'commerce', name),
+      done: false,
+      review: null,
+    });
+
+    await s.vm.load(await inputOf(MOCK_BUILD_CHANGE));
+    push({ change: keyOf(MOCK_BUILD_CHANGE), state: state(), reviewWaiting: [], runs: [{ key: 'commerce-core', run: 'a-run' }] });
+    vi.spyOn(s.transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'held', held: [{ repo: 'customer-portal', holder: keyOf('2026-11-02-other') }] });
+    await s.vm.startBuild({ timeoutSecs: 60 });
+    s.vm.select('commerce-core');
+    await advance(100);
+    // On A: its waiting question, its session and its held start show.
+    expect(s.vm.waitingNotices().map((w) => w.repo)).toEqual(['commerce-core']);
+    expect(s.vm.view().sessions.map((x) => x.id)).toContain('a-run');
+    expect(s.vm.view().held).not.toBeNull();
+
+    await s.vm.load(await inputOf(SECOND_CHANGE));
+    s.vm.select('commerce-core');
+    await advance(100);
+    // On B: none of A.
+    expect(s.vm.waitingNotices()).toEqual([]);
+    expect(s.vm.groups()).toEqual([]);
+    expect(s.vm.view().sessions.map((x) => x.id)).not.toContain('a-run');
+    expect(s.vm.view().held).toBeNull();
+    expect(s.vm.phase()).toBe('none');
+
+    // A's transcript shows only now: it is linked to A, never to the change on show.
+    aRun.update((snap) => ({ ...snap, events: [{ type: 'log', level: 'info', message: 'transcript: C:/runs/a-transcript.jsonl' }] }));
+    await advance(100);
+    expect(linkRun).toHaveBeenCalledWith(expect.objectContaining({ change: MOCK_BUILD_CHANGE, run_id: 'a-transcript', stage: 'build:commerce-core' }));
+    expect(linkRun.mock.calls.filter(([l]) => l.change === SECOND_CHANGE)).toEqual([]);
   });
 });
