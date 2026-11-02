@@ -10,9 +10,11 @@ type Draft = {
   messages: Readonly<Record<string, string>>;
   tab: string | null;
   pick: Pick | null;
+  mode: LayoutMode | null;
+  round: RoundPicks | null;
 };
 
-const EMPTY: Draft = { messages: {}, tab: null, pick: null };
+const EMPTY: Draft = { messages: {}, tab: null, pick: null, mode: null, round: null };
 
 /**
  * What the engineer left on a change's page, so coming back to it shows the same thing. Form state only: no decision
@@ -62,18 +64,22 @@ export class ChangeDraftStore {
   }
 
   /** The build page's mode the engineer picked, or null. */
-  mode(_ref: ChangeRef): LayoutMode | null {
-    return null;
+  mode(ref: ChangeRef): LayoutMode | null {
+    return this.of(ref).mode;
   }
 
-  setMode(_ref: ChangeRef, _mode: LayoutMode | null): void {}
+  setMode(ref: ChangeRef, mode: LayoutMode | null): void {
+    this.put(ref, { mode });
+  }
 
   /** The round dialog's picks and notes while it is open, or null. */
-  round(_ref: ChangeRef): RoundPicks | null {
-    return null;
+  round(ref: ChangeRef): RoundPicks | null {
+    return this.of(ref).round;
   }
 
-  setRound(_ref: ChangeRef, _round: RoundPicks | null): void {}
+  setRound(ref: ChangeRef, round: RoundPicks | null): void {
+    this.put(ref, { round });
+  }
 
   private of(ref: ChangeRef): Draft {
     return this.all()[changeRunKey(ref)] ?? EMPTY;

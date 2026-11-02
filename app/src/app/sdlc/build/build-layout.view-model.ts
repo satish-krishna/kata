@@ -1,4 +1,7 @@
 import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
+import type { ChangeRef } from '@bindings/ChangeRef';
+import { RunLandingStore } from '../../core/run/run-landing.store';
+import { ChangeDraftStore } from '../../core/sdlc/change-draft.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import {
@@ -57,6 +60,8 @@ export class BuildLayoutViewModel {
   private readonly build = inject(BuildPageViewModel);
   private readonly transport = inject(KataTransport);
   private readonly toasts = inject(ToastStore);
+  private readonly drafts = inject(ChangeDraftStore);
+  private readonly landing = inject(RunLandingStore);
 
   readonly mode = signal<LayoutMode>('overview');
   /** The area that fills the page, or null. */
@@ -153,9 +158,31 @@ export class BuildLayoutViewModel {
     this.flipped.set({});
     this.suggested.set(null);
     this.handSwitched.set(false);
-    const mode = suitedMode(this.lastStage ?? 'stopped');
+    const mode = this.leftMode(change) ?? suitedMode(this.lastStage ?? 'stopped');
     this.mode.set(mode);
     this.noteUnreadable(mode);
+  }
+
+  /** The change as the draft store names it, when the page has loaded it. */
+  private draftRef(change: string): ChangeRef | null {
+    const ctx = this.build.loaded()?.ctx;
+    return ctx === undefined || ctx.change !== change || ctx.folder === undefined ? null : { workspace: ctx.folder, system: ctx.system, change };
+  }
+
+  /** The mode the engineer left the change on. A run picked from the running changes wins over it: the stage's own mode shows. */
+  private leftMode(change: string): LayoutMode | null {
+    const ref = this.draftRef(change);
+    if (ref === null) return null;
+    const asked = this.landing.pending();
+    if (asked !== null && asked.system === ref.system && asked.change === change) return null;
+    return this.drafts.mode(ref);
+  }
+
+  /** A run was picked from the running changes: show the stage's own mode. */
+  showSuited(): void {
+    this.focus.set(null);
+    this.flipped.set({});
+    this.mode.set(suitedMode(this.lastStage ?? 'stopped'));
   }
 
   /** The engineer picked a mode. Focus ends and flips go. */
@@ -168,6 +195,8 @@ export class BuildLayoutViewModel {
     this.focus.set(null);
     this.flipped.set({});
     this.mode.set(m);
+    const ref = this.openChange === null ? null : this.draftRef(this.openChange);
+    if (ref !== null) this.drafts.setMode(ref, m);
     this.announceMode(m);
   }
 

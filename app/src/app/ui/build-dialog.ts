@@ -28,6 +28,10 @@ export type BuildFormState = { model: WritableSignal<BuildModel>; form: FieldTre
 const DEFAULT_HOURS = 2;
 const NO_OFFER: RoundOffer = { review: null, repos: [], findings: [] };
 
+/** The entries of a picks record that hold a value. */
+const definedOnly = (record: Partial<Record<string, string>> | undefined): Record<string, string> =>
+  Object.fromEntries(Object.entries(record ?? {}).flatMap(([k, v]) => (v === undefined ? [] : [[k, v]])));
+
 /** The picks the form holds, as the backend's round plan reads them. */
 export function picksOf(model: BuildModel): RoundPicks {
   return { picked: model.picked, assigned: model.assigned, notes: model.notes };
@@ -40,8 +44,8 @@ export function createBuildForm(injector: Injector, offer?: RoundOffer, picks?: 
     hours: DEFAULT_HOURS,
     minutes: 0,
     picked: [...(picks?.picked ?? [])],
-    assigned: {},
-    notes: Object.fromEntries(seen.repos.map((r) => [r, ''])),
+    assigned: definedOnly(picks?.assigned),
+    notes: { ...Object.fromEntries(seen.repos.map((r) => [r, ''])), ...definedOnly(picks?.notes) },
   });
   const f = form(
     model,

@@ -37,6 +37,7 @@ import { LockStore } from '../../core/lock/lock.store';
 import type { ChangeRef as ChangeWithWorkspace } from '@bindings/ChangeRef';
 import { ChangeRunStore, changeRunKey } from '../../core/run/change-run.store';
 import { RunLandingStore } from '../../core/run/run-landing.store';
+import { BuildLayoutViewModel } from '../build/build-layout.view-model';
 import { ChangeDraftStore } from '../../core/sdlc/change-draft.store';
 import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
@@ -206,6 +207,7 @@ export class ChangePageViewModel {
   private readonly changeRuns = inject(ChangeRunStore);
   private readonly landing = inject(RunLandingStore);
   private readonly drafts = inject(ChangeDraftStore);
+  private readonly layout = inject(BuildLayoutViewModel, { optional: true });
   /** The preview every document run goes through; the template mounts its dialog. */
   readonly preview = inject(RunPreviewViewModel);
   private readonly givens = inject(GivenStore);
@@ -1605,6 +1607,10 @@ export class ChangePageViewModel {
     if (run.kind === 'review') this.build.choose({ kind: 'review' });
     else if (run.kind === 'build' && run.repo !== null) this.build.choose({ kind: 'repo', repo: run.repo });
     else return;
+    // The run the engineer asked for wins over the mode they left: the stage's own mode shows it.
+    const ref = this.draftRef();
+    if (ref !== null) this.drafts.setMode(ref, null);
+    this.layout?.showSuited();
     this.picked.set('build');
     this.rememberTab();
   }

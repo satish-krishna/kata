@@ -46,7 +46,10 @@ async function mount(change: string, transport = new MockTransport(), demo: stri
   return { ...out, transport, landing: TestBed.inject(RunLandingStore) };
 }
 
-afterEach(() => TestBed.resetTestingModule());
+afterEach(() => {
+  vi.useRealTimers();
+  TestBed.resetTestingModule();
+});
 
 describe('ChangePage landing on a run picked from the running changes (R13.2)', () => {
   it('a build run opens the Build tab with that repository picked, and the request is taken', async () => {
@@ -68,12 +71,19 @@ describe('ChangePage landing on a run picked from the running changes (R13.2)', 
 
   it("a document run shows the change's own session with its question, and the request is taken", async () => {
     const { container, landing } = await mount(PHOTOS_CHANGE, new MockTransport(), 'sdlc');
+    // The scripted run asks its question about five seconds in; the fake clock gets there at once instead of waiting for it.
+    vi.useFakeTimers();
     await confirmPreview();
     await vi.waitFor(() => expect(container.querySelector('app-sdlc-session')).not.toBeNull());
     landing.ask({ workspaceId: WORKSPACE, system: 'commerce', change: PHOTOS_CHANGE, run: run({ kind: 'spec', repo: null }) });
-    await settle();
+    await vi.advanceTimersByTimeAsync(0);
+    TestBed.tick();
     expect(container.querySelector('app-sdlc-session')).not.toBeNull();
-    await vi.waitFor(() => expect(container.querySelector('app-ask-panel')).not.toBeNull(), { timeout: 8000 });
+    for (let t = 0; t < 10000 && container.querySelector('app-ask-panel') === null; t += 250) {
+      await vi.advanceTimersByTimeAsync(250);
+      TestBed.tick();
+    }
+    expect(container.querySelector('app-ask-panel')).not.toBeNull();
     expect(landing.pending()).toBeNull();
   });
 

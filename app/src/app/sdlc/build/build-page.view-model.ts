@@ -13,6 +13,8 @@ import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { ReviewRows } from '@bindings/ReviewRows';
 import type { RoundGroup } from '@bindings/RoundGroup';
 import type { RoundOffer } from '@bindings/RoundOffer';
+import type { RoundPicks } from '@bindings/RoundPicks';
+import { picksOf } from '../../ui/build-dialog';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { RunSpec } from '@bindings/RunSpec';
@@ -598,6 +600,13 @@ export class BuildPageViewModel {
   private readonly reading = computed(() => this.readingNow());
 
   constructor() {
+    // What the engineer picks and writes in the round dialog is kept while it is open, so leaving the page does not lose it.
+    effect(() => {
+      const form = this.preview.buildForm();
+      const picks = this.dialogMode() === 'round' && form !== null ? picksOf(form.model()) : null;
+      const ref = this.ref();
+      if (picks !== null && ref !== null) untracked(() => this.drafts.setRound(ref, picks));
+    });
     // Whatever the host sets in `loaded` is read at once.
     effect(() => {
       const input = this.loaded();
@@ -1381,7 +1390,8 @@ export class BuildPageViewModel {
     const seq = ++this.previewSeq;
     let result;
     try {
-      const [[offer, picks], view] = await Promise.all([this.transport.sdlcRoundOffer(ref), this.transport.sdlcReviewView(ref)]);
+      const [[offer, backendPicks], view] = await Promise.all([this.transport.sdlcRoundOffer(ref), this.transport.sdlcReviewView(ref)]);
+      const picks = this.leftPicks(ref, offer) ?? backendPicks;
       this.roundOffer.set(offer);
       this.roundGroups.set(view.groups);
       this.dialogMode.set('round');
@@ -1414,7 +1424,22 @@ export class BuildPageViewModel {
     return (await this.startBuild({ timeoutSecs: result.request?.timeoutSecs ?? DEFAULT_BUILD_SECS, rounds: result.plan.requests })) === 'started';
   }
 
+  /** What the engineer left in the round dialog, kept to what the offer still lists; null when nothing was left. */
+  private leftPicks(ref: ChangeRef, offer: RoundOffer): RoundPicks | null {
+    const left = this.drafts.round(ref);
+    if (left === null) return null;
+    const keys = new Set(offer.findings.map((f) => f.key));
+    const repos = new Set(offer.repos);
+    return {
+      picked: left.picked.filter((k) => keys.has(k)),
+      assigned: Object.fromEntries(Object.entries(left.assigned).filter(([k, repo]) => keys.has(k) && repo !== undefined && repos.has(repo))),
+      notes: Object.fromEntries(Object.entries(left.notes).filter(([repo]) => repos.has(repo))),
+    };
+  }
+
   private closeRound(): void {
+    const ref = this.ref();
+    if (ref !== null) this.drafts.setRound(ref, null);
     this.dialogMode.set(null);
     this.roundOffer.set(null);
     this.roundGroups.set([]);
