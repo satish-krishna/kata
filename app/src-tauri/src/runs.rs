@@ -100,6 +100,11 @@ impl<C> RunTable<C> {
         Ok(())
     }
 
+    /// Stub.
+    pub fn may_switch(&self, _folder: &Path) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Starts rejecting `key`: refused while a run of the change is live or its rejection is under way. Until
     /// `end_rejecting`, `claim` refuses every run of the change.
     pub fn begin_rejecting(&mut self, key: &ChangeKey) -> Result<(), String> {
@@ -254,6 +259,25 @@ mod tests {
             .claim(Path::new("D:/ws/app/"), &change("c", true))
             .unwrap_err();
         assert_eq!(err, "Another run is already working in D:/ws/app/.");
+    }
+
+    #[test]
+    fn switching_the_branch_of_a_folder_a_live_run_works_in_is_refused_and_names_its_change() {
+        // A change started before copies existed runs its document runs in the master checkout itself.
+        let t = table(vec![
+            live(1, r"D:\ws\docs", change("2026-10-12-photos", false)),
+            live(2, "D:/ws/tools", Lane::Solo),
+        ]);
+        assert_eq!(
+            t.may_switch(Path::new("D:/ws/docs/")).unwrap_err(),
+            "The change 2026-10-12-photos has a run working in D:/ws/docs/. Switch the branch after the run ends."
+        );
+        assert_eq!(
+            t.may_switch(Path::new("D:/ws/tools")).unwrap_err(),
+            "Another run is working in D:/ws/tools. Switch the branch after the run ends."
+        );
+        // A folder no live run works in may be switched.
+        assert!(t.may_switch(Path::new("D:/ws/app")).is_ok());
     }
 
     #[test]

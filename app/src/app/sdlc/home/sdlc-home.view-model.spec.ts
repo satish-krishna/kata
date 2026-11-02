@@ -16,7 +16,8 @@ import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { MOCK_WORKSPACE_FOLDER, MOCK_MASTER } from '../../lib/sdlc-mock';
-import { seedCatalog } from '../../lib/mock';
+import { seedCatalog, seedSpec } from '../../lib/mock';
+import { documentForm } from '../../lib/build-host';
 import { SdlcHomeViewModel } from './sdlc-home.view-model';
 
 const NEW_FOLDER = 'D:/Work/new-ws';
@@ -603,6 +604,18 @@ describe('SdlcHomeViewModel navigation', () => {
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
     await vm.openOtherBranch('2026-11-02-password-reset');
     expect(checkout).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'feat/PROJ-123-password-reset');
+  });
+
+  it('openOtherBranch is refused while a change works in the master checkout, and the toast names that change (F5)', async () => {
+    const { vm, transport, navigate } = setup();
+    await vm.init();
+    // A change started before copies existed: its spec run works in the master checkout itself.
+    await transport.sdlcRunChange({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: '2026-10-12-product-photo-upload' }, 'spec', documentForm(seedSpec()));
+    await vm.openOtherBranch('2026-10-17-product-notes');
+    expect(toastText()).toContain('The change 2026-10-12-product-photo-upload has a run working in');
+    expect(navigate).not.toHaveBeenCalled();
+    // The branch the run works on is still checked out.
+    expect((await transport.sdlcBranches(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`)).current).not.toBe('change/2026-10-17-product-notes');
   });
 
   it('openOtherBranch shows git message on a dirty refusal and stays put', async () => {
