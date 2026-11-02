@@ -98,6 +98,39 @@
         </main>
       }
       @case ('ready') {
+        @if (vm.copy(); as copy) {
+          <section class="k-copyline" data-testid="copy-line" aria-label="This change's copy">
+            <div class="k-copyline__run">
+              <span class="k-strip__file">Copy</span>
+              <span class="k-mono k-copyline__folder" [attr.title]="copy.folder">{{ copy.folder }}</span>
+              @if (copy.branch; as branch) {
+                <span class="k-copyline__branch">on <span class="k-mono">{{ branch }}</span></span>
+              }
+              <div class="wb-toolbar__spacer"></div>
+              <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.openCopyFolder()">Open folder</button>
+              @if (vm.removalOffered()) {
+                <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.askRemoveCopy()">Remove this copy</button>
+              }
+            </div>
+            <p class="k-copyline__why">This branch is held by this change's own copy, so your own checkout cannot switch to it while the copy exists.</p>
+            @if (vm.copyNote(); as note) {
+              <ng-container *ngTemplateOutlet="copyNote; context: { $implicit: note }" />
+            } @else if (vm.keepFiles().length > 0) {
+              <div class="wb-banner wb-banner--warn" role="status">
+                <span class="k-status k-status--warning"><span class="k-status__dot"></span>The copy holds uncommitted files, so it cannot be removed.</span>
+                <ul class="wb-banner__list wb-banner__list--lines k-mono">
+                  @for (file of vm.keepFiles(); track file) {
+                    <li>{{ file }}</li>
+                  }
+                </ul>
+              </div>
+            }
+          </section>
+        } @else if (vm.copyNote(); as note) {
+          <section class="k-copyline" aria-label="This change's copy">
+            <ng-container *ngTemplateOutlet="copyNote; context: { $implicit: note }" />
+          </section>
+        }
         @if (vm.stripShown()) {
           <div class="k-strip" data-testid="strip">
             @if (vm.stripStatus(); as s) {
@@ -235,6 +268,19 @@
     }
   }
 
+  <ng-template #copyNote let-note>
+    <div [class]="note.tone === 'warning' ? 'wb-banner wb-banner--warn' : 'wb-banner wb-banner--quiet'" data-testid="copy-note" role="status">
+      <span [class]="'k-status k-status--' + (note.tone === 'warning' ? 'warning' : 'idle')"><span class="k-status__dot"></span>{{ note.text }}</span>
+      @if (note.lines.length > 0) {
+        <ul class="wb-banner__list wb-banner__list--lines k-mono">
+          @for (line of note.lines; track $index) {
+            <li>{{ line }}</li>
+          }
+        </ul>
+      }
+    </div>
+  </ng-template>
+
   <ng-template #stageActions>
     @for (a of vm.actions(); track a) {
       <button
@@ -253,6 +299,14 @@
     [elapsed]="vm.lockElapsed()"
     [stepProgress]="vm.lockProgress()"
     (cancel)="vm.cancelLock()"
+  />
+  <app-confirm-dialog
+    [open]="vm.removeAsked()"
+    message="Remove this change's copy? The change branch and its commits stay in the master repository."
+    [details]="[vm.copy()?.folder ?? '']"
+    confirmLabel="Remove copy"
+    (confirm)="vm.confirmRemoveCopy()"
+    (cancel)="vm.declineRemoveCopy()"
   />
   <app-branch-name-dialog [request]="vm.nameRequest()" (accept)="vm.acceptName($event)" (cancel)="vm.closeName()" />
   <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />

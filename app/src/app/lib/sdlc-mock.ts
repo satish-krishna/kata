@@ -50,6 +50,8 @@ import type { TaskStatus } from '@bindings/TaskStatus';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { ChangeView } from '@bindings/ChangeView';
+import type { CopyRemoval } from '@bindings/CopyRemoval';
+import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { ChangeOffer } from '@bindings/ChangeOffer';
 import type { ChangeState } from '@bindings/ChangeState';
 import type { FixFacts } from '@bindings/FixFacts';
@@ -566,6 +568,7 @@ export function changeViewOf(
   readiness: Readiness,
   tasks: ChangeState['tasks'] = null,
   refused: Partial<Record<StageAction, string>> = {},
+  copy: string | null = null,
 ): ChangeView {
   const live: LiveFacts = { runLive: false, buildStopped: false, buildLive: false };
   // A fix stands at the row of its own table whatever its plan reads as; only the full pipeline has a stage for an unreadable plan.
@@ -573,7 +576,7 @@ export function changeViewOf(
   const stop = refused['start-build'] ?? refused['continue-build'] ?? null;
   return {
     state: {
-      change: c.change, master: '/m', folder: `/m/intent/${c.system}/${c.change}`, inCopy: false, title: null, track: c.track,
+      change: c.change, master: copy ?? '/m', folder: `${copy ?? '/m'}/intent/${c.system}/${c.change}`, inCopy: copy !== null, title: null, track: c.track,
       documents: { intent: stateDocument(c.intent), spec: stateDocument(c.spec), plan: stateDocument(c.plan) },
       scenarios: null, tasks, buildLogs: {}, review: { committed: 0, draft: 'none' },
       fix: shown.track === 'fix' && shown.fix_row !== null ? { row: shown.fix_row, facts: FIX_FACTS } : null,
@@ -707,7 +710,7 @@ export class SdlcMock {
       readiness,
       canStartChange: !blocked,
       startChangeReason: blocked ? readiness.message : null,
-      changes: found.map((c) => changeViewOf(c, readiness, this.tasksOf(c))),
+      changes: found.map((c) => changeViewOf(c, readiness, this.tasksOf(c), {}, this.copyOf(c.change))),
       problems: found.flatMap((c) => (c.plan_unreadable && c.plan_unreadable_reason !== null ? [c.plan_unreadable_reason] : [])),
     };
   }
@@ -719,8 +722,33 @@ export class SdlcMock {
     }
     const found = this.stagePass().find((c) => c.change === changeName);
     if (!found) throw new Error(`no change folder named ${changeName}`);
-    return changeViewOf(found, readiness, this.tasksOf(found));
+    return changeViewOf(found, readiness, this.tasksOf(found), {}, this.copyOf(changeName));
   }
+  // ---- the change's own copy ----
+
+  /** The finished change still has its own copy, as a change the plugin started does until it is rejected or its copy is removed. */
+  private readonly copies = new Set<string>([MOCK_DONE_CHANGE]);
+
+  /** The copy folder of a change that has one, else null. */
+  private copyOf(changeName: string): string | null {
+    return this.copies.has(changeName) ? `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${changeName}` : null;
+  }
+  /** Removal is offered for the finished change with its pull requests merged; the clash demos leave it undeclared, so nothing is offered. */
+  copyRemoval(changeName: string): CopyRemoval {
+    return this.copies.has(changeName) && !this.demo?.startsWith('clash') ? { outcome: 'offer' } : { outcome: 'notOffered' };
+  }
+  copyBranch(changeName: string): string {
+    return `change/${changeName}`;
+  }
+  /** The copy is gone and the branch stays in the master repository. */
+  removeCopy(changeName: string): RemoveOutcome {
+    this.copies.delete(changeName);
+    return { outcome: 'removed', kept: [`change/${changeName}: the branch and its commits stay in the master repository`] };
+  }
+  openCopyFolder(changeName: string): void {
+    if (!this.copies.has(changeName)) throw new Error('this change is not in a copy');
+  }
+
   /** What the plugin reports for the build and the finished change: each repository's tasks, the commits that name each, and the commits that name none. Other changes have no plan to report. */
   private tasksOf(c: ChangeInfo): ChangeState['tasks'] {
     if (c.change !== MOCK_BUILD_CHANGE && c.change !== MOCK_DONE_CHANGE) return null;

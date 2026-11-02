@@ -1417,22 +1417,17 @@ describe('ChangePageViewModel: the change copy', () => {
   }
   const removalReady = (vm: ChangePageViewModel, offered: boolean) => vi.waitFor(() => expect(vm.removalOffered()).toBe(offered));
 
-  it('removal is offered only on Offer and Keep names the files', async () => {
-    const offer = setup(PHOTOS_CHANGE, inCopy({ outcome: 'offer' }).transport);
-    await ready(offer.vm);
-    await removalReady(offer.vm, true);
-    expect(offer.vm.keepFiles()).toEqual([]);
-
-    const keep = setup(PHOTOS_CHANGE, inCopy({ outcome: 'keep', uncommitted: ['src/a.ts', 'notes.txt'] }).transport);
-    await ready(keep.vm);
-    await vi.waitFor(() => expect(keep.vm.keepFiles()).toEqual(['src/a.ts', 'notes.txt']));
-    expect(keep.vm.removalOffered()).toBe(false);
-
-    const none = setup(PHOTOS_CHANGE, inCopy({ outcome: 'notOffered' }).transport);
-    await ready(none.vm);
-    await vi.waitFor(() => expect(none.vm.copy()).not.toBeNull());
-    expect(none.vm.removalOffered()).toBe(false);
-    expect(none.vm.keepFiles()).toEqual([]);
+  describe('removal is offered only on Offer and Keep names the files', () => {
+    it.each<[string, CopyRemoval, boolean, string[]]>([
+      ['Offer', { outcome: 'offer' }, true, []],
+      ['Keep', { outcome: 'keep', uncommitted: ['src/a.ts', 'notes.txt'] }, false, ['src/a.ts', 'notes.txt']],
+      ['NotOffered', { outcome: 'notOffered' }, false, []],
+    ])('%s', async (_name, answer, offered, files) => {
+      const { vm } = setup(PHOTOS_CHANGE, inCopy(answer).transport);
+      await ready(vm);
+      await vi.waitFor(() => expect([vm.removalOffered(), vm.keepFiles()]).toEqual([offered, files]));
+      expect(vm.copy()).not.toBeNull();
+    });
   });
 
   it('knows the copy folder and, once the backend answers, the branch it holds', async () => {

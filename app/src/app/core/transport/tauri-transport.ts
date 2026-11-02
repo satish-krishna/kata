@@ -137,10 +137,10 @@ export class TauriTransport extends KataTransport {
   sdlcRenameBranch(folder: string, workspaceId: string, system: string, change: string, to: string) { return this.ipc.invoke<RenameOutcome>('sdlc_rename_branch', { folder, workspaceId, system, change, to }); }
   sdlcCheckScope(folder: string, scope: string) { return this.ipc.invoke<string[]>('sdlc_check_scope', { folder, scope }); }
   sdlcCheckout(master: string, branch: string) { return this.ipc.invoke<void>('sdlc_checkout', { master, branch }); }
-  sdlcCopyRemoval(change: ChangeRef): Promise<CopyRemoval> { void change; return Promise.reject(new Error('not implemented')); }
-  sdlcCopyBranch(change: ChangeRef): Promise<string> { void change; return Promise.reject(new Error('not implemented')); }
-  sdlcRemoveCopy(change: ChangeRef): Promise<RemoveOutcome> { void change; return Promise.reject(new Error('not implemented')); }
-  sdlcOpenCopyFolder(change: ChangeRef): Promise<void> { void change; return Promise.reject(new Error('not implemented')); }
+  sdlcCopyRemoval(change: ChangeRef) { return this.ipc.invoke<CopyRemoval>('sdlc_copy_removal', { change }); }
+  sdlcCopyBranch(change: ChangeRef) { return this.ipc.invoke<string>('sdlc_copy_branch', { change }); }
+  sdlcRemoveCopy(change: ChangeRef) { return this.ipc.invoke<RemoveOutcome>('sdlc_remove_copy', { change }); }
+  sdlcOpenCopyFolder(change: ChangeRef) { return this.ipc.invoke<void>('sdlc_open_copy_folder', { change }); }
   sdlcAccept(change: ChangeRef, doc: ChangeDocument) { return this.ipc.invoke<AcceptOutcome>('sdlc_accept', { change, doc }); }
   sdlcReject(change: ChangeRef) { return this.ipc.invoke<RejectOutcome>('sdlc_reject', { change }); }
   sdlcRunLinks() { return this.ipc.invoke<RunLink[]>('sdlc_run_links'); }

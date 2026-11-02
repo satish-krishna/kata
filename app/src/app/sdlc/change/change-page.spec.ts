@@ -904,13 +904,15 @@ describe('ChangePage: the change copy', () => {
     );
   });
 
-  it('offers Remove this copy only when the backend offers it, and asks first', async () => {
-    const none = inCopy({ outcome: 'notOffered' });
-    const first = await mount(PHOTOS_CHANGE, none.transport);
-    await vi.waitFor(() => expect(line(first.container)).not.toBeNull());
+  it('offers no removal when the backend does not offer it', async () => {
+    const { transport } = inCopy({ outcome: 'notOffered' });
+    const { container } = await mount(PHOTOS_CHANGE, transport);
+    await vi.waitFor(() => expect(line(container)).not.toBeNull());
     await settle();
-    expect(buttonIn(first.container, 'Remove this copy')).toBeUndefined();
+    expect(buttonIn(container, 'Remove this copy')).toBeUndefined();
+  });
 
+  it('offers Remove this copy when the backend offers it, and asks first', async () => {
     const offered = inCopy({ outcome: 'offer' });
     const { container } = await mount(PHOTOS_CHANGE, offered.transport);
     await vi.waitFor(() => expect(buttonIn(container, 'Remove this copy')).toBeDefined());

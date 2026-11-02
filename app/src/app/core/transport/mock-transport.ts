@@ -302,10 +302,17 @@ export class MockTransport extends KataTransport {
   sdlcRenameBranch(_folder: string, _workspaceId: string, _system: string, change: string, to: string): Promise<RenameOutcome> { return Promise.resolve(this.sdlc.renameBranch(change, to)); }
   sdlcCheckout(_master: string, branch: string): Promise<void> { this.sdlc.checkout(branch); return Promise.resolve(); }
   sdlcAccept(change: ChangeRef, doc: ChangeDocument): Promise<AcceptOutcome> { return Promise.resolve(this.sdlc.accept(change.change, doc)); }
-  sdlcCopyRemoval(change: ChangeRef): Promise<CopyRemoval> { void change; return Promise.reject(new Error('not implemented')); }
-  sdlcCopyBranch(change: ChangeRef): Promise<string> { void change; return Promise.reject(new Error('not implemented')); }
-  sdlcRemoveCopy(change: ChangeRef): Promise<RemoveOutcome> { void change; return Promise.reject(new Error('not implemented')); }
-  sdlcOpenCopyFolder(change: ChangeRef): Promise<void> { void change; return Promise.reject(new Error('not implemented')); }
+  sdlcCopyRemoval(change: ChangeRef): Promise<CopyRemoval> { return Promise.resolve(this.sdlc.copyRemoval(change.change)); }
+  sdlcCopyBranch(change: ChangeRef): Promise<string> { return Promise.resolve(this.sdlc.copyBranch(change.change)); }
+  sdlcRemoveCopy(change: ChangeRef): Promise<RemoveOutcome> { return Promise.resolve(this.sdlc.removeCopy(change.change)); }
+  sdlcOpenCopyFolder(change: ChangeRef): Promise<void> {
+    try {
+      this.sdlc.openCopyFolder(change.change);
+      return Promise.resolve();
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
   sdlcReject(change: ChangeRef): Promise<RejectOutcome> { return Promise.resolve(this.sdlc.reject(change.change)); }
   sdlcRunLinks(): Promise<RunLink[]> { return Promise.resolve(this.sdlc.runLinks()); }
   sdlcLinkRun(link: RunLink): Promise<void> { this.sdlc.linkRun(link); return Promise.resolve(); }

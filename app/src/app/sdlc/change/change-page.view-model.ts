@@ -35,6 +35,8 @@ import type { RunSpec } from '@bindings/RunSpec';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
+import type { CopyRemoval } from '@bindings/CopyRemoval';
+import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { ChangeRef as ChangeWithWorkspace } from '@bindings/ChangeRef';
 import { ChangeRunStore, changeRunKey } from '../../core/run/change-run.store';
 import { RunLandingStore } from '../../core/run/run-landing.store';
@@ -238,20 +240,105 @@ export class ChangePageViewModel {
 
   // --- the change's own copy: where it is, whether it may be removed, and what removing it came to
 
+  /** The branch the copy holds, asked for in the background once the page shows; null until it answers. */
+  private readonly copyBranchName = signal<string | null>(null);
+  /** The backend's answer about removing the copy, asked for in the background once the page shows; nothing is offered until it arrives. */
+  private readonly removal = signal<CopyRemoval>({ outcome: 'notOffered' });
+  /** What the last removal or check came to, for the change it belongs to; the page reads the change again after a removal, so it is kept apart from the load. */
+  private readonly copyResult = signal<{ key: string; note: DocNotice } | null>(null);
+  private readonly changeKey = computed(() => `${this.system()}/${this.changeName()}`);
+
   /** Where the change's copy is and the branch it holds; null when the change is not in a copy. */
-  readonly copy = computed<{ folder: string; branch: string | null } | null>(() => null);
+  readonly copy = computed<{ folder: string; branch: string | null } | null>(() => {
+    const state = this.change()?.state;
+    return state?.inCopy ? { folder: state.master, branch: this.copyBranchName() } : null;
+  });
   /** The backend offered to remove the copy. Never true before the backend answered. */
-  readonly removalOffered = computed(() => false);
+  readonly removalOffered = computed(() => this.copy() !== null && this.removal().outcome === 'offer');
   /** The uncommitted files that keep the copy, as the backend named them; none when it names none. */
-  readonly keepFiles = computed<string[]>(() => []);
+  readonly keepFiles = computed<string[]>(() => {
+    const removal = this.removal();
+    return this.copy() !== null && removal.outcome === 'keep' ? removal.uncommitted : [];
+  });
   /** The removal confirmation is on show. */
   readonly removeAsked = signal(false);
   /** What the last removal or check came to, for the page to show; null when there is nothing to say. */
-  readonly copyNote = computed<DocNotice | null>(() => null);
-  askRemoveCopy(): void {}
-  declineRemoveCopy(): void {}
-  async confirmRemoveCopy(): Promise<void> {}
-  async openCopyFolder(): Promise<void> {}
+  readonly copyNote = computed<DocNotice | null>(() => {
+    const result = this.copyResult();
+    return result !== null && result.key === this.changeKey() ? result.note : null;
+  });
+  private setCopyNote(note: DocNotice | null): void {
+    this.copyResult.set(note === null ? null : { key: this.changeKey(), note });
+  }
+  private copyRef(): ChangeRef | null {
+    const workspace = this.current();
+    return workspace === null ? null : { workspace: workspace.folder, system: this.system(), change: this.changeName() };
+  }
+
+  /** Ask for the copy's branch and the removal offer without holding the page: GitHub is asked for the pull request states. */
+  private readCopy(seq: number, ref: ChangeRef): void {
+    this.copyBranchName.set(null);
+    this.removal.set({ outcome: 'notOffered' });
+    this.transport.sdlcCopyBranch(ref).then(
+      (branch) => seq === this.loadSeq && this.copyBranchName.set(branch),
+      () => undefined,
+    );
+    this.transport.sdlcCopyRemoval(ref).then(
+      (answer) => seq === this.loadSeq && this.removal.set(answer),
+      (e) => {
+        if (seq === this.loadSeq) this.setCopyNote({ tone: 'warning', text: `Could not check whether this copy can be removed: ${message(e)}`, lines: [] });
+      },
+    );
+  }
+  /** The engineer asked to remove the copy: only an offered removal is asked about. */
+  askRemoveCopy(): void {
+    if (this.removalOffered()) this.removeAsked.set(true);
+  }
+  declineRemoveCopy(): void {
+    this.removeAsked.set(false);
+  }
+  /** The engineer confirmed. Every outcome has a visible result: the copy goes, or it stays and the note says why. */
+  async confirmRemoveCopy(): Promise<void> {
+    this.removeAsked.set(false);
+    const ref = this.copyRef();
+    if (ref === null) return;
+    let out: RemoveOutcome;
+    try {
+      out = await this.transport.sdlcRemoveCopy(ref);
+    } catch (e) {
+      this.setCopyNote({ tone: 'warning', text: `The copy was not removed: ${message(e)}`, lines: [] });
+      return;
+    }
+    switch (out.outcome) {
+      case 'removed':
+        this.removal.set({ outcome: 'notOffered' });
+        this.setCopyNote({ tone: 'idle', text: 'The copy is removed. The change branch and its commits stay in the master repository.', lines: out.kept });
+        // The plugin reports the master repository now, not the folder of the copy that is gone.
+        await this.load();
+        return;
+      case 'keep':
+        this.removal.set({ outcome: 'keep', uncommitted: out.uncommitted });
+        this.setCopyNote({ tone: 'warning', text: 'The copy holds uncommitted files, so it is kept.', lines: out.uncommitted });
+        return;
+      case 'refused':
+        this.setCopyNote({ tone: 'warning', text: 'The plugin did not remove the copy.', lines: out.problems });
+        return;
+      case 'couldNotRun':
+        this.setCopyNote({ tone: 'warning', text: `The copy was not removed: the plugin could not run: ${out.message}`, lines: [] });
+        return;
+    }
+  }
+  async openCopyFolder(): Promise<void> {
+    const ref = this.copyRef();
+    if (ref === null) return;
+    try {
+      await this.transport.sdlcOpenCopyFolder(ref);
+    } catch (e) {
+      this.toasts.error(`Could not open the copy folder: ${message(e)}`);
+    }
+  }
+  /** The key of the change the backend was last told is open; the page tells it once per change, however often it reads the change. */
+  private openedKey = '';
   private readonly linksFrom = signal<DoneView['linksFrom']>('none');
   /** When the last background refresh of the link states began, in seconds; null until one has ended. A link last seen before it could not be asked about. */
   private readonly refreshedAt = signal<number | null>(null);
@@ -1576,6 +1663,14 @@ export class ChangePageViewModel {
     }
   }
 
+  /** The change leaves the running changes once nothing of it needs them: best effort, a failure changes nothing on the page. */
+  private tellOpened(workspace: string, system: string, change: string): void {
+    const key = `${workspace}|${system}/${change}`;
+    if (key === this.openedKey) return;
+    this.openedKey = key;
+    this.transport.sdlcMarkOpened({ workspace, system, change }).catch(() => undefined);
+  }
+
   private async load(): Promise<void> {
     const seq = ++this.loadSeq;
     const system = this.system();
@@ -1657,6 +1752,13 @@ export class ChangePageViewModel {
       this.catalog.set(catalog);
       finish(found ? 'ready' : 'not-found', found, doc, read);
       if (found) this.restoreTab();
+      if (found) this.tellOpened(w.folder, system, name);
+      // The copy line shows at once; what the slow backend answers about it arrives later and is shown only when it does.
+      if (found?.state.inCopy) this.readCopy(seq, { workspace: w.folder, system, change: name });
+      else {
+        this.copyBranchName.set(null);
+        this.removal.set({ outcome: 'notOffered' });
+      }
       // The build page shows the change's tasks, sessions and findings whether or not a build ran on this page.
       const context = this.buildContext();
       if (found && context !== null) this.build.loaded.set({ ctx: context, master: { repo, path: master }, change: found, status, done: this.done(), review });

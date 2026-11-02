@@ -304,6 +304,28 @@ if (targetRoutes.includes('?demo=close')) {
   if (consoleErrors.length) findings.push({ route: '?demo=close', kind: 'dialog', detail: `console error: ${consoleErrors[0]}` });
 }
 
+// The finished change keeps its own copy in the mock: its page shows the copy line, and Remove this copy asks before anything is removed.
+// The question is an alert dialog opened by a button of the page, so the loop above never clicks it. Escape must close it, and the copy line must stay.
+if (targetRoutes.includes(DONE)) {
+  consoleErrors = [];
+  await page.goto(`http://localhost:${port}/${DONE}`, { waitUntil: 'networkidle' });
+  const asked = page.locator('[role="alertdialog"]:visible', { hasText: "Remove this change's copy" });
+  try {
+    await page.locator('[data-testid="copy-line"]').waitFor({ timeout: 5000 });
+    await page.getByRole('button', { name: 'Open folder' }).waitFor({ timeout: 5000 });
+    await page.getByRole('button', { name: 'Remove this copy' }).click({ timeout: 5000 });
+    await asked.first().waitFor({ timeout: 5000 });
+    checks.push({ label: 'remove copy dialog', opened: true });
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(350);
+    if ((await asked.count()) > 0) findings.push({ route: DONE, kind: 'dialog', detail: 'the remove copy question did not close on Escape' });
+    if ((await page.locator('[data-testid="copy-line"]').count()) !== 1) findings.push({ route: DONE, kind: 'dialog', detail: 'declining the removal took the copy line away' });
+  } catch (e) {
+    findings.push({ route: DONE, kind: 'dialog', detail: `no copy line with a remove copy question (${String(e.message).split('\n')[0]})` });
+  }
+  if (consoleErrors.length) findings.push({ route: DONE, kind: 'dialog', detail: `console error: ${consoleErrors[0]}` });
+}
+
 await browser.close();
 server.close();
 

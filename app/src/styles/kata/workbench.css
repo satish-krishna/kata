@@ -382,6 +382,12 @@
 /* In the Changes strip only the read-only line shrinks; the controls, counts and the actions the page projects keep their size, so no label breaks onto a second line. The strip wraps (see changes-view.css), so none of them is ever pushed out of the panel. */
 .k-changes__strip > :not(.k-changes__end), .k-changes__end > :not(.k-changes__note) { flex: none; white-space: nowrap; }
 .k-strip { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); background: var(--surface-panel); border-bottom: 1px solid var(--border-default); }
+/* The change's own copy: its folder, the branch it holds, and what the engineer can do with it. The folder wraps, so a long path never pushes the actions out. */
+.k-copyline { flex: none; display: grid; gap: var(--space-3); padding: var(--space-3) var(--space-4); background: var(--surface-panel); border-bottom: 1px solid var(--border-default); }
+.k-copyline__run { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3) var(--space-4); }
+.k-copyline__folder { min-width: 0; overflow-wrap: anywhere; font-size: var(--text-xs); color: var(--text-secondary); }
+.k-copyline__branch { font-size: var(--text-xs); color: var(--text-muted); }
+.k-copyline__why { margin: 0; font-size: var(--text-xs); color: var(--text-muted); }
 .k-strip__file { font: var(--text-xs)/1 var(--font-mono); color: var(--text-muted); }
 
 /* AI-SDLC session view: an agent run in the page main region under the toolbar. */
