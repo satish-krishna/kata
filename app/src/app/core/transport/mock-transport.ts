@@ -101,6 +101,15 @@ interface ScriptedRun {
   answer?: string;
 }
 
+/** The answer of a read, or its rejection, as a promise. A module function, so it is not a member of the transport. */
+function settled<T>(read: () => T): Promise<T> {
+  try {
+    return Promise.resolve(read());
+  } catch (e) {
+    return Promise.reject(e);
+  }
+}
+
 /** Browser stand-in: fixtures plus scripted runs (head, ask, mid, permission,
  *  tail), unblocked by submitAnswer / submitDecision. Several runs play at once,
  *  each tagged with its own id. */
@@ -303,14 +312,6 @@ export class MockTransport extends KataTransport {
   }
   /** A test or a demo changes what the workspace holds for a change; the next `sdlcChangeState` and `sdlcState` show it. */
   patchChange(change: string, patch: Partial<ChangeInfo>): void { this.sdlc.patch(change, patch); }
-  /** The answer of a read, or its rejection, as a promise. */
-  private settled<T>(read: () => T): Promise<T> {
-    try {
-      return Promise.resolve(read());
-    } catch (e) {
-      return Promise.reject(e);
-    }
-  }
   /** Every demo folder is there. */
   sdlcMissingFolders(_folders: string[]): Promise<string[]> { return Promise.resolve([]); }
   sdlcBranches(_master: string): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches()); }
@@ -369,15 +370,15 @@ export class MockTransport extends KataTransport {
   sdlcTaskLinks(): Promise<TaskLink[]> { return Promise.resolve(this.sdlc.taskLinks()); }
   /** The scripted run has no process to wait for. */
   sdlcWaitRunExit(_runId: string, _timeoutMs: number): Promise<boolean> { return Promise.resolve(true); }
-  sdlcBuildStatus(ref: ChangeRef): Promise<BuildStatus> { return this.settled(() => this.sdlc.buildStatus(ref.change)); }
+  sdlcBuildStatus(ref: ChangeRef): Promise<BuildStatus> { return settled(() => this.sdlc.buildStatus(ref.change)); }
   sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }): Promise<RepoBoard[]> { return Promise.resolve(mockBoard(repos, status, going, stopped)); }
   sdlcReviewStanding(input: ReviewStandingInput): Promise<ReviewStanding> { return Promise.resolve(mockStanding(input)); }
-  sdlcReadParsed(ref: ChangeRef, doc: string): Promise<ParsedRead | null> { return this.settled(() => this.sdlc.readParsed(ref.change, doc)); }
-  sdlcReviewRecord(ref: ChangeRef): Promise<ReviewRecord | null> { return this.settled(() => { this.sdlc.homeOf(ref.change); return this.sdlc.reviewRecord(); }); }
-  sdlcBuildHeads(ref: ChangeRef, repos: string[]): Promise<Record<string, string>> { return this.settled(() => { this.sdlc.homeOf(ref.change); return this.sdlc.heads(repos); }); }
+  sdlcReadParsed(ref: ChangeRef, doc: string): Promise<ParsedRead | null> { return settled(() => this.sdlc.readParsed(ref.change, doc)); }
+  sdlcReviewRecord(ref: ChangeRef): Promise<ReviewRecord | null> { return settled(() => { this.sdlc.homeOf(ref.change); return this.sdlc.reviewRecord(); }); }
+  sdlcBuildHeads(ref: ChangeRef, repos: string[]): Promise<Record<string, string>> { return settled(() => { this.sdlc.homeOf(ref.change); return this.sdlc.heads(repos); }); }
   sdlcPluginReadiness(_workdir: string | null): Promise<Readiness> { return Promise.resolve({ kind: 'ready', plugin: { dir: '~/.claude/plugins/ai-sdlc', version: MOCK_PLUGIN_VERSION, layouts: MOCK_LAYOUTS }, gh: 'present' }); }
-  sdlcChangeRepos(ref: ChangeRef): Promise<ChangeRepo[]> { return this.settled(() => this.sdlc.changeRepos(ref.workspace, ref.change)); }
-  sdlcMissingChangeBranches(ref: ChangeRef): Promise<string[]> { return this.settled(() => { this.sdlc.homeOf(ref.change); return []; }); }
+  sdlcChangeRepos(ref: ChangeRef): Promise<ChangeRepo[]> { return settled(() => this.sdlc.changeRepos(ref.workspace, ref.change)); }
+  sdlcMissingChangeBranches(ref: ChangeRef): Promise<string[]> { return settled(() => { this.sdlc.homeOf(ref.change); return []; }); }
   sdlcDiffFiles(_repoPath: string, part: Part): Promise<DiffListing> { return Promise.resolve(this.sdlc.diffFiles(part)); }
   sdlcCommitFiles(repoPath: string): Promise<CommitFiles[]> { return Promise.resolve(this.sdlc.commitFiles(repoPath)); }
   sdlcDiffPair(_repoPath: string, _part: Part, path: string): Promise<FilePair> { return Promise.resolve(this.sdlc.diffPair(path)); }
