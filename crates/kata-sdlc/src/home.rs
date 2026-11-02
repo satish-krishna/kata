@@ -3,7 +3,8 @@
 //! Kata asks that, and the one place that checks the folder is on disk. Nothing falls back to the checkout:
 //! a change the plugin cannot place is an error with a message, never a guess.
 use crate::ai_sdlc::state::{self, ChangeState};
-use crate::ai_sdlc::{Place, Program};
+use crate::ai_sdlc::{Place, Program, ProgramError};
+use crate::changes::{is_change_name, is_safe_system};
 use std::path::{Path, PathBuf};
 
 /// Where the plugin has a change, and how it stands there.
@@ -42,8 +43,43 @@ pub fn resolve(
     system: &str,
     change: &str,
 ) -> Result<ChangeHome, HomeError> {
-    let _ = (program, workspace, system, change, state::read_state);
-    unimplemented!("resolve")
+    if !is_safe_system(system) || !is_change_name(change) {
+        return Err(HomeError::Unanswered(format!(
+            "{system}/{change} is not a system and change name"
+        )));
+    }
+    let unanswered = |e: ProgramError| HomeError::Unanswered(e.to_string());
+    // `Program::resolve` runs node on the entry without looking for it, and a missing file would come back
+    // as an empty refusal; say what is wrong instead.
+    if !program.entry.is_file() {
+        return Err(unanswered(ProgramError::TooOld {
+            found: format!("{} does not exist", program.entry.display()),
+        }));
+    }
+    let place = program.resolve(workspace).map_err(unanswered)?;
+    let answer = program
+        .run(
+            &["state", "--json", "--system", system],
+            &place,
+        )
+        .map_err(unanswered)?;
+    let found = state::read_state(answer)
+        .map_err(unanswered)?
+        .changes
+        .into_iter()
+        .find(|c| c.change == change)
+        .ok_or(HomeError::NotListed)?;
+    let folder = PathBuf::from(&found.folder);
+    if !folder.is_dir() {
+        return Err(HomeError::Gone(folder));
+    }
+    Ok(ChangeHome {
+        place,
+        master: PathBuf::from(&found.master),
+        folder,
+        in_copy: found.in_copy,
+        state: found,
+    })
 }
 
 #[cfg(test)]
@@ -93,6 +129,16 @@ mod tests {
                 .unwrap();
             assert_eq!(started["outcome"], "passed", "{started}");
             let copy = ws.join(".ai-sdlc").join("copies").join(CHANGE);
+            testutil::commit_file(
+                &copy,
+                &format!("intent/{SYSTEM}/{CHANGE}/intent.md"),
+                "---
+status: accepted
+---
+# Intent
+",
+                "intent",
+            );
             Fx {
                 _dir: dir,
                 ws,
