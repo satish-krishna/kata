@@ -9,7 +9,7 @@ import type { DoneStep } from '@bindings/DoneStep';
 import type { Resolved } from '@bindings/Resolved';
 import type { BuildEvent } from '@bindings/BuildEvent';
 import type { ChangeRef } from '@bindings/ChangeRef';
-import { MOCK_BUILD_CHANGE, MOCK_BUILD_SECOND, MOCK_HELD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, sdlcSetupScript, sdlcSpecScript } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_BUILD_SECOND, MOCK_HELD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MOCK_MASTER, MOCK_STARTED_FIX, TRIAGE_LIGHT, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 
 const total = (steps: { delay: number }[]) => steps.reduce((a, s) => a + s.delay, 0);
 
@@ -570,5 +570,147 @@ describe('MockTransport declaring-done demos', () => {
         expect((await t.sdlcDiffFiles('/w', 'uncommitted')).files.length > 0).toBe(demo === null);
       });
     }
+  });
+});
+
+describe('MockTransport answers every call the backend gained on this branch (F29)', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  const ref = (change: string): ChangeRef => ({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change });
+  const FORM = { timeoutSecs: 600 };
+  const FORM_RUN = { name: 'sdlc-spec', task: 'x', permissionMode: 'prompt' as const, timeoutSecs: 900 };
+
+  it("sdlcTriageChange names the change the triage's own run started through the plugin, and none for any other run", async () => {
+    const t = new MockTransport();
+    await t.onRunEvent(() => undefined);
+    const id = await t.runSpec({ ...seedSpec(), name: 'sdlc-commerce-new-triage' });
+    vi.advanceTimersByTime(total(sdlcTriageScript.head));
+    await t.submitAnswer(id, 'q1', [[TRIAGE_LIGHT]]);
+    vi.advanceTimersByTime(total(sdlcTriageScript.mid));
+    const transcript = 'sdlc-commerce-new-triage-20261024T090000Z';
+    expect(await t.sdlcTriageChange(transcript, 'commerce')).toBe(MOCK_STARTED_FIX);
+    expect(await t.sdlcTriageChange(transcript, 'other')).toBeNull();
+    expect(await t.sdlcTriageChange('sdlc-commerce-spec-1', 'commerce')).toBeNull();
+  });
+
+  it('sdlcBuildBoard places each repository: working, stopped, finished, not started and idle, with its tasks', async () => {
+    const t = new MockTransport();
+    const status = {
+      tasks: [{ id: 'T1', repo: 'a', row: null }, { id: 'T2', repo: 'b', row: null }],
+      repos: [{ repo: 'a', state: { kind: 'ready', task: 'T1' } }, { repo: 'b', state: { kind: 'ready', task: 'T2' } }, { repo: 'c', state: { kind: 'done' } }, { repo: 'd', state: { kind: 'ready', task: 'T4' } }],
+      departures: [], hasTasks: true, problems: [], logLayouts: [],
+    } as unknown as Parameters<MockTransport['sdlcBuildBoard']>[1];
+    const board = await t.sdlcBuildBoard(['a', 'b', 'c', 'd', 'e'], status, ['a'], { b: { task: 'T2', reason: 'cancelled' } as never });
+    expect(board.map((r) => [r.repo, r.situation.kind])).toEqual([['a', 'working'], ['b', 'stopped'], ['c', 'finished'], ['d', 'not-started'], ['e', 'idle']]);
+    expect(board[0].tasks).toEqual([{ id: 'T1', state: { kind: 'running' } }]);
+  });
+
+  it("sdlcReviewStanding reads the review document first: none, current and stale; without one, the latest review run's", async () => {
+    const t = new MockTransport();
+    const scope = { workspaceId: 'w', system: 'commerce', change: 'c' };
+    const doc = (commits: Record<string, string>) => ({ reviews: [{ commits }], master_moved: [], problems: [] }) as never;
+    const base = { links: [], records: [], heads: { app: 'abc1234' }, scope, master: MOCK_MASTER };
+    expect(await t.sdlcReviewStanding({ ...base, document: { reviews: [], master_moved: [], problems: [] } as never })).toEqual({ kind: 'none' });
+    expect(await t.sdlcReviewStanding({ ...base, document: doc({ app: 'abc1' }) })).toEqual({ kind: 'current-document', review: 0 });
+    expect(await t.sdlcReviewStanding({ ...base, document: doc({ app: 'fff1' }) })).toEqual({ kind: 'stale' });
+    const link = { workspace_id: 'w', system: 'commerce', change: 'c', stage: 'review', run_id: 'r1', started_at: 1, heads: { app: 'abc1234' } };
+    expect(await t.sdlcReviewStanding({ ...base, document: null, links: [link], records: [{ id: 'r1', exit: 0 }] as never })).toEqual({ kind: 'current-run', runId: 'r1' });
+    expect(await t.sdlcReviewStanding({ ...base, document: null, links: [link], records: [{ id: 'r1', exit: 1 }] as never })).toEqual({ kind: 'unfinished' });
+  });
+
+  it('sdlcChangeKey normalizes the workspace folder the way the backend keys it', async () => {
+    const key = await new MockTransport().sdlcChangeKey({ workspace: 'D:\\WS\\Acme\\', system: 'commerce', change: 'c' });
+    expect(key).toEqual({ workspace: { key: 'd:/ws/acme', name: 'acme' }, system: 'commerce', change: 'c' });
+  });
+
+  it('sdlcBuildRuns lists the live runs of a build, sdlcBuildCancel stops one, and sdlcBuildContinue starts it again', async () => {
+    const t = new MockTransport();
+    await t.onRunEvent(() => undefined);
+    expect(await t.sdlcBuildRuns(ref(MOCK_BUILD_SECOND))).toEqual([]);
+    await t.sdlcBuildStart(ref(MOCK_BUILD_SECOND), FORM);
+    const runs = await t.sdlcBuildRuns(ref(MOCK_BUILD_SECOND));
+    expect(runs.length).toBeGreaterThan(0);
+    const repo = runs[0].key;
+    expect(runs.every((r) => r.run !== '')).toBe(true);
+    expect((await t.sdlcBuildContinue(ref(MOCK_BUILD_SECOND), repo)).kind).toBe('alreadyRunning');
+    await t.sdlcBuildCancel(ref(MOCK_BUILD_SECOND), repo);
+    vi.advanceTimersByTime(1000);
+    expect((await t.sdlcBuildRuns(ref(MOCK_BUILD_SECOND))).some((r) => r.key === repo)).toBe(false);
+    expect((await t.sdlcBuildContinue(ref(MOCK_BUILD_SECOND), repo)).kind).not.toBe('alreadyRunning');
+  });
+
+  it("sdlcPreviewChangeRun composes the run from the form: a document run keeps the form's permission mode, a triage or fix run is auto", async () => {
+    const t = new MockTransport();
+    const spec = await t.sdlcPreviewChangeRun(ref(MOCK_BUILD_CHANGE), 'spec', FORM_RUN);
+    expect([spec.name, spec.task, spec.permissions.mode, spec.leash.timeout_secs]).toEqual(['sdlc-spec', 'x', 'prompt', 900]);
+    expect(spec.given?.required_plugins).toEqual(['ai-sdlc']);
+    expect((await t.sdlcPreviewChangeRun(ref(MOCK_BUILD_CHANGE), 'fix', FORM_RUN)).permissions.mode).toBe('auto');
+    expect((await t.sdlcPreviewChangeRun(ref(MOCK_BUILD_CHANGE), 'triage', FORM_RUN)).permissions.mode).toBe('auto');
+  });
+
+  it('sdlcPreviewBuild gives one section per repository then the review, and one section for one repository', async () => {
+    const t = new MockTransport();
+    const all = await t.sdlcPreviewBuild(ref(MOCK_BUILD_CHANGE), 'start', null, FORM);
+    expect(all.at(-1)?.title).toBe('Review');
+    expect(all.length).toBeGreaterThan(1);
+    expect(all.every((s) => s.spec.leash.timeout_secs === 600)).toBe(true);
+    const one = await t.sdlcPreviewBuild(ref(MOCK_BUILD_CHANGE), 'continue-one', 'commerce-core', FORM);
+    expect(one.map((s) => s.repo)).toEqual(['commerce-core']);
+    expect((await t.sdlcPreviewBuild(ref(MOCK_BUILD_CHANGE), 'manual-review', null, FORM)).map((s) => s.title)).toEqual(['Review']);
+  });
+
+  it("sdlcReviewView, sdlcRoundOffer and sdlcRoundPlan read the same review: the offer's default picks plan a round", async () => {
+    const t = new MockTransport();
+    const view = await t.sdlcReviewView(ref(MOCK_BUILD_CHANGE));
+    const [offer, picks] = await t.sdlcRoundOffer(ref(MOCK_BUILD_CHANGE));
+    const keys = offer.findings.map((f) => f.key);
+    expect(view.groups.flatMap((g) => g.findings.map((f) => f.key)).sort()).toEqual([...keys].sort());
+    expect(picks.picked.every((k) => keys.includes(k))).toBe(true);
+    const plan = await t.sdlcRoundPlan(ref(MOCK_BUILD_CHANGE), { picked: [], assigned: {}, notes: {} });
+    expect(plan).toEqual({ blocked: 'Pick a finding or write a note.', requests: [] });
+  });
+
+  it('sdlcMarkOpened and sdlcCloseAnswer have nothing to do in the browser and resolve', async () => {
+    const t = new MockTransport();
+    await expect(t.sdlcMarkOpened(ref(MOCK_BUILD_CHANGE))).resolves.toBeUndefined();
+    await expect(t.sdlcCloseAnswer(true)).resolves.toBeUndefined();
+  });
+
+  it('sdlcRenameBranch renames the change branch in every repository that has it', async () => {
+    const out = await new MockTransport().sdlcRenameBranch(MOCK_WORKSPACE_FOLDER, 'w1', 'commerce', MOCK_BUILD_CHANGE, 'feat/x');
+    expect(out).toMatchObject({ outcome: 'renamed', from: `change/${MOCK_BUILD_CHANGE}`, to: 'feat/x' });
+  });
+
+  it("sdlcChecksView gives each repository's checks with the plugin's sentence", async () => {
+    const views = await new MockTransport().sdlcChecksView(ref(MOCK_DONE_CHANGE));
+    expect(views.length).toBeGreaterThan(0);
+    expect(views.every((v) => v.summary !== '')).toBe(true);
+  });
+
+  it('sdlcOldChecks says nothing without ?demo=old-checks, and sdlcOldChecksSeen resolves', async () => {
+    const t = new MockTransport();
+    expect(await t.sdlcOldChecks(MOCK_WORKSPACE_FOLDER, ['commerce'])).toEqual([]);
+    await expect(t.sdlcOldChecksSeen(['commerce'])).resolves.toBeUndefined();
+  });
+
+  it('onRunning hands every new strip to its listener until unlistened', async () => {
+    const t = new MockTransport();
+    const seen: unknown[] = [];
+    const off = await t.onRunning((s) => seen.push(s));
+    await t.sdlcBuildStart(ref(MOCK_BUILD_SECOND), FORM);
+    expect(seen.length).toBeGreaterThan(0);
+    off();
+    const before = seen.length;
+    await t.sdlcBuildStart(ref(MOCK_BUILD_CHANGE), FORM);
+    expect(seen.length).toBe(before);
+  });
+
+  it('onCloseAsked asks nothing outside ?demo=close', async () => {
+    const t = new MockTransport();
+    const seen: unknown[] = [];
+    const off = await t.onCloseAsked((a) => seen.push(a));
+    await Promise.resolve();
+    expect(seen).toEqual([]);
+    off();
   });
 });

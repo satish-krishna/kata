@@ -101,6 +101,7 @@ const rows: Row[] = [
   ['sdlcDiscard in a build', (t) => t.sdlcDiscard('/m', snap, ['p'], { system: 's', change: 'c' }), 'sdlc_discard', { master: '/m', before: snap, paths: ['p'], build: { system: 's', change: 'c' } }],
   ['sdlcChangeName', (t) => t.sdlcChangeName('Password reset'), 'sdlc_change_name', { title: 'Password reset' }],
   ['sdlcChangeName', (t) => t.sdlcChangeName('Password reset'), 'sdlc_change_name', { title: 'Password reset' }],
+  ['sdlcTriageChange', (t) => t.sdlcTriageChange('sdlc-commerce-triage-1', 's'), 'sdlc_triage_change', { transcript: 'sdlc-commerce-triage-1', system: 's' }],
   ['sdlcStartChange', (t) => t.sdlcStartChange('/w', 's', 'Password reset', 'feat', 'X-1'), 'sdlc_start_change', { folder: '/w', system: 's', title: 'Password reset', workType: 'feat', scope: 'X-1' }],
   ['sdlcStartChange with a branch', (t) => t.sdlcStartChange('/w', 's', 'Password reset', 'feat', 'X-1', 'feat/x'), 'sdlc_start_change', { folder: '/w', system: 's', title: 'Password reset', workType: 'feat', scope: 'X-1', branch: 'feat/x' }],
   ['sdlcStartChange with a branch', (t) => t.sdlcStartChange('/w', 's', 'Password reset', 'feat', 'X-1', 'feat/x'), 'sdlc_start_change', { folder: '/w', system: 's', title: 'Password reset', workType: 'feat', scope: 'X-1', branch: 'feat/x' }],
