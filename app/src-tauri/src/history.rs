@@ -26,6 +26,10 @@ pub struct HistoryEntry {
     pub event: Value,
 }
 
+/// How many ended runs keep their history. A page that learned of a run just before it ended still reads
+/// the whole run; past these, nothing asks for it: a page follows only the runs the backend names live.
+pub const KEPT_ENDED: usize = 8;
+
 #[derive(Default)]
 pub struct RunHistory {
     runs: Mutex<HashMap<u64, Vec<(u64, Value)>>>,
@@ -66,6 +70,10 @@ impl RunHistory {
             })
             .unwrap_or_default()
     }
+
+    /// The run ended and its reader took its last replay. Its history is kept for the latest
+    /// [`KEPT_ENDED`] ended runs, then dropped.
+    pub fn finish(&self, _run_id: u64) {}
 
     /// The question or permission the run is waiting on, if its last request has no answer or decision.
     pub fn pending(&self, run_id: u64) -> Option<Pending> {
@@ -190,5 +198,26 @@ mod tests {
         ));
         h.push(1, &decided("p1"));
         assert_eq!(h.pending(1), None);
+    }
+
+    #[test]
+    fn an_ended_run_is_dropped_once_newer_ended_runs_push_it_out() {
+        let h = RunHistory::default();
+        let total = KEPT_ENDED as u64 + 2;
+        // Run 0 stays live throughout.
+        h.push(0, &json!({"type": "run.started"}));
+        for id in 1..=total {
+            h.push(id, &json!({"type": "run.started"}));
+            h.push(id, &json!({"type": "run.completed"}));
+            h.finish(id);
+        }
+        // The two oldest ended runs are gone; the latest KEPT_ENDED still replay in full.
+        assert!(h.replay(1).is_empty());
+        assert!(h.replay(2).is_empty());
+        for id in 3..=total {
+            assert_eq!(h.replay(id).len(), 2, "run {id}");
+        }
+        // A live run is never dropped, however many runs end.
+        assert_eq!(h.replay(0).len(), 1);
     }
 }
