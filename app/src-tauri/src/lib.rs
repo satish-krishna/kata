@@ -742,32 +742,94 @@ fn sdlc_read_parsed(
     read_parsed_in(&home, &plugin, &change.system, &doc).map_err(|e| e.to_string())
 }
 
+/// Where a run's folder is taken, listed and discarded: a folder the caller names (setup, context and
+/// triage runs), or a change, whose folder is wherever the plugin says it lives.
+#[derive(serde::Deserialize, Clone, Debug)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum SnapshotTarget {
+    Workspace { master: String },
+    Change(build_host::ChangeRef),
+}
+
+/// A `SnapshotTarget` after asking the plugin where the change lives.
+enum Placed {
+    Workspace(std::path::PathBuf),
+    Change {
+        workspace: std::path::PathBuf,
+        system: String,
+        home: Result<sdlc::home::ChangeHome, sdlc::home::HomeError>,
+    },
+}
+
+impl Placed {
+    fn placing(&self) -> sdlc::snapshot::Placing<'_> {
+        match self {
+            Placed::Workspace(master) => sdlc::snapshot::Placing::Workspace(master),
+            Placed::Change { home, .. } => {
+                sdlc::snapshot::Placing::Change(home.as_ref().map(|h| h.master.as_path()))
+            }
+        }
+    }
+}
+
+fn place_target_with(program: &sdlc::ai_sdlc::Program, target: &SnapshotTarget) -> Placed {
+    let _ = (program, target);
+    todo!("place_target_with")
+}
+
+fn place_target(target: &SnapshotTarget) -> Placed {
+    let _ = target;
+    todo!("place_target")
+}
+
+fn snapshot_in(placed: &Placed) -> Result<sdlc::snapshot::Snapshot, String> {
+    let _ = placed;
+    todo!("snapshot_in")
+}
+
+fn leftovers_in(
+    placed: &Placed,
+    before: &sdlc::snapshot::Snapshot,
+    build: Option<&sdlc::snapshot::BuildScope>,
+) -> Result<sdlc::snapshot::Leftovers, String> {
+    let _ = (placed, before, build);
+    todo!("leftovers_in")
+}
+
+fn discard_in(
+    placed: &Placed,
+    before: &sdlc::snapshot::Snapshot,
+    paths: &[String],
+    build: Option<&sdlc::snapshot::BuildScope>,
+) -> Result<(), String> {
+    let _ = (placed, before, paths, build);
+    todo!("discard_in")
+}
+
 #[tauri::command(async)]
-fn sdlc_snapshot(master: String) -> Result<sdlc::snapshot::Snapshot, String> {
-    sdlc::snapshot::take(Path::new(&master)).map_err(|e| e.to_string())
+fn sdlc_snapshot(target: SnapshotTarget) -> Result<sdlc::snapshot::Snapshot, String> {
+    snapshot_in(&place_target(&target))
 }
 
 #[tauri::command(async)]
 fn sdlc_leftovers(
-    master: String,
+    target: SnapshotTarget,
     before: sdlc::snapshot::Snapshot,
-    product_repos: Vec<String>,
     build: Option<sdlc::snapshot::BuildScope>,
 ) -> Result<sdlc::snapshot::Leftovers, String> {
-    let repos: Vec<std::path::PathBuf> = product_repos.into_iter().map(Into::into).collect();
-    sdlc::snapshot::leftovers(Path::new(&master), &before, &repos, build.as_ref())
-        .map_err(|e| e.to_string())
+    leftovers_in(&place_target(&target), &before, build.as_ref())
 }
 
 #[tauri::command(async)]
 fn sdlc_discard(
-    master: String,
+    target: SnapshotTarget,
     before: sdlc::snapshot::Snapshot,
     paths: Vec<String>,
     build: Option<sdlc::snapshot::BuildScope>,
 ) -> Result<(), String> {
-    sdlc::snapshot::discard(Path::new(&master), &before, &paths, build.as_ref())
-        .map_err(|e| e.to_string())
+    discard_in(&place_target(&target), &before, &paths, build.as_ref())
 }
 
 /// The name the plugin will be asked to give a change described by `title`, so a preview can show it.
@@ -2266,6 +2328,98 @@ name: build
             panic!("the workspace's own plugin should be ready, got {readiness:?}");
         };
         assert_eq!(resolved, Ok(found.dir));
+    }
+
+    mod snapshot_target {
+        use super::*;
+        use sdlc::home::HomeError;
+        use std::path::PathBuf;
+
+        fn git(dir: &Path, args: &[&str]) {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+        }
+
+        fn repo(dir: &Path) {
+            std::fs::create_dir_all(dir).unwrap();
+            git(dir, &["init", "-q", "-b", "main"]);
+            git(dir, &["config", "user.name", "Test"]);
+            git(dir, &["config", "user.email", "test@example.com"]);
+            git(dir, &["config", "commit.gpgsign", "false"]);
+            std::fs::write(dir.join("README.md"), "init\n").unwrap();
+            git(dir, &["add", "-A"]);
+            git(dir, &["commit", "-q", "-m", "init"]);
+        }
+
+        fn change_ref(workspace: &Path) -> build_host::ChangeRef {
+            build_host::ChangeRef {
+                workspace: workspace.to_string_lossy().into_owned(),
+                system: "demo".into(),
+                change: "2026-11-02-greeting".into(),
+            }
+        }
+
+        #[test]
+        fn leftovers_for_the_workspace_target_are_unchanged() {
+            let dir = tempfile::tempdir().unwrap();
+            let master = dir.path().join("ai-sdlc");
+            repo(&master);
+            repo(&dir.path().join("app"));
+            repo(&dir.path().join("web"));
+            let placed = Placed::Workspace(master.clone());
+            let before = snapshot_in(&placed).unwrap();
+            assert_eq!(before.folder, master.to_string_lossy());
+            std::fs::write(master.join("run.md"), "x").unwrap();
+            std::fs::write(dir.path().join("app").join("dirty.txt"), "x").unwrap();
+            let l = leftovers_in(&placed, &before, None).unwrap();
+            assert_eq!(l.discardable, vec!["run.md"]);
+            assert_eq!(l.product_repos_changed, vec!["app"]);
+            assert!(l.product_repos_unchecked.is_empty());
+        }
+
+        #[test]
+        fn discard_for_the_workspace_target_acts_in_the_snapshots_folder() {
+            let dir = tempfile::tempdir().unwrap();
+            let master = dir.path().join("ai-sdlc");
+            repo(&master);
+            let placed = Placed::Workspace(master.clone());
+            let before = snapshot_in(&placed).unwrap();
+            std::fs::write(master.join("run.md"), "x").unwrap();
+            discard_in(&placed, &before, &["run.md".into()], None).unwrap();
+            assert!(!master.join("run.md").exists());
+        }
+
+        #[test]
+        fn discard_with_an_unplaceable_change_target_refuses() {
+            let dir = tempfile::tempdir().unwrap();
+            let master = dir.path().join("ai-sdlc");
+            repo(&master);
+            let before = snapshot_in(&Placed::Workspace(master.clone())).unwrap();
+            std::fs::write(master.join("run.md"), "x").unwrap();
+            // A plugin folder with no program: the plugin cannot say where the change lives.
+            let program = sdlc::ai_sdlc::Program::locate(&dir.path().join("no-plugin"));
+            let target = SnapshotTarget::Change(change_ref(dir.path()));
+            let placed = place_target_with(&program, &target);
+            assert!(matches!(
+                placed,
+                Placed::Change {
+                    home: Err(HomeError::Unanswered(_)),
+                    ..
+                }
+            ));
+            let err = discard_in(&placed, &before, &["run.md".into()], None).unwrap_err();
+            assert!(
+                err.starts_with("Nothing discarded: Could not find where this change lives"),
+                "{err}"
+            );
+            assert!(master.join("run.md").exists(), "nothing discarded");
+            let _: PathBuf = master;
+        }
     }
 
     mod open {
