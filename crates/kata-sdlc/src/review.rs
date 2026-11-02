@@ -88,10 +88,15 @@ fn moved_since_latest(
     let Some(since) = recorded else {
         return Vec::new();
     };
-    // A rename commits `branch.md` and changes nothing the review looked at, so only this
-    // currency check lets it through; `verify_run` does not.
+    // A rename commits the change's record (`change.yml` from the plugin, `branch.md` from an older Kata)
+    // and changes nothing the review looked at, so only this currency check lets it through; `verify_run`
+    // does not.
     let dir = change_dir(system, change);
-    let allowed = [format!("{dir}/build/review.md"), format!("{dir}/branch.md")];
+    let allowed = [
+        format!("{dir}/build/review.md"),
+        format!("{dir}/branch.md"),
+        format!("{dir}/change.yml"),
+    ];
     match committed_outside(master, &allowed, since) {
         Ok(files) => files,
         Err(e) => vec![format!("could not check the master repository: {e}")],

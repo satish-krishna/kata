@@ -90,6 +90,7 @@ const BUSY = 'Another task is already running.';
 
 /** The actions `act` handles itself; every other action starts a stage run. */
 type HandledAction =
+  | 'rename'
   | 'accept-intent'
   | 'reject-intent'
   | 'accept-spec'
@@ -397,7 +398,7 @@ export class ChangePageViewModel {
     if (c === null || this.done() || c.offer.label.step !== 'build') return [];
     const own = this.build.actions();
     return this.offeredActions()
-      .filter((a) => (c.state.track === 'fix' ? a === 'reopen-fix' : (a === 'reopen-intent' || a === 'reopen-spec') && !own.includes(a)))
+      .filter((a) => a === 'rename' || (c.state.track === 'fix' ? a === 'reopen-fix' : (a === 'reopen-intent' || a === 'reopen-spec') && !own.includes(a)))
       .map((action) => ({ action, disabled: this.disabledFor(action), title: this.titleFor(action) }));
   });
   /** What blocks the build, shown above the plan; null when nothing does or another document is shown. */
@@ -855,6 +856,9 @@ export class ChangePageViewModel {
         return;
       case 'cancel-build':
         this.build.cancelBuild();
+        return;
+      case 'rename':
+        await this.renameBranch(this.expectedBranch());
         return;
       case 'full-pipeline-instead':
         await this.openFullPipeline();

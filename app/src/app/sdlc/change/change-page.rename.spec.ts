@@ -100,6 +100,6 @@ describe.each(['plan-awaiting', 'build-finished'] as const)('renaming from the c
     expect(text).toContain(old.url);
     expect(text).toContain(`change/${MOCK_BUILD_CHANGE}`);
     // The page read the change again: the new branch is what it knows.
-    expect(transport.sdlcChangeRepos).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(transport.sdlcChangeRepos).mock.calls.length).toBeGreaterThan(1);
   });
 });

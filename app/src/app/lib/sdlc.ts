@@ -25,12 +25,12 @@ export const SDLC_REQUIRED_PLUGINS: readonly string[] = ['ai-sdlc'] as const;
 /** An action of the plugin's answer. */
 type OfferedStageAction = BindingStageAction;
 
-/** The actions the change page draws. The answer also lists renaming the branch and rejecting a fix, which have no control on the page yet. */
-export type StageAction = Exclude<OfferedStageAction, "reject-fix" | "rename">;
+/** The actions the change page draws. The answer also lists rejecting a fix, which has no control on the page yet. */
+export type StageAction = Exclude<OfferedStageAction, "reject-fix">;
 
 /** Whether the page has a control for an offered action. */
 export function isPageAction(action: OfferedStageAction): action is StageAction {
-  return action !== "reject-fix" && action !== "rename";
+  return action !== "reject-fix";
 }
 
 /** A stage by name: the plugin's answer words an out-of-date plan as an object that carries its cause. */
@@ -267,6 +267,7 @@ const LABEL: Record<StageAction, string> = {
   "accept-fix": "Accept fix",
   "change-fix": "Change the fix",
   "reopen-fix": "Reopen the fix",
+  rename: "Rename branch",
   "full-pipeline-instead": "Take the full pipeline instead",
 };
 
