@@ -35,7 +35,7 @@ import type { Offender } from '@bindings/Offender';
 import type { ChecksPlan } from '@bindings/ChecksPlan';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { PublishSummary } from '@bindings/PublishSummary';
-import type { RemoteClash } from '@bindings/RemoteClash';
+import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
 import type { DoneView } from '@bindings/DoneView';
@@ -67,7 +67,7 @@ import type { BuildSection } from '@bindings/BuildSection';
 import type { ReviewView } from '@bindings/ReviewView';
 import type { StartOutcome } from '@bindings/StartOutcome';
 import type { DocumentKind } from '../../lib/build-host';
-import { KataTransport, NO_BACKEND, type NamingState, type RenameResult } from './kata-transport';
+import { KataTransport, NO_BACKEND, type NamingState } from './kata-transport';
 
 /** How long the first scan of the demo setup folder takes, long enough to see the checking steps. */
 const SETUP_SCAN_MS = 1800;
@@ -296,8 +296,7 @@ export class MockTransport extends KataTransport {
   sdlcStartChange(_folder: string, _system: string, title: string, _workType: string, _scope: string, branch?: string): Promise<ChangeStart> { return Promise.resolve(this.sdlc.startChange(title, branch)); }
   sdlcNaming(_folder: string, _masterRepo: string, _system: string): Promise<NamingState> { return Promise.resolve(this.sdlc.naming()); }
   sdlcCheckScope(_folder: string, scope: string): Promise<string[]> { return Promise.resolve(scope.includes(' ') ? ['a scope cannot contain a space'] : []); }
-  sdlcRenameBranch(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, change: string, newName: string): Promise<RenameResult> { return Promise.resolve(this.sdlc.renameBranch(change, newName)); }
-  sdlcRemoteClashes(touched: PublishRepo[], _masterRepo: string, _system: string, change: string): Promise<RemoteClash[]> { return Promise.resolve(this.sdlc.remoteClashes(touched, change)); }
+  sdlcRenameBranch(_folder: string, _workspaceId: string, _system: string, change: string, to: string): Promise<RenameOutcome> { return Promise.resolve(this.sdlc.renameBranch(change, to)); }
   sdlcCheckout(_master: string, branch: string): Promise<void> { this.sdlc.checkout(branch); return Promise.resolve(); }
   sdlcDecide(_master: string, _system: string, change: string, decision: Decision, _confirmed: boolean): Promise<DecideOutcome> { return Promise.resolve(this.sdlc.decide(change, decision)); }
   sdlcRunLinks(): Promise<RunLink[]> { return Promise.resolve(this.sdlc.runLinks()); }

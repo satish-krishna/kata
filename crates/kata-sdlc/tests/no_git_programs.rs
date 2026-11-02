@@ -369,7 +369,7 @@ fn every_flow_runs_with_no_git_or_gh_on_path() {
 
 #[test]
 #[serial]
-fn every_flow_runs_with_no_git_or_gh_on_path_with_a_branch_record() {
+fn every_flow_runs_with_no_git_or_gh_on_path_with_a_recorded_branch() {
     every_flow("feat/PROJ-123-password-reset", true);
 }
 

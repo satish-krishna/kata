@@ -603,62 +603,25 @@ describe('lasting links after a publish or a round', () => {
   });
 });
 
-describe('a branch name that is taken on GitHub', () => {
-  const CLASH = { repo: 'commerce-core', branch: 'feat/PROJ-123-reset' };
+describe('a branch name, after a rename or a push that met another change', () => {
   const NEW_NAME = 'feat/PROJ-123-password-reset';
-  const stepLabels = (steps: { mock: { calls: unknown[][] } }) =>
-    (steps.mock.calls.find((c) => c[0] === 'Declaring done')![1] as { label: string }[]).map((s) => s.label);
 
-  it('a GitHub clash holds confirming until renamed (R10.1)', async () => {
-    const { vm, transport, steps } = await finished();
-    const publish = vi.spyOn(transport, 'sdlcPublish');
-    const clashes = vi.spyOn(transport, 'sdlcRemoteClashes').mockResolvedValue([CLASH]);
-    await vm.act('declare-done');
-    const labels = stepLabels(steps);
-    expect(labels.indexOf('Branch is free on GitHub')).toBe(labels.indexOf('Origins are GitHub repositories') + 1);
-    expect(clashes).toHaveBeenCalledTimes(1);
-    expect(vm.doneReport()!.clashes).toEqual([CLASH]);
-    expect(canConfirm(vm.doneReport()!)).toBe(false);
-    await vm.confirmDone();
-    expect(publish).not.toHaveBeenCalled();
-    expect(vm.doneReport()).not.toBeNull();
-  });
-
-  it('with no clash the report lists none and the branch the repositories have (R10.1)', async () => {
+  it('the report names the branch the repositories have (R10.1)', async () => {
     const { vm } = await finished();
     await vm.act('declare-done');
-    expect(vm.doneReport()!.clashes).toEqual([]);
     expect(vm.doneReport()!.branch).toBe(`change/${BUILD}`);
   });
 
-  it('after a rename the readiness runs again and confirming is offered, the review still current (R10.3)', async () => {
+  it('a rename lists the pull requests opened from the old name, to close by hand (R2.3)', async () => {
     const { vm, transport } = await finished();
-    vi.spyOn(transport, 'sdlcRemoteClashes').mockResolvedValueOnce([CLASH]).mockResolvedValue([]);
-    const rename = vi.spyOn(transport, 'sdlcRenameBranch');
-    const runs = vi.spyOn(transport, 'sdlcRunChecks');
-    await vm.act('declare-done');
-    expect(canConfirm(vm.doneReport()!)).toBe(false);
-    const checksBefore = runs.mock.calls.length;
-    const renamed = vm.renameFromDone(CLASH.branch);
+    const old = { repo: 'customer-portal', url: 'https://github.com/acme/customer-portal/pull/3', number: 3, source: 'plugin' as const };
+    vi.spyOn(transport, 'sdlcRenameBranch').mockResolvedValue({ outcome: 'renamed', from: 'feat/PROJ-123-reset', to: NEW_NAME, repos: ['master'], oldPullRequests: [old] });
+    const renamed = vm.renameBranch('feat/PROJ-123-reset');
     await vi.waitFor(() => expect(TestBed.inject(SdlcRunner).nameRequest()).not.toBeNull());
-    expect(TestBed.inject(SdlcRunner).nameRequest()!.rename).toBe(true);
     await TestBed.inject(SdlcRunner).confirmName(NEW_NAME);
-    await renamed;
-    expect(rename).toHaveBeenCalledWith(vm.current()!.folder, vm.current()!.id, 'commerce-docs', 'commerce', BUILD, NEW_NAME);
-    expect(runs.mock.calls.length).toBeGreaterThan(checksBefore);
-    expect(vm.doneReport()!.clashes).toEqual([]);
-    expect(canConfirm(vm.doneReport()!)).toBe(true);
-  });
-
-  it('closing the rename dialog leaves the report as it was, held (R10.1)', async () => {
-    const { vm, transport } = await finished();
-    vi.spyOn(transport, 'sdlcRemoteClashes').mockResolvedValue([CLASH]);
-    await vm.act('declare-done');
-    const asked = vm.renameFromDone(CLASH.branch);
-    await vi.waitFor(() => expect(TestBed.inject(SdlcRunner).nameRequest()).not.toBeNull());
-    TestBed.inject(SdlcRunner).closeName();
-    await asked;
-    expect(vm.doneReport()!.clashes).toEqual([CLASH]);
+    expect(await renamed).toBe(NEW_NAME);
+    expect(vm.prLeftBehind()).toEqual([{ repo: 'customer-portal', url: old.url, branch: 'feat/PROJ-123-reset' }]);
+    expect(vm.prList()).toEqual([]);
   });
 
   it('a Clash publish result keeps what was pushed and lists what an earlier name left behind (R10.2, R10.4)', async () => {

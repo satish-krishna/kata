@@ -899,27 +899,17 @@ fn sdlc_check_scope(folder: String, scope: String) -> Result<Vec<String>, String
     sdlc::naming::check_scope(&plugin, &scope).map_err(|e| e.to_string())
 }
 
-/// What a rename did, for the window.
-#[derive(serde::Serialize)]
-struct RenameResult {
-    old: String,
-    new: String,
-    repos: Vec<String>,
-}
-
-/// Rename the change's branch in every repository that has it, then move the pull requests saved
-/// under the old name to the record's left-behind list. Refused while a build run of the change is
-/// live, since a run holds the branch checked out.
+/// Rename the change's branch through the plugin, which moves it in every repository that has it or in
+/// none. Refused while a build run of the change is live, since a run holds the branch checked out.
 #[tauri::command(async)]
 fn sdlc_rename_branch(
     control: State<'_, RunControl>,
     folder: String,
     workspace_id: String,
-    master_repo: String,
     system: String,
     change: String,
-    new_name: String,
-) -> Result<RenameResult, String> {
+    to: String,
+) -> Result<rename_change::RenameOutcome, String> {
     if control
         .state
         .lock()
@@ -928,51 +918,12 @@ fn sdlc_rename_branch(
     {
         return Err("A build run of this change is live. Rename the branch after it ends.".into());
     }
-    let plugin = ai_sdlc_readiness(Some(&folder));
-    let out = sdlc::branch_record::rename(
-        &plugin,
-        Path::new(&folder),
-        &master_repo,
-        &system,
-        &change,
-        &new_name,
-    )
-    .map_err(|e| e.to_string())?;
-    let found = sdlc::store::load_pr_records()
-        .into_iter()
-        .find(|r| r.workspace_id == workspace_id && r.system == system && r.change == change);
-    if let Some(mut record) = found {
-        record.retire(&out.new);
-        sdlc::store::save_pr_record(&record).map_err(|e| e.to_string())?;
-    }
-    Ok(RenameResult {
-        old: out.old,
-        new: out.new,
-        repos: out.repos,
-    })
-}
-
-/// The repositories whose GitHub branch of the change holds work this machine does not have.
-#[tauri::command(async)]
-fn sdlc_remote_clashes(
-    touched: Vec<sdlc::publish::PublishRepo>,
-    master_repo: String,
-    system: String,
-    change: String,
-) -> Result<Vec<sdlc::publish::RemoteClash>, String> {
-    let Some(master) = touched.iter().find(|r| r.repo == master_repo) else {
-        return Err(format!(
-            "{master_repo} is not among the repositories of the change"
-        ));
-    };
-    let branch = sdlc::branch_record::change_branch(Path::new(&master.path), &system, &change)
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&folder)?);
+    let place = program
+        .resolve(Path::new(&folder))
         .map_err(|e| e.to_string())?;
-    sdlc::publish::remote_clashes(
-        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
-        &touched,
-        &branch,
-    )
-    .map_err(|e| e.to_string())
+    let legacy = sdlc::pull_requests::legacy_entries(&workspace_id, &system, &change);
+    rename_change::rename_change(&program, &place, &system, &change, &to, &legacy)
 }
 
 #[tauri::command(async)]
@@ -1841,7 +1792,6 @@ pub fn run() {
             sdlc_naming,
             sdlc_check_scope,
             sdlc_rename_branch,
-            sdlc_remote_clashes,
             sdlc_checkout,
             sdlc_decide,
             sdlc_run_links,

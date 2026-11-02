@@ -61,9 +61,13 @@ impl Program {
         change: &str,
         refresh: bool,
     ) -> Result<ChangeShow, ProgramError> {
-        let _ = (place, change, refresh);
-        Err(ProgramError::CouldNotRun {
-            message: "not implemented".into(),
+        let mut command = vec!["change", "show", "--json", "--change", change];
+        if refresh {
+            command.push("--refresh");
+        }
+        let answer = self.run(&command, place)?;
+        serde_json::from_value(answer.clone()).map_err(|e| ProgramError::CouldNotRun {
+            message: format!("change show printed something Kata cannot read ({e}): {answer}"),
         })
     }
 }

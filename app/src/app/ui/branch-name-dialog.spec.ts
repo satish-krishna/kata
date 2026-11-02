@@ -18,7 +18,7 @@ class Host {
 }
 
 const CHANGE = '2026-11-02-password-reset';
-const ASK = { folder: '/ws', workspaceId: 'acme', masterRepo: 'acme-docs', system: 'commerce', change: CHANGE, current: `change/${CHANGE}` };
+const ASK = { folder: '/ws', workspaceId: 'acme', system: 'commerce', change: CHANGE, current: `change/${CHANGE}` };
 const dialog = () => document.body.querySelector('[role="dialog"]');
 const button = (label: string) => Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent!.trim() === label)!;
 const nameInput = () => dialog()!.querySelector<HTMLInputElement>('input[aria-label="Branch name"]')!;
@@ -60,7 +60,7 @@ describe('BranchNameDialog', () => {
     await type('feature/PROJ-123');
     button('Accept').click();
     await settle();
-    expect(rename).toHaveBeenCalledWith('/ws', 'acme', 'acme-docs', 'commerce', CHANGE, 'feature/PROJ-123');
+    expect(rename).toHaveBeenCalledWith('/ws', 'acme', 'commerce', CHANGE, 'feature/PROJ-123');
     expect((await result)?.branch).toBe('feature/PROJ-123');
     expect(dialog()).toBeNull();
   });
@@ -72,6 +72,17 @@ describe('BranchNameDialog', () => {
     button('Accept').click();
     await settle();
     expect(dialog()!.textContent).toContain('feat/x clashes with feat/x in acme-docs');
+    expect(nameInput().getAttribute('aria-invalid')).toBe('true');
+  });
+
+  it('shows the plugin reasons as it gave them when it renames nothing', async () => {
+    const { transport } = await open();
+    vi.spyOn(transport, 'sdlcRenameBranch').mockResolvedValue({ outcome: 'refused', problems: ['feat/x: a branch name cannot contain a space', 'the copy has uncommitted files'] });
+    await type('feat/x');
+    button('Accept').click();
+    await settle();
+    expect(dialog()!.textContent).toContain('feat/x: a branch name cannot contain a space');
+    expect(dialog()!.textContent).toContain('the copy has uncommitted files');
     expect(nameInput().getAttribute('aria-invalid')).toBe('true');
   });
 

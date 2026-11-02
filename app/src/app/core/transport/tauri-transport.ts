@@ -43,7 +43,7 @@ import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import type { PublishSummary } from '@bindings/PublishSummary';
-import type { RemoteClash } from '@bindings/RemoteClash';
+import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { BuildState } from '@bindings/BuildState';
 import type { RoundOffer } from '@bindings/RoundOffer';
 import type { RoundPicks } from '@bindings/RoundPicks';
@@ -62,7 +62,7 @@ import type { RunForm } from '@bindings/RunForm';
 import type { RunningStrip } from '@bindings/RunningStrip';
 import type { StartOutcome } from '@bindings/StartOutcome';
 import type { DocumentKind } from '../../lib/build-host';
-import { KataTransport, type NamingState, type RenameResult } from './kata-transport';
+import { KataTransport, type NamingState } from './kata-transport';
 
 /** The Tauri functions the transport needs, injectable so tests need no module mocking. */
 export interface TauriIpc {
@@ -131,8 +131,7 @@ export class TauriTransport extends KataTransport {
   sdlcChangeName(title: string) { return this.ipc.invoke<string>('sdlc_change_name', { title }); }
   sdlcStartChange(folder: string, system: string, title: string, workType: string, scope: string, branch?: string) { return this.ipc.invoke<ChangeStart>('sdlc_start_change', { folder, system, title, workType, scope, ...(branch === undefined ? {} : { branch }) }); }
   sdlcNaming(folder: string, masterRepo: string, system: string) { return this.ipc.invoke<NamingState>('sdlc_naming', { folder, masterRepo, system }); }
-  sdlcRenameBranch(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, newName: string) { return this.ipc.invoke<RenameResult>('sdlc_rename_branch', { folder, workspaceId, masterRepo, system, change, newName }); }
-  sdlcRemoteClashes(touched: PublishRepo[], masterRepo: string, system: string, change: string) { return this.ipc.invoke<RemoteClash[]>('sdlc_remote_clashes', { touched, masterRepo, system, change }); }
+  sdlcRenameBranch(folder: string, workspaceId: string, system: string, change: string, to: string) { return this.ipc.invoke<RenameOutcome>('sdlc_rename_branch', { folder, workspaceId, system, change, to }); }
   sdlcCheckScope(folder: string, scope: string) { return this.ipc.invoke<string[]>('sdlc_check_scope', { folder, scope }); }
   sdlcCheckout(master: string, branch: string) { return this.ipc.invoke<void>('sdlc_checkout', { master, branch }); }
   sdlcDecide(master: string, system: string, change: string, decision: Decision, confirmed: boolean) { return this.ipc.invoke<DecideOutcome>('sdlc_decide', { master, system, change, decision, confirmed }); }

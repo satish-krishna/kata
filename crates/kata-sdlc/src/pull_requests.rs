@@ -32,8 +32,38 @@ pub struct RecordedPullRequest {
 /// The change's pull requests: those in `change.yml` when there are any, else the `legacy` entries of
 /// Kata's earlier record, else none.
 pub fn recorded(show: &ChangeShow, legacy: &[PrEntry]) -> Vec<RecordedPullRequest> {
-    let _ = (show, legacy);
-    Vec::new()
+    let plugin = show
+        .record
+        .iter()
+        .flat_map(|r| &r.pull_requests)
+        .map(|p| RecordedPullRequest {
+            repo: p.repo.clone(),
+            url: p.url.clone(),
+            number: p.number,
+            source: PullRequestSource::Plugin,
+        })
+        .collect::<Vec<_>>();
+    if !plugin.is_empty() {
+        return plugin;
+    }
+    legacy
+        .iter()
+        .map(|e| RecordedPullRequest {
+            repo: e.repo.clone(),
+            url: e.url.clone(),
+            number: e.number,
+            source: PullRequestSource::Legacy,
+        })
+        .collect()
+}
+
+/// What Kata saved in `pull-requests.json` for the change, before the plugin recorded pull requests.
+pub fn legacy_entries(workspace_id: &str, system: &str, change: &str) -> Vec<PrEntry> {
+    crate::store::load_pr_records()
+        .into_iter()
+        .find(|r| r.workspace_id == workspace_id && r.system == system && r.change == change)
+        .map(|r| r.repos)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

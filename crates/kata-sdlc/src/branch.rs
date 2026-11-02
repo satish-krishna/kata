@@ -9,6 +9,53 @@ use std::path::Path;
 /// change's branch now, so no new one is made, but a master repository may still stand on one.
 pub(crate) const PENDING_PREFIX: &str = "change/pending-";
 
+/// The change's record in its master repository, as the program writes it (`change.yml`) or an older
+/// Kata wrote it (`branch.md`): the file and the text of its `key` field.
+fn recorded_field(
+    master: &Path,
+    system: &str,
+    change: &str,
+    key: &str,
+) -> Option<(String, String)> {
+    let dir = master.join("intent").join(system).join(change);
+    if let Ok(text) = std::fs::read_to_string(dir.join("change.yml")) {
+        // The program writes every string JSON-quoted, one `key: value` per line.
+        let value = text.lines().find_map(|l| {
+            let v = l.strip_prefix(key)?.strip_prefix(':')?.trim();
+            Some(serde_json::from_str::<String>(v).unwrap_or_else(|_| v.to_string()))
+        });
+        if let Some(value) = value.filter(|v| !v.is_empty()) {
+            return Some(("change.yml".into(), value));
+        }
+    }
+    let text = std::fs::read_to_string(dir.join("branch.md")).ok()?;
+    let value = crate::frontmatter::field(&text, key).filter(|v| !v.is_empty())?;
+    Some(("branch.md".into(), value))
+}
+
+/// The branch the change uses: the one its record names, else `change/<change>`. A record that is present
+/// but names an unusable branch is an error, so a hand edit can never reach git.
+pub fn change_branch(master: &Path, system: &str, change: &str) -> Result<String, String> {
+    let Some((file, branch)) = recorded_field(master, system, change, "branch") else {
+        return Ok(format!("change/{change}"));
+    };
+    if branch.starts_with('-')
+        || branch == "HEAD"
+        || branch.starts_with(PENDING_PREFIX)
+        || !git2::Reference::is_valid_name(&format!("refs/heads/{branch}"))
+    {
+        return Err(format!(
+            "intent/{system}/{change}/{file} names \"{branch}\", which is not a usable branch name"
+        ));
+    }
+    Ok(branch)
+}
+
+/// The work type the change's record names; `None` when it has no record or the record names none.
+pub fn recorded_type(master: &Path, system: &str, change: &str) -> Option<String> {
+    recorded_field(master, system, change, "type").map(|(_, t)| t)
+}
+
 pub fn branch_exists(repo: &Path, name: &str) -> bool {
     git::Repo::open(repo).is_ok_and(|r| r.branch_exists(name))
 }
@@ -210,6 +257,47 @@ exit 1
             crate::changes::branch_info(&master).pending_change,
             Some(format!("kata/{CHANGE}"))
         );
+    }
+
+    #[test]
+    fn the_change_branch_is_the_plugins_record_then_the_older_one_then_the_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("intent/kata/2026-11-01-c");
+        std::fs::create_dir_all(&dir).unwrap();
+        let branch = || change_branch(tmp.path(), "kata", "2026-11-01-c");
+        assert_eq!(branch().unwrap(), "change/2026-11-01-c");
+        std::fs::write(
+            dir.join("branch.md"),
+            "---
+branch: feat/old
+type: fix
+---
+",
+        )
+        .unwrap();
+        assert_eq!(branch().unwrap(), "feat/old");
+        std::fs::write(
+            dir.join("change.yml"),
+            "version: 1
+branch: \"feat/X-1-new\"
+type: feat
+scope: \"X-1\"
+base: \"main\"
+",
+        )
+        .unwrap();
+        assert_eq!(branch().unwrap(), "feat/X-1-new");
+        assert_eq!(
+            recorded_type(tmp.path(), "kata", "2026-11-01-c").as_deref(),
+            Some("feat")
+        );
+        std::fs::write(
+            dir.join("change.yml"),
+            "branch: \"--bad\"
+",
+        )
+        .unwrap();
+        assert!(branch().unwrap_err().contains("not a usable branch name"));
     }
 
     #[test]

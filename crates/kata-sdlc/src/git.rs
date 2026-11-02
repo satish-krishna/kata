@@ -1186,36 +1186,6 @@ impl Repo {
         names
     }
 
-    /// The remote-tracking branches already on this machine, each as the full name and the name with
-    /// its remote stripped (`origin/feat/a` and `feat/a`), sorted. A symbolic ref such as
-    /// `origin/HEAD` is skipped. Reads the local refs only; it never fetches.
-    pub(crate) fn remote_tracking_branches(&self) -> Vec<(String, String)> {
-        let Ok(branches) = self.inner.branches(Some(git2::BranchType::Remote)) else {
-            return Vec::new();
-        };
-        let remotes: Vec<String> = self
-            .inner
-            .remotes()
-            .map(|r| r.iter().flatten().flatten().map(str::to_string).collect())
-            .unwrap_or_default();
-        let mut names: Vec<(String, String)> = branches
-            .flatten()
-            .filter(|(b, _)| b.get().symbolic_target_bytes().is_none())
-            .filter_map(|(b, _)| {
-                let full = b.name().ok().flatten()?.to_string();
-                let stripped = remotes
-                    .iter()
-                    .find_map(|r| full.strip_prefix(&format!("{r}/")))
-                    .or_else(|| full.split_once('/').map(|(_, rest)| rest))?
-                    .to_string();
-                Some((full, stripped))
-            })
-            .collect();
-        names.sort();
-        names.dedup();
-        names
-    }
-
     /// What `git diff --name-only <base>...HEAD` prints: the files that differ between the merge
     /// base of `base` and `HEAD` and `HEAD` itself, without rename detection.
     pub(crate) fn files_changed_from_merge_base(

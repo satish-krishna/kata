@@ -3,6 +3,7 @@ import { Injectable, Injector, computed, effect, inject, signal, untracked } fro
 import { Router } from '@angular/router';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Leftovers } from '@bindings/Leftovers';
+import type { RecordedPullRequest } from '@bindings/RecordedPullRequest';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
@@ -72,7 +73,10 @@ export type NameRequest = {
 };
 
 /** What renaming a change's branch needs: the branch it has now is the starting name. */
-export type RenameAsk = { folder: string; workspaceId: string; masterRepo: string; system: string; change: string; current: string };
+export type RenameAsk = { folder: string; workspaceId: string; system: string; change: string; current: string };
+
+/** What a rename came to: the new branch and the pull requests opened from the old name, which the engineer closes by hand. */
+export type Renamed = { branch: string; change: string; from: string; oldPullRequests: RecordedPullRequest[] };
 
 /** What the engineer picked when the system has a naming setting. */
 export type PickedNaming = { workType: WorkType; scope: string };
@@ -151,13 +155,13 @@ export class SdlcRunner {
   /** Counts the branches named so far; a page showing the change reads it again when this moves. */
   readonly named = this.namedCount.asReadonly();
   private renameAsk: RenameAsk | null = null;
-  private settleName: ((named: { branch: string; change: string } | null) => void) | null = null;
+  private settleName: ((named: Renamed | null) => void) | null = null;
 
   /**
    * Ask the engineer for a new name for the branch `ask.current`, in every repository that has it. No type is picked and the
    * current name is the starting point. Resolves with the new branch, or null when the dialog was closed.
    */
-  async requestRename(ask: RenameAsk): Promise<{ branch: string; change: string } | null> {
+  async requestRename(ask: RenameAsk): Promise<Renamed | null> {
     this.closeName();
     this.renameAsk = ask;
     this.request.set({
@@ -185,8 +189,14 @@ export class SdlcRunner {
   private async confirmRename(ask: RenameAsk, name: string): Promise<void> {
     this.request.update((r) => (r === null ? r : { ...r, error: null, busy: true }));
     try {
-      const done = await this.transport.sdlcRenameBranch(ask.folder, ask.workspaceId, ask.masterRepo, ask.system, ask.change, name);
-      this.finishName({ branch: done.new, change: ask.change });
+      const done = await this.transport.sdlcRenameBranch(ask.folder, ask.workspaceId, ask.system, ask.change, name);
+      if (done.outcome === 'refused') {
+        // The plugin renamed nothing; its reasons are shown as it printed them.
+        const reasons = done.problems.join('\n');
+        this.request.update((r) => (r === null ? r : { ...r, error: reasons, busy: false }));
+        return;
+      }
+      this.finishName({ branch: done.to, change: ask.change, from: done.from, oldPullRequests: done.oldPullRequests });
       this.namedCount.update((n) => n + 1);
     } catch (e) {
       this.request.update((r) => (r === null ? r : { ...r, error: message(e), busy: false }));
@@ -198,7 +208,7 @@ export class SdlcRunner {
     this.finishName(null);
   }
 
-  private finishName(named: { branch: string; change: string } | null): void {
+  private finishName(named: Renamed | null): void {
     const settle = this.settleName;
     this.settleName = null;
     this.renameAsk = null;

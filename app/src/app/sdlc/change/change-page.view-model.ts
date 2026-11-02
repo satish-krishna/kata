@@ -22,8 +22,7 @@ import type { Offender } from '@bindings/Offender';
 import type { PrResult } from '@bindings/PrResult';
 import type { DoneView } from '@bindings/DoneView';
 import type { PrLink } from '@bindings/PrLink';
-import type { PrEntry } from '@bindings/PrEntry';
-import type { RemoteClash } from '@bindings/RemoteClash';
+import type { LeftBehind } from '../../ui/pr-list-dialog';
 import type { PublishRepo } from '@bindings/PublishRepo';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
@@ -599,10 +598,15 @@ export class ChangePageViewModel {
    */
   async renameBranch(branch: string | null): Promise<string | null> {
     const w = this.current();
-    const master = this.scanMaster();
-    if (w === null || master === null || branch === null) return null;
-    const named = await this.runner.requestRename({ folder: w.folder, workspaceId: w.id, masterRepo: master, system: this.system(), change: this.changeName(), current: branch });
-    return named?.branch ?? null;
+    if (w === null || branch === null) return null;
+    const named = await this.runner.requestRename({ folder: w.folder, workspaceId: w.id, system: this.system(), change: this.changeName(), current: branch });
+    if (named === null) return null;
+    // The pull requests opened from the old name stay open on GitHub: list them to close by hand.
+    if (named.oldPullRequests.length > 0) {
+      this.prLeftBehind.set(named.oldPullRequests.map((p) => ({ repo: p.repo, url: p.url, branch: named.from })));
+      this.prList.set([]);
+    }
+    return named.branch;
   }
 
   // --- declaring done: Kata's own checks first, then the confirmation
@@ -616,7 +620,7 @@ export class ChangePageViewModel {
   /** The results of opening the pull requests, shown in a dialog that is open exactly while this is set. */
   readonly prList = signal<PrResult[] | null>(null);
   /** The pull requests an earlier branch name left open on GitHub, shown with the list. */
-  readonly prLeftBehind = signal<PrEntry[]>([]);
+  readonly prLeftBehind = signal<LeftBehind[]>([]);
 
   /** The operator confirmed: open the pull requests. */
   async confirmDone(): Promise<void> {
@@ -648,7 +652,7 @@ export class ChangePageViewModel {
     const master = this.scanMaster();
     if (!w || master === null) return;
     let results: PrResult[] = [];
-    let leftBehind: PrEntry[] = [];
+    let leftBehind: LeftBehind[] = [];
     // Each push and each pull request the backend reports becomes the lock's progress line, named by its repository.
     const unlisten = await this.transport.onPublishStep((step) => {
       if (step.kind === 'pushing') this.progress.begin('pushing', progressLabels.pushing(this.changeName(), step.repo, this.doneBranch), 'lock');
@@ -703,15 +707,6 @@ export class ChangePageViewModel {
 
   cancelDone(): void {
     this.doneReport.set(null);
-  }
-
-  /** Pick a new name for the change's branch from the done dialog; declaring done starts again after a rename. */
-  async renameFromDone(branch: string): Promise<void> {
-    const before = this.doneReport();
-    this.doneReport.set(null);
-    // A new name starts declaring done again from the first step; a closed dialog brings the report back as it was.
-    if ((await this.renameBranch(branch)) !== null) await this.declareDone();
-    else this.doneReport.set(before);
   }
 
   // --- the lock: Kata's own checks in the overlay; an agent run as the session view
@@ -1234,7 +1229,6 @@ export class ChangePageViewModel {
       review: { missing: 'none' } as DoneReview,
       plan: null as ChecksPlan | null,
       checksError: null as string | null,
-      clashes: [] as RemoteClash[],
       results: new Map<string, RepoChecks>(),
     };
     const refuse = (e: unknown): never => {
@@ -1273,13 +1267,6 @@ export class ChangePageViewModel {
             refuse(e);
           }
           return plural(touched.length, 'repository', 'repositories');
-        },
-      },
-      {
-        label: 'Branch is free on GitHub',
-        run: async () => {
-          got.clashes = await this.transport.sdlcRemoteClashes(touched, master, system, change);
-          return got.clashes.length === 0 ? 'free in every repository' : plural(got.clashes.length, 'repository holds', 'repositories hold') + ' other work on it';
         },
       },
       {
@@ -1343,7 +1330,6 @@ export class ChangePageViewModel {
       account: got.account,
       notReady: got.notReady,
       branch,
-      clashes: got.clashes,
       repos: touched.map((r) => ({
         repo: r.repo,
         base: r.base,

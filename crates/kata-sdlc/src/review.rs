@@ -295,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn a_run_that_committed_the_branch_record_is_flagged() {
+    fn a_run_that_committed_the_branch_file_is_flagged() {
         let (_dir, master, since) = started();
         testutil::commit_file(&master, REVIEW, "# Review\n", "review");
         testutil::commit_file(

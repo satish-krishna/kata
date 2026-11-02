@@ -36,7 +36,7 @@ import type { RepoChecks } from '@bindings/RepoChecks';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
 import type { PublishSummary } from '@bindings/PublishSummary';
-import type { RemoteClash } from '@bindings/RemoteClash';
+import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { DoneView } from '@bindings/DoneView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
@@ -65,9 +65,6 @@ export type NamingState =
   | { kind: 'none' }
   | { kind: 'setting'; branch: string; pullRequestTitle: string }
   | { kind: 'error'; reason: 'unusable' | 'unreadable' | 'pluginTooOld' | 'pluginMissing' | 'name'; message: string };
-
-/** What a rename did: the old and new branch name and the repositories that had the branch. */
-export interface RenameResult { old: string; new: string; repos: string[] }
 
 /** The one seam between the Workbench and its backend. TauriTransport talks to
  *  the Rust commands; MockTransport stands in with fixtures and a scripted run
@@ -162,9 +159,8 @@ export abstract class KataTransport {
   /** The system's naming setting, or why it cannot be used. */
   abstract sdlcNaming(folder: string, masterRepo: string, system: string): Promise<NamingState>;
   /** Rename the change's branch in every repository that has it. Rejects while a build run is live. */
-  abstract sdlcRenameBranch(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, newName: string): Promise<RenameResult>;
+  abstract sdlcRenameBranch(folder: string, workspaceId: string, system: string, change: string, to: string): Promise<RenameOutcome>;
   /** Repositories where the change's branch name is already taken on GitHub by work this machine does not have. */
-  abstract sdlcRemoteClashes(touched: PublishRepo[], masterRepo: string, system: string, change: string): Promise<RemoteClash[]>;
   /** Why the scope is not usable, one reason per entry; empty when it is accepted as typed. */
   abstract sdlcCheckScope(folder: string, scope: string): Promise<string[]>;
   abstract sdlcCheckout(master: string, branch: string): Promise<void>;

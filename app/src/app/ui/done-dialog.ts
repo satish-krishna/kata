@@ -42,7 +42,6 @@ export class DoneDialog {
   readonly confirm = output<void>();
   readonly anotherRound = output<void>();
   readonly runReview = output<void>();
-  readonly renameBranch = output<string>();
   readonly cancel = output<void>();
 
   /** The engineer's word that the pull requests open with the high-severity findings unresolved. */

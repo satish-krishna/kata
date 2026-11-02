@@ -373,7 +373,7 @@ pub(crate) fn recorded_branch(
     system: &str,
     change: &str,
 ) -> Result<String, BuildError> {
-    crate::branch_record::change_branch(master, system, change)
+    crate::branch::change_branch(master, system, change)
         .map_err(|e| BuildError::Refused(e.to_string()))
 }
 
@@ -717,40 +717,6 @@ mod tests {
             ("kata".to_string(), "feat/PROJ-123-reset".to_string())
         );
         assert_eq!(branches(&fx), before);
-    }
-
-    #[test]
-    fn rename_after_a_build_refusal_lets_the_build_start_r9_2() {
-        let fx = kata_fixture(&[("theirs.txt", "wip: my own thing")]);
-        let old = "feat/PROJ-123-reset";
-        let new = "feat/PROJ-123-password-reset";
-        let tip = git::run(&fx.repo("kata"), &["rev-parse", old]).unwrap();
-        assert_eq!(
-            taken(prep(&fx, false)),
-            ("kata".to_string(), old.to_string())
-        );
-
-        let plugin = crate::plugin::Readiness::Ready {
-            plugin: crate::plugin::Plugin {
-                dir: testutil::plugin_dir().to_path_buf(),
-                version: crate::plugin::MIN_VERSION.to_string(),
-                layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
-            },
-            gh: crate::plugin::GhPresence::Present,
-        };
-        let out = crate::branch_record::rename(&plugin, &fx.folder, "m", S, C, new).unwrap();
-        assert!(out.repos.is_empty());
-
-        // The other work's branch is untouched and no new-name branch appears beside it.
-        let kata = fx.repo("kata");
-        assert_eq!(git::run(&kata, &["rev-parse", old]).unwrap(), tip);
-        assert!(!branch_exists(&kata, new));
-
-        let start = ready(prep(&fx, false));
-        let started = start.repos.iter().find(|r| r.repo == "kata").unwrap();
-        assert!(started.created);
-        assert_eq!(started.branch, new);
-        assert_eq!(git::run(&kata, &["rev-parse", old]).unwrap(), tip);
     }
 
     #[test]
@@ -1425,7 +1391,7 @@ Kata writes this file.
     #[test]
     fn resolver_reads_record_else_change_folder_r8_1() {
         let fx = fixture();
-        let want = |c: &str| crate::branch_record::change_branch(&fx.master, S, c).unwrap();
+        let want = |c: &str| crate::branch::change_branch(&fx.master, S, c).unwrap();
         assert_eq!(
             want("2026-10-19-photo-upload"),
             "change/2026-10-19-photo-upload"

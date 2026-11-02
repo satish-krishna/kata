@@ -492,7 +492,6 @@ describe('MockTransport branch naming demos', () => {
       const b = await t.sdlcBranches('/m');
       expect(b.current).toBe('main');
       expect(b.pending_change).toBeNull();
-      expect(await t.sdlcRemoteClashes(REPOS, 'commerce-docs', 'commerce', MOCK_DONE_CHANGE)).toEqual([]);
       expect((await t.sdlcPullRequests('commerce-docs', 'commerce', REPOS, MOCK_DONE_CHANGE))[0].url).not.toBeNull();
       expect((await publish(t)).results[0].outcome.kind).toBe('opened');
     });
@@ -506,11 +505,9 @@ describe('MockTransport branch naming demos', () => {
     });
   });
 
-  it('?demo=clash leaves the finished change undeclared and reports its branch as taken in a repository', async () => {
+  it('?demo=clash leaves the finished change undeclared', async () => {
     await withDemo('clash', async (t) => {
       expect((await t.sdlcPullRequests('commerce-docs', 'commerce', REPOS, MOCK_DONE_CHANGE))[0].url).toBeNull();
-      const clashes = await t.sdlcRemoteClashes(REPOS, 'commerce-docs', 'commerce', MOCK_DONE_CHANGE);
-      expect(clashes).toEqual([{ repo: 'commerce-core', branch: `change/${MOCK_DONE_CHANGE}` }]);
     });
   });
 
@@ -525,7 +522,6 @@ describe('MockTransport branch naming demos', () => {
 
   it('?demo=clash-push finds the branch free, then the push meets another change on it', async () => {
     await withDemo('clash-push', async (t) => {
-      expect(await t.sdlcRemoteClashes(REPOS, 'commerce-docs', 'commerce', MOCK_DONE_CHANGE)).toEqual([]);
       expect((await publish(t)).results).toEqual([{ repo: 'commerce-core', outcome: { kind: 'clash', branch: `change/${MOCK_DONE_CHANGE}` } }]);
     });
   });

@@ -37,8 +37,8 @@ import type { ParsedTask } from '@bindings/ParsedTask';
 import type { Part } from '@bindings/Part';
 import type { PlanTask } from '@bindings/PlanTask';
 import type { PrResult } from '@bindings/PrResult';
-import type { RemoteClash } from '@bindings/RemoteClash';
-import type { NamingState, RenameResult } from '../core/transport/kata-transport';
+import type { RenameOutcome } from '@bindings/RenameOutcome';
+import type { NamingState } from '../core/transport/kata-transport';
 import type { PrState } from '@bindings/PrState';
 import type { DoneView } from '@bindings/DoneView';
 import type { PublishRepo } from '@bindings/PublishRepo';
@@ -828,10 +828,11 @@ export class SdlcMock {
 
   /** The demo system declares a naming setting; the patterns are the ones the ai-sdlc plugin documents. */
   naming(): NamingState { return { kind: 'setting', branch: '{type}/{scope}-{slug}', pullRequestTitle: '{type}({scope}): {title}' }; }
-  renameBranch(changeName: string, newName: string): RenameResult { return { old: `change/${changeName}`, new: newName, repos: [MOCK_MASTER] }; }
-  /** Only `?demo=clash` finds the branch taken before anything is pushed: the first touched repository holds other work on the change's branch. */
-  remoteClashes(repos: PublishRepo[], changeName: string): RemoteClash[] {
-    return this.demo === 'clash' && repos.length > 0 ? [{ repo: repos[0].repo, branch: `change/${changeName}` }] : [];
+  /** The plugin renames it everywhere; a change with a pull request recorded under the old name lists it to close by hand. */
+  renameBranch(changeName: string, to: string): RenameOutcome {
+    const from = `change/${changeName}`;
+    const old = changeName === MOCK_DONE_CHANGE && !this.demo?.startsWith('clash') ? [{ repo: MOCK_MASTER, url: `https://github.com/acme/${MOCK_MASTER}/pull/7`, number: 7, source: 'plugin' as const }] : [];
+    return { outcome: 'renamed', from, to, repos: ['master', MOCK_MASTER], oldPullRequests: old };
   }
 
   decide(changeName: string, decision: Decision): DecideOutcome {

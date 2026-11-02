@@ -103,8 +103,7 @@ pub(crate) fn branch_in(
             "{master} is not among the repositories of the change"
         ));
     };
-    crate::branch_record::change_branch(Path::new(&m.path), system, change)
-        .map_err(|e| e.to_string())
+    crate::branch::change_branch(Path::new(&m.path), system, change).map_err(|e| e.to_string())
 }
 
 /// The product repositories carrying commits on `change/<change>`, then the master.
@@ -335,47 +334,6 @@ pub struct PublishSummary {
     pub left_behind: Vec<PrEntry>,
 }
 
-/// A repository whose GitHub branch holds work this machine's branch does not.
-#[derive(Serialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
-pub struct RemoteClash {
-    pub repo: String,
-    pub branch: String,
-}
-
-/// Repositories whose `branch` is taken on GitHub by work this machine does not have.
-///
-/// GitHub's branch is the engineer's own earlier push, and so no clash, when its tip is the local
-/// branch tip or one of its ancestors. A tip this repository does not have cannot be.
-pub fn remote_clashes(
-    hosts: &dyn GitHubHosts,
-    repos: &[PublishRepo],
-    branch: &str,
-) -> Result<Vec<RemoteClash>, NotReady> {
-    let mut out = Vec::new();
-    for r in repos {
-        let (gh, owner, name, _) = github_target(hosts, r)?;
-        let tip = gh
-            .branch_tip(&owner, &name, branch)
-            .map_err(|_| NotReady::Unreachable)?;
-        let Some(tip) = tip else {
-            continue;
-        };
-        let own = git::Repo::open(Path::new(&r.path))
-            .map(|repo| repo.branch_contains(branch, &tip))
-            .unwrap_or(false);
-        if !own {
-            out.push(RemoteClash {
-                repo: r.repo.clone(),
-                branch: branch.to_string(),
-            });
-        }
-    }
-    Ok(out)
-}
-
 /// What publishing is doing now, for the Workbench's progress line.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(
@@ -566,7 +524,7 @@ fn pull_request_title(
     let Some(path) = master_path else {
         return Ok(fallback);
     };
-    let Some(work_type) = crate::branch_record::recorded_type(path, system, change) else {
+    let Some(work_type) = crate::branch::recorded_type(path, system, change) else {
         return Ok(fallback);
     };
     match naming::names(plugin, path, system, change, &work_type) {
@@ -1612,7 +1570,7 @@ body
         .unwrap();
         git::run(&clone, &["checkout", "-q", RECORDED]).unwrap();
         assert_eq!(
-            crate::branch_record::change_branch(&clone, "s", CHANGE).unwrap(),
+            crate::branch::change_branch(&clone, "s", CHANGE).unwrap(),
             RECORDED
         );
     }
@@ -1632,7 +1590,7 @@ body
         );
         git::run(&m, &["checkout", "-q", RECORDED]).unwrap();
         assert_eq!(
-            crate::branch_record::change_branch(&m, "s", CHANGE).unwrap(),
+            crate::branch::change_branch(&m, "s", CHANGE).unwrap(),
             RECORDED
         );
         let names: Vec<String> = all(&fx).into_iter().map(|r| r.repo).collect();
@@ -1767,57 +1725,6 @@ body
     }
 
     #[test]
-    fn remote_clash_follows_the_table_r10_1() {
-        let branch = "change/2026-10-19-c";
-        let fx = fixture(true);
-        on_github(&fx);
-        let repos = all(&fx);
-        let app = fx.path("app");
-        let local_tip = git::run(&app, &["rev-parse", branch]).unwrap();
-        let clash = vec![RemoteClash {
-            repo: "app".into(),
-            branch: branch.into(),
-        }];
-
-        // Row 1: GitHub has no such branch.
-        let gh = FakeGitHub::default();
-        assert_eq!(remote_clashes(&gh, &repos, branch).unwrap(), []);
-        assert!(
-            gh.calls().contains(&format!("branch_tip app {branch}")),
-            "{:?}",
-            gh.calls()
-        );
-
-        // Row 2: the branch is at the local tip.
-        let gh = FakeGitHub::default().branch_at("app", &local_tip);
-        assert_eq!(remote_clashes(&gh, &repos, branch).unwrap(), []);
-
-        // Row 3: the tip is a commit this repository has, but not on this branch.
-        git::run(&app, &["checkout", "-q", "-b", "elsewhere", "main"]).unwrap();
-        commit_file(&app, "else.txt", "else\n", "elsewhere");
-        let elsewhere = git::run(&app, &["rev-parse", "HEAD"]).unwrap();
-        git::run(&app, &["checkout", "-q", branch]).unwrap();
-        let gh = FakeGitHub::default().branch_at("app", &elsewhere);
-        assert_eq!(remote_clashes(&gh, &repos, branch).unwrap(), clash);
-
-        // Row 4: the tip is not in this repository at all.
-        let gh = FakeGitHub::default().branch_at("app", &"a".repeat(40));
-        assert_eq!(remote_clashes(&gh, &repos, branch).unwrap(), clash);
-
-        // Row 5: GitHub cannot be asked, which is not a clash.
-        let gh = FakeGitHub::default().branch_lookup_fails(ApiError::Unreachable("down".into()));
-        assert_eq!(
-            remote_clashes(&gh, &repos, branch).unwrap_err(),
-            NotReady::Unreachable
-        );
-        let gh = FakeGitHub::default().branch_lookup_fails(status(500, "boom"));
-        assert_eq!(
-            remote_clashes(&gh, &repos, branch).unwrap_err(),
-            NotReady::Unreachable
-        );
-    }
-
-    #[test]
     fn own_earlier_push_is_not_a_clash_r10_5() {
         let fx = fixture(true);
         on_github(&fx);
@@ -1852,7 +1759,6 @@ body
         let source = FakeSource::default().env("GH_TOKEN", TOKEN);
         let h = hosts(&source, &server.root());
         let repos = all(&fx);
-        assert_eq!(remote_clashes(&h, &repos, branch).unwrap(), []);
         let results = publish(
             &h,
             &Readiness::missing(),
@@ -1872,7 +1778,6 @@ body
         );
         let bearer = format!("Bearer {TOKEN}");
         let seen = server.seen.lock().unwrap();
-        assert!(seen.iter().any(|r| r.path.contains("/branches/")));
         assert!(seen
             .iter()
             .all(|r| r.header("authorization") == Some(bearer.as_str())));

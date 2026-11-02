@@ -44,20 +44,6 @@ impl FakeGitHub {
         self.0.lock().unwrap().open.insert(repo.to_string(), number);
         self
     }
-    /// GitHub has this branch in the repository, pointing at `sha`.
-    pub(crate) fn branch_at(self, repo: &str, sha: &str) -> Self {
-        self.0
-            .lock()
-            .unwrap()
-            .tips
-            .insert(repo.to_string(), sha.to_string());
-        self
-    }
-    /// Asking GitHub for any branch fails.
-    pub(crate) fn branch_lookup_fails(self, error: ApiError) -> Self {
-        self.0.lock().unwrap().tip_error = Some(error);
-        self
-    }
     pub(crate) fn create_fails(self, repo: &str, error: ApiError) -> Self {
         self.0
             .lock()

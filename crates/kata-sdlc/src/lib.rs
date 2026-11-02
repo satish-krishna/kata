@@ -4,7 +4,6 @@
 pub mod ai_sdlc;
 pub mod base;
 pub mod branch;
-pub mod branch_record;
 pub mod build;
 pub mod changes;
 pub mod checks;

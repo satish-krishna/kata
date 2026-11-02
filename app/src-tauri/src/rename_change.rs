@@ -3,7 +3,7 @@
 //! reasons, as it printed them.
 use kata_sdlc::ai_sdlc::{Place, Program};
 use kata_sdlc::prs::PrEntry;
-use kata_sdlc::pull_requests::RecordedPullRequest;
+use kata_sdlc::pull_requests::{recorded, RecordedPullRequest};
 use serde::Serialize;
 
 /// What renaming a change's branch came to.
@@ -38,8 +38,41 @@ pub fn rename_change(
     to: &str,
     legacy: &[PrEntry],
 ) -> Result<RenameOutcome, String> {
-    let _ = (program, place, system, change, to, legacy);
-    Err("not implemented".into())
+    // The pull requests are read first: after the rename the engineer is told which were opened from the old name.
+    let before = program
+        .change_show(place, change, false)
+        .map_err(|e| e.to_string())?;
+    let old_pull_requests = recorded(&before, legacy);
+    let command = [
+        "change", "rename", "--json", "--system", system, "--change", change, "--to", to,
+    ];
+    let answer = program.run(&command, place).map_err(|e| e.to_string())?;
+    let text = |key: &str| answer[key].as_str().map(str::to_string);
+    let list = |key: &str| -> Vec<String> {
+        answer[key]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let problems = list("problems");
+    if !problems.is_empty() {
+        return Ok(RenameOutcome::Refused { problems });
+    }
+    match (text("from"), text("to")) {
+        (Some(from), Some(to)) => Ok(RenameOutcome::Renamed {
+            from,
+            to,
+            repos: list("renamed"),
+            old_pull_requests,
+        }),
+        _ => Err(format!(
+            "the plugin renamed {change} but named no branches: {answer}"
+        )),
+    }
 }
 
 #[cfg(test)]

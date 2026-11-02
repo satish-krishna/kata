@@ -18,7 +18,6 @@ const report = (over: Partial<DoneReport> = {}): DoneReport => ({
     { repo: 'customer-portal', base: 'main', checks: [], result: checks('customer-portal') },
   ],
   branch: null,
-  clashes: [],
   offenders: [],
   departures: [],
   review: { at: Date.UTC(2026, 9, 19, 9, 30, 0), findings: [] },
@@ -212,17 +211,7 @@ describe('DoneDialog', () => {
   });
 });
 
-describe('DoneDialog, a branch that is taken on GitHub', () => {
-  it('lists each clash, holds Open pull requests and offers a new name (R10.1)', async () => {
-    const { fixture } = await open(report({ clashes: [{ repo: 'commerce-core', branch: 'feat/PROJ-123-reset' }] }));
-    expect(text()).toContain('feat/PROJ-123-reset is taken on GitHub in commerce-core');
-    expect(button('Open pull requests')!.disabled).toBe(true);
-    let branch: string | null = null;
-    fixture.componentInstance.renameBranch.subscribe((b: string) => (branch = b));
-    button('Pick a new branch name')!.click();
-    expect(branch).toBe('feat/PROJ-123-reset');
-  });
-
+describe('DoneDialog, the branch', () => {
   it('shows the resolved branch, not change/<change>', async () => {
     await open(report({ branch: 'feat/PROJ-123-reset' }));
     const rows = Array.from(dialog().querySelectorAll('tbody tr')).map((r) => r.textContent!.replace(/\s+/g, ' '));

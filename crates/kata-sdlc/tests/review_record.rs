@@ -187,22 +187,22 @@ fn a_master_that_gained_a_product_commit_after_the_review_lists_its_files() {
 
 #[test]
 fn review_stays_current_after_a_rename_r10_3() {
-    use kata_sdlc::branch_record::{self, BranchRecord, RecordVerb};
     let tmp = tempfile::tempdir().unwrap();
     let master = reviewed_master(tmp.path());
-    // The rename's commit in the master is the record `branch_record::rename` writes.
-    let record = |branch: &str| BranchRecord {
-        branch: branch.to_string(),
-        work_type: Some("feat".to_string()),
-    };
-    branch_record::write(
-        &master,
-        SYS,
-        CHG,
-        &record("feat/PROJ-123-reset"),
-        RecordVerb::Rename,
+    // A rename commits the change's branch record and nothing else in the change's folder.
+    let record = master.join(format!("intent/{SYS}/{CHG}/branch.md"));
+    fs::create_dir_all(record.parent().unwrap()).unwrap();
+    fs::write(
+        &record,
+        "---
+branch: feat/PROJ-123-reset
+type: feat
+---
+",
     )
     .unwrap();
+    git(&master, &["add", "."]);
+    git(&master, &["commit", "-q", "-m", "rename branch"]);
     assert_eq!(
         moved_since_review(tmp.path(), &master),
         serde_json::json!([])

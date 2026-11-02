@@ -1,9 +1,11 @@
 import { Component, computed, input, output } from '@angular/core';
-import type { PrEntry } from '@bindings/PrEntry';
 import type { PrResult } from '@bindings/PrResult';
 import type { BrnDialogState } from '@spartan-ng/brain/dialog';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmDialogImports } from '@spartan-ng/helm/dialog';
+
+/** A pull request still open on GitHub under a branch name the change no longer uses. */
+export type LeftBehind = { repo: string; url: string; branch: string };
 
 type Row = { repo: string; tone: 'success' | 'error'; label: string; url: string | null; error: string | null; clash: string | null };
 
@@ -22,7 +24,7 @@ export class PrListDialog {
   /** A row's address was clicked. */
   readonly openLink = output<string>();
   /** The pull requests an earlier branch name left open on GitHub. */
-  readonly leftBehind = input<PrEntry[]>([]);
+  readonly leftBehind = input<LeftBehind[]>([]);
   readonly renameBranch = output<string>();
   readonly retry = output<void>();
   readonly close = output<void>();
