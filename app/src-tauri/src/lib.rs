@@ -1407,12 +1407,13 @@ fn sdlc_pull_requests_view(
         .change_show(&place, &change, refresh && legacy.is_empty())
         .map_err(|e| e.to_string())?;
     // A change an earlier version of Kata declared done is done from its record; any other is done once the
-    // plugin's `change.done` passed, which its ledger says.
-    let declared = legacy.is_empty()
-        && sdlc::pull_requests::declared_done(
+    // master's pull request is recorded in `change.yml`, on every clone, unless this machine's ledger shows the
+    // latest `change.done` failed (its final push of the master).
+    let failed_here = legacy.is_empty()
+        && sdlc::pull_requests::done_failed_here(
             &program.status(&place, &change).map_err(|e| e.to_string())?,
         );
-    Ok(sdlc::pull_requests::view(&shown, &legacy, declared))
+    Ok(sdlc::pull_requests::view(&shown, &legacy, failed_here))
 }
 
 /// Relay a non-JSON stdout/stderr line as a warn-level log event.

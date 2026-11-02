@@ -93,27 +93,28 @@ pub struct PullRequestsView {
     pub declare_offered: bool,
 }
 
-/// Whether the plugin's `change.done` passed for the change, from its ledger (`status --json`).
-/// The plugin records the master's pull request before its final push, so only a passed run says the
-/// declaration went all the way.
-pub fn declared_done(status: &Status) -> bool {
+/// Whether this machine's ledger (`status --json`) shows the change's latest `change.done` failed. The plugin
+/// records the master's pull request in `change.yml` before its final push of the master, so a failure there
+/// leaves it recorded. A clone that never declared has no ledger, and the record alone decides.
+///
+/// Only a passed or failed run counts: a refused or could-not-run one stopped before it changed anything. Each
+/// repository's runs are oldest first, and runs of different repositories are ordered by when they were
+/// recorded; on a tie the later one read wins.
+pub fn done_failed_here(status: &Status) -> bool {
     status
         .repos
         .iter()
         .flat_map(|r| &r.runs)
-        .any(|run| run.event == "change.done" && run.outcome == "passed")
-}
-
-/// Whether this machine's ledger shows the change's latest `change.done` failed. The plugin records the
-/// master's pull request in `change.yml` before its final push of the master, so a failure there leaves it
-/// recorded. A clone that never declared has no ledger, and the record alone decides.
-pub fn done_failed_here(_status: &Status) -> bool {
-    false
+        .filter(|run| {
+            run.event == "change.done" && matches!(run.outcome.as_str(), "passed" | "failed")
+        })
+        .max_by(|a, b| a.at.cmp(&b.at))
+        .is_some_and(|run| run.outcome == "failed")
 }
 
 /// The pull requests as the page shows them, from `show` (read with or without `--refresh`) and the
-/// `legacy` entries. `declared` is [`declared_done`] of the change's ledger.
-pub fn view(show: &ChangeShow, legacy: &[PrEntry], declared: bool) -> PullRequestsView {
+/// `legacy` entries. `failed_here` is [`done_failed_here`] of this machine's ledger.
+pub fn view(show: &ChangeShow, legacy: &[PrEntry], failed_here: bool) -> PullRequestsView {
     let recorded = recorded(show, legacy);
     let source = recorded.first().map(|p| p.source);
     let links = recorded
@@ -151,9 +152,16 @@ pub fn view(show: &ChangeShow, legacy: &[PrEntry], declared: bool) -> PullReques
         })
         .collect::<Vec<_>>();
     PullRequestsView {
-        // An earlier version of Kata recorded the declaration itself; otherwise only the plugin's passed
-        // `change.done` says it went all the way (the master's pull request is recorded before the last push).
-        done: source == Some(PullRequestSource::Legacy) || declared,
+        // An earlier version of Kata recorded the declaration itself. Otherwise the plugin opens the master's
+        // pull request last, so its record in `change.yml` says the declaration went all the way, on every
+        // clone; only this machine's ledger can say its final push then failed.
+        done: match source {
+            Some(PullRequestSource::Legacy) => true,
+            Some(PullRequestSource::Plugin) => {
+                links.iter().any(|l| l.repo == "master") && !failed_here
+            }
+            None => false,
+        },
         declare_offered: source != Some(PullRequestSource::Legacy),
         source,
         links,
