@@ -37,8 +37,46 @@ pub fn hidden_command(program: impl AsRef<OsStr>) -> Result<Command, SpawnRefuse
     Ok(new_hidden(program))
 }
 
+/// The programs started while a [`SpawnLog`] is open; `None` when none is.
+static SPAWNS: Mutex<Option<Vec<String>>> = Mutex::new(None);
+
+/// A test hook: while it is held, every child process made through this module records its program,
+/// as the file name without its extension in lowercase (`C:\nodejs\node.exe` records `node`). Nothing is
+/// recorded while no log is open. One log at a time: opening one starts an empty record.
+pub struct SpawnLog(());
+
+impl SpawnLog {
+    pub fn open() -> SpawnLog {
+        *SPAWNS.lock().unwrap_or_else(|e| e.into_inner()) = Some(Vec::new());
+        SpawnLog(())
+    }
+
+    /// The programs started since the log opened, in the order they started.
+    pub fn programs(&self) -> Vec<String> {
+        SPAWNS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .unwrap_or_default()
+    }
+}
+
+impl Drop for SpawnLog {
+    fn drop(&mut self) {
+        *SPAWNS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
 /// The one place a child process is created: no console window on Windows, no refusal.
 fn new_hidden(program: &OsStr) -> Command {
+    if let Some(log) = SPAWNS.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        let name = Path::new(program)
+            .file_stem()
+            .unwrap_or(program)
+            .to_string_lossy()
+            .to_lowercase();
+        log.push(name);
+    }
     #[allow(unused_mut)] // `creation_flags` needs it on Windows
     #[allow(clippy::disallowed_methods)] // the one place a child process is started
     let mut command = Command::new(program);
@@ -483,6 +521,21 @@ fn is_refused(program: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_spawn_log_records_each_program_by_name_while_it_is_open() {
+        let log = SpawnLog::open();
+        let _ = hidden_command("/opt/tools/Node.EXE");
+        let _ = hidden_command("/usr/bin/claude");
+        let seen = log.programs();
+        // Other tests of this binary may make commands while the log is open, so only membership is certain.
+        assert!(
+            seen.contains(&"node".to_string()) && seen.contains(&"claude".to_string()),
+            "{seen:?}"
+        );
+        drop(log);
+        assert!(SpawnLog::open().programs().is_empty());
+    }
 
     /// A program name that is `AsRef<OsStr>` but not `AsRef<Path>`.
     struct Name(&'static str);
