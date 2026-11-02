@@ -1,0 +1,84 @@
+<ng-template #entry let-row>
+  <span class="k-mono k-running__name">{{ row.name }}</span>
+  <span class="k-mono k-running__system">{{ row.system }}</span>
+  <span [class]="'k-status k-status--' + row.tone"><span class="k-status__dot"></span>{{ row.state }}</span>
+  @if (row.text; as text) {
+    <span class="k-mono k-running__text" data-testid="running-text" [attr.title]="text">{{ text }}</span>
+  }
+</ng-template>
+
+<ng-template #choices let-row>
+  <ul class="k-running__choices" [attr.aria-label]="'Runs of ' + row.name">
+    @for (c of row.choices; track c.run) {
+      <li>
+        <button hlmBtn [variant]="c.waiting ? 'primary' : 'secondary'" size="sm" type="button" data-testid="run-choice" (click)="vm.open(row, c)">
+          <span class="k-mono">{{ c.label }}</span> {{ c.action }}
+        </button>
+      </li>
+    }
+  </ul>
+</ng-template>
+
+@if (vm.all().length > 0) {
+  <div class="k-running" role="group" aria-label="Running changes">
+    <hlm-popover sideOffset="4" align="end">
+      <button hlmPopoverTrigger hlmBtn variant="secondary" size="sm" type="button" class="k-running__all">{{ vm.allLabel() }}</button>
+      <hlm-popover-content *hlmPopoverPortal="let ctx" data-testid="running-all">
+        <hlm-popover-header>
+          <div hlmPopoverTitle>{{ vm.allLabel() }}</div>
+        </hlm-popover-header>
+        <ul class="k-running__all-list" aria-label="All running changes">
+          @for (row of vm.all(); track row.id) {
+            <li data-testid="running-all-entry">
+              <button hlmBtn variant="bare" size="bare" class="k-running__entry" type="button" [attr.title]="row.title" (click)="vm.open(row, row.direct)">
+                <ng-container [ngTemplateOutlet]="entry" [ngTemplateOutletContext]="{ $implicit: row }" />
+              </button>
+              @if (!row.direct && row.choices.length > 0) {
+                <ng-container [ngTemplateOutlet]="choices" [ngTemplateOutletContext]="{ $implicit: row }" />
+              }
+            </li>
+          }
+        </ul>
+      </hlm-popover-content>
+    </hlm-popover>
+    @for (row of vm.shown(); track row.id) {
+      @if (row.choices.length === 0 || row.direct) {
+        <button
+          hlmBtn
+          variant="bare"
+          size="bare"
+          class="k-running__entry"
+          type="button"
+          data-testid="running-entry"
+          [attr.data-change]="row.change"
+          [attr.title]="row.title"
+          (click)="vm.open(row, row.direct)"
+        >
+          <ng-container [ngTemplateOutlet]="entry" [ngTemplateOutletContext]="{ $implicit: row }" />
+        </button>
+      } @else {
+        <hlm-popover sideOffset="4" align="end">
+          <button
+            hlmPopoverTrigger
+            hlmBtn
+            variant="bare"
+            size="bare"
+            class="k-running__entry"
+            type="button"
+            data-testid="running-entry"
+            [attr.data-change]="row.change"
+            [attr.title]="row.title"
+          >
+            <ng-container [ngTemplateOutlet]="entry" [ngTemplateOutletContext]="{ $implicit: row }" />
+          </button>
+          <hlm-popover-content *hlmPopoverPortal="let ctx" data-testid="run-list">
+            <hlm-popover-header>
+              <div hlmPopoverTitle><span class="k-mono">{{ row.name }}</span> runs</div>
+            </hlm-popover-header>
+            <ng-container [ngTemplateOutlet]="choices" [ngTemplateOutletContext]="{ $implicit: row }" />
+          </hlm-popover-content>
+        </hlm-popover>
+      }
+    }
+  </div>
+}

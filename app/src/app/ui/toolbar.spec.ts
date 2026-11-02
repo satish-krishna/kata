@@ -1,6 +1,8 @@
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
 import { render } from '../../testing/render';
+import { KataTransport } from '../core/transport/kata-transport';
+import { MockTransport } from '../core/transport/mock-transport';
 import { Toolbar } from './toolbar';
 
 const base = { name: 'demo', dirty: false };
@@ -8,6 +10,10 @@ const routes = [provideRouter([{ path: 'library', children: [] }])];
 const btn = (c: HTMLElement, name: RegExp) =>
   Array.from(c.querySelectorAll('button')).find((b) => name.test(b.getAttribute('aria-label') ?? b.textContent ?? ''))!;
 const labeled = (c: HTMLElement, label: string) => c.querySelector(`button[aria-label="${label}"]`);
+
+// The toolbar hosts the running-changes strip, which reads the running changes from the transport.
+const provideTransport = () => TestBed.configureTestingModule({ providers: [{ provide: KataTransport, useClass: MockTransport }] });
+beforeEach(provideTransport);
 
 describe('Toolbar', () => {
   it('links to the library route', async () => {
@@ -87,6 +93,7 @@ describe('Toolbar', () => {
   it('disables the mode badge while running or when modeSwitchDisabled is set', async () => {
     const disabled = async (inputs: Record<string, unknown>) => {
       TestBed.resetTestingModule();
+      provideTransport();
       const { container } = await render(Toolbar, { ...base, ...inputs }, routes);
       return (labeled(container, 'Switch mode (workbench)') as HTMLButtonElement).disabled;
     };

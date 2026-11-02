@@ -3,6 +3,7 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideChevronRight, lucideGitBranch, lucideSettings } from '@ng-icons/lucide';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
+import { RunningStrip } from './running-strip';
 import { WorkspaceSwitcher } from './workspace-switcher';
 
 /* The AI-SDLC toolbar: seal, mode badge, workspace switcher, breadcrumb, the master repo's branch, settings, and
@@ -11,7 +12,7 @@ import { WorkspaceSwitcher } from './workspace-switcher';
 @Component({
   selector: 'app-sdlc-toolbar',
   host: { class: 'contents' },
-  imports: [NgIcon, HlmButtonImports, WorkspaceSwitcher],
+  imports: [NgIcon, HlmButtonImports, WorkspaceSwitcher, RunningStrip],
   providers: [provideIcons({ lucideChevronRight, lucideGitBranch, lucideSettings })],
   templateUrl: './sdlc-toolbar.html',
 })

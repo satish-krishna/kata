@@ -1,0 +1,77 @@
+:host {
+  display: contents;
+}
+
+/* One row. The All running button comes first and every entry after it; an entry that does not fit wraps to a second row the
+ * container's height cuts off whole, so the toolbar never shows half an entry. */
+.k-running {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--control-h);
+  overflow: hidden;
+}
+
+.k-running__entry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  /* The basis, not the text, decides whether an entry fits the row: its question gives way inside it. */
+  flex: 0 1 18rem;
+  min-width: 0;
+  padding: var(--space-1-5) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  background: var(--surface-inset);
+  color: var(--text-secondary);
+  font: var(--font-code-sm);
+  text-align: start;
+  white-space: nowrap;
+}
+
+.k-running__entry:hover {
+  background: var(--surface-card);
+}
+
+.k-running__name,
+.k-running__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.k-running__name {
+  color: var(--text-primary);
+  flex: 0 1 auto;
+}
+
+.k-running__system {
+  color: var(--text-faint);
+  flex: none;
+}
+
+.k-running__text {
+  color: var(--text-muted);
+  flex: 0 100 auto;
+  max-width: 14rem;
+}
+
+.k-running__all {
+  flex: none;
+}
+
+.k-running__choices,
+.k-running__all-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-running__all-list > li {
+  display: grid;
+  gap: var(--space-2);
+}

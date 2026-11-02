@@ -10,13 +10,14 @@ import {
   lucideSquare,
 } from '@ng-icons/lucide';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
+import { RunningStrip } from './running-strip';
 import { HlmInput } from '@spartan-ng/helm/input';
 import { RouterLink } from '@angular/router';
 
 @Component({
   selector: 'app-toolbar',
   host: { class: 'contents' },
-  imports: [NgIcon, HlmButtonImports, HlmInput, RouterLink],
+  imports: [NgIcon, HlmButtonImports, HlmInput, RouterLink, RunningStrip],
   providers: [
     provideIcons({
       lucideFilePlus,

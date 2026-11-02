@@ -44,12 +44,16 @@
    | order | item                    | gives way how                                           | minimum                                       |
    |-------|-------------------------|---------------------------------------------------------|-----------------------------------------------|
    | 1     | separators, gaps, and the chevron after the back link | removed / tightened below 1280            | 0                                             |
-   | 2     | branch chip text        | ellipsis in the chip; below 1280 the icon form instead  | 6rem chip from 1280; the icon below 1280      |
-   | 3     | workspace switcher name | ellipsis; full name in its title and accessible name    | 4.5rem                                        |
-   | 4     | pill padding            | tightened                                               | --space-2 each side                           |
-   | 5     | change name             | ellipsis; full name in its title                        | 6rem                                          |
+   | 2     | running changes strip   | entries drop out of the strip whole, last first (each is in the All running list) | the All running button, 9rem |
+   | 3     | branch chip text        | ellipsis in the chip; below 1280 the icon form instead  | 6rem chip from 1280; the icon below 1280      |
+   | 4     | workspace switcher name | ellipsis; full name in its title and accessible name    | 4.5rem                                        |
+   | 5     | pill padding            | tightened                                               | --space-2 each side                           |
+   | 6     | change name             | ellipsis; full name in its title                        | 6rem                                          |
 
    Never shrink: the seal, the mode badge, the pills' text, the pull request control, the settings button, and the back link, which stays whole until the change name has given way to its minimum. */
+/* Order 2: the strip shrinks before everything below it. Its entries wrap out of its one row whole, last first, so none is ever cut in half. */
+.wb-toolbar .k-running { min-width: 9rem; }
+.wb-toolbar:has(.k-crumbs__item) .k-running { flex: 0 1e16 auto; }
 .wb-toolbar:has(.k-crumbs__item) .k-branch { flex: 0 1e12 auto; min-width: calc-size(max-content, min(size, 6rem)); }
 .wb-toolbar:has(.k-crumbs__item) .k-branch__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .wb-toolbar:has(.k-crumbs__item) .k-wstrigger { flex: 0 1e8 16rem; width: auto; min-width: 4.5rem; }

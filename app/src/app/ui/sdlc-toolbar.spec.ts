@@ -3,6 +3,8 @@ import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import { render } from '../../testing/render';
+import { KataTransport } from '../core/transport/kata-transport';
+import { MockTransport } from '../core/transport/mock-transport';
 import { SdlcToolbar } from './sdlc-toolbar';
 
 const WS: WorkspaceEntry = { id: 'acme', name: 'acme-commerce', folder: '/a', last_opened: 1 };
@@ -11,6 +13,10 @@ const inputs = (over: Record<string, unknown> = {}) => ({
 });
 const byLabel = (c: HTMLElement, label: string) => c.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
 const switcher = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('button[aria-label^="Switch workspace"]')!;
+
+// The toolbar hosts the running-changes strip, which reads the running changes from the transport.
+const provideTransport = () => TestBed.configureTestingModule({ providers: [{ provide: KataTransport, useClass: MockTransport }] });
+beforeEach(provideTransport);
 
 describe('SdlcToolbar', () => {
   it('shows the ai-sdlc badge, the workspace, and the master branch in mono', async () => {
@@ -70,6 +76,7 @@ describe('SdlcToolbar', () => {
     const none = await render(SdlcToolbar, inputs({ crumbs: ['c1'] }));
     expect(back(none.container)).toBeNull();
     TestBed.resetTestingModule();
+    provideTransport();
     const { fixture, container } = await render(SdlcToolbar, inputs({ crumbs: ['c1'], back: 'Changes' }));
     const link = back(container)!;
     expect(link.textContent!.trim()).toBe('Changes');
