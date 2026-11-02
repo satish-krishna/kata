@@ -106,6 +106,8 @@ export class MockTransport extends KataTransport {
   /** Everything listening for what publishing is doing. */
   private readonly doneListeners = new Set<(step: DoneStep) => void>();
   private readonly runs = new Map<string, ScriptedRun>();
+  /** The change of each document run started through `sdlcRunChange`, by run id; a run that has ended no longer holds the checkout. */
+  private readonly changeRunsLive = new Map<string, string>();
   private nextRun = 0;
   /** `?demo=build-long` (browser only) widens the build demo to three repositories, seventeen tasks, many files and findings, so every area of the build page overflows at 1280 by 800. */
   private readonly sdlc = new SdlcMock(demoParam() === 'build-long', demoParam());
@@ -298,7 +300,13 @@ export class MockTransport extends KataTransport {
   sdlcNaming(_folder: string, _masterRepo: string, _system: string): Promise<NamingState> { return Promise.resolve(this.sdlc.naming()); }
   sdlcCheckScope(_folder: string, scope: string): Promise<string[]> { return Promise.resolve(scope.includes(' ') ? ['a scope cannot contain a space'] : []); }
   sdlcRenameBranch(_folder: string, _workspaceId: string, _system: string, change: string, to: string): Promise<RenameOutcome> { return Promise.resolve(this.sdlc.renameBranch(change, to)); }
-  sdlcCheckout(_master: string, branch: string): Promise<void> { this.sdlc.checkout(branch); return Promise.resolve(); }
+  /** Refused, as the backend refuses it, while a change's document run is live: the mock's changes have no copies, so each runs in the master checkout, as a change started before copies existed does. */
+  sdlcCheckout(master: string, branch: string): Promise<void> {
+    const busy = [...this.changeRunsLive].find(([id]) => this.runs.get(id)?.ended !== true);
+    if (busy !== undefined) return Promise.reject(`The change ${busy[1]} has a run working in ${master}. Switch the branch after the run ends.`);
+    this.sdlc.checkout(branch);
+    return Promise.resolve();
+  }
   sdlcAccept(change: ChangeRef, doc: ChangeDocument): Promise<AcceptOutcome> { return Promise.resolve(this.sdlc.accept(change.change, doc)); }
   sdlcCopyRemoval(change: ChangeRef): Promise<CopyRemoval> { return Promise.resolve(this.sdlc.copyRemoval(change.change)); }
   sdlcCopyBranch(change: ChangeRef): Promise<string> { return Promise.resolve(this.sdlc.copyBranch(change.change)); }
@@ -388,7 +396,9 @@ export class MockTransport extends KataTransport {
   async sdlcRunHistory(runId: string): Promise<HistoryEntry[]> { return [...(this.histories.get(runId) ?? [])]; }
   async sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm): Promise<string> {
     void kind;
-    return this.runSpec({ ...seedSpec(), name: form.name, task: form.task, workdir: change.workspace });
+    const id = await this.runSpec({ ...seedSpec(), name: form.name, task: form.task, workdir: change.workspace });
+    this.changeRunsLive.set(id, change.change);
+    return id;
   }
   async sdlcBuildStart(change: ChangeRef, form: StartForm): Promise<StartOutcome> { return this.host.start(change, form); }
   // The scripted host runs no agent, so the choices a continue or review carries change nothing it shows.

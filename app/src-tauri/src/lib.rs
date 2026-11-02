@@ -890,9 +890,19 @@ fn sdlc_rename_branch(
     rename_change::rename_change(&program, &place, &system, &change, &to, &legacy)
 }
 
+/// Switch the master checkout to `branch`. Refused while a live run works in that folder, naming its change;
+/// the runs table stays locked through the switch, so no run can claim the folder half way.
 #[tauri::command(async)]
-fn sdlc_checkout(master: String, branch: String) -> Result<(), String> {
-    sdlc::branch::checkout(Path::new(&master), &branch).map_err(|e| e.to_string())
+fn sdlc_checkout(
+    control: State<'_, RunControl>,
+    master: String,
+    branch: String,
+) -> Result<(), String> {
+    let table = control.state.lock().unwrap();
+    table.may_switch(Path::new(&master))?;
+    let out = sdlc::branch::checkout(Path::new(&master), &branch).map_err(|e| e.to_string());
+    drop(table);
+    out
 }
 
 /// Where the plugin has the change, and how it stands: the workspace's own master and the change's state.

@@ -100,9 +100,26 @@ impl<C> RunTable<C> {
         Ok(())
     }
 
-    /// Stub.
-    pub fn may_switch(&self, _folder: &Path) -> Result<(), String> {
-        Ok(())
+    /// Decide whether Kata may switch the branch checked out in `folder`: refused while a live run works in it,
+    /// by the same folder test `claim` uses, naming the change whose run it is. A change started before copies
+    /// existed runs in the master checkout itself, so a switch there would move its next commit to another branch.
+    pub fn may_switch(&self, folder: &Path) -> Result<(), String> {
+        let key = RepoKey::of(folder);
+        match self.runs.values().find(|r| RepoKey::of(&r.workdir) == key) {
+            None => Ok(()),
+            Some(LiveRun {
+                lane: Lane::Change { key, .. },
+                ..
+            }) => Err(format!(
+                "The change {} has a run working in {}. Switch the branch after the run ends.",
+                key.change,
+                folder.display()
+            )),
+            Some(_) => Err(format!(
+                "Another run is working in {}. Switch the branch after the run ends.",
+                folder.display()
+            )),
+        }
     }
 
     /// Starts rejecting `key`: refused while a run of the change is live or its rejection is under way. Until
