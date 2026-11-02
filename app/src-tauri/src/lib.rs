@@ -1270,6 +1270,56 @@ fn ai_sdlc_dir_in(folder: &str) -> Result<std::path::PathBuf, String> {
     }
 }
 
+/// Everything the change page needs to open a change, read from one resolution of where it lives.
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct OpenedChange {
+    pub view: sdlc_state::ChangeView,
+    pub text: Option<String>,
+    pub parsed: Option<ParsedRead>,
+    pub status: Option<sdlc::build::BuildStatus>,
+    pub review: Option<sdlc::review::ReviewRecord>,
+}
+
+/// The format program's read of a document, or its own message when it could not read it.
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum ParsedRead {
+    Read(sdlc::format::ReadResult),
+    Failed(ReadFailure),
+}
+
+/// A document the format program could not read; `kind` is always `error`.
+#[derive(serde::Serialize, Clone, Debug)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct ReadFailure {
+    pub kind: String,
+    pub message: String,
+}
+
+/// The text of a document as the change's own master holds it, uncommitted edits included.
+fn read_doc_in(home: &sdlc::home::ChangeHome, doc: &str) -> Option<String> {
+    let _ = (home, doc);
+    None
+}
+
+/// The change page's first read: one resolution, the change's view, the document and the build and review.
+fn open_change_in(
+    home: &sdlc::home::ChangeHome,
+    plugin: &Path,
+    readiness: &sdlc::plugin::Readiness,
+    live: sdlc::offer::LiveFacts,
+    doc: &str,
+) -> Result<OpenedChange, String> {
+    let _ = (home, plugin, readiness, live, doc);
+    Err("not implemented".into())
+}
+
 #[tauri::command(async)]
 fn sdlc_change_repos(
     folder: String,
@@ -2162,6 +2212,221 @@ name: build
             panic!("the workspace's own plugin should be ready, got {readiness:?}");
         };
         assert_eq!(resolved, Ok(found.dir));
+    }
+
+    mod open {
+        use super::*;
+        use sdlc::ai_sdlc::state::read_state;
+        use sdlc::home::ChangeHome;
+        use std::path::PathBuf;
+
+        const SYSTEM: &str = "demo";
+        const CHANGE: &str = "2026-11-02-greeting";
+        const SPEC: &str =
+            include_str!("../../../crates/kata-sdlc/tests/ai-sdlc-tools/examples/spec/2/valid.md");
+        const PLAN: &str =
+            include_str!("../../../crates/kata-sdlc/tests/ai-sdlc-tools/examples/plan/2/valid.md");
+        const REVIEW: &str = include_str!(
+            "../../../crates/kata-sdlc/tests/ai-sdlc-tools/examples/review/2/valid.md"
+        );
+
+        fn git(dir: &Path, args: &[&str]) {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+        }
+
+        fn repo(dir: &Path) {
+            std::fs::create_dir_all(dir).unwrap();
+            git(dir, &["init", "-q", "-b", "main"]);
+            git(dir, &["config", "user.name", "Test"]);
+            git(dir, &["config", "user.email", "test@example.com"]);
+            git(dir, &["config", "commit.gpgsign", "false"]);
+        }
+
+        fn write(master: &Path, file: &str, text: &str) {
+            let path = master.join("intent").join(SYSTEM).join(CHANGE).join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+
+        fn commit(master: &Path, message: &str) {
+            git(master, &["add", "-A"]);
+            git(master, &["commit", "-q", "-m", message]);
+        }
+
+        fn copy_dir(from: &Path, to: &Path) {
+            std::fs::create_dir_all(to).unwrap();
+            for entry in std::fs::read_dir(from).unwrap().flatten() {
+                let target = to.join(entry.file_name());
+                if entry.path().is_dir() {
+                    copy_dir(&entry.path(), &target);
+                } else {
+                    std::fs::copy(entry.path(), target).unwrap();
+                }
+            }
+        }
+
+        /// A stand-in plugin folder: the vendored format program under `tools/`.
+        fn plugin(root: &Path) -> PathBuf {
+            let dir = root.join("plugin");
+            copy_dir(
+                &Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../crates/kata-sdlc/tests/ai-sdlc-tools"),
+                &dir.join("tools"),
+            );
+            std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
+            std::fs::write(
+                dir.join(".claude-plugin/plugin.json"),
+                r#"{"name":"ai-sdlc","version":"1.1.0"}"#,
+            )
+            .unwrap();
+            dir
+        }
+
+        fn ready(plugin: &Path) -> sdlc::plugin::Readiness {
+            sdlc::plugin::Readiness::Ready {
+                plugin: sdlc::plugin::Plugin {
+                    dir: plugin.to_path_buf(),
+                    version: "1.1.0".into(),
+                    layouts: vec![],
+                },
+                gh: sdlc::plugin::GhPresence::Present,
+            }
+        }
+
+        /// The plugin's `state` entry for the change, with the documents that exist.
+        fn state_of(
+            master: &Path,
+            folder: &Path,
+            in_copy: bool,
+            plan: bool,
+        ) -> sdlc::ai_sdlc::state::ChangeState {
+            let doc = |exists: bool| {
+                format!(
+                    r#"{{"exists":{exists},"inHead":{exists},"headStatus":null,"workingStatus":null,"uncommitted":false,"pin":null}}"#
+                )
+            };
+            let json = format!(
+                r#"{{"system":"{SYSTEM}","problems":[],"changes":[{{"change":"{CHANGE}","master":{},"folder":{},"inCopy":{in_copy},"title":null,"track":"full",
+ "documents":{{"intent":{},"spec":{},"plan":{}}},
+ "scenarios":null,"tasks":null,"buildLogs":{{}},"review":{{"committed":0,"draft":"none"}},"fix":null,
+ "ready":{{"spec":{{"candidate":true,"stop":null,"accept":[]}},"plan":{{"candidate":false,"stop":"no spec","accept":[]}},"build":{{"candidate":false,"stop":"no plan","accept":[]}},"review":{{"candidate":false,"stop":"no build","accept":[]}},"done":{{"candidate":false,"stop":"no review","accept":[]}},"reject":{{"candidate":true,"stop":null,"accept":[]}}}}}}]}}"#,
+                serde_json::to_string(&master.to_string_lossy()).unwrap(),
+                serde_json::to_string(&folder.to_string_lossy()).unwrap(),
+                doc(true),
+                doc(true),
+                doc(plan),
+            );
+            read_state(serde_json::from_str(&json).unwrap())
+                .unwrap()
+                .changes
+                .remove(0)
+        }
+
+        struct Fx {
+            _dir: tempfile::TempDir,
+            checkout: PathBuf,
+            copy: PathBuf,
+            plugin: PathBuf,
+        }
+
+        /// A checkout holding an older version of the change's documents, and a copy whose documents are
+        /// committed, with a review, and whose `spec.md` has an uncommitted edit.
+        fn fx() -> Fx {
+            let dir = tempfile::tempdir().unwrap();
+            let checkout = dir.path().join("ai-sdlc");
+            let copy = dir.path().join(".ai-sdlc/copies").join(CHANGE);
+            repo(&checkout);
+            write(&checkout, "intent.md", "older intent from the checkout\n");
+            write(&checkout, "spec.md", "older spec from the checkout\n");
+            write(&checkout, "plan.md", "older plan from the checkout\n");
+            commit(&checkout, "older");
+            repo(&copy);
+            write(&copy, "intent.md", "the copy's intent\n");
+            write(&copy, "spec.md", SPEC);
+            write(&copy, "plan.md", PLAN);
+            write(&copy, "build/review.md", REVIEW);
+            commit(&copy, "documents");
+            write(
+                &copy,
+                "spec.md",
+                &format!("{SPEC}\nedited, not committed\n"),
+            );
+            let plugin = plugin(dir.path());
+            Fx {
+                _dir: dir,
+                checkout,
+                copy,
+                plugin,
+            }
+        }
+
+        fn home_of_copy(fx: &Fx, plan: bool) -> ChangeHome {
+            let folder = fx.copy.join("intent").join(SYSTEM).join(CHANGE);
+            ChangeHome {
+                place: sdlc::ai_sdlc::Place {
+                    master: fx.checkout.clone(),
+                    workspace: fx.checkout.parent().unwrap().to_path_buf(),
+                },
+                state: state_of(&fx.copy, &folder, true, plan),
+                master: fx.copy.clone(),
+                folder,
+                in_copy: true,
+            }
+        }
+
+        #[test]
+        fn read_doc_never_reads_the_checkout_for_a_copy_change() {
+            let fx = fx();
+            let home = home_of_copy(&fx, true);
+            assert_eq!(
+                read_doc_in(&home, "intent").as_deref(),
+                Some("the copy's intent\n")
+            );
+        }
+
+        #[test]
+        fn read_doc_returns_uncommitted_edits_in_the_copy() {
+            let fx = fx();
+            let home = home_of_copy(&fx, true);
+            let text = read_doc_in(&home, "spec").unwrap();
+            assert!(text.contains("edited, not committed"), "{text}");
+        }
+
+        #[test]
+        fn open_change_bundles_one_resolution() {
+            let fx = fx();
+            let home = home_of_copy(&fx, true);
+            let opened = open_change_in(
+                &home,
+                &fx.plugin,
+                &ready(&fx.plugin),
+                sdlc::offer::LiveFacts::default(),
+                "plan",
+            )
+            .unwrap();
+            assert_eq!(opened.view.state.change, CHANGE);
+            assert_eq!(opened.text.as_deref(), Some(PLAN));
+            assert!(
+                matches!(
+                    opened.parsed,
+                    Some(ParsedRead::Read(sdlc::format::ReadResult::Plan { .. }))
+                ),
+                "{:?}",
+                opened.parsed
+            );
+            assert!(
+                opened.status.is_some(),
+                "the build status is read from the copy"
+            );
+            let review = opened.review.expect("the review is read from the copy");
+            assert!(!review.reviews.is_empty());
+        }
     }
 
     #[test]
