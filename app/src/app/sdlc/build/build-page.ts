@@ -104,6 +104,9 @@ export class BuildPage {
   readonly startReviewAgain = output<void>();
   readonly answer = output<{ runId: string; id: string; answers: string[][] }>();
   readonly say = output<{ runId: string; text: string }>();
+  /** The messages typed for the runs and not sent, by run id, and the report of each change to one. */
+  readonly drafts = input<Readonly<Record<string, string>>>({});
+  readonly draft = output<{ runId: string; text: string }>();
   readonly decide = output<{ runId: string; id: string; allow: boolean; message: string | null }>();
   readonly goTo = output<string>();
   readonly toggleRun = output<string>();

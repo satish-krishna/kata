@@ -243,6 +243,8 @@
                   mode="sdlc"
                   [unseenFrom]="s.unseenFrom"
                   (answer)="answer.emit({ runId: s.id, id: $event.id, answers: $event.answers })"
+                  [draft]="drafts()[s.id] ?? ''"
+                  (draftChange)="draft.emit({ runId: s.id, text: $event })"
                   (say)="say.emit({ runId: s.id, text: $event })"
                   (decide)="decide.emit({ runId: s.id, id: $event.id, allow: $event.allow, message: $event.message })"
                 />

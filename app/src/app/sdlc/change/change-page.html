@@ -72,6 +72,8 @@
       (cancel)="vm.cancelLock()"
       (close)="vm.closeSession()"
       (answer)="vm.answer($event)"
+      [draft]="vm.messageDraft()"
+      (draftChange)="vm.setMessageDraft($event)"
       (say)="vm.say($event)"
       (decide)="vm.decide($event)"
     />
@@ -216,6 +218,8 @@
                 (startAgain)="build.startAgain()"
                 (startReviewAgain)="build.startReviewAgain()"
                 (answer)="build.answer($event.runId, $event)"
+                [drafts]="build.messageDrafts()"
+                (draft)="build.setMessageDraft($event.runId, $event.text)"
                 (say)="build.sendMessage($event.runId, $event.text)"
                 (decide)="build.decide($event.runId, $event)"
                 (goTo)="build.goTo($event)"

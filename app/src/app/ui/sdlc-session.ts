@@ -35,6 +35,8 @@ export class SdlcSession {
   readonly close = output<void>();
   readonly answer = output<{ id: string; answers: string[][] }>();
   readonly say = output<string>();
+  readonly draft = input('');
+  readonly draftChange = output<string>();
   readonly decide = output<{ id: string; allow: boolean; message: string | null }>();
 
   protected readonly deadlineLabel = computed(() => {

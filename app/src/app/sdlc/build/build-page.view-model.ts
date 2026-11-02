@@ -28,6 +28,8 @@ import { RunStore } from '../../core/run/run.store';
 import { ProgressStore } from '../../core/progress/progress.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
+import { ChangeDraftStore } from '../../core/sdlc/change-draft.store';
+import { RunLandingStore } from '../../core/run/run-landing.store';
 import { type AskRecord, type MessageRecord, type MessageRefusal, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
 import { activityFor, linksOfFollowedRuns, outcomeOf, recordOutcome, repoSessions, sessionsFor, type Chosen, type LiveRun, type Pick, type SessionRef } from '../../lib/build-sessions';
 import { isChange } from '../../lib/build-host';
@@ -340,6 +342,8 @@ export class BuildPageViewModel {
   private readonly toasts = inject(ToastStore);
   private readonly progress = inject(ProgressStore);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly drafts = inject(ChangeDraftStore);
+  private readonly landing = inject(RunLandingStore);
   /** The preview Continue and the build's dialogs open; the template mounts its dialog. */
   readonly preview = inject(RunPreviewViewModel);
   private readonly givens = inject(GivenStore);
@@ -732,6 +736,7 @@ export class BuildPageViewModel {
     this.ctx = input.ctx;
     this.status.set(input.status);
     this.reviewDoc.set(input.review);
+    this.restorePick();
     this.changes.set({ folder: input.ctx.folder, masterRepo: input.master.repo, system: input.ctx.system, change: input.ctx.change });
     await Promise.all([this.readSessions(), this.readChanges(), this.attach(this.ref()!)]);
     this.sessionsReadFor.set(input);
@@ -745,6 +750,32 @@ export class BuildPageViewModel {
   /** Show a repository, a task or the review. */
   choose(pick: Pick): void {
     this.chosen.set({ pick, stage: this.stage(), seq: ++this.pickCount, goTo: null });
+    const ref = this.ref();
+    if (ref !== null) this.drafts.setPick(ref, pick);
+  }
+
+  /**
+   * Show again what the engineer had picked when they left the page. A run picked from the running changes (its request still
+   * waiting, or already taken and chosen) wins over it, because the engineer asked for that run just now.
+   */
+  private restorePick(): void {
+    const ref = this.ref();
+    if (ref === null || this.chosen() !== null) return;
+    const asked = this.landing.pending();
+    if (asked !== null && asked.system === ref.system && asked.change === ref.change) return;
+    const pick = this.drafts.pick(ref);
+    if (pick !== null) this.chosen.set({ pick, stage: this.stage(), seq: ++this.pickCount, goTo: null });
+  }
+
+  /** The messages typed for the build's runs and not sent, by run id. */
+  readonly messageDrafts = computed<Readonly<Record<string, string>>>(() => {
+    const ref = this.ref();
+    return ref === null ? {} : this.drafts.messages(ref);
+  });
+
+  setMessageDraft(runId: string, text: string): void {
+    const ref = this.ref();
+    if (ref !== null) this.drafts.setMessage(ref, runId, text);
   }
 
   /** The repositories of the tasks area, in order: the plan's, then the master once it has tasks or runs. */
@@ -1433,6 +1464,7 @@ export class BuildPageViewModel {
 
   /** Message the agent of one build run. Not `say`, which is the page's live-region announcer. */
   sendMessage(runId: string, text: string): void {
+    this.setMessageDraft(runId, '');
     void this.runs.sendMessage(runId, text);
   }
 

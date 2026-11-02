@@ -56,7 +56,7 @@
 
 @if (box(); as view) {
   @if (view.shown) {
-    <app-message-box [view]="view" (send)="say.emit($event)" />
+    <app-message-box [view]="view" [draft]="draft()" (draftChange)="draftChange.emit($event)" (send)="say.emit($event)" />
   }
 }
 

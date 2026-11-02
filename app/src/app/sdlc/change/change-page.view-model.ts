@@ -34,8 +34,10 @@ import type { RunSpec } from '@bindings/RunSpec';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
+import type { ChangeRef as ChangeWithWorkspace } from '@bindings/ChangeRef';
 import { ChangeRunStore, changeRunKey } from '../../core/run/change-run.store';
 import { RunLandingStore } from '../../core/run/run-landing.store';
+import { ChangeDraftStore } from '../../core/sdlc/change-draft.store';
 import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
@@ -77,6 +79,9 @@ export type ChangeState = 'loading' | 'ready' | 'not-found';
 
 /** The spec and plan tabs' views: the list (requirements, tasks), the one `##` section (Design, Approach), the whole text. */
 export type DocView = 'list' | 'section' | 'whole';
+
+/** The one run a change's page has a message box for: its own document session. */
+const SESSION_RUN = 'document';
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const nowSecs = (): number => Math.floor(Date.now() / 1000);
@@ -200,6 +205,7 @@ export class ChangePageViewModel {
   private readonly lock = inject(LockStore);
   private readonly changeRuns = inject(ChangeRunStore);
   private readonly landing = inject(RunLandingStore);
+  private readonly drafts = inject(ChangeDraftStore);
   /** The preview every document run goes through; the template mounts its dialog. */
   readonly preview = inject(RunPreviewViewModel);
   private readonly givens = inject(GivenStore);
@@ -1084,7 +1090,10 @@ export class ChangePageViewModel {
       this.pickSeq++;
       this.pendingDoc.set(null);
       this.progress.end('doc');
-      if (this.shownDoc() !== 'build' && this.change() !== null) this.picked.set('build');
+      if (this.shownDoc() !== 'build' && this.change() !== null) {
+        this.picked.set('build');
+        this.rememberTab();
+      }
       return;
     }
     if (!isDocStem(stem) || !this.docs()[stem]) return;
@@ -1112,6 +1121,7 @@ export class ChangePageViewModel {
       this.doc.set(text);
       this.read.set(read);
       this.picked.set(stem);
+      this.rememberTab();
       this.pendingDoc.set(null);
       this.progress.end('doc');
     } catch (e) {
@@ -1154,6 +1164,7 @@ export class ChangePageViewModel {
 
   closeSession(): void {
     const key = this.runKey();
+    this.setMessageDraft('');
     if (this.ownRun() !== null && key !== null) this.changeRuns.close(key);
     else this.lock.close();
   }
@@ -1164,12 +1175,25 @@ export class ChangePageViewModel {
     else this.lock.answer(e.id, e.answers);
   }
 
-  /** The message typed for this change's session, which survives leaving the page. */
-  readonly messageDraft = (): string => '';
+  /** The change as the draft store names it; null until a workspace is open. */
+  private readonly draftRef = computed<ChangeWithWorkspace | null>(() => {
+    const w = this.current();
+    return w ? { workspace: w.folder, system: this.system(), change: this.changeName() } : null;
+  });
 
-  setMessageDraft(_text: string): void {}
+  /** The message typed for this change's session and not sent, which survives leaving the page. */
+  readonly messageDraft = computed(() => {
+    const ref = this.draftRef();
+    return ref === null ? '' : this.drafts.message(ref, SESSION_RUN);
+  });
+
+  setMessageDraft(text: string): void {
+    const ref = this.draftRef();
+    if (ref !== null) this.drafts.setMessage(ref, SESSION_RUN, text);
+  }
 
   say(text: string): void {
+    this.setMessageDraft('');
     const key = this.runKey();
     if (this.ownRun() !== null && key !== null) this.changeRuns.say(key, text);
     else this.lock.say(text);
@@ -1582,6 +1606,34 @@ export class ChangePageViewModel {
     else if (run.kind === 'build' && run.repo !== null) this.build.choose({ kind: 'repo', repo: run.repo });
     else return;
     this.picked.set('build');
+    this.rememberTab();
+  }
+
+  private rememberTab(): void {
+    const ref = this.draftRef();
+    if (ref !== null) this.drafts.setTab(ref, this.picked());
+  }
+
+  /** The change the page last opened on the tab the engineer left it on, so a reload of the same change starts over as before. */
+  private restoredFor: string | null = null;
+
+  /**
+   * Open the tab the engineer left this change on. A run picked from the running changes wins over it: the engineer asked for that
+   * run just now, and its request is still waiting, so the remembered tab is left as it is for the run to replace.
+   */
+  private restoreTab(): void {
+    const ref = this.draftRef();
+    if (ref === null) return;
+    const key = changeRunKey(ref);
+    if (this.restoredFor !== key) {
+      this.restoredFor = key;
+      const asked = this.landing.pending();
+      const tab = this.drafts.tab(ref);
+      if (asked !== null && asked.system === ref.system && asked.change === ref.change) return;
+      if (tab !== null && tab !== this.shownDoc()) void this.showDoc(tab);
+    } else {
+      this.drafts.setTab(ref, null);
+    }
   }
 
   private async load(): Promise<void> {
@@ -1666,6 +1718,7 @@ export class ChangePageViewModel {
       this.records.set(records);
       this.catalog.set(catalog);
       finish(found ? 'ready' : 'not-found', found, doc, read);
+      if (found) this.restoreTab();
       // The build page shows the change's tasks, sessions and findings whether or not a build ran on this page.
       const context = this.buildContext();
       if (found && context !== null) this.build.loaded.set({ ctx: context, master: { repo, path: master }, change: found, status, done: this.done(), review });

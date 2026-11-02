@@ -23,6 +23,8 @@
     [given]="given()"
     mode="sdlc"
     (answer)="answer.emit($event)"
+    [draft]="draft()"
+    (draftChange)="draftChange.emit($event)"
     (say)="say.emit($event)"
     (decide)="decide.emit($event)"
   />

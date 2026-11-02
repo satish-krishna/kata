@@ -118,7 +118,10 @@ describe('ChangePageViewModel', () => {
     const second = open();
     const after = second.get(ChangePageViewModel);
     await ready(after);
-    expect(after.shownDoc()).toBe('intent');
+    await vi.waitFor(() => {
+      TestBed.tick();
+      expect(after.shownDoc()).toBe('intent');
+    });
     expect(after.messageDraft()).toBe('also cover the empty cart');
     second.destroy();
   });
