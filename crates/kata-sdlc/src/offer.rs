@@ -368,6 +368,16 @@ fn feedback_required(action: StageAction, stage: OfferStage) -> bool {
     }
 }
 
+/// The offer once the change's pull requests are known: a change an earlier version of Kata declared done is
+/// not offered declaring done again.
+pub fn after_pull_requests(
+    offer: ChangeOffer,
+    pull_requests: &crate::pull_requests::PullRequestsView,
+) -> ChangeOffer {
+    let _ = pull_requests;
+    offer
+}
+
 /// What a change shows and offers, from the plugin's answer and the Workbench's live facts.
 pub fn of(change: &ChangeState, live: &LiveFacts) -> ChangeOffer {
     let stage = stage_of(change, live);
@@ -987,5 +997,34 @@ mod tests {
             false,
             Some("A run of this change is live."),
         );
+    }
+
+    #[test]
+    fn a_change_an_earlier_version_declared_done_is_not_offered_declaring_done_r8_1() {
+        use crate::pull_requests::{PullRequestSource, PullRequestsView};
+        let mut finished = base();
+        all_logged(&mut finished);
+        let offer = of(&finished, &NOT_LIVE);
+        let view = |source: Option<PullRequestSource>, declare_offered: bool| PullRequestsView {
+            done: source.is_some(),
+            source,
+            links: vec![],
+            declare_offered,
+        };
+        // Recorded by the earlier version: declaring done is gone, every other action stays.
+        let earlier =
+            after_pull_requests(offer.clone(), &view(Some(PullRequestSource::Legacy), false));
+        assert!(!earlier
+            .actions
+            .iter()
+            .any(|a| a.action == StageAction::DeclareDone));
+        assert_eq!(earlier.actions.len(), offer.actions.len() - 1);
+        // Recorded by the plugin, or not recorded: the offer is as it was.
+        for v in [
+            view(Some(PullRequestSource::Plugin), true),
+            view(None, true),
+        ] {
+            assert_eq!(after_pull_requests(offer.clone(), &v), offer);
+        }
     }
 }
