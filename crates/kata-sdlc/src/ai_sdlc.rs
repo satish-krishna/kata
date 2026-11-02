@@ -551,11 +551,17 @@ mod tests {
         (dir, place)
     }
 
+    /// Whether `value` names the folder `expected`, whatever form either path takes: an 8.3
+    /// short name, a different case, a verbatim prefix or the slash direction.
     fn same_path(value: &Value, expected: &Path) -> bool {
-        let norm = |s: &str| s.replace('\\', "/").to_lowercase();
+        let norm = |p: &Path| {
+            let resolved = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+            let text = resolved.display().to_string().replace('\\', "/");
+            text.trim_start_matches("//?/").to_lowercase()
+        };
         value
             .as_str()
-            .is_some_and(|s| norm(s) == norm(&expected.display().to_string()))
+            .is_some_and(|s| norm(Path::new(s)) == norm(expected))
     }
 
     #[test]
