@@ -753,7 +753,8 @@ pub enum SnapshotTarget {
     Change(build_host::ChangeRef),
 }
 
-/// A `SnapshotTarget` after asking the plugin where the change lives.
+/// A `SnapshotTarget` after asking the plugin where the change lives. Short-lived, so not boxed.
+#[allow(clippy::large_enum_variant)]
 enum Placed {
     Workspace(std::path::PathBuf),
     Change {
@@ -775,18 +776,49 @@ impl Placed {
 }
 
 fn place_target_with(program: &sdlc::ai_sdlc::Program, target: &SnapshotTarget) -> Placed {
-    let _ = (program, target);
-    todo!("place_target_with")
+    match target {
+        SnapshotTarget::Workspace { master } => Placed::Workspace(master.into()),
+        SnapshotTarget::Change(change) => Placed::Change {
+            workspace: (&change.workspace).into(),
+            system: change.system.clone(),
+            home: sdlc::home::resolve(
+                program,
+                Path::new(&change.workspace),
+                &change.system,
+                &change.change,
+            ),
+        },
+    }
 }
 
 fn place_target(target: &SnapshotTarget) -> Placed {
-    let _ = target;
-    todo!("place_target")
+    match target {
+        SnapshotTarget::Workspace { master } => Placed::Workspace(master.into()),
+        SnapshotTarget::Change(change) => match ai_sdlc_dir_in(&change.workspace) {
+            Ok(dir) => place_target_with(&sdlc::ai_sdlc::Program::locate(&dir), target),
+            Err(message) => Placed::Change {
+                workspace: (&change.workspace).into(),
+                system: change.system.clone(),
+                home: Err(sdlc::home::HomeError::Unanswered(message)),
+            },
+        },
+    }
+}
+
+/// The folder a snapshot and a leftovers read are taken in; the plugin's refusal when it cannot be placed.
+fn take_master(placed: &Placed) -> Result<&Path, String> {
+    match placed {
+        Placed::Workspace(master) => Ok(master),
+        Placed::Change { home, .. } => home
+            .as_ref()
+            .map(|h| h.master.as_path())
+            .map_err(|e| e.to_string()),
+    }
 }
 
 fn snapshot_in(placed: &Placed) -> Result<sdlc::snapshot::Snapshot, String> {
-    let _ = placed;
-    todo!("snapshot_in")
+    let master = take_master(placed)?;
+    sdlc::snapshot::take(master).map_err(|e| e.to_string())
 }
 
 fn leftovers_in(
@@ -794,8 +826,14 @@ fn leftovers_in(
     before: &sdlc::snapshot::Snapshot,
     build: Option<&sdlc::snapshot::BuildScope>,
 ) -> Result<sdlc::snapshot::Leftovers, String> {
-    let _ = (placed, before, build);
-    todo!("leftovers_in")
+    let master = take_master(placed)?;
+    let repos = match placed {
+        Placed::Workspace(master) => sdlc::snapshot::sibling_repos(master),
+        Placed::Change {
+            workspace, system, ..
+        } => sdlc::snapshot::product_repos(workspace, system),
+    };
+    sdlc::snapshot::leftovers(master, before, &repos, build).map_err(|e| e.to_string())
 }
 
 fn discard_in(
@@ -804,8 +842,7 @@ fn discard_in(
     paths: &[String],
     build: Option<&sdlc::snapshot::BuildScope>,
 ) -> Result<(), String> {
-    let _ = (placed, before, paths, build);
-    todo!("discard_in")
+    sdlc::snapshot::discard_placed(&placed.placing(), before, paths, build)
 }
 
 #[tauri::command(async)]

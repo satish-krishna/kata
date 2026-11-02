@@ -5,6 +5,10 @@
  */
 export type Snapshot = { 
 /**
+ * The absolute folder `take` was given. A discard acts only in this folder.
+ */
+folder: string, 
+/**
  * `HEAD` commit, `None` on an unborn branch.
  */
 head: string | null, 

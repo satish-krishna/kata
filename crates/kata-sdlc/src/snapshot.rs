@@ -1,6 +1,7 @@
 //! Run snapshot: what the master repo looked like before an agent run, and what the run left behind.
 use crate::git::{GitError, Repo};
 use crate::home::HomeError;
+use crate::workspace;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -71,8 +72,35 @@ pub enum Placing<'a> {
 
 /// Decides, before anything is touched, the folder a discard may act in, or the refusal to show.
 pub fn discard_folder(placing: &Placing<'_>, before: &Snapshot) -> Result<PathBuf, String> {
-    let _ = (placing, before);
-    todo!("discard_folder")
+    match placing {
+        Placing::Change(Err(why)) => Err(format!("Nothing discarded: {why}")),
+        Placing::Change(Ok(folder)) | Placing::Workspace(folder) => {
+            if same_folder(folder, &before.folder) {
+                Ok(folder.to_path_buf())
+            } else {
+                Err(DiscardError::WrongFolder {
+                    folder: folder.to_string_lossy().into_owned(),
+                }
+                .to_string())
+            }
+        }
+    }
+}
+
+/// Whether two spellings of a folder name the same folder: canonical when both exist, else compared
+/// with the separators, the Windows verbatim prefix and (on Windows) the case normalized.
+fn same_folder(a: &Path, b: &str) -> bool {
+    fn key(p: &Path) -> String {
+        let p = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let text = p.to_string_lossy().replace('\\', "/");
+        let text = text.trim_start_matches("//?/").trim_end_matches('/');
+        if cfg!(windows) {
+            text.to_lowercase()
+        } else {
+            text.to_string()
+        }
+    }
+    !b.is_empty() && key(a) == key(Path::new(b))
 }
 
 /// Takes the decision of `discard_folder`, then discards in that folder.
@@ -82,14 +110,45 @@ pub fn discard_placed(
     paths: &[String],
     build: Option<&BuildScope>,
 ) -> Result<(), String> {
-    let _ = (placing, before, paths, build);
-    todo!("discard_placed")
+    let folder = discard_folder(placing, before)?;
+    discard(&folder, before, paths, build).map_err(|e| e.to_string())
 }
 
 /// The product repositories checked out in the workspace for `system`: the marker's list, the master excluded.
 pub fn product_repos(workspace: &Path, system: &str) -> Vec<PathBuf> {
-    let _ = (workspace, system);
-    Vec::new()
+    let Ok(scan) = workspace::scan(workspace) else {
+        return Vec::new();
+    };
+    let master = scan_master(&scan);
+    workspace::system_repos(&scan, system)
+        .into_iter()
+        .filter(|r| Some(r.as_str()) != master && scan.repos.contains(r))
+        .map(|r| workspace.join(r))
+        .collect()
+}
+
+/// Every repository next to `master` in its folder, for a run outside any change (setup, context,
+/// triage), where there is no system to name the product repositories.
+pub fn sibling_repos(master: &Path) -> Vec<PathBuf> {
+    let Some(workspace) = master.parent() else {
+        return Vec::new();
+    };
+    let Ok(scan) = workspace::scan(workspace) else {
+        return Vec::new();
+    };
+    let own = master.file_name().map(|n| n.to_string_lossy().into_owned());
+    scan.repos
+        .iter()
+        .filter(|r| Some(r.as_str()) != own.as_deref())
+        .map(|r| workspace.join(r))
+        .collect()
+}
+
+fn scan_master(scan: &workspace::WorkspaceScan) -> Option<&str> {
+    match &scan.master {
+        workspace::MasterState::One { repo, .. } => Some(repo.as_str()),
+        _ => None,
+    }
 }
 
 /// One `git status` entry: the two-letter code and the repo-relative path.
@@ -158,7 +217,7 @@ fn dirty_map(master: &Path) -> Result<BTreeMap<String, String>, GitError> {
 
 pub fn take(master: &Path) -> Result<Snapshot, GitError> {
     Ok(Snapshot {
-        folder: String::new(),
+        folder: master.to_string_lossy().into_owned(),
         head: current_head(master),
         dirty: dirty_map(master)?,
     })
@@ -241,6 +300,11 @@ pub fn discard(
     paths: &[String],
     build: Option<&BuildScope>,
 ) -> Result<(), DiscardError> {
+    if !same_folder(master, &before.folder) {
+        return Err(DiscardError::WrongFolder {
+            folder: master.to_string_lossy().into_owned(),
+        });
+    }
     let entries = status_entries(master)?;
     let mut plan = Vec::new();
     for path in paths {
