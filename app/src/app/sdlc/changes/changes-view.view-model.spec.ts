@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
-import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { ChangesViewModel } from './changes-view.view-model';
 
 const CTX = { folder: MOCK_WORKSPACE_FOLDER, masterRepo: MOCK_MASTER, system: 'commerce', change: MOCK_BUILD_CHANGE };
@@ -97,5 +97,20 @@ describe('ChangesViewModel', () => {
       ['commerce-core', `change/${MOCK_BUILD_CHANGE}`, 'main'],
       ['customer-portal', `change/${MOCK_BUILD_CHANGE}`, 'main'],
     ]);
+  });
+});
+
+describe('the Changes view follows the change reference (R2.2)', () => {
+  it('build_page_and_changes_view_follow_the_change_copy', async () => {
+    const { vm, transport } = setup();
+    const ref = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_DONE_CHANGE };
+    const repos = vi.spyOn(transport, 'sdlcChangeRepos');
+    const missing = vi.spyOn(transport, 'sdlcMissingChangeBranches');
+    await vm.open({ ...CTX, change: MOCK_DONE_CHANGE, ref });
+    expect(repos).toHaveBeenCalledWith(ref);
+    expect(missing).toHaveBeenCalledWith(ref);
+    const master = vm.repos().find((r) => r.repo === MOCK_MASTER)!;
+    expect(master.path).toBe(`${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${MOCK_DONE_CHANGE}`);
+    expect(master.branch).toBe(`change/${MOCK_DONE_CHANGE}`);
   });
 });

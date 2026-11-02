@@ -104,7 +104,8 @@ export type StageMessage = { title: string; lines: string[] };
 /** What the page is given on every load of the change. */
 export type BuildPageInput = {
   ctx: BuildContext;
-  master: { repo: string; path: string };
+  master?: { repo: string; path: string };
+  masterRepo?: string;
   change: ChangeView;
   status: BuildStatus | null;
   done: boolean;
@@ -826,7 +827,7 @@ export class BuildPageViewModel {
     this.status.set(input.status);
     this.reviewDoc.set(input.review);
     this.restorePick();
-    this.changes.set({ folder: input.ctx.folder, masterRepo: input.master.repo, system: input.ctx.system, change: input.ctx.change });
+    this.changes.set({ folder: input.ctx.folder, masterRepo: input.masterRepo ?? input.master?.repo ?? '', system: input.ctx.system, change: input.ctx.change });
     await Promise.all([this.readSessions(), this.readChanges(), this.attach(this.ref()!), this.readChecks()]);
     if (!this.shows(input.ctx)) return;
     if (input.status !== null) await this.readBoard(this.groupKeys(), input.status, this.buildState());

@@ -1,6 +1,7 @@
 import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { BuildRow } from '@bindings/BuildRow';
+import type { ChangeRef } from '@bindings/ChangeRef';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { ChangedFile } from '@bindings/ChangedFile';
 import type { CommitFiles } from '@bindings/CommitFiles';
@@ -19,7 +20,7 @@ import type { FindingMark, StepRequest } from '../../ui/diff-editor/diff-editor'
 import type { FileRef, RepoFile, RepoFileGroup } from '../../ui/repo-file-list';
 
 /** What the Changes view looks at: the workspace folder, its master repository, and the system's change. */
-export type ChangesContext = { folder: string; masterRepo: string; system: string; change: string };
+export type ChangesContext = { folder: string; masterRepo: string; system: string; change: string; ref?: ChangeRef };
 
 export const PART_OPTIONS: { value: Part; label: string }[] = [
   { value: 'whole', label: 'Whole change' },

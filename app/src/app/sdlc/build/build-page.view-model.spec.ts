@@ -24,7 +24,7 @@ import { RunStore } from '../../core/run/run.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { GivenStore } from '../../core/given/given.store';
-import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { IDLE, type RunSnapshot } from '../../core/run/reduce';
 import { BuildLayoutViewModel } from './build-layout.view-model';
 import { BuildPageViewModel, findingsAreaOf, type BuildContext, type Departure, type FindingsView, type ReviewEntry } from './build-page.view-model';
@@ -1225,5 +1225,30 @@ describe('moving the page from one change to another (F1)', () => {
     await advance(100);
     expect(linkRun).toHaveBeenCalledWith(expect.objectContaining({ change: MOCK_BUILD_CHANGE, run_id: 'a-transcript', stage: 'build:commerce-core' }));
     expect(linkRun.mock.calls.filter(([l]) => l.change === SECOND_CHANGE)).toEqual([]);
+  });
+});
+
+describe('the build page reads a change through its reference (R1.1, R2.2)', () => {
+  const COPY_REF = { workspace: FOLDER, system: 'commerce', change: MOCK_DONE_CHANGE };
+
+  it('build_page_reads_a_copy_change_from_its_copy', async () => {
+    const s = setup();
+    const status = await s.transport.sdlcBuildStatus(COPY_REF);
+    const [found] = (await readAllChanges(s.transport, FOLDER)).filter((c) => c.state.change === MOCK_DONE_CHANGE);
+    const repos = vi.spyOn(s.transport, 'sdlcChangeRepos');
+    const heads = vi.spyOn(s.transport, 'sdlcBuildHeads');
+    const read = vi.spyOn(s.transport, 'sdlcDiffFiles');
+    await s.vm.load({ ctx: { ...CTX, change: MOCK_DONE_CHANGE }, masterRepo: MOCK_MASTER, change: found, status, done: true, review: null });
+    await advance(100);
+    // The tasks are the copy's: the finished change has every task logged.
+    expect(status.tasks.length).toBeGreaterThan(0);
+    expect(status.tasks.every((t) => t.row !== null)).toBe(true);
+    expect(repos).toHaveBeenCalledWith(COPY_REF);
+    expect(heads.mock.calls.every(([ref]) => ref.change === MOCK_DONE_CHANGE && ref.workspace === FOLDER)).toBe(true);
+    expect(heads.mock.calls[0][1]).toContain(MOCK_MASTER);
+    // The files are counted in the folders the backend named; the master repository's is the copy itself.
+    const copy = `${FOLDER}/.ai-sdlc/copies/${MOCK_DONE_CHANGE}`;
+    expect(read.mock.calls.map(([path]) => path)).toContain(copy);
+    expect(s.vm.view().counts.files).toBeGreaterThan(0);
   });
 });
