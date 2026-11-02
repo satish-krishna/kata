@@ -37,7 +37,26 @@ An operation that touches several repositories (preparing a build, creating bran
 
 ## 5. Existing logic in TypeScript
 
-The debt list is one item. `rulePath` and `productRepoRules` in `app/src/app/lib/sdlc.ts` still build deny rules for setup, context and new-change runs, and duplicate `kata_sdlc::permissions::rule_path`, the owner of the rule shape. Do not copy them as precedent and do not add a decision to them. Moving them is a change of its own, unless the change at hand already rewrites those runs.
+This is the decision logic TypeScript still holds. None of it is precedent: do not copy it and do not add a decision to it. Moving an item is a change of its own, unless the change at hand already rewrites that code. When an item moves, delete it here in the same change.
+
+Rules a spec or a context file states, computed in TypeScript:
+
+- `rulePath`, `productRepoRules` and `restrictedFor` in `app/src/app/lib/sdlc.ts` build deny rules for setup, context, triage, fix and new-change runs, and duplicate `kata_sdlc::permissions::rule_path`, the owner of the rule shape.
+- `stageRuns`, `stagePills` and `primaryAction` in `app/src/app/lib/sdlc.ts`: which runs belong to a stage (with the fallback by deterministic run name), which stage pills are open, accepted or locked, and which action is primary.
+- `reviewFindings` and `mostSeriousFirst` in `app/src/app/lib/sdlc.ts`, `shownReview` and `shownSection` in `app/src/app/lib/sdlc-review.ts`, and `groupFindings` in `app/src/app/lib/sdlc-findings.ts`: which findings a change shows (the review document over the review run's words), their order, most serious first, and their grouping by repository.
+- `shownDocument`, `shownBuild`, `shownPart` and `shownChangeList` in `app/src/app/lib/doc-notice.ts`: the decision table for what a spec, plan, build log or review shows and which notice goes above it.
+- `buildStage` and `taskGroups` in `app/src/app/lib/build-stage.ts` (a change declared done is done whatever the build session says; which repositories the tasks area lists), and `layoutStage` in `app/src/app/lib/build-layout-stage.ts` (where the build stands for the layout).
+- `sessionsFor` and `activityFor` in `app/src/app/lib/build-sessions.ts`: which session a picked task shows (the latest of several links counts) and the default pick.
+- `isSetUp` and `contextAction` in `app/src/app/lib/sdlc-workspace.ts`: when a workspace counts as set up, and which context action a repository row offers.
+- `reviewEntry` in `app/src/app/sdlc/build/build-page.view-model.ts` counts a review the build just finished and read as finished before the run links catch up. The review's standing itself is `kata_sdlc::review::standing`, and where each repository and task stands is `kata_sdlc::board`.
+
+Single-item commands looped in TypeScript (section 3):
+
+- `sdlcDiffFiles` per repository in `readChanges` of `app/src/app/sdlc/build/build-page.view-model.ts`, and `sdlcDiffFiles` and `sdlcCommitFiles` per repository in `app/src/app/sdlc/changes/changes-view.view-model.ts`.
+- `sdlcContextHealth` per repository in `readContextStates` of `app/src/app/lib/sdlc-workspace.ts`, which the home calls.
+- `previewRun` per section in `app/src/app/core/given/run-preview.view-model.ts`.
+
+The browser mock (`app/src/app/lib/sdlc-mock.ts`) restates some backend decisions, `mockBoard` and `mockStanding` among them, so the browser and the unit tests have answers where no backend runs. That is a fixture, not a second owner: the Rust tests own the rows, and a mock answer that drifts from them is a mock bug.
 
 ## Checking a document or a diff
 
