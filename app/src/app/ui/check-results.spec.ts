@@ -17,6 +17,7 @@ describe('CheckResults shows what the plugin recorded, in its words (R5.1)', () 
     ['failed, to be fixed', view('kata', { kind: 'failedFix', id: 'unit', output: OUTPUT }, FIX), 'error'],
     ['failed, to stop', view('kata', { kind: 'failedStop', id: 'unit', output: OUTPUT }, 'unit failed. The build stopped here.'), 'error'],
     ['could not run', view('kata', { kind: 'couldNotRun', id: 'unit', output: OUTPUT }, 'unit could not run on this machine. That is a fault of the machine, not of the code.'), 'warning'],
+    ['the hook configuration is broken (F20)', view('kata', { kind: 'configBroken', output: OUTPUT }, "The team's check configuration on the base branch has problems. No check runs until it is fixed."), 'warning'],
   ] as const)('%s: the sentence and its color', async (_name, v, tone) => {
     const { container } = await render(CheckResults, { views: [v] });
     expect(text(container)).toContain(v.summary);
@@ -35,6 +36,11 @@ describe('CheckResults shows what the plugin recorded, in its words (R5.1)', () 
     const { container } = await render(CheckResults, { views: [view('kata', v, `${v.id} says so.`)] });
     expect(container.querySelector('pre')!.textContent).toBe(OUTPUT);
     expect(text(container)).toContain('unit');
+  });
+
+  it("a broken hook configuration shows the plugin's problems (F20)", async () => {
+    const { container } = await render(CheckResults, { views: [view('kata', { kind: 'configBroken', output: OUTPUT }, 'broken')] });
+    expect(container.querySelector('pre')!.textContent).toBe(OUTPUT);
   });
 
   it('a passed run lists the checks that passed', async () => {

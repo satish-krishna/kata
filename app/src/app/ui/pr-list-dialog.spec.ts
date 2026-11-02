@@ -26,12 +26,21 @@ describe("PrListDialog, the plugin's answer to declaring done", () => {
   };
 
   it('done lists every pull request with its link, the master last (R7.1 passes)', async () => {
-    await show({ kind: 'done', pullRequests: [recorded('commerce-core', 1), recorded('customer-portal', 2), recorded('commerce-docs', 3)] });
+    await show({ kind: 'done', pullRequests: [recorded('commerce-core', 1), recorded('customer-portal', 2), recorded('commerce-docs', 3)], warnings: [] });
     const rows = Array.from(dialog().querySelectorAll('li'));
     expect(rows.map((r) => r.querySelector('.k-mono')!.textContent!.trim())).toEqual(['commerce-core', 'customer-portal', 'commerce-docs']);
     expect(Array.from(dialog().querySelectorAll<HTMLAnchorElement>('a')).map((a) => a.getAttribute('href'))).toEqual([url('commerce-core'), url('customer-portal'), url('commerce-docs')]);
     expect(button('Close')).toBeDefined();
     expect(button('Declare done again')).toBeUndefined();
+  });
+
+  it("done shows the plugin's warnings, such as an after hook that failed, with the pull requests (F22)", async () => {
+    const warning = 'after hook announce failed with exit code 1; nothing was undone';
+    await show({ kind: 'done', pullRequests: [recorded('commerce-core', 1)], warnings: [warning] });
+    const warned = dialog().querySelector('.k-status--warning');
+    expect(warned!.textContent!.trim()).toBe(warning);
+    expect(warned!.querySelector('.k-status__dot')).not.toBeNull();
+    expect(dialog().querySelector('a')!.getAttribute('href')).toBe(url('commerce-core'));
   });
 
   it('a refusal shows every problem as the plugin wrote it and says nothing was pushed (R7.1 refuses, R7.5)', async () => {
@@ -93,7 +102,7 @@ describe('PrListDialog, what an earlier branch name left behind', () => {
   });
 
   it('lists it after the pull requests of the answer', async () => {
-    await render(PrListDialog, { view: { kind: 'done', pullRequests: [{ repo: 'api', url: url('api'), number: 7, source: 'plugin' }] }, leftBehind: [entry('api', 'feat/PROJ-123-reset')] });
+    await render(PrListDialog, { view: { kind: 'done', pullRequests: [{ repo: 'api', url: url('api'), number: 7, source: 'plugin' }], warnings: [] }, leftBehind: [entry('api', 'feat/PROJ-123-reset')] });
     await settle();
     expect(Array.from(dialog().querySelectorAll<HTMLAnchorElement>('a')).map((a) => a.getAttribute('href'))).toEqual([url('api'), url('api')]);
   });

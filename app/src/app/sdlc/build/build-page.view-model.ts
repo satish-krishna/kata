@@ -1318,7 +1318,7 @@ export class BuildPageViewModel {
       this.refusal.set({ reason: message(e), problems: [] });
       return 'couldNotRun';
     }
-    if (outcome.kind === 'refused' || outcome.kind === 'couldNotRun') this.progress.fail('build');
+    if (outcome.kind === 'refused' || outcome.kind === 'failed' || outcome.kind === 'couldNotRun') this.progress.fail('build');
     else this.progress.end('build');
     return this.settle(outcome);
   }
@@ -1343,8 +1343,14 @@ export class BuildPageViewModel {
       case 'refused':
         this.refusal.set({ reason: 'The plugin refused to start the build', problems: outcome.problems });
         break;
+      case 'failed':
+        this.refusal.set({
+          reason: outcome.hook === null ? "The plugin's build start failed" : `The team's hook ${outcome.hook.id} failed`,
+          problems: [...outcome.problems, ...(outcome.hook === null || outcome.hook.output.trim() === '' ? [] : [outcome.hook.output.trim()])],
+        });
+        break;
       case 'couldNotRun':
-        this.refusal.set({ reason: outcome.output, problems: [] });
+        this.refusal.set({ reason: outcome.repo === null ? "This machine could not run the plugin's step" : `This machine could not run the plugin's step in ${outcome.repo}`, problems: [outcome.output] });
         break;
     }
     return outcome.kind;

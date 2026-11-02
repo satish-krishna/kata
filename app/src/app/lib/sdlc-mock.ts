@@ -599,7 +599,7 @@ export class SdlcMock {
   /** The long demo's change whose plan the format program cannot read, so the reading rows show a reason. */
   private readonly unreadable: string | null;
 
-  /** `?demo=naming` puts the build demo change on a pending branch that waits for a name; `?demo=done-refused`, `done-partial`, `done-cannot` and `done-gh` leave the finished change undeclared and give each answer of the plugin to declaring it done. */
+  /** `?demo=naming` puts the build demo change on a pending branch that waits for a name; `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` leave the finished change undeclared and give each answer of the plugin to declaring it done. */
   private readonly demo: string | null;
 
   constructor(long = false, demo: string | null = null) {
@@ -870,7 +870,7 @@ export class SdlcMock {
 
   accept(changeName: string, which: ChangeDocument): AcceptOutcome {
     this.changes = this.changes.map((c) => (c.change === changeName ? applyAcceptance(c, which) : c));
-    return { outcome: 'accepted' };
+    return { outcome: 'accepted', warnings: [] };
   }
 
   /** The plugin commits the rejection and removes the change's copy: the change leaves the list, its branch stays. */
@@ -1000,12 +1000,14 @@ export class SdlcMock {
   /**
    * What each repository's checks came to, as the plugin's answer would read. The team's checks cover commerce-core (unit) and, in
    * the long variant, billing-api (integration); customer-portal has none. Before the build has recorded every task nothing has run.
-   * `?demo=checks-fix`, `checks-stop`, `checks-cannot` and `checks-stale` give commerce-core each of the other results.
+   * `?demo=checks-fix`, `checks-stop`, `checks-cannot` and `checks-stale` give commerce-core each of the other results, and
+   * `?demo=checks-config` gives every repository the plugin's problems with the team's hook configuration.
    */
   checksView(changeName: string): RepoCheckView[] {
     const finished = changeName === MOCK_DONE_CHANGE || this.rows.size >= this.plan.length;
     const output = ['running 14 tests', 'test store::keeps_the_upload ... FAILED', '', 'failures:', '    store::keeps_the_upload', '', 'test result: FAILED. 13 passed; 1 failed'].join('\n');
     const view = (repo: string, id: string): CheckView => {
+      if (this.demo === 'checks-config') return { kind: 'configBroken', output: '.ai-sdlc.json: hooks.build.finish[0]: timeout must be a whole number of seconds from 1 to 86400' };
       if (!finished) return { kind: 'notRunYet' };
       if (repo === 'billing-api') return { kind: 'failedFix', id, output };
       switch (this.demo) {
@@ -1023,6 +1025,8 @@ export class SdlcMock {
     };
     const summary = (v: CheckView): string => {
       switch (v.kind) {
+        case 'configBroken':
+          return "The team's check configuration on the base branch has problems. No check runs until it is fixed.";
         case 'noChecks':
           return 'This repository has no checks.';
         case 'notRunYet':
@@ -1094,7 +1098,8 @@ export class SdlcMock {
     }
     const all = [...this.repos, MOCK_MASTER];
     all.forEach((repo) => this.published.add(repo));
-    return { view: { kind: 'done', pullRequests: all.map((repo, i) => link(repo, 7 + i)) }, steps: stepsFor(all) };
+    const warnings = this.demo === 'done-warnings' ? ['after hook announce failed with exit code 1; nothing was undone'] : [];
+    return { view: { kind: 'done', pullRequests: all.map((repo, i) => link(repo, 7 + i)), warnings }, steps: stepsFor(all) };
   }
 
   /**

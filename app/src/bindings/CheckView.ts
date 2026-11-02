@@ -4,4 +4,4 @@ import type { HookShown } from "./HookShown";
 /**
  * Where a repository's checks stand.
  */
-export type CheckView = { "kind": "noChecks" } | { "kind": "notRunYet" } | { "kind": "stale", head: string, } | { "kind": "passed", hooks: Array<HookShown>, } | { "kind": "failedFix", id: string, output: string, } | { "kind": "failedStop", id: string, output: string, } | { "kind": "couldNotRun", id: string, output: string, };
+export type CheckView = { "kind": "configBroken", output: string, } | { "kind": "noChecks" } | { "kind": "notRunYet" } | { "kind": "stale", head: string, } | { "kind": "passed", hooks: Array<HookShown>, } | { "kind": "failedFix", id: string, output: string, } | { "kind": "failedStop", id: string, output: string, } | { "kind": "couldNotRun", id: string, output: string, };

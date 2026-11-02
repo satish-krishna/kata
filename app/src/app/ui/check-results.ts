@@ -13,6 +13,7 @@ const toneOf = (view: CheckView): Tone => {
     case 'failedStop':
       return 'error';
     case 'couldNotRun':
+    case 'configBroken':
       return 'warning';
     default:
       return 'idle';

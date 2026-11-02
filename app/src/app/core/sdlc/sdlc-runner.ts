@@ -456,6 +456,18 @@ export class SdlcRunner {
       this.toasts.error(started.problems.join('\n'));
       return { kind: 'stopped' };
     }
+    if (started.outcome === 'failed') {
+      // A team hook or the plugin's own step failed: its words and the hook's output, and what it had made by then.
+      const hook = started.hook === null ? [] : [`The team's hook ${started.hook.id} failed.`, started.hook.output.trim()];
+      const made = started.made.length === 0 ? [] : [`The plugin made: ${started.made.join(', ')}`];
+      this.toasts.error([...hook, ...started.problems, ...made].filter((line) => line !== '').join('\n'));
+      return { kind: 'stopped' };
+    }
+    if (started.outcome === 'couldNotRun') {
+      const output = started.hook === null ? '' : started.hook.output.trim();
+      this.toasts.error([`This machine could not run the plugin's start: ${started.reason}`, output].filter((line) => line !== '').join('\n'));
+      return { kind: 'stopped' };
+    }
     const { change } = started;
     // The name was settled before the preview; a start across midnight can differ, and the run must be about the change that exists.
     const rename = (text: string): string => (previewed !== null && previewed !== change ? text.split(previewed).join(change) : text);

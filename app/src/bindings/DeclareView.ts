@@ -4,4 +4,8 @@ import type { RecordedPullRequest } from "./RecordedPullRequest";
 /**
  * What declaring a change done came to.
  */
-export type DeclareView = { "kind": "done", pullRequests: Array<RecordedPullRequest>, } | { "kind": "notReady", problems: Array<string>, } | { "kind": "partial", pushed: Array<string>, opened: Array<RecordedPullRequest>, failed: Array<string>, } | { "kind": "couldNotRun", message: string, };
+export type DeclareView = { "kind": "done", pullRequests: Array<RecordedPullRequest>, 
+/**
+ * The plugin's warnings, such as an after hook that failed (nothing was undone).
+ */
+warnings: Array<string>, } | { "kind": "notReady", problems: Array<string>, } | { "kind": "partial", pushed: Array<string>, opened: Array<RecordedPullRequest>, failed: Array<string>, } | { "kind": "couldNotRun", message: string, };

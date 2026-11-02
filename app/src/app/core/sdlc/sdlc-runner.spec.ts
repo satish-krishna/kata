@@ -514,6 +514,22 @@ describe('SdlcRunner.newChange', () => {
       expect(lock.runAgent).not.toHaveBeenCalled();
     });
 
+    it("a team hook that failed on starting is shown with its output and what the plugin made, and nothing runs (F10)", async () => {
+      const { runner, fake, lock, toasts } = setup();
+      fake.started = { outcome: 'failed', problems: ['hook gate failed with exit code 1'], hook: { id: 'gate', onFailure: 'stop', output: 'gate says no\n' }, made: [] };
+      expect(await runner.newChange(target, 'commerce', 'flag prices', 'full')).toEqual({ kind: 'stopped' });
+      expect(toasts.error).toHaveBeenCalledWith("The team's hook gate failed.\ngate says no\nhook gate failed with exit code 1");
+      expect(lock.runAgent).not.toHaveBeenCalled();
+    });
+
+    it("a start the machine could not run says so, with the hook's output (F3)", async () => {
+      const { runner, fake, lock, toasts } = setup();
+      fake.started = { outcome: 'couldNotRun', reason: 'hook gate could not run', hook: { id: 'gate', onFailure: 'stop', output: 'cannot start gate: ENOENT' } };
+      expect(await runner.newChange(target, 'commerce', 'flag prices', 'full')).toEqual({ kind: 'stopped' });
+      expect(toasts.error).toHaveBeenCalledWith("This machine could not run the plugin's start: hook gate could not run\ncannot start gate: ENOENT");
+      expect(lock.runAgent).not.toHaveBeenCalled();
+    });
+
     it('any other refusal is shown as it is', async () => {
       const { runner, fake, lock, toasts } = setup();
       fake.started = refused('other', ['the master repository has no base branch', 'second problem']);

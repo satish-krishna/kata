@@ -5,6 +5,17 @@
       <div class="max-h-[65vh] overflow-y-auto">
         @if (view(); as v) {
           @switch (v.kind) {
+            @case ('done') {
+              @if (v.warnings.length > 0) {
+                <ul class="k-left__list" aria-label="Warnings from the plugin">
+                  @for (warning of v.warnings; track $index) {
+                    <li class="k-left__row">
+                      <span class="k-status k-status--warning"><span class="k-status__dot"></span>{{ warning }}</span>
+                    </li>
+                  }
+                </ul>
+              }
+            }
             @case ('notReady') {
               <ul class="k-left__list">
                 @for (problem of v.problems; track $index) {

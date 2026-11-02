@@ -331,7 +331,7 @@ export class MockTransport extends KataTransport {
   sdlcOldChecks(_folder: string, system: string): Promise<OldChecks | null> { return Promise.resolve(this.sdlc.oldChecks(system)); }
   sdlcOldChecksSeen(system: string): Promise<void> { this.sdlc.oldChecksSeen(system); return Promise.resolve(); }
   sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]> { return Promise.resolve(this.sdlc.checksView(change.change)); }
-  /** The plugin's answer to declaring the change done, with the steps it reports on the way; `?demo=done-refused`, `done-partial`, `done-cannot` and `done-gh` give each of the other answers. */
+  /** The plugin's answer to declaring the change done, with the steps it reports on the way; `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` give each of the other answers. */
   async sdlcDeclareDone(change: ChangeRef): Promise<DeclareView> {
     const { view, steps } = this.sdlc.declareDone(change.change);
     for (const step of steps) for (const listen of [...this.doneListeners]) listen(step);

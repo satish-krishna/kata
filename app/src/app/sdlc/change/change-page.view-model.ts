@@ -1274,7 +1274,8 @@ export class ChangePageViewModel {
     }
     switch (out.outcome) {
       case 'accepted':
-        this.toasts.success(`Accepted ${doc} · committed`);
+        if (out.warnings.length === 0) this.toasts.success(`Accepted ${doc} · committed`);
+        else this.toasts.info([`Accepted ${doc} · committed, with warnings from the plugin.`, ...out.warnings].join('\n'));
         break;
       case 'acceptedHookFailed':
         this.toasts.error(`Accepted ${doc} and committed it, but ${out.hook === null ? 'a hook on accepting' : `the hook ${out.hook}`} failed.\n${[...out.problems, outputTail(out.output)].filter((s) => s !== '').join('\n')}`);

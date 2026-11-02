@@ -1059,6 +1059,26 @@ describe('the build page reads the backend\'s build and starts it through the ho
     expect(vm.view().held).toBeNull();
   });
 
+  it("a team hook that failed on starting shows the hook and its output, not a machine fault (F10)", async () => {
+    const { vm, transport, load } = await opened();
+    await load();
+    vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({
+      kind: 'failed',
+      problems: ['hook deps failed with exit code 1'],
+      hook: { id: 'deps', onFailure: 'stop', output: 'npm ci: lockfile out of date\n' },
+    });
+    expect(await vm.startBuild({ timeoutSecs: 60 })).toBe('failed');
+    expect(vm.refusal()).toEqual({ reason: "The team's hook deps failed", problems: ['hook deps failed with exit code 1', 'npm ci: lockfile out of date'] });
+  });
+
+  it("a step the machine could not run names the repository the plugin names (F3)", async () => {
+    const { vm, transport, load } = await opened();
+    await load();
+    vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'couldNotRun', output: 'hook prep could not run', repo: 'commerce-core' });
+    expect(await vm.startBuild({ timeoutSecs: 60 })).toBe('couldNotRun');
+    expect(vm.refusal()).toEqual({ reason: "This machine could not run the plugin's step in commerce-core", problems: ['hook prep could not run'] });
+  });
+
   it('the round dialog shows the backend\'s plan for the picks', async () => {
     const { vm, transport, preview, load } = await opened();
     await load();

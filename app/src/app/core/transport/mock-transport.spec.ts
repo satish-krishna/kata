@@ -178,7 +178,7 @@ describe('MockTransport', () => {
     const before = (await readAllChanges(t)).find((c) => c.state.change === '2026-10-12-product-photo-upload');
     expect(before && stageName(before.offer.stage)).toBe('spec-awaiting');
     const out = await t.sdlcAccept({ workspace: '/ws', system: 'commerce', change: '2026-10-12-product-photo-upload' }, 'spec');
-    expect(out).toEqual({ outcome: 'accepted' });
+    expect(out).toEqual({ outcome: 'accepted', warnings: [] });
     const after = (await readAllChanges(t)).find((c) => c.state.change === '2026-10-12-product-photo-upload');
     expect(after && stageName(after.offer.stage)).toBe('plan-ready');
   });
@@ -546,6 +546,13 @@ describe('MockTransport declaring-done demos', () => {
       expect(view.kind).toBe(kind);
       if (view.kind === 'notReady' && demo === 'done-gh') expect(view.problems).toEqual(["Declaring done needs GitHub's command-line tool, gh. Install it from https://cli.github.com and reopen."]);
       if (view.kind === 'notReady' && demo === 'done-refused') expect(view.problems.join(' ')).toContain('has unresolved high findings');
+    });
+  });
+
+  it("?demo=done-warnings declares done with the plugin's warnings (F22)", async () => {
+    await withDemo('done-warnings', async (t) => {
+      const view = await t.sdlcDeclareDone(ref);
+      expect(view.kind === 'done' ? view.warnings : null).toEqual(['after hook announce failed with exit code 1; nothing was undone']);
     });
   });
 
