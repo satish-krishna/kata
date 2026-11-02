@@ -28,6 +28,34 @@ pub struct RunRef {
     pub repo: Option<String>,
 }
 
+/// A run of a change the engineer can open from the strip.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct OpenRun {
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub run: u64,
+    pub kind: RunKind,
+    pub repo: Option<String>,
+    /// Whether the run waits on the engineer: the list offers Answer for it, Watch otherwise.
+    pub waiting: bool,
+}
+
+/// What picking an entry opens.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum Opens {
+    /// That run's session, with its question or permission ready.
+    Session { run: OpenRun },
+    /// A list of the change's runs, each opening in one more step.
+    List { runs: Vec<OpenRun> },
+    /// The change's page: the change has no live run to open.
+    Change,
+}
+
 /// What a running change needs or does, in the order of the rows that pick it.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(
@@ -82,6 +110,8 @@ pub struct RunningEntry {
     pub since: u64,
     /// The runs of this change waiting on the engineer, oldest first.
     pub waiting: Vec<RunRef>,
+    /// What picking the entry opens.
+    pub opens: Opens,
 }
 
 /// The strip: the first entries and every entry.
@@ -150,6 +180,11 @@ fn pending_since(p: &Pending) -> u64 {
     }
 }
 
+/// What picking a change's entry opens. Stub: the rule is not written yet.
+fn opens_of(_f: &Facts) -> Opens {
+    Opens::Change
+}
+
 /// The entry for one change: the first row that holds, or none (rows 7 and 8).
 fn entry_of(change: &ChangeKey, f: &Facts) -> Option<RunningEntry> {
     let waiting: Vec<RunRef> = f
@@ -175,6 +210,7 @@ fn entry_of(change: &ChangeKey, f: &Facts) -> Option<RunningEntry> {
             state,
             since,
             waiting: waiting.clone(),
+            opens: opens_of(f),
         })
     };
     let build = f.build;
@@ -550,6 +586,105 @@ mod tests {
         marks.open(&key("A"));
         let s = entries(&[], &[view("N", None)], &h, &marks);
         assert!(s.all.is_empty());
+    }
+
+    fn open_run(run: u64, kind: RunKind, repo: Option<&str>, waiting: bool) -> OpenRun {
+        OpenRun {
+            run,
+            kind,
+            repo: repo.map(String::from),
+            waiting,
+        }
+    }
+
+    #[test]
+    fn picking_an_entry_with_one_waiting_run_opens_that_session() {
+        // R13.2 row 1: exactly one session waiting on the engineer, even beside a working one.
+        let h = RunHistory::default();
+        ask(&h, 2, "Which branch?");
+        let live = vec![
+            run(1, "A", RunKind::Build, Some("api")),
+            run(2, "A", RunKind::Build, Some("app")),
+        ];
+        let e = only(strip(&live, &[], &h));
+        assert_eq!(
+            e.opens,
+            Opens::Session {
+                run: open_run(2, RunKind::Build, Some("app"), true)
+            }
+        );
+        // A permission counts as waiting the same way.
+        let h = RunHistory::default();
+        permission(&h, 1, "ls");
+        let e = only(strip(&[run(1, "A", RunKind::Review, None)], &[], &h));
+        assert_eq!(
+            e.opens,
+            Opens::Session {
+                run: open_run(1, RunKind::Review, None, true)
+            }
+        );
+    }
+
+    #[test]
+    fn picking_an_entry_with_two_waiting_runs_opens_a_list_of_them() {
+        // R13.2 row 2: two sessions waiting; the list holds the change's runs, waiting ones marked.
+        let h = RunHistory::default();
+        ask(&h, 1, "which?");
+        permission(&h, 3, "ls");
+        let live = vec![
+            run(1, "A", RunKind::Build, Some("app")),
+            run(2, "A", RunKind::Build, Some("api")),
+            run(3, "A", RunKind::Review, None),
+        ];
+        let e = only(strip(&live, &[], &h));
+        assert_eq!(
+            e.opens,
+            Opens::List {
+                runs: vec![
+                    open_run(1, RunKind::Build, Some("app"), true),
+                    open_run(3, RunKind::Review, None, true),
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn picking_an_entry_with_only_working_runs_opens_a_list_of_them() {
+        // R13.2 row 3: none waiting, one or more working. One run still gets a list, not a session.
+        let h = RunHistory::default();
+        let e = only(strip(&[run(1, "A", RunKind::Build, Some("app"))], &[], &h));
+        assert_eq!(
+            e.opens,
+            Opens::List {
+                runs: vec![open_run(1, RunKind::Build, Some("app"), false)]
+            }
+        );
+        let live = vec![
+            run(1, "A", RunKind::Build, Some("app")),
+            run(2, "A", RunKind::Build, Some("api")),
+        ];
+        let e = only(strip(&live, &[], &h));
+        assert_eq!(
+            e.opens,
+            Opens::List {
+                runs: vec![
+                    open_run(1, RunKind::Build, Some("app"), false),
+                    open_run(2, RunKind::Build, Some("api"), false),
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn picking_an_entry_with_no_live_run_opens_the_change() {
+        let mut v = view("A", None);
+        v.held_start = held("app", "B");
+        let e = only(strip(&[], &[v], &RunHistory::default()));
+        assert_eq!(e.opens, Opens::Change);
+        let marks = OpenedMarks::default();
+        marks.ended(&key("A"));
+        let e = only(entries(&[], &[], &RunHistory::default(), &marks));
+        assert_eq!(e.opens, Opens::Change);
     }
 
     #[test]
