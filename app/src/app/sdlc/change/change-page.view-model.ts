@@ -820,9 +820,10 @@ export class ChangePageViewModel {
   readonly messageRefusal = computed(() => this.ownSnap()?.refusal ?? this.runs.refusal());
   readonly permissions = computed(() => this.ownSnap()?.permissions ?? this.runs.permissions());
   readonly given = computed(() => this.ownSnap() === null ? this.runs.given() : this.ownSnap()!.given);
-  readonly leftovers = this.runner.leftovers;
-  /** The session view's Close waits for the run's after-run work and for any leftover decision. */
-  readonly closeBlocked = computed(() => this.runner.settling() || this.runner.leftovers() !== null);
+  /** What a stopped run of this change (or of no change) left behind; another change's leftovers show on that change. */
+  readonly leftovers = computed(() => this.runner.leftoversOn(this.runKey()));
+  /** The session view's Close waits for this change's run's after-run work and for its leftover decision. */
+  readonly closeBlocked = computed(() => this.runner.settlingOn(this.runKey()) || this.leftovers() !== null);
 
   constructor() {
     // The router reuses this screen when only the change param moves, so the load follows the params, not a snapshot.
@@ -1186,7 +1187,7 @@ export class ChangePageViewModel {
   }
 
   async discardLeftovers(choices: DiscardChoice[]): Promise<void> {
-    await this.runner.discardAll(choices);
+    await this.runner.discardAll(choices, this.runKey());
     await this.load();
   }
 
@@ -1200,7 +1201,7 @@ export class ChangePageViewModel {
   }
 
   closeLeftovers(): void {
-    this.runner.closeLeftovers();
+    this.runner.closeLeftovers(this.runKey());
   }
 
   // --- internals

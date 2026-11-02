@@ -83,6 +83,12 @@ export type PickedNaming = { workType: WorkType; scope: string };
 
 export type ChangeTarget = { workspace: WorkspaceEntry; master: string; productRepos: string[] };
 
+/**
+ * What one stopped run left behind, offered on the page it belongs to: `place` is the change run's key for a change's own run, null for a
+ * run of no change (and for the run that starts a new change, which the page that started it waits on).
+ */
+type Batch = { id: number; place: string | null; entries: RepoLeftovers[] };
+
 /** The master repo a stopped run is compared against, with its pre-run snapshot. */
 type Baseline = { master: string; snapshot: Snapshot; productRepos: string[] };
 type PendingLink = { workspace_id: string; system: string; change: string; stage: string; started_at: number };
@@ -137,27 +143,42 @@ export class SdlcRunner {
   private readonly router = inject(Router);
 
   private readonly injector = inject(Injector);
-  private readonly pending = signal<RepoLeftovers[]>([]);
-  private closeWaiters: (() => void)[] = [];
+  /** Every stopped run's leftovers not yet decided, oldest first. */
+  private readonly pending = signal<Batch[]>([]);
+  private batchSeq = 0;
+  private closeWaiters = new Map<number, (() => void)[]>();
   /** The link of the solo run in flight; a change run keeps its own, so runs of different changes link apart. */
   private linkTarget: { link: PendingLink | null } | null = null;
 
-  /** What the last non-successful run left behind; the screen's leftover dialog renders it. */
-  readonly leftovers = computed<RepoLeftovers[] | null>(() => (this.pending().length === 0 ? null : this.pending()));
+  /** What a non-successful run of no change left behind; the home's leftover dialog renders it. */
+  readonly leftovers = computed<RepoLeftovers[] | null>(() => this.leftoversOn(null));
 
-  /** Stub: what a page on `place` shows. */
-  leftoversOn(_place: string | null): RepoLeftovers[] | null {
-    return this.leftovers();
+  /**
+   * What the leftover dialog of a page shows: the oldest undecided batch of the page's change run (`place`, its key) or of a run of no
+   * change. Null for the home (`place` null) shows only runs of no change. Each batch stays until it is decided, so none is lost.
+   */
+  leftoversOn(place: string | null): RepoLeftovers[] | null {
+    return this.shownBatch(place)?.entries ?? null;
   }
 
-  /** Stub: whether a run shown on `place` is still settling. */
-  settlingOn(_place: string | null): boolean {
-    return this.settling();
+  /** Whether a run shown on `place` has ended and its after-run work is still going: that page's session view cannot close yet. */
+  settlingOn(place: string | null): boolean {
+    const counts = this.afterRun();
+    return (counts.get(null) ?? 0) > 0 || (place !== null && (counts.get(place) ?? 0) > 0);
   }
 
-  private readonly afterRun = signal(0);
-  /** A run has ended but its after-run work (engine exit, report) is still going: the session view cannot close yet. */
-  readonly settling = computed(() => this.afterRun() > 0);
+  private shownBatch(place: string | null): Batch | undefined {
+    return this.pending().find((b) => b.place === null || b.place === place);
+  }
+
+  /** The runs whose after-run work is still going, by the place they show on. */
+  private readonly afterRun = signal<ReadonlyMap<string | null, number>>(new Map());
+  /** A run of no change has ended but its after-run work (engine exit, report) is still going: the session view cannot close yet. */
+  readonly settling = computed(() => this.settlingOn(null));
+
+  private settle(place: string | null, by: 1 | -1): void {
+    this.afterRun.update((m) => new Map(m).set(place, (m.get(place) ?? 0) + by));
+  }
   private readonly request = signal<NameRequest | null>(null);
   /** The branch name confirmation on show; null when none is open. */
   readonly nameRequest = this.request.asReadonly();
@@ -245,11 +266,23 @@ export class SdlcRunner {
   }
 
   async run(title: string, spec: RunSpec, target: RunTarget, change?: ChangeLaunch): Promise<RunOutcome> {
+    const out = await this.runAt(change ? changeRunKey(change.ref) : null, title, spec, target, change);
+    return { state: out.state, runId: out.runId, snapshot: out.snapshot, exited: out.exited };
+  }
+
+  /** Run, offering what a stopped run left behind on `place`; answers with the batch it offered, null when none. */
+  private async runAt(
+    place: string | null,
+    title: string,
+    spec: RunSpec,
+    target: RunTarget,
+    change?: ChangeLaunch,
+  ): Promise<RunOutcome & { batch: number | null }> {
     // A change's document run has a session of its own: only that change's own live run refuses it, and the backend refuses what needs a folder another run holds.
     const key = change ? changeRunKey(change.ref) : null;
     if (key === null ? this.isBusy() : this.changeRuns.has(key)) {
       this.toasts.error('Another task is already running.');
-      return { state: 'error', runId: null, snapshot: null, exited: true };
+      return { state: 'error', runId: null, snapshot: null, exited: true, batch: null };
     }
     let snapshot: Snapshot | null = null;
     let candidates: Map<string, Snapshot> | null = null;
@@ -258,7 +291,7 @@ export class SdlcRunner {
         snapshot = await this.transport.sdlcSnapshot(target.master);
       } catch (e) {
         this.toasts.error(`Could not read the master repo before the run: ${message(e)}`);
-        return { state: 'error', runId: null, snapshot: null, exited: true };
+        return { state: 'error', runId: null, snapshot: null, exited: true, batch: null };
       }
     } else if (target.firstSetup) {
       candidates = await this.snapshotAll(target.firstSetup);
@@ -267,7 +300,7 @@ export class SdlcRunner {
       link: target.link ? { workspace_id: target.workspaceId, ...target.link, started_at: Math.floor(Date.now() / 1000) } : (null as PendingLink | null),
     };
     // Settling from before the run ends, so the finished view never shows an enabled Close ahead of the work below.
-    this.afterRun.update((n) => n + 1);
+    this.settle(place, 1);
     // The run being watched: the solo run, or the backend's id of the change's run once it has launched.
     let backendId: string | null = null;
     let watch = null as { destroy(): void } | null;
@@ -296,7 +329,7 @@ export class SdlcRunner {
         state = await this.lock.runAgent(title, spec);
       }
     } catch (e) {
-      this.afterRun.update((n) => n - 1);
+      this.settle(place, -1);
       watch?.destroy();
       throw e;
     }
@@ -311,34 +344,43 @@ export class SdlcRunner {
       // writing. Nothing reads or changes the repo until it has exited.
       if (!(await this.engineExited(change ? (backendId ?? undefined) : undefined, change !== undefined))) {
         this.toasts.error(STILL_STOPPING);
-        return { state, runId: transcript, snapshot, exited: false };
+        return { state, runId: transcript, snapshot, exited: false, batch: null };
       }
       const label = target.label ?? title;
+      let batch: number | null = null;
       if (state === 'success') {
         this.toasts.success(`${label} finished · ${summarize(view().summary?.result)}`);
       } else {
-        await this.reportStopped(label, state, target, snapshot, candidates, view());
+        batch = await this.reportStopped(place, label, state, target, snapshot, candidates, view());
       }
-      return { state, runId: transcript, snapshot, exited: true };
+      return { state, runId: transcript, snapshot, exited: true, batch };
     } finally {
-      this.afterRun.update((n) => n - 1);
+      this.settle(place, -1);
       await this.lock.dismissed(key ?? undefined);
     }
   }
 
   /** Discard what the operator chose in each repository, then close the dialog and keep the rest. False when any discard failed. */
-  async discardAll(choices: DiscardChoice[], _place: string | null = null): Promise<boolean> {
+  /** Discard what the operator chose in each repository of the batch shown on `place`, then close it and keep the rest. False when any discard failed. */
+  async discardAll(choices: DiscardChoice[], place: string | null = null): Promise<boolean> {
+    const batch = this.shownBatch(place);
+    if (batch === undefined) return true;
     for (const c of choices) {
       if (c.paths.length === 0) continue;
-      if (!(await this.discard(c.repo, c.paths))) return false;
+      if (!(await this.discardIn(batch.id, c.repo, c.paths))) return false;
     }
-    this.closeLeftovers();
+    this.closeBatch(batch.id);
     return true;
   }
 
-  /** Discard the chosen paths of one repository, against that repository's own snapshot. The dialog stays open if it fails. */
-  async discard(repo: string, paths: string[]): Promise<boolean> {
-    const entry = this.pending().find((p) => p.repo === repo);
+  /** Discard the chosen paths of one repository of the batch shown on `place`, against that repository's own snapshot. The dialog stays open if it fails. */
+  async discard(repo: string, paths: string[], place: string | null = null): Promise<boolean> {
+    const batch = this.shownBatch(place);
+    return batch === undefined ? false : this.discardIn(batch.id, repo, paths);
+  }
+
+  private async discardIn(id: number, repo: string, paths: string[]): Promise<boolean> {
+    const entry = this.pending().find((b) => b.id === id)?.entries.find((p) => p.repo === repo);
     if (!entry) return false;
     try {
       await this.transport.sdlcDiscard(entry.path, entry.snapshot, paths, ...(entry.build ? [entry.build] : []));
@@ -346,19 +388,22 @@ export class SdlcRunner {
       this.toasts.error(`Could not discard: ${message(e)}`);
       return false;
     }
-    this.setPending(this.pending().filter((p) => p.repo !== repo));
+    const rest = (this.pending().find((b) => b.id === id)?.entries ?? []).filter((p) => p.repo !== repo);
+    if (rest.length === 0) this.closeBatch(id);
+    else this.pending.update((all) => all.map((b) => (b.id === id ? { ...b, entries: rest } : b)));
     return true;
   }
 
-  closeLeftovers(_place: string | null = null): void {
-    this.setPending([]);
+  /** Close the batch shown on `place` without discarding; the next one of that page, if any, shows then. */
+  closeLeftovers(place: string | null = null): void {
+    const batch = this.shownBatch(place);
+    if (batch !== undefined) this.closeBatch(batch.id);
   }
 
-  private setPending(next: RepoLeftovers[]): void {
-    this.pending.set(next);
-    if (next.length > 0) return;
-    const waiters = this.closeWaiters;
-    this.closeWaiters = [];
+  private closeBatch(id: number): void {
+    this.pending.update((all) => all.filter((b) => b.id !== id));
+    const waiters = this.closeWaiters.get(id) ?? [];
+    this.closeWaiters.delete(id);
     for (const wake of waiters) wake();
   }
 
@@ -482,14 +527,16 @@ export class SdlcRunner {
     // The name was settled before the preview; a start across midnight can differ, and the run must be about the change that exists.
     const rename = (text: string): string => (previewed !== null && previewed !== change ? text.split(previewed).join(change) : text);
     const spec: RunSpec = { ...confirmed, name: rename(confirmed.name), task: rename(confirmed.task) };
-    const out = await this.run(
+    // What a stopped intent run left is offered where the engineer started the change, which waits on it before opening the change.
+    const out = await this.runAt(
+      null,
       'Starting a change',
       spec,
       { workspaceId: workspace.id, master, productRepos, link: null, label: 'Intent' },
       { ref: { workspace: workspace.folder, system, change }, kind: 'intent' },
     );
     if (!out.exited) return { kind: 'stopped' };
-    await this.leftoversClosed();
+    await this.leftoversClosed(out.batch);
     await this.linkAndOpen(workspace, system, change, 'intent', out.runId);
     return { kind: 'opened', change, branch: started.branch };
   }
@@ -513,9 +560,9 @@ export class SdlcRunner {
     };
     const before = await listed();
     if (before === null) return { kind: 'stopped' };
-    const out = await this.run('Starting a change', spec, { workspaceId: workspace.id, master, productRepos, link: null, label: 'Triage' });
+    const out = await this.runAt(null, 'Starting a change', spec, { workspaceId: workspace.id, master, productRepos, link: null, label: 'Triage' });
     if (!out.exited) return { kind: 'stopped' };
-    await this.leftoversClosed();
+    await this.leftoversClosed(out.batch);
     const after = await listed();
     if (after === null) return { kind: 'stopped' };
     const change = after.find((c) => !before.includes(c));
@@ -538,13 +585,14 @@ export class SdlcRunner {
   }
 
   private async reportStopped(
+    place: string | null,
     label: string,
     state: RunState,
     target: RunTarget,
     snapshot: Snapshot | null,
     candidates: Map<string, Snapshot> | null,
     ended: RunSnapshot,
-  ): Promise<void> {
+  ): Promise<number | null> {
     const why = this.failureReason(ended);
     const verb = `${state === 'warning' ? 'stopped' : 'failed'}${why ? ` · ${why}` : ''}`;
     let where: Baseline | null =
@@ -552,13 +600,17 @@ export class SdlcRunner {
     if (where === null && target.firstSetup && candidates) where = await this.masterAfterSetup(target.firstSetup.folder, candidates);
     if (where === null) {
       this.toasts.error(`${label} ${verb} · there was no master repo to compare against`);
-      return;
+      return null;
     }
     const data = await this.readLeftovers(where.master, where.snapshot, where.productRepos);
     const commits = plural(data.new_commits.length, 'commit', 'commits');
     const files = plural(data.discardable.length + data.touched_dirty.length + data.created.length, 'file', 'files');
     this.toasts.error(`${label} ${verb} · ${commits} landed, ${files} left uncommitted`);
-    if (hasLeftovers(data)) this.setPending([this.entry(where.master, where.snapshot, data)]);
+    if (!hasLeftovers(data)) return null;
+    // Added beside every batch not yet decided, never in place of one.
+    const id = ++this.batchSeq;
+    this.pending.update((all) => [...all, { id, place, entries: [this.entry(where.master, where.snapshot, data)] }]);
+    return id;
   }
 
   /** Why the run ended, in its own words: claude's result, else the engine's last error log; null when neither says. */
@@ -616,9 +668,10 @@ export class SdlcRunner {
     }
   }
 
-  private leftoversClosed(): Promise<void> {
-    if (this.pending().length === 0) return Promise.resolve();
-    return new Promise((resolve) => this.closeWaiters.push(resolve));
+  /** Resolves once the batch `id` is decided; at once when there is none. */
+  private leftoversClosed(id: number | null): Promise<void> {
+    if (id === null || !this.pending().some((b) => b.id === id)) return Promise.resolve();
+    return new Promise((resolve) => this.closeWaiters.set(id, [...(this.closeWaiters.get(id) ?? []), resolve]));
   }
 
   private entry(master: string, snapshot: Snapshot, data: Leftovers): RepoLeftovers {
