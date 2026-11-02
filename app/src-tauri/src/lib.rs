@@ -931,16 +931,67 @@ fn sdlc_checkout(master: String, branch: String) -> Result<(), String> {
     sdlc::branch::checkout(Path::new(&master), &branch).map_err(|e| e.to_string())
 }
 
+/// Where the plugin has the change, and how it stands: the workspace's own master and the change's state.
+fn change_standing(
+    program: &sdlc::ai_sdlc::Program,
+    change: &build_host::ChangeRef,
+) -> Result<(sdlc::ai_sdlc::Place, sdlc::ai_sdlc::state::ChangeState), String> {
+    let place = program
+        .resolve(Path::new(&change.workspace))
+        .map_err(|e| e.to_string())?;
+    let answer = program
+        .run(
+            &[
+                "state",
+                "--json",
+                "--system",
+                &change.system,
+                "--change",
+                &change.change,
+            ],
+            &place,
+        )
+        .map_err(|e| e.to_string())?;
+    let state = sdlc::ai_sdlc::state::read_state(answer).map_err(|e| e.to_string())?;
+    let found = state
+        .changes
+        .into_iter()
+        .find(|c| c.change == change.change)
+        .ok_or_else(|| format!("the plugin knows no change {}", change.change))?;
+    Ok((place, found))
+}
+
+/// Accept a document of a change: the status edit, the plugin's acceptance commit, then its `doc.accept` event.
 #[tauri::command(async)]
-fn sdlc_decide(
-    master: String,
-    system: String,
-    change: String,
-    decision: sdlc::decide::Decision,
-    confirmed: bool,
-) -> Result<sdlc::decide::DecideOutcome, String> {
-    sdlc::decide::apply(Path::new(&master), &system, &change, decision, confirmed)
-        .map_err(|e| e.to_string())
+fn sdlc_accept(
+    change: build_host::ChangeRef,
+    doc: sdlc::accept::ChangeDocument,
+) -> Result<sdlc::accept::AcceptOutcome, String> {
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let (place, state) = change_standing(&program, &change)?;
+    Ok(sdlc::accept::apply(
+        &program,
+        &place,
+        &change.system,
+        &state,
+        doc,
+    ))
+}
+
+/// Reject a change the way the plugin does: it commits the rejection and removes the change's copy. No run
+/// of the change starts while that goes on, and none may be live when it begins.
+#[tauri::command(async)]
+fn sdlc_reject(
+    control: State<'_, RunControl>,
+    change: build_host::ChangeRef,
+) -> Result<sdlc::accept::RejectOutcome, String> {
+    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let key = build_host::key_of(&change);
+    control.state.lock().unwrap().begin_rejecting(&key)?;
+    let outcome = change_standing(&program, &change)
+        .map(|(place, state)| sdlc::accept::reject(&program, &place, &change.system, &state));
+    control.state.lock().unwrap().end_rejecting(&key);
+    outcome
 }
 
 #[tauri::command]
@@ -1793,7 +1844,8 @@ pub fn run() {
             sdlc_check_scope,
             sdlc_rename_branch,
             sdlc_checkout,
-            sdlc_decide,
+            sdlc_accept,
+            sdlc_reject,
             sdlc_run_links,
             sdlc_task_links,
             sdlc_link_run,

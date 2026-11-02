@@ -275,13 +275,6 @@
     (retry)="vm.retryPublish()"
     (close)="vm.closePrList()"
   />
-  <app-confirm-dialog
-    [open]="vm.confirmPrompt() !== null"
-    [message]="vm.confirmPrompt() ?? ''"
-    confirmLabel="Commit"
-    (confirm)="vm.confirmDecision()"
-    (cancel)="vm.cancelConfirm()"
-  />
   <app-new-change-dialog
     [open]="vm.pipelineOpen()"
     [systems]="vm.pipelineSystems()"

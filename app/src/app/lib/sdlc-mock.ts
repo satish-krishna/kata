@@ -64,8 +64,9 @@ import type { SystemView } from '@bindings/SystemView';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
-import type { DecideOutcome } from '@bindings/DecideOutcome';
-import type { Decision } from '@bindings/Decision';
+import type { AcceptOutcome } from '@bindings/AcceptOutcome';
+import type { ChangeDocument } from '@bindings/ChangeDocument';
+import type { RejectOutcome } from '@bindings/RejectOutcome';
 import type { DocState } from '@bindings/DocState';
 import type { ChangeStart } from '@bindings/ChangeStart';
 import type { Leftovers } from '@bindings/Leftovers';
@@ -446,16 +447,14 @@ const DOCS: Record<string, string> = {
   '2026-10-09-merchant-reassign/plan': '---\nstatus: draft\n---\n# Plan: reassign\n\n- [ ] Add the reassign endpoint to commerce-core.\n- [ ] Add the reassign action to customer-portal.\n',
 };
 
-/** What accepting or rejecting does to a change's documents and stage. */
-function applyDecision(c: ChangeInfo, decision: Decision): ChangeInfo {
-  switch (decision) {
-    case 'accept-intent':
+/** What accepting a document does to a change's documents and stage. */
+function applyAcceptance(c: ChangeInfo, which: ChangeDocument): ChangeInfo {
+  switch (which) {
+    case 'intent':
       return { ...c, intent: doc('accepted'), stage: 'spec-ready' };
-    case 'reject-intent':
-      return { ...c, intent: doc('rejected'), stage: 'rejected' };
-    case 'accept-spec':
+    case 'spec':
       return { ...c, spec: doc('accepted'), stage: 'plan-ready' };
-    case 'accept-plan':
+    case 'plan':
       return { ...c, plan: doc('accepted'), stage: 'build-ready' };
   }
 }
@@ -518,8 +517,8 @@ const FULL_OFFERS: Record<string, StageAction[]> = {
 /** What a change on the light track offers at each stage; a stage not listed offers nothing. */
 const FIX_OFFERS: Record<string, StageAction[]> = {
   'fix-in-progress': ['finish-fix-draft'],
-  'fix-awaiting': ['accept-fix', 'change-fix'],
-  'fix-accepting': ['accept-fix', 'change-fix'],
+  'fix-awaiting': ['accept-fix', 'change-fix', 'reject-fix'],
+  'fix-accepting': ['accept-fix', 'change-fix', 'reject-fix'],
   'build-ready': ['start-build', 'reopen-fix'],
   'build-stopped': ['continue-build', 'another-round', 'reopen-fix'],
   'build-finished': ['declare-done', 'another-round', 'run-review', 'reopen-fix'],
@@ -835,9 +834,15 @@ export class SdlcMock {
     return { outcome: 'renamed', from, to, repos: ['master', MOCK_MASTER], oldPullRequests: old };
   }
 
-  decide(changeName: string, decision: Decision): DecideOutcome {
-    this.changes = this.changes.map((c) => (c.change === changeName ? applyDecision(c, decision) : c));
-    return { kind: 'committed' };
+  accept(changeName: string, which: ChangeDocument): AcceptOutcome {
+    this.changes = this.changes.map((c) => (c.change === changeName ? applyAcceptance(c, which) : c));
+    return { outcome: 'accepted' };
+  }
+
+  /** The plugin commits the rejection and removes the change's copy: the change leaves the list, its branch stays. */
+  reject(changeName: string): RejectOutcome {
+    this.changes = this.changes.filter((c) => c.change !== changeName);
+    return { outcome: 'rejected', recordBranch: `change/${changeName}` };
   }
 
   runLinks(): RunLink[] { return this.links.map((l) => ({ ...l })); }

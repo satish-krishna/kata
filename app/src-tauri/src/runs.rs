@@ -7,7 +7,7 @@
 use kata_sdlc::holds::{ChangeKey, RepoKey};
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use tauri_plugin_shell::process::CommandChild;
 
@@ -67,12 +67,15 @@ pub struct LiveSummary {
 /// Every live run, keyed by id.
 pub struct RunTable<C = CommandChild> {
     runs: BTreeMap<u64, LiveRun<C>>,
+    /// The changes being rejected: the plugin is about to remove their copy, so no run of them may start.
+    rejecting: HashSet<ChangeKey>,
 }
 
 impl<C> Default for RunTable<C> {
     fn default() -> Self {
         Self {
             runs: BTreeMap::new(),
+            rejecting: HashSet::new(),
         }
     }
 }
@@ -80,6 +83,11 @@ impl<C> Default for RunTable<C> {
 impl<C> RunTable<C> {
     /// Decide whether a run in `workdir` on `lane` may start.
     pub fn claim(&self, workdir: &Path, lane: &Lane) -> Result<(), String> {
+        if let Lane::Change { key, .. } = lane {
+            if self.rejecting.contains(key) {
+                return Err("This change is being rejected.".into());
+            }
+        }
         let folder = RepoKey::of(workdir);
         if self
             .runs
@@ -95,6 +103,26 @@ impl<C> RunTable<C> {
             return Err("Another task is already running.".into());
         }
         Ok(())
+    }
+
+    /// Starts rejecting `key`: refused while a run of the change is live or its rejection is under way. Until
+    /// `end_rejecting`, `claim` refuses every run of the change.
+    pub fn begin_rejecting(&mut self, key: &ChangeKey) -> Result<(), String> {
+        let live = self
+            .runs
+            .values()
+            .any(|r| matches!(&r.lane, Lane::Change { key: k, .. } if k == key));
+        if live {
+            return Err("A run of this change is live. Reject it after the run ends.".into());
+        }
+        if !self.rejecting.insert(key.clone()) {
+            return Err("This change is already being rejected.".into());
+        }
+        Ok(())
+    }
+
+    pub fn end_rejecting(&mut self, key: &ChangeKey) {
+        self.rejecting.remove(key);
     }
 
     /// Every live run with its lane, oldest id first.
@@ -187,6 +215,32 @@ mod tests {
             t.insert(r);
         }
         t
+    }
+
+    #[test]
+    fn a_change_being_rejected_takes_no_run_and_is_refused_while_one_is_live() {
+        let key = |name: &str| match change(name, false) {
+            Lane::Change { key, .. } => key,
+            _ => unreachable!(),
+        };
+        // A live run of the change stops the rejection; another change's run does not.
+        let mut t = table(vec![live(1, "D:/ws/a", change("c", false))]);
+        assert!(t.begin_rejecting(&key("c")).is_err());
+        assert!(t.begin_rejecting(&key("other")).is_ok());
+        t.end_rejecting(&key("other"));
+        // While it runs, every run of the change is refused, whatever its lane or folder; others are not.
+        let mut t = RunTable::<()>::default();
+        t.begin_rejecting(&key("c")).unwrap();
+        assert!(t.begin_rejecting(&key("c")).is_err());
+        assert!(t
+            .claim(Path::new("D:/ws/new"), &change("c", false))
+            .is_err());
+        assert!(t.claim(Path::new("D:/ws/new"), &change("c", true)).is_err());
+        assert!(t
+            .claim(Path::new("D:/ws/new"), &change("other", false))
+            .is_ok());
+        t.end_rejecting(&key("c"));
+        assert!(t.claim(Path::new("D:/ws/new"), &change("c", false)).is_ok());
     }
 
     #[test]

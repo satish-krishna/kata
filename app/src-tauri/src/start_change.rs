@@ -2,7 +2,7 @@
 //! and Kata only asks. Kata never creates a branch or a copy itself; a refusal is the plugin's own reason,
 //! sorted by what the engineer can do about it.
 use kata_sdlc::ai_sdlc::{Place, Program};
-use kata_sdlc::{decide, naming};
+use kata_sdlc::naming;
 use serde::Serialize;
 
 /// Why the plugin refused to start a change, by what the engineer can change.
@@ -112,7 +112,7 @@ pub fn start_change(
         .unwrap_or_default();
     let change = naming::change_name(date, title);
     let scope = match request.scope.trim() {
-        "" => decide::change_scope(&place.master, request.system, &change),
+        "" => naming::change_scope(&place.master, request.system, &change),
         typed => typed.to_string(),
     };
     let mut command = vec![

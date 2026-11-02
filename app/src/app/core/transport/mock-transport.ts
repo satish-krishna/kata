@@ -16,8 +16,9 @@ import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { ChangeStart } from '@bindings/ChangeStart';
-import type { Decision } from '@bindings/Decision';
-import type { DecideOutcome } from '@bindings/DecideOutcome';
+import type { AcceptOutcome } from '@bindings/AcceptOutcome';
+import type { ChangeDocument } from '@bindings/ChangeDocument';
+import type { RejectOutcome } from '@bindings/RejectOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
@@ -298,7 +299,8 @@ export class MockTransport extends KataTransport {
   sdlcCheckScope(_folder: string, scope: string): Promise<string[]> { return Promise.resolve(scope.includes(' ') ? ['a scope cannot contain a space'] : []); }
   sdlcRenameBranch(_folder: string, _workspaceId: string, _system: string, change: string, to: string): Promise<RenameOutcome> { return Promise.resolve(this.sdlc.renameBranch(change, to)); }
   sdlcCheckout(_master: string, branch: string): Promise<void> { this.sdlc.checkout(branch); return Promise.resolve(); }
-  sdlcDecide(_master: string, _system: string, change: string, decision: Decision, _confirmed: boolean): Promise<DecideOutcome> { return Promise.resolve(this.sdlc.decide(change, decision)); }
+  sdlcAccept(change: ChangeRef, doc: ChangeDocument): Promise<AcceptOutcome> { return Promise.resolve(this.sdlc.accept(change.change, doc)); }
+  sdlcReject(change: ChangeRef): Promise<RejectOutcome> { return Promise.resolve(this.sdlc.reject(change.change)); }
   sdlcRunLinks(): Promise<RunLink[]> { return Promise.resolve(this.sdlc.runLinks()); }
   sdlcLinkRun(link: RunLink): Promise<void> { this.sdlc.linkRun(link); return Promise.resolve(); }
   sdlcTaskLinks(): Promise<TaskLink[]> { return Promise.resolve(this.sdlc.taskLinks()); }

@@ -4,7 +4,6 @@
 #![allow(clippy::disallowed_methods)]
 
 use kata_sdlc::build::BuildAction;
-use kata_sdlc::decide::{self, DecideOutcome, Decision};
 use kata_sdlc::diff::{self, Part};
 use kata_sdlc::github::{ApiError, Credential, GitHub, GitHubHosts, Pull, PullState};
 use kata_sdlc::plugin::Readiness;
@@ -409,12 +408,6 @@ fn every_flow(branch: &str, record: bool) {
         .unwrap()
         .expect("the review document is there");
     assert_eq!(record.reviews.len(), 1);
-
-    // Accept a document.
-    assert_eq!(
-        decide::apply(&master, SYS, DRAFT, Decision::AcceptIntent, false).unwrap(),
-        DecideOutcome::Committed
-    );
 
     // Prepare and settle a build: the repository with no commits on its change branch gives it back.
     let begun = start::prepare(

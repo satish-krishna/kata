@@ -22,16 +22,8 @@ import { defaultSpec } from "./spec";
 /** The plugins an AI-SDLC run cannot work without; passed to `previewRun` so the preview locks them on. */
 export const SDLC_REQUIRED_PLUGINS: readonly string[] = ['ai-sdlc'] as const;
 
-/** An action of the plugin's answer. */
-type OfferedStageAction = BindingStageAction;
-
-/** The actions the change page draws. The answer also lists rejecting a fix, which has no control on the page yet. */
-export type StageAction = Exclude<OfferedStageAction, "reject-fix">;
-
-/** Whether the page has a control for an offered action. */
-export function isPageAction(action: OfferedStageAction): action is StageAction {
-  return action !== "reject-fix";
-}
+/** An action of the plugin's answer; the change page has a control for each. */
+export type StageAction = BindingStageAction;
 
 /** A stage by name: the plugin's answer words an out-of-date plan as an object that carries its cause. */
 export type StageName = Exclude<OfferStage, object> | "plan-out-of-date";
@@ -269,6 +261,7 @@ const LABEL: Record<StageAction, string> = {
   "reopen-fix": "Reopen the fix",
   rename: "Rename branch",
   "full-pipeline-instead": "Take the full pipeline instead",
+  "reject-fix": "Reject fix",
 };
 
 export function actionLabel(action: StageAction): string {

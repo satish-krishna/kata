@@ -18,8 +18,9 @@ import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { ChangeStart } from '@bindings/ChangeStart';
-import type { Decision } from '@bindings/Decision';
-import type { DecideOutcome } from '@bindings/DecideOutcome';
+import type { AcceptOutcome } from '@bindings/AcceptOutcome';
+import type { ChangeDocument } from '@bindings/ChangeDocument';
+import type { RejectOutcome } from '@bindings/RejectOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
@@ -134,7 +135,8 @@ export class TauriTransport extends KataTransport {
   sdlcRenameBranch(folder: string, workspaceId: string, system: string, change: string, to: string) { return this.ipc.invoke<RenameOutcome>('sdlc_rename_branch', { folder, workspaceId, system, change, to }); }
   sdlcCheckScope(folder: string, scope: string) { return this.ipc.invoke<string[]>('sdlc_check_scope', { folder, scope }); }
   sdlcCheckout(master: string, branch: string) { return this.ipc.invoke<void>('sdlc_checkout', { master, branch }); }
-  sdlcDecide(master: string, system: string, change: string, decision: Decision, confirmed: boolean) { return this.ipc.invoke<DecideOutcome>('sdlc_decide', { master, system, change, decision, confirmed }); }
+  sdlcAccept(change: ChangeRef, doc: ChangeDocument) { return this.ipc.invoke<AcceptOutcome>('sdlc_accept', { change, doc }); }
+  sdlcReject(change: ChangeRef) { return this.ipc.invoke<RejectOutcome>('sdlc_reject', { change }); }
   sdlcRunLinks() { return this.ipc.invoke<RunLink[]>('sdlc_run_links'); }
   sdlcLinkRun(link: RunLink) { return this.ipc.invoke<void>('sdlc_link_run', { link }); }
   sdlcTaskLinks() { return this.ipc.invoke<TaskLink[]>('sdlc_task_links'); }

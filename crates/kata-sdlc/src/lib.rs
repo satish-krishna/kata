@@ -10,7 +10,6 @@ pub mod changes;
 pub mod checks;
 pub mod commits;
 pub mod coordinator;
-pub mod decide;
 pub mod diff;
 pub mod format;
 pub mod frontmatter;

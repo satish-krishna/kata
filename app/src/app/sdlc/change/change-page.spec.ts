@@ -103,9 +103,9 @@ describe('ChangePage', () => {
     expect(all).not.toContain('Start plan');
   });
 
-  it('crosses the seam: clicking Accept spec calls sdlcDecide and the stepper moves on', async () => {
+  it('crosses the seam: clicking Accept spec calls sdlcAccept and the stepper moves on', async () => {
     const { container, transport } = await mount();
-    const decide = vi.spyOn(transport, 'sdlcDecide');
+    const decide = vi.spyOn(transport, 'sdlcAccept');
     Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Accept spec')!.click();
     await vi.waitFor(() => expect(decide).toHaveBeenCalledTimes(1));
     await settle();

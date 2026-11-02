@@ -698,7 +698,7 @@ fn read_change_with(
         plan,
         stage,
         build,
-        scope: crate::decide::change_scope(master, system, change),
+        scope: crate::naming::change_scope(master, system, change),
         out_of_date,
         plan_unreadable: facts.unreadable,
         plan_unreadable_reason,

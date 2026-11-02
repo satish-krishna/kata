@@ -15,8 +15,9 @@ import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { ChangeStart } from '@bindings/ChangeStart';
-import type { Decision } from '@bindings/Decision';
-import type { DecideOutcome } from '@bindings/DecideOutcome';
+import type { AcceptOutcome } from '@bindings/AcceptOutcome';
+import type { ChangeDocument } from '@bindings/ChangeDocument';
+import type { RejectOutcome } from '@bindings/RejectOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
@@ -164,7 +165,10 @@ export abstract class KataTransport {
   /** Why the scope is not usable, one reason per entry; empty when it is accepted as typed. */
   abstract sdlcCheckScope(folder: string, scope: string): Promise<string[]>;
   abstract sdlcCheckout(master: string, branch: string): Promise<void>;
-  abstract sdlcDecide(master: string, system: string, change: string, decision: Decision, confirmed: boolean): Promise<DecideOutcome>;
+  /** Accept a document of a change: the plugin commits it and runs the team's accepting hooks. */
+  abstract sdlcAccept(change: ChangeRef, doc: ChangeDocument): Promise<AcceptOutcome>;
+  /** Reject a change through the plugin, which commits the rejection and removes the change's copy. */
+  abstract sdlcReject(change: ChangeRef): Promise<RejectOutcome>;
   abstract sdlcRunLinks(): Promise<RunLink[]>;
   abstract sdlcLinkRun(link: RunLink): Promise<void>;
   /** Which run recorded each task, in the order they were linked. */

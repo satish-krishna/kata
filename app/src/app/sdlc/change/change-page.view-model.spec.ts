@@ -298,119 +298,127 @@ describe('ChangePageViewModel', () => {
     expect(vm.docName()).toBe('intent.md');
   });
 
-  describe('decisions', () => {
-    it('accept-spec calls sdlcDecide with accept-spec, not confirmed, and the reloaded stage is plan-ready', async () => {
+  describe('accepting and rejecting go through the plugin', () => {
+    const ref = (change: string) => ({ workspace: 'D:/Work/acme-commerce', system: 'commerce', change });
+
+    it('accept-spec asks the plugin to accept the spec, and the reloaded stage is plan-ready', async () => {
       const { vm, transport } = setup(PHOTOS_CHANGE);
-      const decide = vi.spyOn(transport, 'sdlcDecide');
+      const accept = vi.spyOn(transport, 'sdlcAccept');
       await ready(vm);
       await vm.act('accept-spec');
-      expect(decide).toHaveBeenCalledWith(expect.stringContaining('commerce-docs'), 'commerce', PHOTOS_CHANGE, 'accept-spec', false);
+      expect(accept).toHaveBeenCalledWith(ref(PHOTOS_CHANGE), 'spec');
+      expect(toastText()).toContain('Accepted spec · committed');
       expect(vm.change()?.offer.stage).toBe('plan-ready');
       expect(vm.actions()).toEqual(['start-plan', 'reopen-spec', 'reopen-intent']);
     });
 
-    it('accept plan commits through sdlcDecide and opens the build (R1.2)', async () => {
+    it('accept plan opens the build (R1.2)', async () => {
       const { vm, transport } = setup(REASSIGN);
-      const decide = vi.spyOn(transport, 'sdlcDecide');
+      const accept = vi.spyOn(transport, 'sdlcAccept');
       await ready(vm);
       expect(vm.primary()).toBe('accept-plan');
       await vm.act('accept-plan');
-      expect(decide).toHaveBeenCalledWith(expect.stringContaining('commerce-docs'), 'commerce', REASSIGN, 'accept-plan', false);
+      expect(accept).toHaveBeenCalledWith(ref(REASSIGN), 'plan');
       expect(toastText()).toContain('Accepted plan · committed');
       expect(vm.change()?.offer.stage).toBe('build-ready');
     });
 
-    it('commit-acceptance on a plan accepted but not committed decides accept-plan', async () => {
-      const transport = new MockTransport();
-      withStage(transport, REASSIGN, 'plan-accepted-uncommitted');
-      const { vm } = setup(REASSIGN, transport);
-      const decide = vi.spyOn(transport, 'sdlcDecide');
-      await ready(vm);
-      await vm.act('commit-acceptance');
-      expect(decide.mock.calls[0][3]).toBe('accept-plan');
-    });
-
-    it('names plan.md in the confirm for a plan decision', async () => {
-      const { vm, transport } = setup(REASSIGN);
-      vi.spyOn(transport, 'sdlcDecide').mockResolvedValue({ kind: 'needsConfirm', other_edits: true });
-      await ready(vm);
-      await vm.act('accept-plan');
-      expect(vm.confirmPrompt()).toBe('plan.md has other uncommitted edits; accepting commits them too.');
-    });
-
     it('accept-intent moves a draft intent on to spec-ready', async () => {
       const { vm, transport } = setup(FRAUD);
-      const decide = vi.spyOn(transport, 'sdlcDecide');
+      const accept = vi.spyOn(transport, 'sdlcAccept');
       await ready(vm);
       await vm.act('accept-intent');
-      expect(decide.mock.calls[0][3]).toBe('accept-intent');
+      expect(accept).toHaveBeenCalledWith(ref(FRAUD), 'intent');
       expect(vm.change()?.offer.stage).toBe('spec-ready');
     });
 
-    it('reject-intent closes the change', async () => {
-      const { vm, transport } = setup(FRAUD);
-      const decide = vi.spyOn(transport, 'sdlcDecide');
-      await ready(vm);
-      await vm.act('reject-intent');
-      expect(decide.mock.calls[0][3]).toBe('reject-intent');
-      expect(vm.change()?.offer.stage).toBe('rejected');
-      expect(vm.actions()).toEqual([]);
-    });
-
-    it('opens the confirm on NeedsConfirm with the exact copy, and confirming repeats the decision with confirmed true', async () => {
-      const { vm, transport } = setup(PHOTOS_CHANGE);
-      const decide = vi.spyOn(transport, 'sdlcDecide').mockResolvedValueOnce({ kind: 'needsConfirm', other_edits: true });
-      await ready(vm);
-      await vm.act('accept-spec');
-      expect(vm.confirmPrompt()).toBe('spec.md has other uncommitted edits; accepting commits them too.');
-      expect(decide).toHaveBeenCalledTimes(1);
-      await vm.confirmDecision();
-      expect(decide).toHaveBeenCalledTimes(2);
-      expect(decide.mock.calls[1]).toEqual([expect.any(String), 'commerce', PHOTOS_CHANGE, 'accept-spec', true]);
-      expect(vm.confirmPrompt()).toBeNull();
-      expect(vm.change()?.offer.stage).toBe('plan-ready');
-    });
-
-    it('names intent.md in the confirm for an intent decision, and cancelling decides nothing', async () => {
-      const { vm, transport } = setup(FRAUD);
-      const decide = vi.spyOn(transport, 'sdlcDecide').mockResolvedValue({ kind: 'needsConfirm', other_edits: true });
-      await ready(vm);
-      await vm.act('accept-intent');
-      expect(vm.confirmPrompt()).toBe('intent.md has other uncommitted edits; accepting commits them too.');
-      vm.cancelConfirm();
-      expect(vm.confirmPrompt()).toBeNull();
-      expect(decide).toHaveBeenCalledTimes(1);
-      expect(vm.change()?.offer.stage).toBe('intent-awaiting');
-    });
-
-    it('shows git stderr verbatim in an error toast', async () => {
-      const { vm, transport } = setup(PHOTOS_CHANGE);
-      vi.spyOn(transport, 'sdlcDecide').mockResolvedValue({ kind: 'gitFailed', stderr: 'error: gpg failed to sign the data' });
-      await ready(vm);
-      await vm.act('accept-spec');
-      expect(toastText()).toContain('error: gpg failed to sign the data');
-    });
-
-    it('falls back to a plain message when git says nothing', async () => {
-      const { vm, transport } = setup(PHOTOS_CHANGE);
-      vi.spyOn(transport, 'sdlcDecide').mockResolvedValue({ kind: 'gitFailed', stderr: '  ' });
-      await ready(vm);
-      await vm.act('accept-spec');
-      expect(toastText()).toContain('git refused the commit');
-    });
-
     it.each([
-      ['intent-accepted-uncommitted', 'accept-intent'],
-      ['spec-accepted-uncommitted', 'accept-spec'],
-    ] as const)('commit-acceptance at %s decides %s', async (stage, decision) => {
+      ['intent-accepted-uncommitted', 'intent'],
+      ['spec-accepted-uncommitted', 'spec'],
+    ] as const)('commit-acceptance at %s accepts the %s', async (stage, doc) => {
       const transport = new MockTransport();
       withStage(transport, PHOTOS_CHANGE, stage);
       const { vm } = setup(PHOTOS_CHANGE, transport);
-      const decide = vi.spyOn(transport, 'sdlcDecide');
+      const accept = vi.spyOn(transport, 'sdlcAccept');
       await ready(vm);
       expect(vm.actions()[0]).toBe('commit-acceptance');
       await vm.act('commit-acceptance');
-      expect(decide.mock.calls[0][3]).toBe(decision);
+      expect(accept.mock.calls[0][1]).toBe(doc);
+    });
+
+    it('commit-acceptance on a plan accepted but not committed accepts the plan', async () => {
+      const transport = new MockTransport();
+      withStage(transport, REASSIGN, 'plan-accepted-uncommitted');
+      const { vm } = setup(REASSIGN, transport);
+      const accept = vi.spyOn(transport, 'sdlcAccept');
+      await ready(vm);
+      await vm.act('commit-acceptance');
+      expect(accept.mock.calls[0][1]).toBe('plan');
+    });
+
+    it('a team hook that fails shows the hook and its output, and the acceptance stays committed', async () => {
+      const { vm, transport } = setup(PHOTOS_CHANGE);
+      vi.spyOn(transport, 'sdlcAccept').mockResolvedValue({ outcome: 'acceptedHookFailed', hook: 'docs-lint', output: 'lint says no', problems: [] });
+      await ready(vm);
+      await vm.act('accept-spec');
+      expect(toastText()).toContain('Accepted spec and committed it, but the hook docs-lint failed.');
+      expect(toastText()).toContain('lint says no');
+    });
+
+    it('hooks that could not run are said, with their output', async () => {
+      const { vm, transport } = setup(PHOTOS_CHANGE);
+      vi.spyOn(transport, 'sdlcAccept').mockResolvedValue({ outcome: 'acceptedHookCouldNotRun', output: 'no such program' });
+      await ready(vm);
+      await vm.act('accept-spec');
+      expect(toastText()).toContain('could not run the hooks on accepting');
+      expect(toastText()).toContain('no such program');
+    });
+
+    it('shows each problem of a commit the plugin refused, with its file and line', async () => {
+      const { vm, transport } = setup(PHOTOS_CHANGE);
+      vi.spyOn(transport, 'sdlcAccept').mockResolvedValue({ outcome: 'notCommitted', problems: ['D:/ws/spec.md:12: a requirement has no ID'] });
+      await ready(vm);
+      await vm.act('accept-spec');
+      expect(toastText()).toContain('The spec was not committed.');
+      expect(toastText()).toContain('D:/ws/spec.md:12: a requirement has no ID');
+    });
+
+    it('reject-intent asks the plugin, says once where the record stays and goes back to the workspace', async () => {
+      const { vm, transport, navigate } = setup(FRAUD);
+      const reject = vi.spyOn(transport, 'sdlcReject');
+      await ready(vm);
+      await vm.act('reject-intent');
+      expect(reject).toHaveBeenCalledTimes(1);
+      expect(reject).toHaveBeenCalledWith(ref(FRAUD));
+      expect(toastText()).toContain(`Rejected. Its record stays on branch \`change/${FRAUD}\`.`);
+      expect(navigate).toHaveBeenCalledWith(['/sdlc']);
+    });
+
+    it('a fix is rejected from its page too', async () => {
+      const transport = new MockTransport();
+      withStage(transport, PHOTOS_CHANGE, 'fix-awaiting', { track: 'fix', fix_row: 6 });
+      const { vm, navigate } = setup(PHOTOS_CHANGE, transport);
+      const reject = vi.spyOn(transport, 'sdlcReject');
+      await ready(vm);
+      expect(vm.actions()).toContain('reject-fix');
+      expect(vm.labelOf('reject-fix')).toBe('Reject fix');
+      await vm.act('reject-fix');
+      expect(reject).toHaveBeenCalledWith(ref(PHOTOS_CHANGE));
+      expect(navigate).toHaveBeenCalledWith(['/sdlc']);
+    });
+
+    it.each([
+      ['the plugin refuses it', { outcome: 'refused' as const, message: 'has build work' }, 'has build work'],
+      ['a git hook refuses the commit', { outcome: 'notCommitted' as const, problems: ['hook says no'] }, 'hook says no'],
+      ['the copy is not removed', { outcome: 'rejectedNotRemoved' as const, problems: ['notes.txt is not committed'] }, 'notes.txt is not committed'],
+      ['the plugin cannot run', { outcome: 'couldNotRun' as const, message: 'node is missing' }, 'node is missing'],
+    ])('a rejection where %s shows the plugin\'s words and stays on the page', async (_why, outcome, text) => {
+      const { vm, transport, navigate } = setup(FRAUD);
+      vi.spyOn(transport, 'sdlcReject').mockResolvedValue(outcome);
+      await ready(vm);
+      await vm.act('reject-intent');
+      expect(toastText()).toContain(text);
+      expect(navigate).not.toHaveBeenCalled();
     });
   });
 
@@ -571,7 +579,7 @@ describe('ChangePageViewModel', () => {
     it('refuses a second task while the lock is held', async () => {
       const { vm, runAgent, transport } = setup(PHOTOS_CHANGE);
       await ready(vm);
-      const decide = vi.spyOn(transport, 'sdlcDecide');
+      const decide = vi.spyOn(transport, 'sdlcAccept');
       vi.spyOn(TestBed.inject(LockStore), 'active').mockReturnValue({ kind: 'run', title: 'x', finished: null });
       await vm.act('accept-spec');
       await vm.act('continue-spec');

@@ -14,7 +14,9 @@ import type { ChangeView } from '@bindings/ChangeView';
 import type { OfferedAction } from '@bindings/OfferedAction';
 import type { OutOfDateCause } from '@bindings/OutOfDateCause';
 import type { StateDocument } from '@bindings/StateDocument';
-import type { Decision } from '@bindings/Decision';
+import type { AcceptOutcome } from '@bindings/AcceptOutcome';
+import type { ChangeDocument } from '@bindings/ChangeDocument';
+import type { RejectOutcome } from '@bindings/RejectOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { ChecksPlan } from '@bindings/ChecksPlan';
@@ -54,7 +56,6 @@ import {
   reviewFindings,
   parseFrontMatter,
   specFor,
-  isPageAction,
   outOfDateCause,
   stageName,
   stagePills,
@@ -93,6 +94,7 @@ type HandledAction =
   | 'rename'
   | 'accept-intent'
   | 'reject-intent'
+  | 'reject-fix'
   | 'accept-spec'
   | 'accept-plan'
   | 'commit-acceptance'
@@ -103,14 +105,14 @@ type HandledAction =
   | 'run-review'
   | 'cancel-build'
   | 'full-pipeline-instead';
-/** What recording a decision came to; the full-pipeline hand-over goes on only after 'committed'. */
-/** A change by system and folder name. */
-type ChangeRef = { system: string; change: string };
 /** The toast for a drafted fix that stays open after the new change that replaces it started. */
-/** A drafted fix being closed after its replacement opened: the branch its documents are on, and the new change's branch. */
-type FixClose = ChangeRef & { master: string; fixBranch: string; newBranch: string };
-const fixStays =(fix: ChangeRef, why: string): string => `The new change started, but the fix ${fix.change} could not be closed: ${why}. It stays open.`;
-type DecisionOutcome ='committed' | 'needsConfirm' | 'gitFailed' | 'error';
+const fixStays = (fix: ChangeRef, why: string): string => `The new change started, but the fix ${fix.change} could not be closed: ${why}. It stays open.`;
+/** What the engineer is told once a change is rejected: the record stays on the master's branch. */
+const rejectedSaid = (branch: string): string => `Rejected. Its record stays on branch \`${branch}\`.`;
+/** The last lines of a hook's output, which is what says why it failed. */
+const outputTail = (output: string): string => output.trim().split('\n').slice(-12).join('\n');
+/** A change by system and folder name, with the workspace it belongs to. */
+type ChangeRef = ChangeWithWorkspace;
 type StageRun = { kind: 'intent' | 'spec' | 'plan' | 'fix'; title: string; label: string };
 
 /** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result.
@@ -132,24 +134,18 @@ const RUNS: Record<Exclude<StageAction, HandledAction>, StageRun> = {
 const FIX_RUNS: readonly StageAction[] = ['finish-fix-draft', 'change-fix', 'reopen-fix', 'accept-fix'];
 const NEEDS_LIGHT_TRACK = 'Needs ai-sdlc 1.1.0 or later.';
 
-const FILE: Record<Decision, 'intent.md' | 'spec.md' | 'plan.md'> = {
-  'accept-intent': 'intent.md',
-  'reject-intent': 'intent.md',
-  'accept-spec': 'spec.md',
-  'accept-plan': 'plan.md',
-};
-const DONE: Record<Decision, string> = {
-  'accept-intent': 'Accepted intent',
-  'reject-intent': 'Rejected intent',
-  'accept-spec': 'Accepted spec',
-  'accept-plan': 'Accepted plan',
+/** The document each accepting action records. */
+const ACCEPTS: Partial<Record<StageAction, ChangeDocument>> = {
+  'accept-intent': 'intent',
+  'accept-spec': 'spec',
+  'accept-plan': 'plan',
 };
 
-/** The decision that commits a document already accepted in the working tree, by the stage that says so. */
-const ACCEPTED_UNCOMMITTED: Partial<Record<string, Decision>> = {
-  'intent-accepted-uncommitted': 'accept-intent',
-  'spec-accepted-uncommitted': 'accept-spec',
-  'plan-accepted-uncommitted': 'accept-plan',
+/** The document whose acceptance is in the working tree but not committed, by the stage that says so. */
+const ACCEPTED_UNCOMMITTED: Partial<Record<string, ChangeDocument>> = {
+  'intent-accepted-uncommitted': 'intent',
+  'spec-accepted-uncommitted': 'spec',
+  'plan-accepted-uncommitted': 'plan',
 };
 
 /** Why the plan cannot be built, in the words the plan tab shows. */
@@ -373,7 +369,7 @@ export class ChangePageViewModel {
     return [...this.build.actions(), ...this.barExtras().map((e) => e.action)];
   });
   /** The actions the plugin's answer offers that the page has a control for, in the answer's order. */
-  private readonly offeredActions = computed<StageAction[]>(() => (this.change()?.offer.actions ?? []).map((a) => a.action).filter(isPageAction));
+  private readonly offeredActions = computed<StageAction[]>(() => (this.change()?.offer.actions ?? []).map((a) => a.action));
   /** What the answer says about an action: may it be used now, and if not why. Null for an action the answer does not list. */
   private offered(action: StageAction): OfferedAction | null {
     return this.change()?.offer.actions.find((a) => a.action === action) ?? null;
@@ -465,16 +461,6 @@ export class ChangePageViewModel {
     if (w === null || stem === 'build') return { rows: [], total: 0 };
     const runs = stageRuns(this.links(), this.records(), w.id, this.system(), this.changeName(), stem);
     return recentRuns(runs, stem.charAt(0).toUpperCase() + stem.slice(1));
-  });
-
-  // --- the acceptance confirm
-  private readonly pendingDecision = signal<Decision | null>(null);
-  readonly confirmPrompt = computed(() => {
-    const d = this.pendingDecision();
-    if (d === null) return null;
-    const fix = this.pendingFix();
-    if (fix !== null) return `${fix.change}'s ${FILE[d]} has other uncommitted edits; rejecting the fix commits them too.`;
-    return `${FILE[d]} has other uncommitted edits; ${d === 'reject-intent' ? 'rejecting' : 'accepting'} commits them too.`;
   });
 
   // --- the feedback box: a revisit asks what should change before it runs
@@ -831,13 +817,16 @@ export class ChangePageViewModel {
     }
     switch (action) {
       case 'accept-intent':
-      case 'reject-intent':
       case 'accept-spec':
       case 'accept-plan':
-        await this.commitDecision(action, false);
+        await this.acceptDocument(ACCEPTS[action] ?? 'spec');
         return;
       case 'commit-acceptance':
-        await this.commitDecision(ACCEPTED_UNCOMMITTED[stageNameOf(this.change())] ?? 'accept-spec', false);
+        await this.acceptDocument(ACCEPTED_UNCOMMITTED[stageNameOf(this.change())] ?? 'spec');
+        return;
+      case 'reject-intent':
+      case 'reject-fix':
+        await this.rejectChange();
         return;
       case 'start-build':
         void this.startBuild(this.build.openPreview('start'));
@@ -882,26 +871,6 @@ export class ChangePageViewModel {
     this.pendingRevisit.set(null);
   }
 
-  /** The operator confirmed that the file has other edits and the commit should take them too. */
-  async confirmDecision(): Promise<void> {
-    const d = this.pendingDecision();
-    this.pendingDecision.set(null);
-    const fix = this.pendingFix();
-    this.pendingFix.set(null);
-    if (d === null) return;
-    if (fix !== null) await this.closeFix(fix, true);
-    else await this.commitDecision(d, true);
-  }
-
-  async cancelConfirm(): Promise<void> {
-    this.pendingDecision.set(null);
-    const fix = this.pendingFix();
-    this.pendingFix.set(null);
-    if (fix === null) return;
-    await this.leaveFixOpen(fix, 'its other edits were not committed');
-    await this.load();
-  }
-
   // --- taking the full pipeline instead of a drafted fix
 
   readonly pipelineOpen = signal(false);
@@ -913,9 +882,6 @@ export class ChangePageViewModel {
     const r = this.readiness();
     return r !== null && r.kind === 'ready';
   });
-  /** The fix whose rejection waits on the other-edits confirm, after its replacement opened; null when none does. */
-  private readonly pendingFix = signal<FixClose | null>(null);
-
   /** Read the fix's intent and open New change on the full pipeline with the fix as its description. */
   private async openFullPipeline(): Promise<void> {
     const master = this.masterDir();
@@ -939,9 +905,8 @@ export class ChangePageViewModel {
    * the runner has already said why for a refused or stopped start and for a run that made no change, so only an
    * error thrown here gets a toast. The dialog's Start is the engineer's confirmation that the fix will close.
    *
-   * The sequence: read the branch the master repository is on (the fix's documents live there), start the new change,
-   * which leaves the master on the new change's branch, then check out the fix's branch, commit `reject-intent` for the
-   * fix, and check out the new change's branch again. See `closeFix`.
+   * The sequence: start the new change, then ask the plugin to reject the fix (its own copy holds the fix's documents,
+   * so no branch is switched). See `closeFix`.
    */
   async startPipeline(system: string, idea: string): Promise<void> {
     this.pipelineOpen.set(false);
@@ -950,13 +915,10 @@ export class ChangePageViewModel {
     const master = this.masterDir();
     if (!workspace || !scan || !master) return;
     // Captured before the await: newChange navigates to the new change, and this page and ViewModel are reused.
-    const fixRef: ChangeRef = { system: this.system(), change: this.changeName() };
+    const fixRef: ChangeRef = { workspace: workspace.folder, system: this.system(), change: this.changeName() };
     let outcome;
-    let fixBranch: string | null;
     try {
       const branches = await this.transport.sdlcBranches(master);
-      fixBranch = branches.current;
-      if (fixBranch === null) throw new Error('the master repository is not on a branch');
       // A setting that cannot be used stops the start, as on the workspace home; there is no fall back to `change/` naming (R3.2).
       const repo = masterRepo(scan);
       let naming: NamingState = { kind: 'none' };
@@ -975,63 +937,40 @@ export class ChangePageViewModel {
       return;
     }
     if (outcome.kind !== 'opened') return;
-    await this.closeFix({ ...fixRef, master, fixBranch, newBranch: outcome.branch ?? `change/${outcome.change}` }, false);
+    await this.closeFix(fixRef);
   }
 
   /**
-   * Close the fix after its replacement opened. The master repository is on the new change's branch by now, where the
-   * fix's folder may be missing or stale, so: check out the fix's branch (skipped when it is the new branch), commit the
-   * rejection there, and check out the new change's branch again. A failed first checkout decides nothing; a failed
-   * decision still returns to the new branch; each failure is said in a toast, never left as a half state. An
-   * other-edits confirm keeps the master on the fix's branch until it is answered.
+   * Close the fix after its replacement opened: the plugin commits the rejection in the fix's copy and removes the copy,
+   * keeping its record on the master's branch. Every refusal is said in a toast and leaves the fix open.
    */
-  private async closeFix(fix: FixClose, confirmed: boolean): Promise<void> {
-    const master = fix.master;
-    const swap = fix.fixBranch !== fix.newBranch;
-    if (swap && confirmed === false) {
-      try {
-        await this.transport.sdlcCheckout(master, fix.fixBranch);
-      } catch (e) {
-        await this.leaveFixOpen(fix, message(e), false);
-        return;
-      }
-    }
-    let problem: string | null = null;
+  private async closeFix(fix: ChangeRef): Promise<void> {
+    let out: RejectOutcome;
     try {
-      const out = await this.transport.sdlcDecide(master, fix.system, fix.change, 'reject-intent', confirmed);
-      switch (out.kind) {
-        case 'needsConfirm':
-          this.pendingDecision.set('reject-intent');
-          this.pendingFix.set(fix);
-          return;
-        case 'gitFailed':
-          problem = out.stderr.trim() === '' ? 'git refused the commit' : out.stderr;
-          break;
-        case 'committed':
-          this.toasts.success(`${DONE['reject-intent']} · committed`);
-          break;
-      }
+      out = await this.transport.sdlcReject(fix);
     } catch (e) {
-      problem = message(e);
+      this.toasts.error(fixStays(fix, message(e)));
+      await this.load();
+      return;
     }
-    if (problem !== null) await this.leaveFixOpen(fix, problem, swap);
-    else if (swap) await this.returnToNewChange(fix);
+    switch (out.outcome) {
+      case 'rejected':
+        this.toasts.success(rejectedSaid(out.recordBranch));
+        break;
+      case 'rejectedNotRemoved':
+        this.toasts.error(`The new change started and the fix ${fix.change} is rejected, but its copy was not removed: ${out.problems.join('\n')}`);
+        break;
+      case 'refused':
+        this.toasts.error(fixStays(fix, out.message));
+        break;
+      case 'notCommitted':
+        this.toasts.error(fixStays(fix, out.problems.join('\n')));
+        break;
+      case 'couldNotRun':
+        this.toasts.error(fixStays(fix, out.message));
+        break;
+    }
     await this.load();
-  }
-
-  /** Say the fix stays open, after returning the master to the new change's branch when it had left it. */
-  private async leaveFixOpen(fix: FixClose, why: string, returning = true): Promise<void> {
-    if (returning && fix.fixBranch !== fix.newBranch) await this.returnToNewChange(fix);
-    this.toasts.error(fixStays(fix, why));
-  }
-
-  /** Check out the new change's branch again; a failure says where the master and the new change are. */
-  private async returnToNewChange(fix: FixClose): Promise<void> {
-    try {
-      await this.transport.sdlcCheckout(fix.master, fix.newBranch);
-    } catch (e) {
-      this.toasts.error(`The master repository is on ${fix.fixBranch} and the new change is on ${fix.newBranch}: ${message(e)}. Check out ${fix.newBranch} to continue.`);
-    }
   }
 
   /** The preview a run goes through; null when it was cancelled or could not be opened. */
@@ -1355,30 +1294,67 @@ export class ChangePageViewModel {
     return w && repo ? masterPath(w.folder, repo) : null;
   }
 
-  /** Record a decision on the change the page shows. */
-  private async commitDecision(decision: Decision, confirmed: boolean): Promise<DecisionOutcome> {
-    const master = this.masterDir();
-    if (master === null) return 'error';
-    let out;
+  /** Accept a document of the change the page shows: the plugin commits it and runs the team's accepting hooks. */
+  private async acceptDocument(doc: ChangeDocument): Promise<void> {
+    const ref = this.draftRef();
+    if (ref === null) return;
+    let out: AcceptOutcome;
     try {
-      out = await this.transport.sdlcDecide(master, this.system(), this.changeName(), decision, confirmed);
+      out = await this.transport.sdlcAccept(ref, doc);
     } catch (e) {
-      this.toasts.error(`Could not record the decision: ${message(e)}`);
-      return 'error';
+      this.toasts.error(`Could not accept the ${doc}: ${message(e)}`);
+      return;
     }
-    switch (out.kind) {
-      case 'needsConfirm':
-        this.pendingDecision.set(decision);
-        return 'needsConfirm';
-      case 'gitFailed':
-        this.toasts.error(out.stderr.trim() === '' ? 'git refused the commit' : out.stderr);
+    switch (out.outcome) {
+      case 'accepted':
+        this.toasts.success(`Accepted ${doc} · committed`);
         break;
-      case 'committed':
-        this.toasts.success(`${DONE[decision]} · committed`);
+      case 'acceptedHookFailed':
+        this.toasts.error(`Accepted ${doc} and committed it, but ${out.hook === null ? 'a hook on accepting' : `the hook ${out.hook}`} failed.\n${[...out.problems, outputTail(out.output)].filter((s) => s !== '').join('\n')}`);
+        break;
+      case 'acceptedHookCouldNotRun':
+        this.toasts.error(`Accepted ${doc} and committed it, but this machine could not run the hooks on accepting.\n${outputTail(out.output)}`);
+        break;
+      case 'notCommitted':
+        this.toasts.error(`The ${doc} was not committed.\n${out.problems.join('\n')}`);
+        break;
+      case 'couldNotRun':
+        this.toasts.error(`Could not accept the ${doc}: ${out.message}`);
         break;
     }
     await this.load();
-    return out.kind;
+  }
+
+  /** Reject the change the page shows through the plugin; once it is gone the page goes back to the workspace. */
+  private async rejectChange(): Promise<void> {
+    const ref = this.draftRef();
+    if (ref === null) return;
+    let out: RejectOutcome;
+    try {
+      out = await this.transport.sdlcReject(ref);
+    } catch (e) {
+      this.toasts.error(`Could not reject the change: ${message(e)}`);
+      return;
+    }
+    switch (out.outcome) {
+      case 'rejected':
+        this.toasts.success(rejectedSaid(out.recordBranch));
+        await this.toHome();
+        return;
+      case 'rejectedNotRemoved':
+        this.toasts.error(`Rejected and committed, but the change's copy was not removed.\n${out.problems.join('\n')}`);
+        break;
+      case 'refused':
+        this.toasts.error(out.message);
+        break;
+      case 'notCommitted':
+        this.toasts.error(`The rejection was not committed.\n${out.problems.join('\n')}`);
+        break;
+      case 'couldNotRun':
+        this.toasts.error(`Could not reject the change: ${out.message}`);
+        break;
+    }
+    await this.load();
   }
 
   private async runStage(action: StageAction, feedback = ''): Promise<void> {

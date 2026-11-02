@@ -6,9 +6,42 @@
 //! setting is and how the patterns are filled; this module only asks it.
 use crate::format::{self, NamingAnswer, NamingPatterns, NamingValues};
 use crate::plugin::{BlockReason, Readiness, MIN_VERSION};
-use crate::workspace::MARKER;
-use crate::{base, build, decide, frontmatter, git};
+use crate::workspace::{Marker, MARKER};
+use crate::{base, build, frontmatter, git};
 use std::path::{Path, PathBuf};
+
+/// Lowercase kebab-case, the only scope shape a commitlint header accepts.
+fn is_scope(s: &str) -> bool {
+    !s.is_empty()
+        && !s.starts_with('-')
+        && !s.ends_with('-')
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// What a commit header's scope group takes: non-empty, no whitespace, no parentheses. Capitals stay, so
+/// a ticket ID such as `PROJ-123` can be a scope.
+fn fits_header(s: &str) -> bool {
+    !s.is_empty() && !s.contains(|c: char| c.is_whitespace() || c == '(' || c == ')')
+}
+
+/// The scope a change starts with when its intent names none, as the ai-sdlc plugin resolves it: the intent's
+/// `scope`, then the marker's `systems.<system>.commitScope`, then the system name. A malformed value is
+/// skipped: the intent's must fit a commit header's scope group, the marker's must be lowercase kebab-case.
+pub fn change_scope(master: &Path, system: &str, change: &str) -> String {
+    let intent =
+        std::fs::read_to_string(master.join(format!("intent/{system}/{change}/intent.md")))
+            .ok()
+            .and_then(|t| frontmatter::field(&t, "scope"));
+    let marker = std::fs::read_to_string(master.join(MARKER))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Marker>(&t).ok())
+        .and_then(|m| m.systems.get(system)?.commit_scope.clone());
+    intent
+        .filter(|s| fits_header(s))
+        .or_else(|| marker.filter(|s| is_scope(s)))
+        .unwrap_or_else(|| system.to_string())
+}
 
 /// The patterns of a usable naming setting.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,7 +196,7 @@ pub fn names(
         .filter(|t| !t.is_empty());
     let values = NamingValues {
         work_type: work_type.to_string(),
-        scope: decide::change_scope(master, system, change),
+        scope: change_scope(master, system, change),
         change: change.to_string(),
         title,
     };
@@ -225,6 +258,47 @@ pub fn check_scope(plugin: &Readiness, scope: &str) -> Result<Vec<String>, Namin
 mod tests {
     use super::*;
     use crate::{plugin, testutil};
+
+    #[test]
+    fn change_scope_reads_the_intent_then_the_marker_then_the_system() {
+        const INTENT: &str = "intent/claims/2026-10-12-fnol/intent.md";
+        const CHANGE: &str = "2026-10-12-fnol";
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        // No marker and no intent: the system.
+        assert_eq!(change_scope(&repo, "claims", CHANGE), "claims");
+        testutil::commit_file(
+            &repo,
+            ".ai-sdlc.json",
+            r#"{"version":1,"systems":{"claims":{"commitScope":"claims-sys"}}}"#,
+            "marker",
+        );
+        assert_eq!(change_scope(&repo, "claims", CHANGE), "claims-sys");
+        // The intent's scope wins when it fits a header; a malformed one is skipped; capitals stay.
+        for (scope, expect) in [
+            ("fnol", "fnol"),
+            ("PROJ-123", "PROJ-123"),
+            ("proj 123", "claims-sys"),
+            ("a(b)", "claims-sys"),
+        ] {
+            testutil::commit_file(
+                &repo,
+                INTENT,
+                &format!("---\nstatus: draft\nscope: \"{scope}\"\n---\n"),
+                "i",
+            );
+            assert_eq!(change_scope(&repo, "claims", CHANGE), expect, "{scope}");
+        }
+        // A marker scope that is not lowercase kebab-case is skipped too.
+        testutil::commit_file(
+            &repo,
+            ".ai-sdlc.json",
+            r#"{"version":1,"systems":{"claims":{"commitScope":"Claims Sys"}}}"#,
+            "marker",
+        );
+        testutil::commit_file(&repo, INTENT, "---\nstatus: draft\n---\n", "i");
+        assert_eq!(change_scope(&repo, "claims", CHANGE), "claims");
+    }
 
     const SETTING: &str = r#"{"version":1,"systems":{"kata":{"repos":["kata"],"naming":{"branch":"{type}/{scope}-{slug}","pullRequestTitle":"{type}({scope}): {title}"}}}}"#;
     const NO_NAMING: &str = r#"{"version":1,"systems":{"kata":{"repos":["kata"]}}}"#;

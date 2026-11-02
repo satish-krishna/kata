@@ -1,16 +1,19 @@
 //! Accepting and rejecting a change's documents through the ai-sdlc plugin. Kata edits one front matter
 //! line; the plugin commits it (`commit --kind accept-<doc>` or `reject-intent` / `reject-fix`), runs the
 //! `doc.accept` event and removes the rejected change's copy. Kata makes no commit and runs no hook.
-use crate::ai_sdlc::state::ChangeState;
-use crate::ai_sdlc::{Place, Program};
+use crate::ai_sdlc::state::{ChangeState, ChangeTrack};
+use crate::ai_sdlc::{Place, Program, ProgramError};
+use crate::frontmatter;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::path::{Path, PathBuf};
 
 /// A document of the full pipeline that is accepted by the engineer.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
-pub enum Document {
+pub enum ChangeDocument {
     Intent,
     Spec,
     Plan,
@@ -67,26 +70,276 @@ pub enum RejectOutcome {
 /// Accepts `doc` of `change`: `status: accepted` in its front matter, the plugin's `accept-<doc>` commit,
 /// then the `doc.accept` event. `place` is the workspace's own master, as `Program::resolve` finds it.
 pub fn apply(
-    _program: &Program,
-    _place: &Place,
-    _system: &str,
-    _change: &ChangeState,
-    _doc: Document,
+    program: &Program,
+    place: &Place,
+    system: &str,
+    change: &ChangeState,
+    doc: ChangeDocument,
 ) -> AcceptOutcome {
-    AcceptOutcome::CouldNotRun {
-        message: "not implemented".into(),
+    let file = doc.file();
+    let mut edits = match Edit::start(&Path::new(&change.folder).join(file), "accepted") {
+        Ok(edit) => vec![edit],
+        Err(message) => return AcceptOutcome::CouldNotRun { message },
+    };
+    let at = copy_place(place, change);
+    let kind = format!("accept-{}", doc.name());
+    match commit(program, &at, system, &change.change, &kind, &edits) {
+        Committed::Yes => {}
+        Committed::No(problems) => {
+            revert(&mut edits);
+            return AcceptOutcome::NotCommitted { problems };
+        }
+        Committed::CouldNotRun(message) => {
+            revert(&mut edits);
+            return AcceptOutcome::CouldNotRun { message };
+        }
+    }
+    let command = [
+        "run",
+        "doc.accept",
+        "--json",
+        "--system",
+        system,
+        "--change",
+        &change.change,
+        "--document",
+        file,
+    ];
+    match program.run(&command, &at) {
+        Ok(answer) => event_outcome(&answer),
+        Err(ProgramError::Refused { stdout }) => AcceptOutcome::AcceptedHookFailed {
+            hook: None,
+            output: stdout,
+            problems: Vec::new(),
+        },
+        Err(e) => AcceptOutcome::AcceptedHookCouldNotRun {
+            output: e.to_string(),
+        },
     }
 }
 
-/// Rejects `change` the way the plugin's own `intent --reject` and `fix --reject` do.
+/// Rejects `change` the way the plugin's own `intent --reject` and `fix --reject` do (section 13 of its
+/// workspace reference): the intent is `rejected` and a plan is `superseded`, the plugin commits them, then
+/// removes the change's copy and keeps the master's branch as the record. Nothing is rejected while the
+/// plugin's `ready.reject` refuses. `place` is the workspace's own master, as `Program::resolve` finds it.
 pub fn reject(
-    _program: &Program,
-    _place: &Place,
-    _system: &str,
-    _change: &ChangeState,
+    program: &Program,
+    place: &Place,
+    system: &str,
+    change: &ChangeState,
 ) -> RejectOutcome {
-    RejectOutcome::CouldNotRun {
-        message: "not implemented".into(),
+    if let Some(message) = &change.ready.reject.stop {
+        return RejectOutcome::Refused {
+            message: message.clone(),
+        };
+    }
+    // The record branch is read first: the removal takes the copy, and the plugin's record with it.
+    let branch = match program.change_show(place, &change.change, false) {
+        Ok(show) => show.branch,
+        Err(e) => {
+            return RejectOutcome::CouldNotRun {
+                message: e.to_string(),
+            }
+        }
+    };
+    let folder = Path::new(&change.folder);
+    let mut edits = Vec::new();
+    let mut targets = vec![(ChangeDocument::Intent, "rejected")];
+    if change.documents.plan.exists {
+        targets.push((ChangeDocument::Plan, "superseded"));
+    }
+    for (doc, status) in targets {
+        match Edit::start(&folder.join(doc.file()), status) {
+            Ok(edit) => edits.push(edit),
+            Err(message) => {
+                revert(&mut edits);
+                return RejectOutcome::CouldNotRun { message };
+            }
+        }
+    }
+    let at = copy_place(place, change);
+    let kind = match change.track {
+        ChangeTrack::Fix => "reject-fix",
+        ChangeTrack::Full => "reject-intent",
+    };
+    match commit(program, &at, system, &change.change, kind, &edits) {
+        Committed::Yes => {}
+        Committed::No(problems) => {
+            revert(&mut edits);
+            return RejectOutcome::NotCommitted { problems };
+        }
+        Committed::CouldNotRun(message) => {
+            revert(&mut edits);
+            return RejectOutcome::CouldNotRun { message };
+        }
+    }
+    // From the workspace's own master, so the command still works once the copy is gone.
+    let command = [
+        "change",
+        "remove",
+        "--json",
+        "--change",
+        &change.change,
+        "--abandon",
+    ];
+    match program.run(&command, place) {
+        Ok(answer) => {
+            let problems = strings(&answer["problems"]);
+            if problems.is_empty() {
+                RejectOutcome::Rejected {
+                    record_branch: branch,
+                }
+            } else {
+                RejectOutcome::RejectedNotRemoved { problems }
+            }
+        }
+        Err(e) => RejectOutcome::RejectedNotRemoved {
+            problems: vec![e.to_string()],
+        },
+    }
+}
+
+impl ChangeDocument {
+    fn file(self) -> &'static str {
+        match self {
+            ChangeDocument::Intent => "intent.md",
+            ChangeDocument::Spec => "spec.md",
+            ChangeDocument::Plan => "plan.md",
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            ChangeDocument::Intent => "intent",
+            ChangeDocument::Spec => "spec",
+            ChangeDocument::Plan => "plan",
+        }
+    }
+}
+
+/// Where the plugin works for `change`: the master that holds it (its copy) in the workspace of `place`.
+fn copy_place(place: &Place, change: &ChangeState) -> Place {
+    Place {
+        master: PathBuf::from(&change.master),
+        workspace: place.workspace.clone(),
+    }
+}
+
+/// A front matter `status` edit made to a document, with what it needs to be taken back.
+struct Edit {
+    path: PathBuf,
+    original: Vec<u8>,
+    written: Vec<u8>,
+}
+
+impl Edit {
+    /// Sets the document's `status` to `status` on disk.
+    fn start(path: &Path, status: &str) -> Result<Edit, String> {
+        let original = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let text = String::from_utf8(original.clone())
+            .map_err(|_| format!("{} is not UTF-8 text", path.display()))?;
+        let written = frontmatter::set_status(&text, status).into_bytes();
+        if written != original {
+            std::fs::write(path, &written).map_err(|e| format!("{}: {e}", path.display()))?;
+        }
+        Ok(Edit {
+            path: path.to_path_buf(),
+            original,
+            written,
+        })
+    }
+}
+
+/// Puts every edited document back as it was, unless the engineer changed it since: that edit is theirs.
+fn revert(edits: &mut [Edit]) {
+    for edit in edits {
+        if edit.written != edit.original
+            && std::fs::read(&edit.path).is_ok_and(|now| now == edit.written)
+        {
+            let _ = std::fs::write(&edit.path, &edit.original);
+        }
+    }
+}
+
+enum Committed {
+    /// Committed, or nothing differed from `HEAD` (an acceptance already in the document).
+    Yes,
+    /// The check failed or git refused; the plugin's problems.
+    No(Vec<String>),
+    CouldNotRun(String),
+}
+
+/// Asks the plugin to commit the edited documents as `kind`.
+fn commit(
+    program: &Program,
+    at: &Place,
+    system: &str,
+    change: &str,
+    kind: &str,
+    edits: &[Edit],
+) -> Committed {
+    let paths: Vec<String> = edits.iter().map(|e| e.path.display().to_string()).collect();
+    let mut command = vec![
+        "commit", "--json", "--kind", kind, "--system", system, "--change", change, "--",
+    ];
+    command.extend(paths.iter().map(String::as_str));
+    match program.run(&command, at) {
+        Ok(answer) if answer["committed"] == true => Committed::Yes,
+        Ok(answer) if answer["reason"] == "nothing changed" => Committed::Yes,
+        Ok(answer) => {
+            let mut problems = strings(&answer["problems"]);
+            if problems.is_empty() {
+                problems.push(
+                    answer["reason"]
+                        .as_str()
+                        .unwrap_or("the plugin did not commit")
+                        .to_string(),
+                );
+            }
+            Committed::No(problems)
+        }
+        Err(ProgramError::Refused { stdout }) => Committed::No(vec![stdout]),
+        Err(e) => Committed::CouldNotRun(e.to_string()),
+    }
+}
+
+fn strings(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// What the `doc.accept` event's answer means for the acceptance that is already committed.
+fn event_outcome(answer: &Value) -> AcceptOutcome {
+    let problems = strings(&answer["problems"]);
+    match answer["outcome"].as_str() {
+        Some("passed") => AcceptOutcome::Accepted,
+        Some("failed" | "refused") => {
+            let failed = &answer["failed"];
+            AcceptOutcome::AcceptedHookFailed {
+                hook: failed["id"].as_str().map(String::from),
+                output: failed["output"].as_str().unwrap_or_default().to_string(),
+                problems,
+            }
+        }
+        _ => {
+            let hooks = answer["hooks"].as_array().cloned().unwrap_or_default();
+            let mut output: Vec<String> = hooks
+                .iter()
+                .filter(|h| h["outcome"] == "could-not-run")
+                .filter_map(|h| h["output"].as_str())
+                .map(String::from)
+                .collect();
+            output.extend(problems);
+            AcceptOutcome::AcceptedHookCouldNotRun {
+                output: output.join("\n"),
+            }
+        }
     }
 }
 
@@ -227,7 +480,7 @@ mod tests {
                 .collect()
         }
 
-        fn apply(&self, doc: Document) -> AcceptOutcome {
+        fn apply(&self, doc: ChangeDocument) -> AcceptOutcome {
             apply(&program(), &self.place(), SYSTEM, &self.state(), doc)
         }
 
@@ -237,17 +490,17 @@ mod tests {
     }
 
     /// A change whose `doc` is drafted and waiting to be accepted, the documents above it accepted.
-    fn ready(doc: Document, spec_body: &str, base: &[(&str, &str)]) -> Fx {
+    fn ready(doc: ChangeDocument, spec_body: &str, base: &[(&str, &str)]) -> Fx {
         let fx = Fx::new(base);
         let accepted_intent = intent("accepted", "");
         match doc {
-            Document::Intent => {
+            ChangeDocument::Intent => {
                 fx.commit_doc("intent.md", &intent("draft", ""));
             }
-            Document::Spec | Document::Plan => {
+            ChangeDocument::Spec | ChangeDocument::Plan => {
                 let pin = fx.commit_doc("intent.md", &accepted_intent);
                 match doc {
-                    Document::Spec => {
+                    ChangeDocument::Spec => {
                         fx.commit_doc("spec.md", &spec("draft", &pin, spec_body));
                     }
                     _ => {
@@ -260,11 +513,11 @@ mod tests {
         fx
     }
 
-    fn file_of(doc: Document) -> &'static str {
+    fn file_of(doc: ChangeDocument) -> &'static str {
         match doc {
-            Document::Intent => "intent.md",
-            Document::Spec => "spec.md",
-            Document::Plan => "plan.md",
+            ChangeDocument::Intent => "intent.md",
+            ChangeDocument::Spec => "spec.md",
+            ChangeDocument::Plan => "plan.md",
         }
     }
 
@@ -291,9 +544,13 @@ mod tests {
     fn accepting_a_document_rows() {
         // R3.1 "the commit and the accepting step pass": one case for each document.
         for (doc, header, next) in [
-            (Document::Intent, "accept intent", StageAction::StartSpec),
-            (Document::Spec, "accept spec", StageAction::StartPlan),
-            (Document::Plan, "accept plan", StageAction::StartBuild),
+            (
+                ChangeDocument::Intent,
+                "accept intent",
+                StageAction::StartSpec,
+            ),
+            (ChangeDocument::Spec, "accept spec", StageAction::StartPlan),
+            (ChangeDocument::Plan, "accept plan", StageAction::StartBuild),
         ] {
             let fx = ready(doc, SPEC_BODY, &[]);
             let before = git(&fx.copy, &["rev-list", "--count", "HEAD"]);
@@ -321,9 +578,9 @@ mod tests {
             assert!(committed.contains("status: accepted"), "{doc:?}");
             let state = fx.state();
             let status = match doc {
-                Document::Intent => &state.documents.intent,
-                Document::Spec => &state.documents.spec,
-                Document::Plan => &state.documents.plan,
+                ChangeDocument::Intent => &state.documents.intent,
+                ChangeDocument::Spec => &state.documents.spec,
+                ChangeDocument::Plan => &state.documents.plan,
             };
             assert_eq!(status.head_status.as_deref(), Some("accepted"), "{doc:?}");
             assert_eq!(
@@ -341,10 +598,10 @@ mod tests {
 
         // R3.1 "the format check fails" (row 4): nothing is committed, each problem has its file and line.
         {
-            let fx = ready(Document::Spec, SPEC_NO_ID, &[]);
+            let fx = ready(ChangeDocument::Spec, SPEC_NO_ID, &[]);
             let head = fx.head();
             let before = fx.text("spec.md");
-            let AcceptOutcome::NotCommitted { problems } = fx.apply(Document::Spec) else {
+            let AcceptOutcome::NotCommitted { problems } = fx.apply(ChangeDocument::Spec) else {
                 panic!("expected NotCommitted");
             };
             assert!(!problems.is_empty());
@@ -363,11 +620,11 @@ mod tests {
 
         // R3.1 "a git hook refuses the commit" (row 5): nothing is committed, the hook's output is shown.
         {
-            let fx = ready(Document::Plan, SPEC_BODY, &[]);
+            let fx = ready(ChangeDocument::Plan, SPEC_BODY, &[]);
             pre_commit_hook(&fx.master, "echo hook says no >&2\nexit 1");
             let head = fx.head();
             let before = fx.text("plan.md");
-            let AcceptOutcome::NotCommitted { problems } = fx.apply(Document::Plan) else {
+            let AcceptOutcome::NotCommitted { problems } = fx.apply(ChangeDocument::Plan) else {
                 panic!("expected NotCommitted");
             };
             assert!(problems.join("\n").contains("hook says no"), "{problems:?}");
@@ -383,11 +640,11 @@ mod tests {
                 "console.log('lint says no');process.exit(1)"
             ]));
             let fx = ready(
-                Document::Spec,
+                ChangeDocument::Spec,
                 SPEC_BODY,
                 &[("intent/demo/hooks.json", &hooks)],
             );
-            let outcome = fx.apply(Document::Spec);
+            let outcome = fx.apply(ChangeDocument::Spec);
             let AcceptOutcome::AcceptedHookFailed { hook, output, .. } = outcome else {
                 panic!("expected AcceptedHookFailed, got {outcome:?}");
             };
@@ -406,11 +663,11 @@ mod tests {
         {
             let hooks = accept_hook(json!(["kata-no-such-program-on-this-machine"]));
             let fx = ready(
-                Document::Intent,
+                ChangeDocument::Intent,
                 SPEC_BODY,
                 &[("intent/demo/hooks.json", &hooks)],
             );
-            let outcome = fx.apply(Document::Intent);
+            let outcome = fx.apply(ChangeDocument::Intent);
             let AcceptOutcome::AcceptedHookCouldNotRun { output } = outcome else {
                 panic!("expected AcceptedHookCouldNotRun, got {outcome:?}");
             };
@@ -423,14 +680,20 @@ mod tests {
 
         // Row 6: the plugin could not run the commit; the edit is reverted and nothing is committed.
         {
-            let fx = ready(Document::Intent, SPEC_BODY, &[]);
+            let fx = ready(ChangeDocument::Intent, SPEC_BODY, &[]);
             let head = fx.head();
             let before = fx.text("intent.md");
             let gone = Program {
                 node: "node".into(),
                 entry: fx.ws.join("no-such-plugin").join("ai-sdlc.ts"),
             };
-            let outcome = apply(&gone, &fx.place(), SYSTEM, &fx.state(), Document::Intent);
+            let outcome = apply(
+                &gone,
+                &fx.place(),
+                SYSTEM,
+                &fx.state(),
+                ChangeDocument::Intent,
+            );
             let AcceptOutcome::CouldNotRun { message } = outcome else {
                 panic!("expected CouldNotRun, got {outcome:?}");
             };
@@ -453,7 +716,7 @@ mod tests {
     fn rejecting_goes_through_the_plugin_and_takes_the_change_away() {
         // R3.3 "full pipeline, intent, nothing was built".
         {
-            let fx = ready(Document::Intent, SPEC_BODY, &[]);
+            let fx = ready(ChangeDocument::Intent, SPEC_BODY, &[]);
             let branch = fx.state_branch();
             let before = git(&fx.master, &["rev-list", "--count", &branch])
                 .parse::<u32>()
@@ -523,7 +786,7 @@ mod tests {
 
         // R3.3 "a build log already exists": rejecting is not offered, and the plugin's reason is shown as is.
         {
-            let fx = ready(Document::Intent, SPEC_BODY, &[]);
+            let fx = ready(ChangeDocument::Intent, SPEC_BODY, &[]);
             fx.commit_doc("build/app.md", "---\nlayout: 2\n---\n\n# Build log: app\n");
             let state = fx.state();
             let stop = state.ready.reject.stop.clone().expect("the plugin refuses");
@@ -555,7 +818,7 @@ mod tests {
 
         // The rejection landed and the plugin refused to remove the copy: an uncommitted file stops it.
         {
-            let fx = ready(Document::Intent, SPEC_BODY, &[]);
+            let fx = ready(ChangeDocument::Intent, SPEC_BODY, &[]);
             std::fs::write(fx.folder().join("notes.txt"), "keep me\n").unwrap();
             let outcome = reject(&program(), &fx.place(), SYSTEM, &fx.state());
             let RejectOutcome::RejectedNotRemoved { problems } = outcome else {

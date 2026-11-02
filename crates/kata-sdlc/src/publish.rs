@@ -8,12 +8,12 @@ use crate::base::{
 use crate::branch::branch_exists;
 use crate::changes::{is_change_name, is_safe_system, read_doc};
 use crate::commits::{offenders_to, Offender};
-use crate::decide::change_scope;
 use crate::diff::{changed_files, Part};
 use crate::frontmatter;
 use crate::git;
 use crate::github::{parse_repo_path, ApiError, GitHub, GitHubHosts};
 use crate::naming;
+use crate::naming::change_scope;
 use crate::plugin::Readiness;
 use crate::prs::{self, PrEntry, PrRecord, PrStateKind};
 use crate::start::{recorded_branch, BuildError};

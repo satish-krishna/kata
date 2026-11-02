@@ -42,7 +42,7 @@ import { progressLabels } from '../../lib/progress-steps';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { REVIEW_MISSING_TEXT, reviewState } from '../../lib/sdlc-done';
-import { DEFAULT_BUILD_SECS, isPageAction, reviewFindings, stageName, transcriptRunId, type Finding, type StageAction } from '../../lib/sdlc';
+import { DEFAULT_BUILD_SECS, reviewFindings, stageName, transcriptRunId, type Finding, type StageAction } from '../../lib/sdlc';
 import { groupFindings, type FindingGroup } from '../../lib/sdlc-findings';
 import { filterCounts, taskList, type TaskFilter, type TaskLine, type TaskListView } from '../../lib/build-task-list';
 import type { BuildDialogMode } from '../../ui/build-dialog';
@@ -814,7 +814,7 @@ export class BuildPageViewModel {
     if (this.stage() === 'done') return [];
     if (this.active()) return ['cancel-build'];
     const offered = this.loaded()?.change.offer.actions ?? [];
-    return offered.map((a) => a.action).filter(isPageAction).filter((a) => BUILD_ACTIONS.includes(a));
+    return offered.map((a) => a.action).filter((a) => BUILD_ACTIONS.includes(a));
   });
 
   /** What the page says about its stage; null at a stage that says nothing. */

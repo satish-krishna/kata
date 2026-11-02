@@ -144,20 +144,19 @@ describe('MockTransport', () => {
     expect((await readAllChanges(t)).length).toBe(before);
   });
 
-  it('rejecting an intent moves its change to rejected', async () => {
+  it('rejecting a change takes it out of the list and says where its record stays', async () => {
     const t = new MockTransport();
-    expect(await t.sdlcDecide('/m', 'commerce', '2026-10-16-price-flag', 'reject-intent', false)).toEqual({ kind: 'committed' });
-    const c = (await readAllChanges(t)).find((x) => x.state.change === '2026-10-16-price-flag');
-    expect(c && stageName(c.offer.stage)).toBe('rejected');
-    expect(c?.state.documents.intent.workingStatus).toBe('rejected');
+    const ref = { workspace: '/ws', system: 'commerce', change: '2026-10-16-price-flag' };
+    expect(await t.sdlcReject(ref)).toEqual({ outcome: 'rejected', recordBranch: 'change/2026-10-16-price-flag' });
+    expect((await readAllChanges(t)).find((x) => x.state.change === '2026-10-16-price-flag')).toBeUndefined();
   });
 
   it('accepting the photos spec moves its change to plan-ready', async () => {
     const t = new MockTransport();
     const before = (await readAllChanges(t)).find((c) => c.state.change === '2026-10-12-product-photo-upload');
     expect(before && stageName(before.offer.stage)).toBe('spec-awaiting');
-    const out = await t.sdlcDecide('D:/Work/acme-commerce/commerce-docs', 'commerce', '2026-10-12-product-photo-upload', 'accept-spec', false);
-    expect(out).toEqual({ kind: 'committed' });
+    const out = await t.sdlcAccept({ workspace: '/ws', system: 'commerce', change: '2026-10-12-product-photo-upload' }, 'spec');
+    expect(out).toEqual({ outcome: 'accepted' });
     const after = (await readAllChanges(t)).find((c) => c.state.change === '2026-10-12-product-photo-upload');
     expect(after && stageName(after.offer.stage)).toBe('plan-ready');
   });
