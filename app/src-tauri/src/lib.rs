@@ -1174,7 +1174,7 @@ fn drop_declare_done_after_earlier_declaration(
         return;
     };
     if let Ok(shown) = program.change_show(&place, change, false) {
-        let pull_requests = sdlc::pull_requests::view(&shown, &legacy);
+        let pull_requests = sdlc::pull_requests::view(&shown, &legacy, false);
         view.offer = sdlc::offer::after_pull_requests(view.offer.clone(), &pull_requests);
     }
 }
@@ -1344,7 +1344,7 @@ fn sdlc_pull_requests_view(
     let shown = program
         .change_show(&place, &change, refresh && legacy.is_empty())
         .map_err(|e| e.to_string())?;
-    Ok(sdlc::pull_requests::view(&shown, &legacy))
+    Ok(sdlc::pull_requests::view(&shown, &legacy, false))
 }
 
 /// Relay a non-JSON stdout/stderr line as a warn-level log event.

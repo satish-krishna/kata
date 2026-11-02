@@ -1,6 +1,7 @@
 //! The pull requests a change was declared done with, as the change shows them: the program's record in
 //! `change.yml` first, else what Kata saved before the program recorded them.
 use crate::ai_sdlc::show::ChangeShow;
+use crate::ai_sdlc::status::Status;
 use crate::prs::{PrEntry, PrStateKind};
 use serde::Serialize;
 
@@ -92,9 +93,14 @@ pub struct PullRequestsView {
     pub declare_offered: bool,
 }
 
+/// Whether the plugin's `change.done` passed for the change, from its ledger (`status --json`).
+pub fn declared_done(_status: &Status) -> bool {
+    false
+}
+
 /// The pull requests as the page shows them, from `show` (read with or without `--refresh`) and the
-/// `legacy` entries.
-pub fn view(show: &ChangeShow, legacy: &[PrEntry]) -> PullRequestsView {
+/// `legacy` entries. `declared` is [`declared_done`] of the change's ledger.
+pub fn view(show: &ChangeShow, legacy: &[PrEntry], _declared: bool) -> PullRequestsView {
     let recorded = recorded(show, legacy);
     let source = recorded.first().map(|p| p.source);
     let links = recorded
@@ -265,7 +271,7 @@ mod tests {
             plugin("master", 11),
         ]);
         // At once: every link, the master's last, none with a state and none marked last seen.
-        let now = view(&recorded, &[]);
+        let now = view(&recorded, &[], false);
         assert_eq!(now.source, Some(PullRequestSource::Plugin));
         assert_eq!(
             now.links
@@ -288,6 +294,7 @@ mod tests {
                 ],
             ),
             &[],
+            false,
         );
         let got: Vec<(&str, Option<PrStateKind>, bool)> = filled
             .links
@@ -316,7 +323,7 @@ mod tests {
     #[test]
     fn an_earlier_declaration_still_shows_as_done() {
         let earlier = [legacy("old", 3), legacy("older", 4)];
-        let got = view(&show(vec![]), &earlier);
+        let got = view(&show(vec![]), &earlier, false);
         assert!(got.done);
         assert!(!got.declare_offered);
         assert_eq!(got.source, Some(PullRequestSource::Legacy));
@@ -332,26 +339,27 @@ mod tests {
         );
         // The plugin does not know these pull requests, so a refresh does not touch them.
         let asked = with_states(show(vec![]), &[(&url("old", 3), Some("OPEN"))]);
-        let again = view(&asked, &earlier);
+        let again = view(&asked, &earlier, false);
         assert_eq!(again.links[0].state, Some(PrStateKind::Merged));
         assert!(again.links[0].last_seen);
         // A change with no change.yml at all shows the same.
         let mut bare = show(vec![]);
         bare.record = None;
-        assert!(view(&bare, &earlier).done);
+        assert!(view(&bare, &earlier, false).done);
         // Neither record: not done, nothing to show, declaring done is offered.
-        let none = view(&bare, &[]);
+        let none = view(&bare, &[], false);
         assert!(!none.done && none.links.is_empty() && none.declare_offered);
         assert_eq!(none.source, None);
     }
 
     /// R8.2: a change with a legacy entry and pull requests in `change.yml` shows only `change.yml`'s; it
-    /// is done once the plugin recorded the master's, and declaring done stays offered while that is missing.
+    /// is done once the plugin's `change.done` passed, and declaring done stays offered until then.
     #[test]
     fn a_new_declaration_reads_only_change_yml() {
         let both = view(
             &show(vec![plugin("app", 7), plugin("master", 8)]),
             &[legacy("old", 3)],
+            true,
         );
         assert_eq!(both.source, Some(PullRequestSource::Plugin));
         assert_eq!(
@@ -364,10 +372,54 @@ mod tests {
         assert!(both.done);
         assert!(both.declare_offered);
         // The plugin writes the master's last: without it the declaration stopped part way.
-        let partial = view(&show(vec![plugin("app", 7)]), &[legacy("old", 3)]);
+        let partial = view(&show(vec![plugin("app", 7)]), &[legacy("old", 3)], false);
         assert_eq!(partial.links.len(), 1);
         assert_eq!(partial.links[0].repo, "app");
         assert!(!partial.done);
         assert!(partial.declare_offered);
+    }
+
+    fn ledger(runs: &[(&str, &str)]) -> Status {
+        serde_json::from_value(serde_json::json!({
+            "system": "s",
+            "change": "2026-11-01-c",
+            "repos": [{
+                "repo": "master",
+                "path": "D:/ws/ai-sdlc",
+                "head": "abc",
+                "runs": runs.iter().map(|(event, outcome)| serde_json::json!({
+                    "event": event, "key": "abc", "outcome": outcome, "hooks": [], "problems": [], "failed": null,
+                })).collect::<Vec<_>>(),
+            }],
+        }))
+        .unwrap()
+    }
+
+    /// R7.1 row 3: the plugin records the master's pull request in change.yml before its final push of the
+    /// master. When that push fails, `change.done` failed: the change is not done and declaring done again
+    /// is offered to carry on.
+    #[test]
+    fn a_failed_final_push_is_not_done_and_offers_declaring_again() {
+        let recorded = show(vec![plugin("app", 7), plugin("master", 8)]);
+        let status = ledger(&[("build.finish", "passed"), ("change.done", "failed")]);
+        let got = view(&recorded, &[], declared_done(&status));
+        assert!(!got.done, "the master's pull request alone is not done");
+        assert!(got.declare_offered);
+        assert_eq!(got.links.len(), 2, "what was opened still shows");
+        // Declared again, it passed: now it is done.
+        let status = ledger(&[("change.done", "failed"), ("change.done", "passed")]);
+        assert!(declared_done(&status));
+        assert!(view(&recorded, &[], declared_done(&status)).done);
+        // No ledger at all: not done.
+        assert!(!declared_done(&Status { repos: vec![] }));
+    }
+
+    /// R8.1: a change declared done before this change has no `change.done` in the ledger and still shows as done.
+    #[test]
+    fn an_earlier_declaration_is_done_with_no_change_done_in_the_ledger() {
+        let status = Status { repos: vec![] };
+        let got = view(&show(vec![]), &[legacy("old", 3)], declared_done(&status));
+        assert!(got.done);
+        assert!(!got.declare_offered);
     }
 }
