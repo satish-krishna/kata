@@ -1,4 +1,4 @@
-import { signal } from '@angular/core';
+import { Injector, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
@@ -104,6 +104,23 @@ describe('ChangePageViewModel', () => {
     const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
     expect(read).toHaveBeenCalledWith(expect.any(String), 'commerce', PHOTOS_CHANGE, 'spec');
+  });
+
+  it('a message typed and the tab opened on a change come back when its page is opened again (R13.6)', async () => {
+    setup(PHOTOS_CHANGE);
+    const open = () => Injector.create({ parent: TestBed.inject(Injector), providers: [ChangePageViewModel, BuildPageViewModel, RunPreviewViewModel] });
+    const first = open();
+    const before = first.get(ChangePageViewModel);
+    await ready(before);
+    await before.showDoc('intent');
+    before.setMessageDraft('also cover the empty cart');
+    first.destroy();
+    const second = open();
+    const after = second.get(ChangePageViewModel);
+    await ready(after);
+    expect(after.shownDoc()).toBe('intent');
+    expect(after.messageDraft()).toBe('also cover the empty cart');
+    second.destroy();
   });
 
   it('shows an earlier document when its tile is picked, and the current one again after a reload', async () => {

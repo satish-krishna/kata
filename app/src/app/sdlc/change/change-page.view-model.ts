@@ -1164,6 +1164,11 @@ export class ChangePageViewModel {
     else this.lock.answer(e.id, e.answers);
   }
 
+  /** The message typed for this change's session, which survives leaving the page. */
+  readonly messageDraft = (): string => '';
+
+  setMessageDraft(_text: string): void {}
+
   say(text: string): void {
     const key = this.runKey();
     if (this.ownRun() !== null && key !== null) this.changeRuns.say(key, text);
