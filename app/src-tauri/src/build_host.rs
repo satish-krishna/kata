@@ -2032,6 +2032,9 @@ mod tests {
         runs: Mutex<Vec<Launched>>,
         events: Mutex<Vec<BuildEvent>>,
         cancelled: Mutex<Vec<u64>>,
+        /// Set by a rig that makes announcing read the host, as the Workbench's does.
+        host: Mutex<std::sync::Weak<BuildHost>>,
+        announcements: std::sync::atomic::AtomicUsize,
     }
 
     impl Launcher for FakeLauncher {
@@ -2066,6 +2069,12 @@ mod tests {
         }
         fn emit(&self, event: &BuildEvent) {
             self.events.lock().unwrap().push(event.clone());
+            let host = self.host.lock().unwrap().upgrade();
+            if let Some(host) = host {
+                host.views();
+                self.announcements
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
         }
     }
 
@@ -2175,6 +2184,13 @@ mod tests {
         rig_with(FakeTools::new(fake_place()))
     }
 
+    /// A rig whose launcher reads the host when it announces, as the Workbench's does.
+    fn rig_reading_host() -> Rig {
+        let r = rig();
+        *r.launcher.host.lock().unwrap() = Arc::downgrade(&r.host);
+        r
+    }
+
     impl Rig {
         /// A change in its own copy whose tasks (repo, all, logged) and plan rows (id, repo, deps) are given.
         fn change(
@@ -2252,6 +2268,29 @@ mod tests {
                 .holder(&RepoKey::of(&Path::new(WS).join(repo)))
                 .cloned()
         }
+    }
+
+    // R1.1
+    #[test]
+    fn a_build_starts_when_announcing_reads_the_host() {
+        let r = rig_reading_host();
+        r.simple("A", &["kata"]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let host = r.host.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(host.start(&cref("A"), form()));
+        });
+        let outcome = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the build start never returned: announcing deadlocked on the host's lock");
+        assert!(matches!(outcome, StartOutcome::Started { .. }));
+        assert!(!r.launcher.events.lock().unwrap().is_empty());
+        assert!(
+            r.launcher
+                .announcements
+                .load(std::sync::atomic::Ordering::SeqCst)
+                >= 1
+        );
     }
 
     // R11.1
