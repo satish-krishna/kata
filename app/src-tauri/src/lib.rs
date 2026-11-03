@@ -2255,6 +2255,18 @@ fn relay_step(next: Next, result_seen: bool, engine_alive: bool) -> Step {
 /// How often the relay loop checks that the engine still exists while its output is quiet.
 const RELAY_TICK: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// The `log` event recorded when a run is ended because its engine exited while its output
+/// stayed open.
+fn outlived_warning(_run: u64, _pid: u32) -> Value {
+    Value::Null
+}
+
+/// Whether ending the run on this step records the outlived-output warning: only an end
+/// decided on a quiet poll (`Silent`), never one the stream itself reported.
+fn warns(_next: Next, _step: &Step) -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2284,6 +2296,27 @@ mod tests {
                 expected,
                 "{next:?} seen={seen} alive={alive}"
             );
+        }
+    }
+
+    #[test]
+    fn ending_by_engine_exit_records_one_warning() {
+        let ev = outlived_warning(7, 4242);
+        assert_eq!(ev["type"], "log");
+        assert_eq!(ev["level"], "warn");
+        let message = ev["message"].as_str().unwrap();
+        assert!(message.contains("run 7"), "{message}");
+        assert!(message.contains("4242"), "{message}");
+
+        for seen in [true, false] {
+            let silent_end = relay_step(Next::Silent, seen, false);
+            assert!(warns(Next::Silent, &silent_end));
+            assert!(!warns(Next::Silent, &relay_step(Next::Silent, seen, true)));
+            for next in [Next::Ended, Next::Event] {
+                for alive in [true, false] {
+                    assert!(!warns(next, &relay_step(next, seen, alive)));
+                }
+            }
         }
     }
 
