@@ -1511,9 +1511,8 @@ fn open_change_in(
         match sdlc::build::status(plugin, &home.master, system, change) {
             Ok(status) => Some(status),
             Err(e) => {
-                // Red-step stub: the part is not told apart yet.
                 notices.push(OpenNotice {
-                    part: NoticePart::Review,
+                    part: NoticePart::BuildStatus,
                     message: e.to_string(),
                 });
                 None

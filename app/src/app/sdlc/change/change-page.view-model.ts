@@ -7,6 +7,7 @@ import type { BuildStatus } from '@bindings/BuildStatus';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { ParsedRequirement } from '@bindings/ParsedRequirement';
 import type { OpenedChange } from '@bindings/OpenedChange';
+import type { OpenNotice } from '@bindings/OpenNotice';
 import type { ParsedRead } from '@bindings/ParsedRead';
 import type { ReadFailure } from '@bindings/ReadFailure';
 import type { ReadResult } from '@bindings/ReadResult';
@@ -354,13 +355,21 @@ export class ChangePageViewModel {
   /** The review document as the format program reads it; null when the change has none or it could not be read. */
   private readonly reviewRecord = signal<ReviewRecord | null>(null);
   /** The notice above the open spec or plan; null when it needs none. */
-  readonly docNotice = computed<DocNotice | null>(() => this.resolutionNotice() ?? this.openNotice() ?? this.unsettledNotice() ?? this.shown()?.notice ?? this.refusalNotice());
-  /** What the backend sent for the parts of the change it could not read when it opened it (the build status, the review), as it sent it. */
-  private readonly openNotices = signal<string[]>([]);
-  private readonly openNotice = computed<DocNotice | null>(() => {
-    const [text, ...lines] = this.openNotices();
-    return text === undefined ? null : { tone: 'warning', text, lines };
+  readonly docNotice = computed<DocNotice | null>(() => {
+    const resolution = this.resolutionNotice();
+    if (resolution !== null) return resolution;
+    // The plan tab shows the build status, so a failed status read concerns it; the other tabs show neither part.
+    const base = this.unsettledNotice() ?? this.shown()?.notice ?? this.refusalNotice();
+    return this.shownDoc() === 'plan' ? this.withOpenNotices(base, ['buildStatus']) : base;
   });
+  /** What the backend sent for the parts of the change it could not read when it opened it (the build status, the review), with the part each concerns. */
+  private readonly openNotices = signal<OpenNotice[]>([]);
+  /** The open notices of these parts added to a notice as extra lines, or shown as a warning of their own when there is no notice. */
+  private withOpenNotices(base: DocNotice | null, parts: OpenNotice['part'][]): DocNotice | null {
+    const [first, ...rest] = this.openNotices().filter((n) => parts.includes(n.part)).map((n) => n.message);
+    if (first === undefined) return base;
+    return base === null ? { tone: 'warning', text: first, lines: rest } : { ...base, lines: [...base.lines, first, ...rest] };
+  }
   /** The backend's message when it could not place the change or read the shown document, as it sent it. */
   private readonly resolutionNotice = computed<DocNotice | null>(() => {
     const text = this.resolutionError();
@@ -396,7 +405,7 @@ export class ChangePageViewModel {
     const status = this.status();
     const review = this.reviewRecord();
     // Every log, the plan's and logs' problems and the review are judged together: no one's label hides another's problems.
-    return this.openNotice() ?? shownBuild(
+    const base = shownBuild(
       [
         ...(status?.logLayouts ?? []).map((l) => ({ layout: l.layout, problems: [] })),
         { layout: null, problems: status?.problems ?? [] },
@@ -404,6 +413,8 @@ export class ChangePageViewModel {
       ],
       readiness,
     ).notice ?? this.refusalNotice();
+    // The Build tab shows both the status and the review, so a failure of either is added beside the rest.
+    return this.withOpenNotices(base, ['buildStatus', 'review']);
   });
   /** The shown spec or plan as the format program read it, unless a notice says the document is shown as plain text. */
   private readonly parsed = computed<ReadResult | null>(() => {
@@ -1635,7 +1646,7 @@ export class ChangePageViewModel {
       if (seq !== this.loadSeq) return;
       this.applyPullRequests(pulls.view, pulls.failed);
       this.status.set(status);
-      this.openNotices.set(opening.opened.notices.map((n) => n.message));
+      this.openNotices.set(opening.opened.notices);
       this.readiness.set(readiness);
       this.reviewRecord.set(review);
       this.scan.set(scan);

@@ -326,12 +326,12 @@ export class MockTransport extends KataTransport {
     const parsed = await this.parsedOf(ref, doc);
     // As the backend does: a part that cannot be read is left out with its reason, and the open still succeeds.
     const notices: OpenNotice[] = [];
-    const failed = (e: unknown): null => {
-      notices.push({ part: 'review', message: e instanceof Error ? e.message : String(e) });
+    const failed = (part: OpenNotice['part']) => (e: unknown): null => {
+      notices.push({ part, message: e instanceof Error ? e.message : String(e) });
       return null;
     };
-    const status = planned ? await this.sdlcBuildStatus(ref).catch(failed) : null;
-    const review = planned ? await this.sdlcReviewRecord(ref).catch(failed) : null;
+    const status = planned ? await this.sdlcBuildStatus(ref).catch(failed('buildStatus')) : null;
+    const review = planned ? await this.sdlcReviewRecord(ref).catch(failed('review')) : null;
     return { view, text, parsed, status, review, notices };
   }
   /** The text and the parsed read of one document, composed of the transport's own reads, so a test that changes what a read answers changes what this answers. A parsed read that fails is an error result, as the backend answers. */
