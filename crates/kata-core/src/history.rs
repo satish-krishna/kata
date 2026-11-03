@@ -96,6 +96,14 @@ pub fn load_run(id: &str) -> Result<RunDetail, HistoryError> {
     Ok(RunDetail { record, events })
 }
 
+/// Append one event as a JSON line to an existing transcript, `<runs_dir>/<id>.jsonl`.
+///
+/// Takes the event as a JSON value because the Workbench relay holds its events that way.
+/// The same guards as `load_run` apply, and the file must already exist: this never creates a transcript.
+pub fn append_event(_id: &str, _event: &serde_json::Value) -> Result<(), HistoryError> {
+    Ok(())
+}
+
 fn is_valid_id(id: &str) -> bool {
     !id.is_empty()
         && id
@@ -380,5 +388,47 @@ mod tests {
             load_run("nope-20260101T000000Z"),
             Err(HistoryError::NotFound)
         ));
+    }
+
+    #[test]
+    #[serial]
+    fn an_appended_warning_is_in_the_run_after_reload() {
+        let home = seed(&[("triage-20260618T100000Z.jsonl", COMPLETED)]);
+        let id = "triage-20260618T100000Z";
+        let before = load_run(id).unwrap().record;
+        let warning = serde_json::json!({
+            "type": "log",
+            "level": "warn",
+            "message": "run 7: the engine (pid 1) exited, but its output stayed open; the run was ended without waiting for it"
+        });
+        append_event(id, &warning).unwrap();
+        let detail = load_run(id).unwrap();
+        match detail.events.last() {
+            Some(KataEvent::Log { level, message }) => {
+                assert_eq!(level, "warn");
+                assert!(message.contains("output stayed open"));
+            }
+            other => panic!("last event should be the warning, got {other:?}"),
+        }
+        assert_eq!(detail.record.exit, before.exit);
+        assert_eq!(detail.record.result, before.result);
+        assert_eq!(detail.record.turns, before.turns);
+
+        assert!(matches!(
+            append_event("../escape", &warning),
+            Err(HistoryError::InvalidId)
+        ));
+        assert!(matches!(
+            append_event("a/b", &warning),
+            Err(HistoryError::InvalidId)
+        ));
+        let missing = "nope-20260101T000000Z";
+        assert!(matches!(
+            append_event(missing, &warning),
+            Err(HistoryError::NotFound)
+        ));
+        let runs = crate::fsutil::runs_dir().unwrap();
+        assert!(!runs.join(format!("{missing}.jsonl")).exists());
+        drop(home);
     }
 }
