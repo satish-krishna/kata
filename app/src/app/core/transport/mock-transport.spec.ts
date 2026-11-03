@@ -438,7 +438,7 @@ describe('MockTransport', () => {
       const opened = await t.sdlcOpenChange(ref(MOCK_BUILD_CHANGE), 'plan');
       expect(opened.status).toBeNull();
       expect(opened.view.state.change).toBe(MOCK_BUILD_CHANGE);
-      expect(opened.notices).toEqual(['path does not exist in HEAD']);
+      expect(opened.notices).toEqual([{ part: 'buildStatus', message: 'path does not exist in HEAD' }]);
     });
 
     it('opens a planned change whose review cannot be read: no review and a notice, not a swallowed empty value (F1)', async () => {
@@ -446,7 +446,7 @@ describe('MockTransport', () => {
       vi.spyOn(t, 'sdlcReviewRecord').mockRejectedValue(new Error('review is unreadable'));
       const opened = await t.sdlcOpenChange(ref(MOCK_BUILD_CHANGE), 'plan');
       expect(opened.review).toBeNull();
-      expect(opened.notices).toEqual(['review is unreadable']);
+      expect(opened.notices).toEqual([{ part: 'review', message: 'review is unreadable' }]);
     });
 
     it('opens a change with no notices when every read succeeds', async () => {

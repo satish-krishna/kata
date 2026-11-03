@@ -1384,7 +1384,27 @@ pub struct OpenedChange {
     pub review: Option<sdlc::review::ReviewRecord>,
     /// What part of the open could not be read (the build status, the review record), in the backend's words.
     /// The part is then `None` and the open still succeeds.
-    pub notices: Vec<String>,
+    pub notices: Vec<OpenNotice>,
+}
+
+/// The part of an opened change a notice concerns.
+#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum NoticePart {
+    BuildStatus,
+    Review,
+}
+
+/// What could not be read when a change was opened, and which part it concerns.
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct OpenNotice {
+    pub part: NoticePart,
+    pub message: String,
 }
 
 /// The format program's read of a document, or its own message when it could not read it.
@@ -1491,7 +1511,11 @@ fn open_change_in(
         match sdlc::build::status(plugin, &home.master, system, change) {
             Ok(status) => Some(status),
             Err(e) => {
-                notices.push(e.to_string());
+                // Red-step stub: the part is not told apart yet.
+                notices.push(OpenNotice {
+                    part: NoticePart::Review,
+                    message: e.to_string(),
+                });
                 None
             }
         }
@@ -1502,7 +1526,10 @@ fn open_change_in(
         match sdlc::review::record(plugin, &home.master, system, change) {
             Ok(review) => review,
             Err(e) => {
-                notices.push(e.to_string());
+                notices.push(OpenNotice {
+                    part: NoticePart::Review,
+                    message: e.to_string(),
+                });
                 None
             }
         }
@@ -2884,7 +2911,10 @@ name: build
             assert!(opened.status.is_none());
             assert_eq!(opened.text.as_deref(), Some(PLAN));
             assert!(
-                opened.notices.iter().any(|n| n.contains("HEAD")),
+                opened
+                    .notices
+                    .iter()
+                    .any(|n| n.part == NoticePart::BuildStatus && n.message.contains("HEAD")),
                 "{:?}",
                 opened.notices
             );

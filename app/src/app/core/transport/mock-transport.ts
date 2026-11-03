@@ -20,6 +20,7 @@ import type { Snapshot } from '@bindings/Snapshot';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
 import type { DocumentRead } from '@bindings/DocumentRead';
 import type { OpenedChange } from '@bindings/OpenedChange';
+import type { OpenNotice } from '@bindings/OpenNotice';
 import type { ParsedRead } from '@bindings/ParsedRead';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { ChangeStart } from '@bindings/ChangeStart';
@@ -324,9 +325,9 @@ export class MockTransport extends KataTransport {
     const text = await this.sdlcReadDoc(ref, doc);
     const parsed = await this.parsedOf(ref, doc);
     // As the backend does: a part that cannot be read is left out with its reason, and the open still succeeds.
-    const notices: string[] = [];
+    const notices: OpenNotice[] = [];
     const failed = (e: unknown): null => {
-      notices.push(e instanceof Error ? e.message : String(e));
+      notices.push({ part: 'review', message: e instanceof Error ? e.message : String(e) });
       return null;
     };
     const status = planned ? await this.sdlcBuildStatus(ref).catch(failed) : null;

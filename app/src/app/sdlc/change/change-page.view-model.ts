@@ -1635,7 +1635,7 @@ export class ChangePageViewModel {
       if (seq !== this.loadSeq) return;
       this.applyPullRequests(pulls.view, pulls.failed);
       this.status.set(status);
-      this.openNotices.set(opening.opened.notices);
+      this.openNotices.set(opening.opened.notices.map((n) => n.message));
       this.readiness.set(readiness);
       this.reviewRecord.set(review);
       this.scan.set(scan);
