@@ -657,6 +657,23 @@ describe('ChangePage: where the change lives', () => {
     expect(container.textContent).not.toContain('The copy holds');
   });
 
+  it('a change whose build status cannot be read still opens, with the backend text in a notice (F1)', async () => {
+    const transport = new MockTransport();
+    const failure = 'git show HEAD:intent/commerce/plan.md: path does not exist in HEAD';
+    vi.spyOn(transport, 'sdlcBuildStatus').mockRejectedValue(new Error(failure));
+    const { container } = await openPage(MOCK_COPY_CHANGE, transport);
+    expect(container.textContent).not.toContain('Change not found');
+    expect(container.querySelector('[data-testid="resolution-error"]')).toBeNull();
+    expect(container.querySelector('main.k-change')).not.toBeNull();
+    const banner = container.querySelector('[data-testid="doc-notice"]')!;
+    expect(banner).not.toBeNull();
+    expect(banner.classList.contains('wb-banner--warn')).toBe(true);
+    expect(text(banner)).toContain(failure);
+    pill(container, 'Build').click();
+    await settle();
+    expect(text(container.querySelector('[data-testid="doc-notice"]')!)).toContain(failure);
+  });
+
   it('a done change the plugin does not list shows the plugin message and no document (R6.2)', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcOpenChange').mockRejectedValue(new Error(MOCK_NOT_LISTED));

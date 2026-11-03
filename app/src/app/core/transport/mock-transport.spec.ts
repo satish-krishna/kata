@@ -421,6 +421,28 @@ describe('MockTransport', () => {
       expect(opened.status).toEqual(await t.sdlcBuildStatus(ref(MOCK_BUILD_CHANGE)));
     });
 
+    it('opens a planned change whose build status cannot be read: no status and a notice, never a failed open (F1)', async () => {
+      const t = new MockTransport();
+      vi.spyOn(t, 'sdlcBuildStatus').mockRejectedValue(new Error('path does not exist in HEAD'));
+      const opened = await t.sdlcOpenChange(ref(MOCK_BUILD_CHANGE), 'plan');
+      expect(opened.status).toBeNull();
+      expect(opened.view.state.change).toBe(MOCK_BUILD_CHANGE);
+      expect(opened.notices).toEqual(['path does not exist in HEAD']);
+    });
+
+    it('opens a planned change whose review cannot be read: no review and a notice, not a swallowed empty value (F1)', async () => {
+      const t = new MockTransport();
+      vi.spyOn(t, 'sdlcReviewRecord').mockRejectedValue(new Error('review is unreadable'));
+      const opened = await t.sdlcOpenChange(ref(MOCK_BUILD_CHANGE), 'plan');
+      expect(opened.review).toBeNull();
+      expect(opened.notices).toEqual(['review is unreadable']);
+    });
+
+    it('opens a change with no notices when every read succeeds', async () => {
+      const t = new MockTransport();
+      expect((await t.sdlcOpenChange(ref(MOCK_BUILD_CHANGE), 'plan')).notices).toEqual([]);
+    });
+
     it('rejects every read of a change it does not list, with the message for a removed copy', async () => {
       const t = new MockTransport();
       const gone = ref('2026-01-01-no-such-change');

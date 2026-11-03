@@ -324,7 +324,7 @@ export class MockTransport extends KataTransport {
     const parsed = doc === 'spec' || doc === 'plan' ? await this.sdlcReadParsed(ref, doc).catch((e): ParsedRead => ({ kind: 'error', message: e instanceof Error ? e.message : String(e) })) : null;
     const status = planned ? await this.sdlcBuildStatus(ref) : null;
     const review = planned ? await this.sdlcReviewRecord(ref).catch(() => null) : null;
-    return { view, text, parsed, status, review };
+    return { view, text, parsed, status, review, notices: [] };
   }
   sdlcReadDoc(ref: ChangeRef, doc: string): Promise<string | null> {
     try {

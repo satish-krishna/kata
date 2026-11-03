@@ -7,4 +7,9 @@ import type { ReviewRecord } from "./ReviewRecord";
 /**
  * Everything the change page needs to open a change, read from one resolution of where it lives.
  */
-export type OpenedChange = { view: ChangeView, text: string | null, parsed: ParsedRead | null, status: BuildStatus | null, review: ReviewRecord | null, };
+export type OpenedChange = { view: ChangeView, text: string | null, parsed: ParsedRead | null, status: BuildStatus | null, review: ReviewRecord | null, 
+/**
+ * What part of the open could not be read (the build status, the review record), in the backend's words.
+ * The part is then `None` and the open still succeeds.
+ */
+notices: Array<string>, };

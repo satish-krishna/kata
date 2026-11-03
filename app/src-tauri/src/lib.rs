@@ -1351,6 +1351,11 @@ fn ai_sdlc_dir_in(folder: &str) -> Result<std::path::PathBuf, String> {
     }
 }
 
+/// The plugin folder for a per-change command.
+fn change_plugin_dir(workspace: &str) -> Result<std::path::PathBuf, String> {
+    ai_sdlc_dir_in(workspace)
+}
+
 /// Everything the change page needs to open a change, read from one resolution of where it lives.
 #[derive(serde::Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -1362,6 +1367,9 @@ pub struct OpenedChange {
     pub parsed: Option<ParsedRead>,
     pub status: Option<sdlc::build::BuildStatus>,
     pub review: Option<sdlc::review::ReviewRecord>,
+    /// What part of the open could not be read (the build status, the review record), in the backend's words.
+    /// The part is then `None` and the open still succeeds.
+    pub notices: Vec<String>,
 }
 
 /// The format program's read of a document, or its own message when it could not read it.
@@ -1444,6 +1452,7 @@ fn open_change_in(
         parsed,
         status,
         review,
+        notices: Vec::new(),
     })
 }
 
@@ -2105,6 +2114,50 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    /// Held by every test that points HOME at another folder.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// F2: a per-change command whose plugin cannot be found says it could not find where the change
+    /// lives, with the readiness message, through the real readiness check.
+    #[test]
+    fn plugin_not_found_is_a_resolution_error_for_a_change_command_f2() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!("kata-f2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let workspace = root.join("ws");
+        let empty_home = root.join("home");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&empty_home).unwrap();
+        let saved: Vec<_> = ["HOME", "USERPROFILE"]
+            .iter()
+            .map(|k| (*k, std::env::var_os(k)))
+            .collect();
+        for (k, _) in &saved {
+            std::env::set_var(k, &empty_home);
+        }
+        let ws = workspace.to_str().unwrap();
+        let readiness = ai_sdlc_readiness(Some(ws));
+        let direct = change_plugin_dir(ws);
+        let through_resolved = resolved(&build_host::ChangeRef {
+            workspace: ws.into(),
+            system: "demo".into(),
+            change: "2026-11-02-greeting".into(),
+        });
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        let sdlc::plugin::Readiness::Blocked { message, .. } = readiness else {
+            panic!("no plugin in the workspace or the home should be blocked, got {readiness:?}");
+        };
+        let expected = format!("Could not find where this change lives: {message}");
+        assert_eq!(direct, Err(expected.clone()));
+        assert_eq!(through_resolved.map(|_| ()), Err(expected));
+    }
+
     #[test]
     fn open_copy_folder_opens_only_a_copy() {
         // In a copy: the folder the plugin reports is opened, once.
@@ -2318,8 +2371,7 @@ mod tests {
     fn commands_resolve_the_same_plugin_as_readiness_f8() {
         // The catalog reads the user scope from HOME; point it at an empty folder so the machine's own
         // plugins cannot answer. Nothing else in this test binary reads HOME.
-        static HOME: Mutex<()> = Mutex::new(());
-        let _guard = HOME.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap();
         let root = std::env::temp_dir().join(format!("kata-f8-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let workspace = root.join("ws");
@@ -2672,6 +2724,35 @@ name: build
             );
             let review = opened.review.expect("the review is read from the copy");
             assert!(!review.reviews.is_empty());
+            assert!(opened.notices.is_empty(), "{:?}", opened.notices);
+        }
+
+        /// F1: a plan written but not committed (a plan run in progress) opens: the status is left out and the
+        /// notice says why; the document text is still there.
+        #[test]
+        fn open_change_with_an_uncommitted_plan_succeeds_with_a_notice_f1() {
+            let fx = fx();
+            let plan = format!("intent/{SYSTEM}/{CHANGE}/plan.md");
+            git(&fx.copy, &["rm", "-q", "--cached", &plan]);
+            git(&fx.copy, &["commit", "-q", "-m", "plan not committed"]);
+            assert!(fx.copy.join(&plan).is_file());
+            let home = home_of_copy(&fx, true);
+            let opened = open_change_in(
+                &home,
+                &fx.plugin,
+                &ready(&fx.plugin),
+                sdlc::offer::LiveFacts::default(),
+                SYSTEM,
+                "plan",
+            )
+            .expect("a failed status read never fails the open");
+            assert!(opened.status.is_none());
+            assert_eq!(opened.text.as_deref(), Some(PLAN));
+            assert!(
+                opened.notices.iter().any(|n| n.contains("HEAD")),
+                "{:?}",
+                opened.notices
+            );
         }
     }
 
