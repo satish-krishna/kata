@@ -73,8 +73,9 @@ pub fn list_runs() -> Vec<RunRecord> {
     out
 }
 
-/// One run's record plus its full event stream (for the detail view).
-pub fn load_run(id: &str) -> Result<RunDetail, HistoryError> {
+/// The path of an existing transcript, `<runs_dir>/<id>.jsonl`, after the guards every access shares:
+/// a valid id, a file directly under the runs folder, and not a symlink.
+fn transcript_path(id: &str) -> Result<std::path::PathBuf, HistoryError> {
     if !is_valid_id(id) {
         return Err(HistoryError::InvalidId);
     }
@@ -86,14 +87,51 @@ pub fn load_run(id: &str) -> Result<RunDetail, HistoryError> {
     }
     // Reject symlinks: the file's contents are returned to the webview, so a
     // symlink at <id>.jsonl could exfiltrate an arbitrary file. symlink_metadata
-    // does not follow the link; a missing file errors here → NotFound.
+    // does not follow the link; a missing file errors here -> NotFound.
     let meta = std::fs::symlink_metadata(&path).map_err(|_| HistoryError::NotFound)?;
     if meta.file_type().is_symlink() {
         return Err(HistoryError::InvalidId);
     }
+    Ok(path)
+}
+
+/// One run's record plus its full event stream (for the detail view).
+pub fn load_run(id: &str) -> Result<RunDetail, HistoryError> {
+    let path = transcript_path(id)?;
     let events = read_events(&path).map_err(|e| HistoryError::Io(e.to_string()))?;
     let record = build_record(id, &events).ok_or(HistoryError::NotFound)?;
     Ok(RunDetail { record, events })
+}
+
+/// Append one event as a JSON line to an existing transcript, `<runs_dir>/<id>.jsonl`.
+///
+/// Takes the event as a JSON value because the Workbench relay holds its events that way.
+/// The same guards as `load_run` apply, and the file must already exist: this never creates a transcript.
+/// When the transcript ends mid-line, the event starts on a new line so it is not lost.
+pub fn append_event(id: &str, event: &serde_json::Value) -> Result<(), HistoryError> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let path = transcript_path(id)?;
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| HistoryError::Io(e.to_string()))?;
+    let ends_mid_line = match file.seek(SeekFrom::End(-1)) {
+        Ok(_) => {
+            let mut last = [0u8; 1];
+            file.read_exact(&mut last)
+                .map_err(|e| HistoryError::Io(e.to_string()))?;
+            last[0] != b'\n'
+        }
+        Err(_) => false, // empty file
+    };
+    let line = if ends_mid_line {
+        format!("\n{event}\n")
+    } else {
+        format!("{event}\n")
+    };
+    file.write_all(line.as_bytes())
+        .map_err(|e| HistoryError::Io(e.to_string()))
 }
 
 fn is_valid_id(id: &str) -> bool {
@@ -380,5 +418,70 @@ mod tests {
             load_run("nope-20260101T000000Z"),
             Err(HistoryError::NotFound)
         ));
+    }
+
+    #[test]
+    #[serial]
+    fn an_appended_warning_is_in_the_run_after_reload() {
+        let home = seed(&[("triage-20260618T100000Z.jsonl", COMPLETED)]);
+        let id = "triage-20260618T100000Z";
+        let before = load_run(id).unwrap().record;
+        let warning = serde_json::json!({
+            "type": "log",
+            "level": "warn",
+            "message": "run 7: the engine (pid 1) exited, but its output stayed open; the run was ended without waiting for it"
+        });
+        append_event(id, &warning).unwrap();
+        let detail = load_run(id).unwrap();
+        match detail.events.last() {
+            Some(KataEvent::Log { level, message }) => {
+                assert_eq!(level, "warn");
+                assert!(message.contains("output stayed open"));
+            }
+            other => panic!("last event should be the warning, got {other:?}"),
+        }
+        assert_eq!(detail.record.exit, before.exit);
+        assert_eq!(detail.record.result, before.result);
+        assert_eq!(detail.record.turns, before.turns);
+
+        assert!(matches!(
+            append_event("../escape", &warning),
+            Err(HistoryError::InvalidId)
+        ));
+        assert!(matches!(
+            append_event("a/b", &warning),
+            Err(HistoryError::InvalidId)
+        ));
+        let missing = "nope-20260101T000000Z";
+        assert!(matches!(
+            append_event(missing, &warning),
+            Err(HistoryError::NotFound)
+        ));
+        let runs = crate::fsutil::runs_dir().unwrap();
+        assert!(!runs.join(format!("{missing}.jsonl")).exists());
+        drop(home);
+    }
+
+    #[test]
+    #[serial]
+    fn an_event_appended_after_a_cut_off_line_is_kept() {
+        let cut_off = format!("{COMPLETED}{}", r#"{"type":"log","level":"info","mess"#);
+        let home = seed(&[("triage-20260618T100000Z.jsonl", cut_off.as_str())]);
+        let id = "triage-20260618T100000Z";
+        let warning = serde_json::json!({
+            "type": "log",
+            "level": "warn",
+            "message": "run 7: the engine (pid 1) exited, but its output stayed open"
+        });
+        append_event(id, &warning).unwrap();
+        let detail = load_run(id).unwrap();
+        match detail.events.last() {
+            Some(KataEvent::Log { level, message }) => {
+                assert_eq!(level, "warn");
+                assert!(message.contains("output stayed open"));
+            }
+            other => panic!("last event should be the warning, got {other:?}"),
+        }
+        drop(home);
     }
 }

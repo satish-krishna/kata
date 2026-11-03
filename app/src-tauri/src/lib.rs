@@ -178,6 +178,7 @@ fn start_run(
         }
     };
 
+    let engine_pid = child.pid();
     let change_key = match &lane {
         runs::Lane::Change { key, .. } => Some(key.clone()),
         _ => None,
@@ -200,7 +201,57 @@ fn start_run(
     tauri::async_runtime::spawn(async move {
         let mut terminal_seen = false;
         let mut end: Option<build_host::RunEnd> = None;
-        while let Some(event) = rx.recv().await {
+        let mut exit_code: Option<i32> = None;
+        loop {
+            let received = tokio::time::timeout(RELAY_TICK, rx.recv()).await;
+            let (next, event) = match received {
+                Ok(Some(CommandEvent::Terminated(payload))) => {
+                    exit_code = Some(payload.code.unwrap_or(-1));
+                    (Next::Ended, None)
+                }
+                Ok(Some(event)) => (Next::Event, Some(event)),
+                Ok(None) => (Next::Ended, None),
+                Err(_) => (Next::Silent, None),
+            };
+            let alive = match next {
+                Next::Silent => kata_core::pid_alive(engine_pid),
+                _ => true,
+            };
+            let step = relay_step(next, terminal_seen, alive);
+            match step {
+                Step::Wait => continue,
+                Step::End { result } => {
+                    if warns(next, &step) {
+                        let ev = outlived_warning(id, engine_pid);
+                        let seq = history.push(id, &ev);
+                        // The in-memory history is gone after a restart, so the transcript keeps the evidence.
+                        // Best-effort: a failure here never stops the run from ending.
+                        let seen: Vec<Value> =
+                            history.replay(id).into_iter().map(|e| e.event).collect();
+                        if let Some(run_id) = build_host::transcript_run_id(&seen) {
+                            let _ = kata_core::history::append_event(&run_id, &ev);
+                        }
+                        let _ = app.emit(RUN_EVENT, runs::wrap(id, seq, ev));
+                    }
+                    if !result {
+                        let message = match exit_code {
+                            Some(code) => format!("engine exited ({code}) without a result"),
+                            None => "the engine exited without a result".to_string(),
+                        };
+                        end = Some(build_host::RunEnd {
+                            exit: exit_code,
+                            error: Some(message.clone()),
+                            history_id: None,
+                        });
+                        let ev = json!({ "type": "run.error", "message": message });
+                        let seq = history.push(id, &ev);
+                        let _ = app.emit(RUN_EVENT, runs::wrap(id, seq, ev));
+                    }
+                    break;
+                }
+                Step::Relay => {}
+            }
+            let Some(event) = event else { continue };
             match event {
                 CommandEvent::Stdout(bytes) => match serde_json::from_slice::<Value>(&bytes) {
                     Ok(v) => {
@@ -241,23 +292,6 @@ fn start_run(
                     Err(_) => relay_log(&app, &history, id, &bytes),
                 },
                 CommandEvent::Stderr(bytes) => relay_log(&app, &history, id, &bytes),
-                CommandEvent::Terminated(payload) => {
-                    if !terminal_seen {
-                        let code = payload.code.unwrap_or(-1);
-                        end = Some(build_host::RunEnd {
-                            exit: Some(code),
-                            error: Some(format!("engine exited ({code}) without a result")),
-                            history_id: None,
-                        });
-                        let ev = json!({
-                            "type": "run.error",
-                            "message": format!("engine exited ({code}) without a result"),
-                        });
-                        let seq = history.push(id, &ev);
-                        let _ = app.emit(RUN_EVENT, runs::wrap(id, seq, ev));
-                    }
-                    break;
-                }
                 CommandEvent::Error(err) => {
                     terminal_seen = true;
                     end = Some(build_host::RunEnd {
@@ -2195,10 +2229,115 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+/// What the relay loop saw next: an event from the engine, the end of its stream or its
+/// termination, or a poll tick that passed with nothing. `Event` is a marker; the loop
+/// keeps the event itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Next {
+    Event,
+    Ended,
+    Silent,
+}
+
+/// What the relay loop does with what it saw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    /// Handle the event as usual.
+    Relay,
+    /// Keep waiting.
+    Wait,
+    /// Leave the loop; `result` says whether the run had already reported its result.
+    End { result: bool },
+}
+
+/// The relay loop's decision, by what it saw, whether the run reported a result and whether
+/// its engine process still exists.
+fn relay_step(next: Next, result_seen: bool, engine_alive: bool) -> Step {
+    match next {
+        Next::Event => Step::Relay,
+        Next::Ended => Step::End {
+            result: result_seen,
+        },
+        Next::Silent if engine_alive => Step::Wait,
+        Next::Silent => Step::End {
+            result: result_seen,
+        },
+    }
+}
+
+/// How often the relay loop checks that the engine still exists while its output is quiet.
+const RELAY_TICK: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The `log` event recorded when a run is ended because its engine exited while its output
+/// stayed open.
+fn outlived_warning(run: u64, pid: u32) -> Value {
+    json!({
+        "type": "log",
+        "level": "warn",
+        "message": format!(
+            "run {run}: the engine (pid {pid}) exited, but its output stayed open; the run was ended without waiting for it"
+        ),
+    })
+}
+
+/// Whether ending the run on this step records the outlived-output warning: only an end
+/// decided on a quiet poll (`Silent`), never one the stream itself reported.
+fn warns(next: Next, step: &Step) -> bool {
+    next == Next::Silent && matches!(step, Step::End { .. })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn relay_ends_per_table() {
+        use Next::*;
+        // (next, result seen, engine alive, expected)
+        let rows = [
+            (Event, true, true, Step::Relay),
+            (Event, true, false, Step::Relay),
+            (Event, false, true, Step::Relay),
+            (Event, false, false, Step::Relay),
+            (Ended, true, true, Step::End { result: true }),
+            (Ended, true, false, Step::End { result: true }),
+            (Ended, false, true, Step::End { result: false }),
+            (Ended, false, false, Step::End { result: false }),
+            (Silent, true, true, Step::Wait),
+            (Silent, true, false, Step::End { result: true }),
+            (Silent, false, true, Step::Wait),
+            (Silent, false, false, Step::End { result: false }),
+        ];
+        for (next, seen, alive, expected) in rows {
+            assert_eq!(
+                relay_step(next, seen, alive),
+                expected,
+                "{next:?} seen={seen} alive={alive}"
+            );
+        }
+    }
+
+    #[test]
+    fn ending_by_engine_exit_records_one_warning() {
+        let ev = outlived_warning(7, 4242);
+        assert_eq!(ev["type"], "log");
+        assert_eq!(ev["level"], "warn");
+        let message = ev["message"].as_str().unwrap();
+        assert!(message.contains("run 7"), "{message}");
+        assert!(message.contains("4242"), "{message}");
+
+        for seen in [true, false] {
+            let silent_end = relay_step(Next::Silent, seen, false);
+            assert!(warns(Next::Silent, &silent_end));
+            assert!(!warns(Next::Silent, &relay_step(Next::Silent, seen, true)));
+            for next in [Next::Ended, Next::Event] {
+                for alive in [true, false] {
+                    assert!(!warns(next, &relay_step(next, seen, alive)));
+                }
+            }
+        }
+    }
 
     /// Held by every test that points HOME at another folder.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
