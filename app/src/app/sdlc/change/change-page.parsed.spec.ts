@@ -34,17 +34,17 @@ describe('ChangePage parsed documents', () => {
   it('change page shows every requirement, scenario, task, build record and finding', async () => {
     const transport = new MockTransport();
     transport.patchChange(MOCK_BUILD_CHANGE, { stage: 'build-finished' });
-    vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_m, _s, _c, stem) => PROSE(stem));
+    vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_r, stem) => PROSE(stem));
     const documents: Record<string, ReadResult> = { spec: parsedSpec(), plan: parsedPlan() };
-    vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_m, _s, _c, stem) => documents[stem] ?? null);
+    vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_r, stem) => documents[stem] ?? null);
     const status = transport.sdlcBuildStatus.bind(transport);
-    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => {
-      const got = await status(m, s, c);
+    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (r) => {
+      const got = await status(r);
       return { ...got, repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })), tasks: builtTasks() };
     });
     vi.spyOn(transport, 'sdlcDiffFiles').mockResolvedValue({ files: [], loc: [] });
     vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 0 }]);
-    const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], MOCK_BUILD_CHANGE);
+    const heads = await transport.sdlcBuildHeads({ workspace: '', system: 'commerce', change: MOCK_BUILD_CHANGE }, ['commerce-docs', ...REPOS]);
     const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
     vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(reviewOfSix(commits));
     const { container, fixture } = await render(ChangePage, {}, [

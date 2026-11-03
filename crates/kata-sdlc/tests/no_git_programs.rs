@@ -351,6 +351,7 @@ fn kata_flows(branch_name: &str, record: bool) {
     assert_eq!(record.reviews.len(), 1);
     let heads = branch::heads(
         &fx.folder,
+        &master,
         "m",
         SYS,
         &["app".to_string(), "api".to_string()],
@@ -360,10 +361,11 @@ fn kata_flows(branch_name: &str, record: bool) {
     assert_eq!(heads.keys().collect::<Vec<_>>(), ["app"]);
 
     // What changed: the repositories, their files, the commits and the base.
-    let repos = diff::change_repos(&fx.folder, "m", SYS, CHG).unwrap();
+    let repos = diff::change_repos(&fx.folder, &master, "m", SYS, CHG).unwrap();
     let listed: Vec<&str> = repos.iter().map(|r| r.repo.as_str()).collect();
     assert_eq!(listed, ["m", "app"]);
-    let missing = branch::missing_change_branches(&fx.plugin, &fx.folder, "m", SYS, CHG).unwrap();
+    let missing =
+        branch::missing_change_branches(&fx.plugin, &fx.folder, &master, "m", SYS, CHG).unwrap();
     assert_eq!(missing, ["api"]);
     let files = diff::changed_files(&app, Part::Whole).unwrap();
     assert!(files.iter().any(|f| f.path == "x.txt"), "{files:?}");

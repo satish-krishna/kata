@@ -1,3 +1,4 @@
+import type { OpenNotice } from '@bindings/OpenNotice';
 import type { Problem } from '@bindings/Problem';
 import type { ReadResult } from '@bindings/ReadResult';
 import type { Readiness } from '@bindings/Readiness';
@@ -31,12 +32,14 @@ type Setup = {
   buildProblems?: Problem[];
   /** Stems the program cannot read: its rejection carries the message. */
   unreadable?: Record<string, string>;
+  /** What the backend reports it could not read when it opened the change. */
+  openNotices?: OpenNotice[];
 };
 
 async function open(setup: Setup) {
   const transport = new MockTransport();
   if (!setup.logLayouts) transport.patchChange(MOCK_BUILD_CHANGE, { stage: 'plan-awaiting' });
-  vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_m, _s, _c, stem) => PROSE(stem));
+  vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_r, stem) => PROSE(stem));
   vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(setup.readiness ?? READY);
   if (setup.logLayouts) {
     const status = transport.sdlcBuildStatus.bind(transport);
@@ -44,8 +47,12 @@ async function open(setup: Setup) {
       async (...args) => ({ ...(await status(...args)), logLayouts: setup.logLayouts, problems: setup.buildProblems ?? [] }) as never,
     );
   }
+  if (setup.openNotices) {
+    const opened = transport.sdlcOpenChange.bind(transport);
+    vi.spyOn(transport, 'sdlcOpenChange').mockImplementation(async (...args) => ({ ...(await opened(...args)), notices: setup.openNotices! }));
+  }
   const documents: Record<string, ReadResult> = { spec: setup.spec ?? parsedSpec(), plan: setup.plan ?? parsedPlan() };
-  vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_m, _s, _c, stem) => {
+  vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_r, stem) => {
     if (setup.unreadable?.[stem] !== undefined) throw new Error(setup.unreadable[stem]);
     return documents[stem] ?? null;
   });
@@ -127,6 +134,40 @@ describe('ChangePage document notices', () => {
     await page.tab('Build');
     expect(text(page.notice())).toContain('line 9: task T2 is recorded twice');
     expect(text(page.notice())).not.toBe('Older layout');
+  });
+
+  describe('open notices sit beside the existing notice (review 2 F1)', () => {
+    const STATUS: OpenNotice = { part: 'buildStatus', message: 'path does not exist in HEAD' };
+    const REVIEW: OpenNotice = { part: 'review', message: 'review is unreadable' };
+
+    it('the Build tab keeps the build log problems and adds the review failure as an extra line', async () => {
+      const buildProblems: Problem[] = [{ file: 'build/app.md', line: 9, message: 'task T2 is recorded twice' }];
+      const page = await open({ logLayouts: [{ repo: 'app', layout: 2 }], buildProblems, openNotices: [REVIEW] });
+      await page.tab('Build');
+      expect(text(page.notice())).toContain('line 9: task T2 is recorded twice');
+      expect(text(page.notice())).toContain('review is unreadable');
+    });
+
+    it('the plan tab keeps the plain-text fallback reason and adds the status failure as an extra line', async () => {
+      const page = await open({ unreadable: { plan: 'front matter is not closed' }, openNotices: [STATUS] });
+      await page.tab('Plan');
+      expect(text(page.notice())).toContain('front matter is not closed');
+      expect(text(page.notice())).toContain('path does not exist in HEAD');
+    });
+
+    it('the intent tab shows neither open notice', async () => {
+      const page = await open({ openNotices: [STATUS, REVIEW] });
+      await page.tab('Intent');
+      expect(text(page.notice()) ?? '').not.toContain('path does not exist in HEAD');
+      expect(text(page.notice()) ?? '').not.toContain('review is unreadable');
+    });
+
+    it('the Build tab shows a review failure alone as a warning', async () => {
+      const page = await open({ logLayouts: [{ repo: 'app', layout: 2 }], openNotices: [REVIEW] });
+      await page.tab('Build');
+      expect(text(page.notice())).toContain('review is unreadable');
+      expect(page.notice()!.className).toContain('wb-banner--warn');
+    });
   });
 
   it("a spec the program cannot read is shown as plain text with the program's message (F4)", async () => {

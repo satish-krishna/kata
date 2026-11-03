@@ -11,7 +11,7 @@ import { DiffEditor } from '../../ui/diff-editor/diff-editor';
 import { ChangesView } from './changes-view';
 import { ChangesViewModel } from './changes-view.view-model';
 
-const INPUTS = { folder: MOCK_WORKSPACE_FOLDER, masterRepo: MOCK_MASTER, system: 'commerce', change: MOCK_BUILD_CHANGE, turns: 0, banner: null };
+const INPUTS = { changeRef: { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE }, masterRepo: MOCK_MASTER, turns: 0, banner: null };
 const settle = async () => {
   for (let i = 0; i < 4; i++) {
     TestBed.tick();
@@ -488,7 +488,7 @@ describe('ChangesView progress line', () => {
   it('names the repository being read while what changed loads (R7.1)', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     const { transport, release } = slow();
-    const repos = await transport.sdlcChangeRepos(MOCK_WORKSPACE_FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE);
+    const repos = await transport.sdlcChangeRepos({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE });
     const second = repos[1].repo;
     const { container, fixture } = await mount(transport);
     expect(container.querySelector('app-progress-line')).toBeNull();

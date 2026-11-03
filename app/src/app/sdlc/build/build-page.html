@@ -272,10 +272,8 @@
       <div class="k-bp__body">
         @if (view().areas.files && context(); as ctx) {
           <app-changes-view
-            [folder]="ctx.folder"
+            [changeRef]="ctx.ref"
             [masterRepo]="ctx.masterRepo"
-            [system]="ctx.system"
-            [change]="ctx.change"
             [turns]="turns()"
             [rows]="rows()"
             [task]="task()"

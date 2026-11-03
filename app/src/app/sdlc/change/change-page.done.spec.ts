@@ -59,12 +59,12 @@ async function finished(tweak: (t: MockTransport) => void = () => undefined) {
   withStage(transport, BUILD, 'build-finished');
   vi.spyOn(transport, 'sdlcDiffFiles').mockResolvedValue({ files: [], loc: [] });
   const status = transport.sdlcBuildStatus.bind(transport);
-  vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => ({ ...(await status(m, s, c)), departures: [DEPARTURE] }));
+  vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (r) => ({ ...(await status(r)), departures: [DEPARTURE] }));
   vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 0 }]);
   tweak(transport);
   const s = setup(transport);
   await ready(s.vm);
-  const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
+  const heads = await transport.sdlcBuildHeads({ workspace: '', system: 'commerce', change: BUILD }, ['commerce-docs', ...REPOS]);
   await transport.sdlcLinkRun({ workspace_id: s.vm.current()!.id, system: 'commerce', change: BUILD, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
   const lock = TestBed.inject(LockStore);
   return { ...s, lock, steps: vi.spyOn(lock, 'runSteps') };
@@ -207,12 +207,12 @@ describe('declaring done from the build page', () => {
     vi.spyOn(transport, 'sdlcDiffFiles').mockResolvedValue({ files: [], loc: [] });
     vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(REVIEW);
     const status = transport.sdlcBuildStatus.bind(transport);
-    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => {
-      const got = await status(m, s, c);
+    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (r) => {
+      const got = await status(r);
       return { ...got, repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })), tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } })), departures: [DEPARTURE] };
     });
     vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 0 }]);
-    const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
+    const heads = await transport.sdlcBuildHeads({ workspace: '', system: 'commerce', change: BUILD }, ['commerce-docs', ...REPOS]);
     await transport.sdlcLinkRun({ workspace_id: 'acme-commerce', system: 'commerce', change: BUILD, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
     const publish = vi.spyOn(transport, 'sdlcDeclareDone');
     const { container, fixture } = await mountPage(BUILD, transport);
@@ -432,7 +432,7 @@ describe("declaring done is the plugin's step", () => {
 
   it('a high finding asks for no tick box and does not hold the plugin: whether it is refused is its answer (R7.2)', async () => {
     const { vm, transport } = await finished();
-    const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
+    const heads = await transport.sdlcBuildHeads({ workspace: '', system: 'commerce', change: BUILD }, ['commerce-docs', ...REPOS]);
     const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
     const finding = { id: 'F1', severity: 'high' as const, file: 'src/a.ts', line: 4, text: 'The limit is not enforced on retry.' };
     vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({ layout: 2, problems: [], master_moved: [], reviews: [{ number: 1, reviewed_at: '2026-10-22', commits, findings: [finding] }] });

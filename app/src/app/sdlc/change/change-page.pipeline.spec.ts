@@ -30,7 +30,7 @@ async function mountFix() {
   const transport = new MockTransport();
   transport.patchChange(FIX, { stage: 'fix-awaiting', track: 'fix', fix_row: 6, intent: { exists: true, committed: true, status: 'draft', head_status: 'draft' } });
   const realDoc = transport.sdlcReadDoc.bind(transport);
-  vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (m, s, c, d) => (c === FIX && d === 'intent' ? FIX_INTENT : realDoc(m, s, c, d)));
+  vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (r, d) => (r.change === FIX && d === 'intent' ? FIX_INTENT : realDoc(r, d)));
   const reject = vi.spyOn(transport, 'sdlcReject');
   const checkout = vi.spyOn(transport, 'sdlcCheckout');
   const params = new BehaviorSubject(convertToParamMap({ system: 'commerce', change: FIX }));

@@ -17,6 +17,11 @@ import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
+import type { SnapshotTarget } from '@bindings/SnapshotTarget';
+import type { DocumentRead } from '@bindings/DocumentRead';
+import type { OpenedChange } from '@bindings/OpenedChange';
+import type { OpenNotice } from '@bindings/OpenNotice';
+import type { ParsedRead } from '@bindings/ParsedRead';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { ChangeStart } from '@bindings/ChangeStart';
 import type { AcceptOutcome } from '@bindings/AcceptOutcome';
@@ -27,8 +32,6 @@ import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
-import type { ReadResult } from '@bindings/ReadResult';
-import type { ReadError } from '../../lib/doc-notice';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { Part } from '@bindings/Part';
@@ -98,6 +101,15 @@ interface ScriptedRun {
   question?: string;
   /** The label a scripted triage was answered with. */
   answer?: string;
+}
+
+/** The answer of a read, or its rejection, as a promise. A module function, so it is not a member of the transport. */
+function settled<T>(read: () => T): Promise<T> {
+  try {
+    return Promise.resolve(read());
+  } catch (e) {
+    return Promise.reject(e);
+  }
 }
 
 /** Browser stand-in: fixtures plus scripted runs (head, ask, mid, permission,
@@ -305,16 +317,43 @@ export class MockTransport extends KataTransport {
   /** Every demo folder is there. */
   sdlcMissingFolders(_folders: string[]): Promise<string[]> { return Promise.resolve([]); }
   sdlcBranches(_master: string): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches()); }
-  sdlcReadDoc(_master: string, _system: string, change: string, doc: string): Promise<string | null> {
+  /** Everything the change page opens with, from the fixture the change's home picks; rejects for a change the workspace does not list. */
+  async sdlcOpenChange(ref: ChangeRef, doc: string): Promise<OpenedChange> {
+    const view = await this.sdlcChangeState(ref.workspace, ref.system, ref.change);
+    const planned = view.state.documents.plan.exists;
+    // Composed of the transport's own reads, so a test that changes what a read answers changes what the change opens with.
+    const text = await this.sdlcReadDoc(ref, doc);
+    const parsed = await this.parsedOf(ref, doc);
+    // As the backend does: a part that cannot be read is left out with its reason, and the open still succeeds.
+    const notices: OpenNotice[] = [];
+    const failed = (part: OpenNotice['part']) => (e: unknown): null => {
+      notices.push({ part, message: e instanceof Error ? e.message : String(e) });
+      return null;
+    };
+    const status = planned ? await this.sdlcBuildStatus(ref).catch(failed('buildStatus')) : null;
+    const review = planned ? await this.sdlcReviewRecord(ref).catch(failed('review')) : null;
+    return { view, text, parsed, status, review, notices };
+  }
+  /** The text and the parsed read of one document, composed of the transport's own reads, so a test that changes what a read answers changes what this answers. A parsed read that fails is an error result, as the backend answers. */
+  async sdlcReadDocument(ref: ChangeRef, doc: string): Promise<DocumentRead> {
+    const text = await this.sdlcReadDoc(ref, doc);
+    const parsed = await this.parsedOf(ref, doc);
+    return { text, parsed };
+  }
+  private parsedOf(ref: ChangeRef, doc: string): Promise<ParsedRead | null> {
+    if (doc !== 'spec' && doc !== 'plan') return Promise.resolve(null);
+    return this.sdlcReadParsed(ref, doc).catch((e): ParsedRead => ({ kind: 'error', message: e instanceof Error ? e.message : String(e) }));
+  }
+  sdlcReadDoc(ref: ChangeRef, doc: string): Promise<string | null> {
     try {
-      return Promise.resolve(this.sdlc.readDoc(change, doc));
+      return Promise.resolve(this.sdlc.readDoc(ref.change, doc));
     } catch (e) {
       return Promise.reject(e);
     }
   }
-  sdlcSnapshot(_master: string): Promise<Snapshot> { return Promise.resolve(this.sdlc.snapshot()); }
-  sdlcLeftovers(_master: string, _before: Snapshot, _productRepos: string[], _build?: BuildScope): Promise<Leftovers> { return Promise.resolve(this.sdlc.leftovers()); }
-  sdlcDiscard(_master: string, _before: Snapshot, paths: string[], _build?: BuildScope): Promise<void> { this.sdlc.discard(paths); return Promise.resolve(); }
+  sdlcSnapshot(_target: SnapshotTarget): Promise<Snapshot> { return Promise.resolve(this.sdlc.snapshot()); }
+  sdlcLeftovers(_target: SnapshotTarget, _before: Snapshot, _build?: BuildScope): Promise<Leftovers> { return Promise.resolve(this.sdlc.leftovers()); }
+  sdlcDiscard(_target: SnapshotTarget, _before: Snapshot, paths: string[], _build?: BuildScope): Promise<void> { this.sdlc.discard(paths); return Promise.resolve(); }
   sdlcChangeName(title: string): Promise<string> { return Promise.resolve(this.sdlc.changeName(title)); }
   /** The change the run's own events name as started: the plugin's `change start` answer among its tool results, as the backend reads the run's record. */
   sdlcTriageChange(transcript: string, system: string): Promise<string | null> {
@@ -324,7 +363,7 @@ export class MockTransport extends KataTransport {
   sdlcNaming(_folder: string, _masterRepo: string, _system: string): Promise<NamingState> { return Promise.resolve(this.sdlc.naming()); }
   sdlcCheckScope(_folder: string, scope: string): Promise<string[]> { return Promise.resolve(scope.includes(' ') ? ['a scope cannot contain a space'] : []); }
   sdlcRenameBranch(_folder: string, _workspaceId: string, _system: string, change: string, to: string): Promise<RenameOutcome> { return Promise.resolve(this.sdlc.renameBranch(change, to)); }
-  /** Refused, as the backend refuses it, while a change's document run is live: the mock's changes have no copies, so each runs in the master checkout, as a change started before copies existed does. */
+  /** Refused, as the backend refuses it, while a change's document run is live. */
   sdlcCheckout(master: string, branch: string): Promise<void> {
     const busy = [...this.changeRunsLive].find(([id]) => this.runs.get(id)?.ended !== true);
     if (busy !== undefined) return Promise.reject(`The change ${busy[1]} has a run working in ${master}. Switch the branch after the run ends.`);
@@ -349,15 +388,16 @@ export class MockTransport extends KataTransport {
   sdlcTaskLinks(): Promise<TaskLink[]> { return Promise.resolve(this.sdlc.taskLinks()); }
   /** The scripted run has no process to wait for. */
   sdlcWaitRunExit(_runId: string, _timeoutMs: number): Promise<boolean> { return Promise.resolve(true); }
-  sdlcBuildStatus(_master: string, _system: string, change: string): Promise<BuildStatus> { return Promise.resolve(this.sdlc.buildStatus(change)); }
+  sdlcBuildStatus(ref: ChangeRef): Promise<BuildStatus> { return settled(() => this.sdlc.buildStatus(ref.change)); }
   sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }): Promise<RepoBoard[]> { return Promise.resolve(mockBoard(repos, status, going, stopped)); }
   sdlcReviewStanding(input: ReviewStandingInput): Promise<ReviewStanding> { return Promise.resolve(mockStanding(input)); }
-  sdlcReadParsed(_master: string, _system: string, change: string, doc: string): Promise<ReadResult | ReadError | null> { return Promise.resolve(this.sdlc.readParsed(change, doc)); }
-  sdlcReviewRecord(_master: string, _system: string, _change: string): Promise<ReviewRecord | null> { return Promise.resolve(this.sdlc.reviewRecord()); }
-  sdlcBuildHeads(_folder: string, _masterRepo: string, _system: string, repos: string[], _change: string): Promise<Record<string, string>> { return Promise.resolve(this.sdlc.heads(repos)); }
+  /** The fixture's parsed read; only the transport's own reads call it. */
+  sdlcReadParsed(ref: ChangeRef, doc: string): Promise<ParsedRead | null> { return settled(() => this.sdlc.readParsed(ref.change, doc)); }
+  sdlcReviewRecord(ref: ChangeRef): Promise<ReviewRecord | null> { return settled(() => { this.sdlc.homeOf(ref.change); return this.sdlc.reviewRecord(); }); }
+  sdlcBuildHeads(ref: ChangeRef, repos: string[]): Promise<Record<string, string>> { return settled(() => { this.sdlc.homeOf(ref.change); return this.sdlc.heads(repos); }); }
   sdlcPluginReadiness(_workdir: string | null): Promise<Readiness> { return Promise.resolve({ kind: 'ready', plugin: { dir: '~/.claude/plugins/ai-sdlc', version: MOCK_PLUGIN_VERSION, layouts: MOCK_LAYOUTS }, gh: 'present' }); }
-  sdlcChangeRepos(folder: string, _masterRepo: string, _system: string, change: string): Promise<ChangeRepo[]> { return Promise.resolve(this.sdlc.changeRepos(folder, change)); }
-  sdlcMissingChangeBranches(_folder: string, _masterRepo: string, _system: string, _change: string): Promise<string[]> { return Promise.resolve([]); }
+  sdlcChangeRepos(ref: ChangeRef): Promise<ChangeRepo[]> { return settled(() => this.sdlc.changeRepos(ref.workspace, ref.change)); }
+  sdlcMissingChangeBranches(ref: ChangeRef): Promise<string[]> { return settled(() => { this.sdlc.homeOf(ref.change); return []; }); }
   sdlcDiffFiles(_repoPath: string, part: Part): Promise<DiffListing> { return Promise.resolve(this.sdlc.diffFiles(part)); }
   sdlcCommitFiles(repoPath: string): Promise<CommitFiles[]> { return Promise.resolve(this.sdlc.commitFiles(repoPath)); }
   sdlcDiffPair(_repoPath: string, _part: Part, path: string): Promise<FilePair> { return Promise.resolve(this.sdlc.diffPair(path)); }

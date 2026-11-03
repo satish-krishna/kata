@@ -1,6 +1,7 @@
 import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { BuildRow } from '@bindings/BuildRow';
+import type { ChangeRef } from '@bindings/ChangeRef';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { ChangedFile } from '@bindings/ChangedFile';
 import type { CommitFiles } from '@bindings/CommitFiles';
@@ -18,8 +19,8 @@ import type { DiffLayout } from '../../ui/diff-bar';
 import type { FindingMark, StepRequest } from '../../ui/diff-editor/diff-editor';
 import type { FileRef, RepoFile, RepoFileGroup } from '../../ui/repo-file-list';
 
-/** What the Changes view looks at: the workspace folder, its master repository, and the system's change. */
-export type ChangesContext = { folder: string; masterRepo: string; system: string; change: string };
+/** What the Changes view looks at: the change's reference, which the backend resolves to where the change lives, and the name of its master repository, which orders the list. */
+export type ChangesContext = { ref: ChangeRef; masterRepo: string };
 
 export const PART_OPTIONS: { value: Part; label: string }[] = [
   { value: 'whole', label: 'Whole change' },
@@ -174,7 +175,7 @@ export class ChangesViewModel {
   /** Start looking at a change: list its repositories and the files of the whole change. A new change starts over. */
   async open(ctx: ChangesContext): Promise<void> {
     const c = this.context;
-    if (c !== null && c.folder === ctx.folder && c.masterRepo === ctx.masterRepo && c.system === ctx.system && c.change === ctx.change) return;
+    if (c !== null && c.masterRepo === ctx.masterRepo && c.ref.workspace === ctx.ref.workspace && c.ref.system === ctx.ref.system && c.ref.change === ctx.ref.change) return;
     this.context = ctx;
     this.loaded.set(false);
     this.selected.set(null);
@@ -357,8 +358,8 @@ export class ChangesViewModel {
     this.progress.begin('reading-diff', progressLabels.findingRepos(), PROGRESS_OWNER);
     try {
       // A failure here only loses the note; the repositories with changes still list.
-      const missing = this.transport.sdlcMissingChangeBranches(ctx.folder, ctx.masterRepo, ctx.system, ctx.change).catch(() => []);
-      const found = await this.transport.sdlcChangeRepos(ctx.folder, ctx.masterRepo, ctx.system, ctx.change);
+      const missing = this.transport.sdlcMissingChangeBranches(ctx.ref).catch(() => []);
+      const found = await this.transport.sdlcChangeRepos(ctx.ref);
       const repos = [...found.filter((r) => r.repo === ctx.masterRepo), ...found.filter((r) => r.repo !== ctx.masterRepo)];
       // A commit read that fails leaves that repository's files untied; it never fails the list.
       // The plain label names the first repository still being read and moves on as each one is read.

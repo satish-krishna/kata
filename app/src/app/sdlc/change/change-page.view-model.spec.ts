@@ -19,7 +19,7 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/given';
 import { safetyRules, type StageAction } from '../../lib/sdlc';
-import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_REFUSED_CHANGE, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_COPY_CHANGE, MOCK_COPY_FIX, MOCK_DONE_CHANGE, MOCK_NOT_LISTED, MOCK_REFUSED_CHANGE, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePageViewModel } from './change-page.view-model';
 
@@ -29,6 +29,7 @@ const holdLock = (lock: LockStore): void => void lock.runSteps('Checking', [{ la
 const PHOTOS_CHANGE = '2026-10-12-product-photo-upload';
 const FRAUD = '2026-10-16-price-flag';
 const REASSIGN = '2026-10-09-merchant-reassign';
+const NO_PLACE = 'Could not find where this change lives: the ai-sdlc program could not run: boom';
 const toastText = () => toastState.toasts().map((t) => String(t.title)).join(' | ');
 
 /** `confirm` (the default) lets the preview confirm every run at once, so a test about something else never meets it; `real` leaves it to the test. */
@@ -106,7 +107,7 @@ describe('ChangePageViewModel', () => {
     const read = vi.spyOn(transport, 'sdlcReadDoc');
     const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
-    expect(read).toHaveBeenCalledWith(expect.any(String), 'commerce', PHOTOS_CHANGE, 'spec');
+    expect(read).toHaveBeenCalledWith({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: PHOTOS_CHANGE }, 'spec');
   });
 
   it('a message typed and the tab opened on a change come back when its page is opened again (R13.6)', async () => {
@@ -167,16 +168,16 @@ describe('ChangePageViewModel', () => {
     expect(vm.doc()).toContain('# Spec: photo upload');
   });
 
-  it('stays on the shown document and says why when the picked one cannot be read', async () => {
+  it('shows the backend message and no document when the picked one cannot be read', async () => {
     const transport = new MockTransport();
     const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
     vi.spyOn(transport, 'sdlcReadDoc').mockRejectedValue('permission denied');
     await vm.showDoc('intent');
-    expect(vm.shownDoc()).toBe('spec');
-    expect(vm.docName()).toBe('spec.md');
-    expect(vm.doc()).toContain('# Spec: photo upload');
-    expect(toastText()).toContain('Could not read intent.md: permission denied');
+    expect(vm.shownDoc()).toBe('intent');
+    expect(vm.docName()).toBe('intent.md');
+    expect(vm.doc()).toBeNull();
+    expect(vm.docNotice()?.text).toBe('permission denied');
   });
 
   it('keeps the old tab and its document until the picked one has been read, then switches both together', async () => {
@@ -213,7 +214,7 @@ describe('ChangePageViewModel', () => {
     expect(vm.pendingDoc()).toBe('spec');
     await failing;
     expect(vm.pendingDoc()).toBeNull();
-    expect(vm.shownDoc()).toBe('intent');
+    expect(vm.shownDoc()).toBe('spec');
   });
 
   it('lets a click back on the shown tab cancel a pick still reading', async () => {
@@ -1359,7 +1360,7 @@ describe('ChangePageViewModel document runs of different changes (R11)', () => {
     const cancel = vi.spyOn(transport, 'cancelRun');
     await ready(vm);
     // Change A's run goes through the runner, as its own page would start it.
-    void TestBed.inject(SdlcRunner).run('Starting spec of A', { ...seedSpec(), name: 'sdlc-commerce-a-spec' }, { workspaceId: 'w', master: null, productRepos: [], link: null }, { ref: OTHER, kind: 'spec' });
+    void TestBed.inject(SdlcRunner).run('Starting spec of A', { ...seedSpec(), name: 'sdlc-commerce-a-spec' }, { workspaceId: 'w', target: null, link: null }, { ref: OTHER, kind: 'spec' });
     await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(1));
     void vm.act('start-spec');
     await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(2));
@@ -1406,7 +1407,7 @@ describe('ChangePageViewModel document runs of different changes (R11)', () => {
 describe("ChangePageViewModel: the session view's Close waits on the run it shows (F30)", () => {
   /** A run of no change, as the home starts a triage, setup or context run: it takes the screen and settles on place null. */
   const homeRun = (master: string | null = null) =>
-    TestBed.inject(SdlcRunner).run('Triage', { ...seedSpec(), name: 'sdlc-triage' }, { workspaceId: 'w', master, productRepos: [], link: null });
+    TestBed.inject(SdlcRunner).run('Triage', { ...seedSpec(), name: 'sdlc-triage' }, { workspaceId: 'w', target: master === null ? null : { kind: 'workspace', master }, link: null });
   /** Hold the engine's exit of the next run that waits on it, so its after-run work stays going until the test lets it go. */
   const holdExit = (transport: MockTransport) => {
     let exit!: (v: boolean) => void;
@@ -1520,7 +1521,7 @@ describe("ChangePageViewModel: Close waits on the settling of the run on show, t
   /** A run of no change (a triage) that takes the screen, cancelled; it has no master, so it leaves nothing to decide. */
   const lockRun = async ({ transport }: Ctx, settling: boolean) => {
     const lock = TestBed.inject(LockStore);
-    void TestBed.inject(SdlcRunner).run('Triage', { ...seedSpec(), name: 'sdlc-triage' }, { workspaceId: 'w', master: null, productRepos: [], link: null });
+    void TestBed.inject(SdlcRunner).run('Triage', { ...seedSpec(), name: 'sdlc-triage' }, { workspaceId: 'w', target: null, link: null });
     await vi.waitFor(() => expect(lock.active()?.kind).toBe('run'));
     const held = settling ? holdExit(transport) : null;
     lock.cancel();
@@ -1531,7 +1532,7 @@ describe("ChangePageViewModel: Close waits on the settling of the run on show, t
   /** The full-track start of a new change that the plugin names this page's change: its intent run lives in this change's session. */
   const intentRun = async ({ vm, transport }: Ctx, settling: boolean) => {
     vi.spyOn(transport, 'sdlcStartChange').mockResolvedValue({ outcome: 'started', change: PHOTOS_CHANGE, branch: `change/${PHOTOS_CHANGE}`, copy: '/copy' });
-    void TestBed.inject(SdlcRunner).newChange({ workspace: vm.current()!, master: '/ws/commerce-docs', productRepos: [] }, 'commerce', 'flag prices', 'full');
+    void TestBed.inject(SdlcRunner).newChange({ workspace: vm.current()!, master: '/ws/commerce-docs' }, 'commerce', 'flag prices', 'full');
     await vi.waitFor(() => expect(LIVE).toContain(vm.runState()));
     expect(vm.session()?.title).toBe('Starting a change');
     const held = settling ? holdExit(transport) : null;
@@ -1549,12 +1550,12 @@ describe("ChangePageViewModel: Close waits on the settling of the run on show, t
     const runner = TestBed.inject(SdlcRunner);
     if (other === 'home') {
       const lock = TestBed.inject(LockStore);
-      void runner.run('Context', { ...seedSpec(), name: 'sdlc-context' }, { workspaceId: 'w', master: null, productRepos: [], link: null });
+      void runner.run('Context', { ...seedSpec(), name: 'sdlc-context' }, { workspaceId: 'w', target: null, link: null });
       await vi.waitFor(() => expect(lock.active()?.kind).toBe('run'));
       lock.cancel();
     } else {
       const runs = TestBed.inject(ChangeRunStore);
-      void runner.run('Starting spec of B', { ...seedSpec(), name: 'sdlc-commerce-b-spec' }, { workspaceId: 'w', master: null, productRepos: [], link: null }, { ref: OTHER, kind: 'spec' });
+      void runner.run('Starting spec of B', { ...seedSpec(), name: 'sdlc-commerce-b-spec' }, { workspaceId: 'w', target: null, link: null }, { ref: OTHER, kind: 'spec' });
       await vi.waitFor(() => expect(runs.session(changeRunKey(OTHER))?.runId).toBeTruthy());
       runs.cancel(changeRunKey(OTHER));
     }
@@ -1754,5 +1755,118 @@ describe('ChangePageViewModel: the change copy', () => {
     await vm.confirmRemoveCopy();
     expect(vm.copy()).not.toBeNull();
     expect(vm.copyNote()?.text).toContain('node was not found');
+  });
+});
+
+describe('ChangePageViewModel: where the change lives', () => {
+  const copyRef = (change: string) => ({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change });
+
+  it('switching_tabs_reads_from_the_change_copy', async () => {
+    const transport = new MockTransport();
+    const read = vi.spyOn(transport, 'sdlcReadDoc');
+    const { vm } = setup(MOCK_COPY_CHANGE, transport);
+    await ready(vm);
+    expect(vm.state()).toBe('ready');
+    await vm.showDoc('intent');
+    expect(vm.doc()).toContain('The copy holds this intent.');
+    await vm.showDoc('plan');
+    expect(vm.doc()).toContain('The copy holds this plan.');
+    expect(read).toHaveBeenCalledWith(copyRef(MOCK_COPY_CHANGE), 'plan');
+  });
+
+  it('a_tab_switch_reads_the_document_and_its_parsed_read_with_one_call', async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(MOCK_COPY_CHANGE, transport);
+    await ready(vm);
+    await vm.showDoc('intent');
+    // The mock composes this read of the two below, so the call is answered whole to show the page asks for nothing else.
+    const whole = await transport.sdlcReadDocument(copyRef(MOCK_COPY_CHANGE), 'plan');
+    const one = vi.spyOn(transport, 'sdlcReadDocument').mockResolvedValue(whole);
+    const doc = vi.spyOn(transport, 'sdlcReadDoc');
+    const parsed = vi.spyOn(transport, 'sdlcReadParsed');
+    await vm.showDoc('plan');
+    expect(vm.doc()).toContain('The copy holds this plan.');
+    expect(one).toHaveBeenCalledTimes(1);
+    expect(one).toHaveBeenCalledWith(copyRef(MOCK_COPY_CHANGE), 'plan');
+    expect(doc).not.toHaveBeenCalled();
+    expect(parsed).not.toHaveBeenCalled();
+  });
+
+  it('full_pipeline_from_a_fix_reads_the_fix_intent_in_its_copy', async () => {
+    const transport = new MockTransport();
+    const read = vi.spyOn(transport, 'sdlcReadDoc');
+    const { vm } = setup(MOCK_COPY_FIX, transport);
+    await ready(vm);
+    await vm.act('full-pipeline-instead');
+    expect(read).toHaveBeenCalledWith(copyRef(MOCK_COPY_FIX), 'intent');
+    expect(vm.pipelineOpen()).toBe(true);
+    expect(vm.pipelineIdea()).toContain('The fix intent is in the copy.');
+  });
+
+  it('opens a change with one call that carries the change reference, and asks for its view no other way', async () => {
+    const transport = new MockTransport();
+    const open = vi.spyOn(transport, 'sdlcOpenChange');
+    const state = vi.spyOn(transport, 'sdlcChangeState');
+    const { vm } = setup(MOCK_COPY_CHANGE, transport);
+    await ready(vm);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open.mock.calls[0][0]).toEqual(copyRef(MOCK_COPY_CHANGE));
+    expect(state).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the backend message and no document when the change cannot be placed', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcOpenChange').mockRejectedValue(new Error(NO_PLACE));
+    const { vm } = setup(MOCK_COPY_CHANGE, transport);
+    await ready(vm);
+    expect(vm.state()).toBe('not-found');
+    expect(vm.resolutionError()).toBe(NO_PLACE);
+    expect(vm.doc()).toBeNull();
+    expect(toastText()).not.toContain('Could not read the change');
+  });
+
+  it('change_page_reads_review_and_pull_requests_of_a_copy_change_from_its_copy', async () => {
+    const transport = new MockTransport();
+    const COPY_ONLY_FINDING = "Only this copy's review record has this finding.";
+    const record = {
+      layout: 2,
+      problems: [],
+      master_moved: [],
+      reviews: [{ number: 1, reviewed_at: '2026-11-02', commits: {}, findings: [{ id: 'F1', severity: 'high', file: 'src/a.ts', line: 4, text: COPY_ONLY_FINDING }] }],
+    } as unknown as NonNullable<Awaited<ReturnType<MockTransport['sdlcReviewRecord']>>>;
+    const review = vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(record);
+    const pulls = vi.spyOn(transport, 'sdlcPullRequestsView');
+    const { vm } = setup(MOCK_DONE_CHANGE, transport);
+    await ready(vm);
+    // The review record is read with the copy change's reference, and the build page is handed that record.
+    expect(review).toHaveBeenCalledWith(copyRef(MOCK_DONE_CHANGE));
+    const build = TestBed.inject(BuildPageViewModel);
+    const input = build.loaded();
+    expect(input?.review).toBe(record);
+    await build.load(input!);
+    expect(build.findings().map((f) => f.text)).toEqual([COPY_ONLY_FINDING]);
+    // The pull requests are read for the copy change by name, and shown as the fixture holds them.
+    expect(pulls).toHaveBeenCalledWith(MOCK_WORKSPACE_FOLDER, vm.current()!.id, 'commerce', MOCK_DONE_CHANGE, false);
+    const held = await transport.sdlcPullRequestsView(MOCK_WORKSPACE_FOLDER, vm.current()!.id, 'commerce', MOCK_DONE_CHANGE, false);
+    expect(held.links.length).toBeGreaterThan(0);
+    expect(vm.pullLinks().map((l) => l.repo)).toEqual(held.links.map((l) => l.repo));
+    expect(vm.done()).toBe(true);
+  });
+
+  it('tab_switch_after_copy_removed_shows_the_backend_message', async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(MOCK_COPY_CHANGE, transport);
+    await ready(vm);
+    await vm.showDoc('intent');
+    expect(vm.doc()).toContain('The copy holds this intent.');
+    vi.spyOn(transport, 'sdlcReadDoc').mockRejectedValue(new Error(MOCK_NOT_LISTED));
+    await vm.showDoc('plan');
+    expect(vm.shownDoc()).toBe('plan');
+    expect(vm.doc()).toBeNull();
+    expect(vm.docNotice()).toEqual({ tone: 'warning', text: MOCK_NOT_LISTED, lines: [] });
+    vi.spyOn(transport, 'sdlcReadDoc').mockRestore();
+    await vm.showDoc('intent');
+    expect(vm.resolutionError()).toBeNull();
+    expect(vm.doc()).toContain('The copy holds this intent.');
   });
 });

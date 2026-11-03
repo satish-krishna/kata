@@ -205,8 +205,11 @@ describe('SdlcHomeViewModel add workspace', () => {
       .mockResolvedValueOnce(scanOf({ master: { kind: 'none' }, marker: null }))
       .mockResolvedValueOnce(scanOf({ master: { kind: 'one', repo: 'commerce-docs', committed: false }, marker: null }));
     await vm.addWorkspace();
-    expect(snap.mock.calls.map((c) => c[0])).toEqual([`${NEW_FOLDER}/commerce-docs`, `${NEW_FOLDER}/customer-portal`]);
-    expect(left).toHaveBeenCalledWith(`${NEW_FOLDER}/commerce-docs`, expect.anything(), [`${NEW_FOLDER}/customer-portal`]);
+    expect(snap.mock.calls.map((c) => c[0])).toEqual([
+      { kind: 'workspace', master: `${NEW_FOLDER}/commerce-docs` },
+      { kind: 'workspace', master: `${NEW_FOLDER}/customer-portal` },
+    ]);
+    expect(left).toHaveBeenCalledWith({ kind: 'workspace', master: `${NEW_FOLDER}/commerce-docs` }, expect.anything());
     expect(vm.leftovers()?.[0].data.discardable).toEqual(['.ai-sdlc.json']);
     expect(vm.candidate()).toBeNull();
   });
@@ -1254,7 +1257,7 @@ describe("SdlcHomeViewModel: Close waits on the settling of the run on show, tra
   const intentSettling = async (transport: MockTransport, runner: SdlcRunner) => {
     const workspace = (await transport.sdlcWorkspaces())[0];
     const held = holdExit(transport);
-    void runner.newChange({ workspace, master: MOCK_MASTER, productRepos: [] }, 'commerce', 'flag prices', 'full');
+    void runner.newChange({ workspace, master: MOCK_MASTER }, 'commerce', 'flag prices', 'full');
     const key = changeRunKey({ workspace: workspace.folder, system: 'commerce', change: await transport.sdlcChangeName('flag prices') });
     const runs = TestBed.inject(ChangeRunStore);
     await vi.waitFor(() => expect(runs.session(key)?.runId).toBeTruthy());
@@ -1264,7 +1267,7 @@ describe("SdlcHomeViewModel: Close waits on the settling of the run on show, tra
   /** A run of no change that takes the screen, cancelled; it has no master, so it leaves nothing to decide. */
   const lockRun = async (transport: MockTransport, runner: SdlcRunner, settling: boolean) => {
     const lock = TestBed.inject(LockStore);
-    void runner.run('Context', { ...seedSpec(), name: 'sdlc-context' }, { workspaceId: 'w', master: null, productRepos: [], link: null });
+    void runner.run('Context', { ...seedSpec(), name: 'sdlc-context' }, { workspaceId: 'w', target: null, link: null });
     await vi.waitFor(() => expect(LIVE).toContain(TestBed.inject(RunStore).state()));
     const held = settling ? holdExit(transport) : null;
     lock.cancel();

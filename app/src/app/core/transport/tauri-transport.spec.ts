@@ -9,6 +9,7 @@ import type { RunLink } from '@bindings/RunLink';
 import type { RoundPicks } from '@bindings/RoundPicks';
 import type { BuildEvent } from '@bindings/BuildEvent';
 import type { ChangeRef } from '@bindings/ChangeRef';
+import type { SnapshotTarget } from '@bindings/SnapshotTarget';
 import type { CloseOutcome } from '@bindings/CloseOutcome';
 import type { RunForm } from '@bindings/RunForm';
 import type { RunningStrip } from '@bindings/RunningStrip';
@@ -16,9 +17,11 @@ import type { RunningStrip } from '@bindings/RunningStrip';
 const spec = seedSpec();
 const settings: Settings = { mode: 'sdlc', remember: true, permission_mode: 'bypass' };
 const entry: WorkspaceEntry = { id: 'w', name: 'w', folder: '/w', last_opened: 1 };
-const snap: Snapshot = { head: 'abc', dirty: {} };
+const snap: Snapshot = { head: 'abc', folder: '/m', dirty: {} };
 const link: RunLink = { workspace_id: 'w', system: 's', change: 'c', stage: 'intent', run_id: 'r', started_at: 1 };
 const change: ChangeRef = { workspace: '/w', system: 's', change: 'c' };
+const folderTarget: SnapshotTarget = { kind: 'workspace', master: '/m' };
+const changeTarget: SnapshotTarget = { kind: 'change', ...change };
 const runForm: RunForm = { name: 'n', task: 't', permissionMode: 'auto', timeoutSecs: 600 };
 const picks: RoundPicks = { picked: ['F1'], assigned: {}, notes: {} };
 const layout: Record<string, unknown> = { order: ['T1'] };
@@ -93,12 +96,15 @@ const rows: Row[] = [
   ['zoom', (t) => t.zoom('in'), 'zoom', { step: 'in' }],
   ['loadBuildLayout', (t) => t.loadBuildLayout(), 'load_build_layout', undefined],
   ['saveBuildLayout', (t) => t.saveBuildLayout(layout), 'save_build_layout', { layout }],
-  ['sdlcReadDoc', (t) => t.sdlcReadDoc('/m', 's', 'c', 'intent'), 'sdlc_read_doc', { master: '/m', system: 's', change: 'c', doc: 'intent' }],
-  ['sdlcSnapshot', (t) => t.sdlcSnapshot('/m'), 'sdlc_snapshot', { master: '/m' }],
-  ['sdlcLeftovers', (t) => t.sdlcLeftovers('/m', snap, ['r']), 'sdlc_leftovers', { master: '/m', before: snap, productRepos: ['r'] }],
-  ['sdlcDiscard', (t) => t.sdlcDiscard('/m', snap, ['p']), 'sdlc_discard', { master: '/m', before: snap, paths: ['p'] }],
-  ['sdlcLeftovers in a build', (t) => t.sdlcLeftovers('/m', snap, ['r'], { system: 's', change: 'c' }), 'sdlc_leftovers', { master: '/m', before: snap, productRepos: ['r'], build: { system: 's', change: 'c' } }],
-  ['sdlcDiscard in a build', (t) => t.sdlcDiscard('/m', snap, ['p'], { system: 's', change: 'c' }), 'sdlc_discard', { master: '/m', before: snap, paths: ['p'], build: { system: 's', change: 'c' } }],
+  ['sdlcReadDoc', (t) => t.sdlcReadDoc(change, 'intent'), 'sdlc_read_doc', { change, doc: 'intent' }],
+  ['sdlcReadDocument', (t) => t.sdlcReadDocument(change, 'plan'), 'sdlc_read_document', { change, doc: 'plan' }],
+  ['sdlcOpenChange', (t) => t.sdlcOpenChange(change, 'spec'), 'sdlc_open_change', { change, doc: 'spec' }],
+  ['sdlcSnapshot of a folder', (t) => t.sdlcSnapshot(folderTarget), 'sdlc_snapshot', { target: folderTarget }],
+  ['sdlcSnapshot of a change', (t) => t.sdlcSnapshot(changeTarget), 'sdlc_snapshot', { target: changeTarget }],
+  ['sdlcLeftovers', (t) => t.sdlcLeftovers(changeTarget, snap), 'sdlc_leftovers', { target: changeTarget, before: snap }],
+  ['sdlcDiscard', (t) => t.sdlcDiscard(folderTarget, snap, ['p']), 'sdlc_discard', { target: folderTarget, before: snap, paths: ['p'] }],
+  ['sdlcLeftovers in a build', (t) => t.sdlcLeftovers(changeTarget, snap, { system: 's', change: 'c' }), 'sdlc_leftovers', { target: changeTarget, before: snap, build: { system: 's', change: 'c' } }],
+  ['sdlcDiscard in a build', (t) => t.sdlcDiscard(changeTarget, snap, ['p'], { system: 's', change: 'c' }), 'sdlc_discard', { target: changeTarget, before: snap, paths: ['p'], build: { system: 's', change: 'c' } }],
   ['sdlcChangeName', (t) => t.sdlcChangeName('Password reset'), 'sdlc_change_name', { title: 'Password reset' }],
   ['sdlcChangeName', (t) => t.sdlcChangeName('Password reset'), 'sdlc_change_name', { title: 'Password reset' }],
   ['sdlcTriageChange', (t) => t.sdlcTriageChange('sdlc-commerce-triage-1', 's'), 'sdlc_triage_change', { transcript: 'sdlc-commerce-triage-1', system: 's' }],
@@ -117,15 +123,14 @@ const rows: Row[] = [
   ['sdlcOpenCopyFolder', (t) => t.sdlcOpenCopyFolder({ workspace: '/w', system: 's', change: 'c' }), 'sdlc_open_copy_folder', { change: { workspace: '/w', system: 's', change: 'c' } }],
   ['sdlcRunLinks', (t) => t.sdlcRunLinks(), 'sdlc_run_links', undefined],
   ['sdlcLinkRun', (t) => t.sdlcLinkRun(link), 'sdlc_link_run', { link }],
-  ['sdlcBuildStatus', (t) => t.sdlcBuildStatus('/m', 's', 'c'), 'sdlc_build_status', { master: '/m', system: 's', change: 'c' }],
+  ['sdlcBuildStatus', (t) => t.sdlcBuildStatus(change), 'sdlc_build_status', { change }],
   ['sdlcBuildBoard', (t) => t.sdlcBuildBoard(['a'], { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] }, ['a'], {}), 'sdlc_build_board', { repos: ['a'], status: { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] }, going: ['a'], stopped: {} }],
   ['sdlcReviewStanding', (t) => t.sdlcReviewStanding({ links: [], records: [], heads: { a: 'h' }, scope: { workspaceId: 'w', system: 's', change: 'c' }, document: null, master: 'm' }), 'sdlc_review_standing', { links: [], records: [], heads: { a: 'h' }, scope: { workspaceId: 'w', system: 's', change: 'c' }, document: null, master: 'm' }],
-  ['sdlcReadParsed', (t) => t.sdlcReadParsed('/m', 's', 'c', 'plan'), 'sdlc_read_parsed', { master: '/m', system: 's', change: 'c', doc: 'plan' }],
-  ['sdlcReviewRecord', (t) => t.sdlcReviewRecord('/m', 's', 'c'), 'sdlc_review_record', { master: '/m', system: 's', change: 'c' }],
-  ['sdlcBuildHeads', (t) => t.sdlcBuildHeads('/w', 'm', 's', ['r'], 'c'), 'sdlc_build_heads', { folder: '/w', masterRepo: 'm', system: 's', repos: ['r'], change: 'c' }],
+  ['sdlcReviewRecord', (t) => t.sdlcReviewRecord(change), 'sdlc_review_record', { change }],
+  ['sdlcBuildHeads', (t) => t.sdlcBuildHeads(change, ['r']), 'sdlc_build_heads', { change, repos: ['r'] }],
   ['sdlcPluginReadiness', (t) => t.sdlcPluginReadiness('/p'), 'sdlc_plugin_readiness', { workdir: '/p' }],
-  ['sdlcChangeRepos', (t) => t.sdlcChangeRepos('/w', 'm', 's', 'c'), 'sdlc_change_repos', { folder: '/w', masterRepo: 'm', system: 's', change: 'c' }],
-  ['sdlcMissingChangeBranches', (t) => t.sdlcMissingChangeBranches('/w', 'm', 's', 'c'), 'sdlc_missing_change_branches', { folder: '/w', masterRepo: 'm', system: 's', change: 'c' }],
+  ['sdlcChangeRepos', (t) => t.sdlcChangeRepos(change), 'sdlc_change_repos', { change }],
+  ['sdlcMissingChangeBranches', (t) => t.sdlcMissingChangeBranches(change), 'sdlc_missing_change_branches', { change }],
   ['sdlcDiffFiles', (t) => t.sdlcDiffFiles('/r', 'whole'), 'sdlc_diff_files', { repoPath: '/r', part: 'whole' }],
   ['sdlcDiffPair', (t) => t.sdlcDiffPair('/r', 'committed', 'a.ts'), 'sdlc_diff_pair', { repoPath: '/r', part: 'committed', path: 'a.ts' }],
   ['sdlcDiffBase', (t) => t.sdlcDiffBase('/r'), 'sdlc_diff_base', { repoPath: '/r' }],
@@ -144,15 +149,6 @@ describe('TauriTransport', () => {
     const args = ipc.invoke.mock.calls[0] as unknown[];
     expect(args[0]).toBe(cmd);
     expect(args[1]).toEqual(payload);
-  });
-
-  it("returns the program's message when it cannot read a document, never null (F4)", async () => {
-    const ipc = fakeIpc();
-    ipc.invoke.mockRejectedValueOnce('front matter is not closed');
-    const t = new TauriTransport(asIpc(ipc));
-    expect(await t.sdlcReadParsed('/m', 's', 'c', 'spec')).toEqual({ kind: 'error', message: 'front matter is not closed' });
-    ipc.invoke.mockRejectedValueOnce(new Error('node is missing'));
-    expect(await t.sdlcReadParsed('/m', 's', 'c', 'spec')).toEqual({ kind: 'error', message: 'node is missing' });
   });
 
   it('opens the native dialogs with the run-spec filters', async () => {

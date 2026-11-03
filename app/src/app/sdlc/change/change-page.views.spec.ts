@@ -11,7 +11,7 @@ import { render } from '../../../testing/render';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { diagrams } from '../../lib/mermaid';
-import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_COPY_CHANGE, MOCK_DONE_CHANGE, MOCK_NOT_LISTED } from '../../lib/sdlc-mock';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
@@ -148,11 +148,11 @@ const status = (tasks: TaskStatus[]): BuildStatus => ({ tasks, repos: [], depart
  */
 async function mount(change: string, docs: Record<string, string | null>, tasks: TaskStatus[] = [], parsed: { spec?: ReadResult; plan?: ParsedTask[] } = {}) {
   const transport = new MockTransport();
-  vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_m, _s, _c, stem) => docs[stem] ?? null);
+  vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_r, stem) => docs[stem] ?? null);
   vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(status(tasks));
   const spec = parsed.spec ?? specOf(docs['spec']?.includes('```gherkin') ? REQUIREMENTS : []);
   const plan = parsed.plan ?? tasks.map((t) => PLANNED[t.id] ?? planned(t.id, t.name, t.repo, t.dependsOn, []));
-  vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_m, _s, _c, stem) => {
+  vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_r, stem) => {
     if (docs[stem] == null) return null;
     if (stem === 'spec') return spec;
     return { kind: 'plan', layout: 1, document: { tasks: plan, shared_decisions: [] }, problems: [] };
@@ -498,8 +498,8 @@ describe('ChangePage opens an existing change on the build page', () => {
     const transport = new MockTransport();
     transport.patchChange(MOCK_BUILD_CHANGE, { stage });
     const status = transport.sdlcBuildStatus.bind(transport);
-    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => {
-      const got = await status(m, s, c);
+    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (r) => {
+      const got = await status(r);
       const all = built.length === got.tasks.length;
       return { ...got, repos: all ? got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })) : got.repos, tasks: got.tasks.map((t) => (built.includes(t.id) ? { ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } } : t)) };
     });
@@ -571,5 +571,129 @@ describe('ChangePage opens an existing change on the build page', () => {
     await settle();
     expect(container.querySelector(`app-build-page [data-session="${EARLIER}"]`)).not.toBeNull();
     expect(container.querySelector('header [data-testid="pr-menu"]')).not.toBeNull();
+  });
+});
+
+describe('ChangePage: where the change lives', () => {
+  let draw: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    draw = vi.spyOn(diagrams, 'render').mockResolvedValue('<svg></svg>');
+  });
+  afterEach(() => {
+    draw.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  const openPage = async (change: string, transport = new MockTransport()) => {
+    const out = await render(ChangePage, {}, [
+      provideRouter([]),
+      { provide: KataTransport, useValue: transport },
+      { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'commerce', change })), snapshot: { queryParamMap: convertToParamMap({}) } } },
+    ]);
+    await settle();
+    return { ...out, transport };
+  };
+  const shownText = (c: HTMLElement) => text(c.querySelector('main.k-change')!);
+  const wholeDocument = async (c: HTMLElement) => {
+    const toggle = Array.from(c.querySelectorAll<HTMLElement>('header [role="radio"]')).find((r) => text(r) === 'Whole document');
+    toggle?.click();
+    await settle();
+  };
+  const NOT_PLACED = 'Could not find where this change lives: ';
+
+  it.each([
+    ['intent', 'The copy holds this intent.'],
+    ['spec', 'The copy holds this spec.'],
+    ['plan', 'The copy holds this plan.'],
+  ])('change_page_reads_a_copy_change_from_its_copy: the %s', async (stem, expected) => {
+    const { container } = await openPage(MOCK_COPY_CHANGE);
+    pill(container, stem[0].toUpperCase() + stem.slice(1)).click();
+    await settle();
+    await wholeDocument(container);
+    expect(shownText(container)).toContain(expected);
+    expect(shownText(container)).not.toContain('is not in this change folder');
+  });
+
+  it.each([
+    [PHOTOS_CHANGE, 'Sellers attach product photos'],
+    [MOCK_DONE_CHANGE, 'Sellers see why a photo is refused'],
+  ])('change_page_reads_a_checkout_change_as_today: %s', async (change, expected) => {
+    const { container } = await openPage(change);
+    pill(container, 'Intent').click();
+    await settle();
+    expect(shownText(container).toLowerCase()).toContain(expected.toLowerCase());
+    expect(container.querySelector('[data-testid="resolution-error"]')).toBeNull();
+  });
+
+  it('switching_tabs_reads_from_the_change_copy: the copy plan renders after opening on the intent', async () => {
+    const { container } = await openPage(MOCK_COPY_CHANGE);
+    pill(container, 'Intent').click();
+    await settle();
+    expect(shownText(container)).toContain('The copy holds this intent.');
+    pill(container, 'Plan').click();
+    await settle();
+    await wholeDocument(container);
+    expect(shownText(container)).toContain('The copy holds this plan.');
+    expect(shownText(container)).not.toContain('The copy holds this intent.');
+  });
+
+  it.each([
+    ['the plugin is too old', NOT_PLACED + 'the installed ai-sdlc plugin is too old: 1.0.0 is below 1.1.0'],
+    ['the plugin fails', NOT_PLACED + 'the ai-sdlc program could not run: boom'],
+    ['the plugin times out', NOT_PLACED + 'timed out'],
+    ['the plugin does not list a rejected change', null],
+  ])('change_page_shows_the_resolution_error_and_nothing_else: %s', async (_row, message) => {
+    const transport = new MockTransport();
+    if (message !== null) vi.spyOn(transport, 'sdlcOpenChange').mockRejectedValue(new Error(message));
+    const change = message === null ? '2026-10-14-rejected-idea' : MOCK_COPY_CHANGE;
+    const { container } = await openPage(change, transport);
+    const banner = container.querySelector('[data-testid="resolution-error"]')!;
+    expect(banner).not.toBeNull();
+    expect(banner.classList.contains('wb-banner--warn')).toBe(true);
+    expect(banner.querySelector('.k-status__dot')).not.toBeNull();
+    expect(text(banner)).toBe(message ?? MOCK_NOT_LISTED);
+    expect(container.querySelector('main.k-change')).toBeNull();
+    expect(container.textContent).not.toContain('is not in this change folder');
+    expect(container.textContent).not.toContain('The copy holds');
+  });
+
+  it('a change whose build status cannot be read still opens, with the backend text in a notice (F1)', async () => {
+    const transport = new MockTransport();
+    const failure = 'git show HEAD:intent/commerce/plan.md: path does not exist in HEAD';
+    vi.spyOn(transport, 'sdlcBuildStatus').mockRejectedValue(new Error(failure));
+    const { container } = await openPage(MOCK_COPY_CHANGE, transport);
+    expect(container.textContent).not.toContain('Change not found');
+    expect(container.querySelector('[data-testid="resolution-error"]')).toBeNull();
+    expect(container.querySelector('main.k-change')).not.toBeNull();
+    const banner = container.querySelector('[data-testid="doc-notice"]')!;
+    expect(banner).not.toBeNull();
+    expect(banner.classList.contains('wb-banner--warn')).toBe(true);
+    expect(text(banner)).toContain(failure);
+    pill(container, 'Build').click();
+    await settle();
+    expect(text(container.querySelector('[data-testid="doc-notice"]')!)).toContain(failure);
+  });
+
+  it('a done change the plugin does not list shows the plugin message and no document (R6.2)', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcOpenChange').mockRejectedValue(new Error(MOCK_NOT_LISTED));
+    const { container } = await openPage(MOCK_DONE_CHANGE, transport);
+    expect(text(container.querySelector('[data-testid="resolution-error"]')!)).toBe(MOCK_NOT_LISTED);
+    expect(container.querySelector('main.k-change')).toBeNull();
+  });
+
+  it('tab_switch_after_copy_removed_shows_the_backend_message: the banner, and no stale text', async () => {
+    const { container, transport } = await openPage(MOCK_COPY_CHANGE);
+    pill(container, 'Intent').click();
+    await settle();
+    expect(shownText(container)).toContain('The copy holds this intent.');
+    vi.spyOn(transport, 'sdlcReadDoc').mockRejectedValue(new Error(MOCK_NOT_LISTED));
+    pill(container, 'Plan').click();
+    await settle();
+    const banner = container.querySelector('[data-testid="doc-notice"]')!;
+    expect(text(banner)).toBe(MOCK_NOT_LISTED);
+    expect(banner.classList.contains('wb-banner--warn')).toBe(true);
+    expect(shownText(container)).not.toContain('The copy holds');
+    expect(shownText(container)).not.toContain('is not in this change folder');
   });
 });

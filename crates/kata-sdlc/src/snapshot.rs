@@ -1,5 +1,7 @@
 //! Run snapshot: what the master repo looked like before an agent run, and what the run left behind.
 use crate::git::{GitError, Repo};
+use crate::home::HomeError;
+use crate::workspace;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -9,6 +11,8 @@ use std::path::{Path, PathBuf};
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct Snapshot {
+    /// The absolute folder `take` was given. A discard acts only in this folder.
+    pub folder: String,
     /// `HEAD` commit, `None` on an unborn branch.
     pub head: Option<String>,
     /// Dirty path to the SHA-1 of its working-tree content (empty for a deleted file).
@@ -52,6 +56,99 @@ pub enum DiscardError {
     Git(#[from] GitError),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+    #[error(
+        "Nothing discarded: this change now lives in {folder}, not where the run left its files."
+    )]
+    WrongFolder { folder: String },
+}
+
+/// Where a snapshot's folder was found, for the decision whether a discard may go ahead.
+pub enum Placing<'a> {
+    /// A folder the caller named (setup, context and triage runs).
+    Workspace(&'a Path),
+    /// The master the plugin reports for a change, or why it could not.
+    Change(Result<&'a Path, &'a HomeError>),
+}
+
+/// Decides, before anything is touched, the folder a discard may act in, or the refusal to show.
+pub fn discard_folder(placing: &Placing<'_>, before: &Snapshot) -> Result<PathBuf, String> {
+    match placing {
+        Placing::Change(Err(why)) => Err(format!("Nothing discarded: {why}")),
+        Placing::Change(Ok(folder)) | Placing::Workspace(folder) => {
+            if same_folder(folder, &before.folder) {
+                Ok(folder.to_path_buf())
+            } else {
+                Err(DiscardError::WrongFolder {
+                    folder: folder.to_string_lossy().into_owned(),
+                }
+                .to_string())
+            }
+        }
+    }
+}
+
+/// Whether two spellings of a folder name the same folder: canonical when both exist, else compared
+/// with the separators, the Windows verbatim prefix and (on Windows) the case normalized.
+fn same_folder(a: &Path, b: &str) -> bool {
+    fn key(p: &Path) -> String {
+        let p = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let text = p.to_string_lossy().replace('\\', "/");
+        let text = text.trim_start_matches("//?/").trim_end_matches('/');
+        if cfg!(windows) {
+            text.to_lowercase()
+        } else {
+            text.to_string()
+        }
+    }
+    !b.is_empty() && key(a) == key(Path::new(b))
+}
+
+/// Takes the decision of `discard_folder`, then discards in that folder.
+pub fn discard_placed(
+    placing: &Placing<'_>,
+    before: &Snapshot,
+    paths: &[String],
+    build: Option<&BuildScope>,
+) -> Result<(), String> {
+    let folder = discard_folder(placing, before)?;
+    discard(&folder, before, paths, build).map_err(|e| e.to_string())
+}
+
+/// The product repositories checked out in the workspace for `system`: the marker's list, the master excluded.
+pub fn product_repos(workspace: &Path, system: &str) -> Vec<PathBuf> {
+    let Ok(scan) = workspace::scan(workspace) else {
+        return Vec::new();
+    };
+    let master = scan_master(&scan);
+    workspace::system_repos(&scan, system)
+        .into_iter()
+        .filter(|r| Some(r.as_str()) != master && scan.repos.contains(r))
+        .map(|r| workspace.join(r))
+        .collect()
+}
+
+/// Every repository next to `master` in its folder, for a run outside any change (setup, context,
+/// triage), where there is no system to name the product repositories.
+pub fn sibling_repos(master: &Path) -> Vec<PathBuf> {
+    let Some(workspace) = master.parent() else {
+        return Vec::new();
+    };
+    let Ok(scan) = workspace::scan(workspace) else {
+        return Vec::new();
+    };
+    let own = master.file_name().map(|n| n.to_string_lossy().into_owned());
+    scan.repos
+        .iter()
+        .filter(|r| Some(r.as_str()) != own.as_deref())
+        .map(|r| workspace.join(r))
+        .collect()
+}
+
+fn scan_master(scan: &workspace::WorkspaceScan) -> Option<&str> {
+    match &scan.master {
+        workspace::MasterState::One { repo, .. } => Some(repo.as_str()),
+        _ => None,
+    }
 }
 
 /// One `git status` entry: the two-letter code and the repo-relative path.
@@ -120,6 +217,7 @@ fn dirty_map(master: &Path) -> Result<BTreeMap<String, String>, GitError> {
 
 pub fn take(master: &Path) -> Result<Snapshot, GitError> {
     Ok(Snapshot {
+        folder: master.to_string_lossy().into_owned(),
         head: current_head(master),
         dirty: dirty_map(master)?,
     })
@@ -202,6 +300,11 @@ pub fn discard(
     paths: &[String],
     build: Option<&BuildScope>,
 ) -> Result<(), DiscardError> {
+    if !same_folder(master, &before.folder) {
+        return Err(DiscardError::WrongFolder {
+            folder: master.to_string_lossy().into_owned(),
+        });
+    }
     let entries = status_entries(master)?;
     let mut plan = Vec::new();
     for path in paths {
@@ -495,5 +598,170 @@ mod tests {
         std::fs::write(tmp.path().join("outside.md"), "keep").unwrap();
         assert!(discard(&m, &before, &["../outside.md".into()], None).is_err());
         assert!(tmp.path().join("outside.md").exists());
+    }
+
+    const MARKER: &str = r#"{"version":1,"systems":{"demo":{"repos":["app"]}}}"#;
+
+    /// A workspace: the engineer's checkout of the master with a marker, a product repo `app`, and a
+    /// copy of the master under `.ai-sdlc/copies/c`. The checkout and the copy both hold `notes.md`.
+    struct Ws {
+        _dir: tempfile::TempDir,
+        ws: PathBuf,
+        checkout: PathBuf,
+        copy: PathBuf,
+        app: PathBuf,
+    }
+
+    fn ws() -> Ws {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let checkout = repo(&root, "ai-sdlc");
+        commit_file(&checkout, ".ai-sdlc.json", MARKER, "marker");
+        commit_file(&checkout, "notes.md", "orig", "notes");
+        let app = repo(&root, "app");
+        let copies = root.join(".ai-sdlc").join("copies");
+        std::fs::create_dir_all(&copies).unwrap();
+        let copy = repo(&copies, "c");
+        commit_file(&copy, ".ai-sdlc.json", MARKER, "marker");
+        commit_file(&copy, "notes.md", "orig", "notes");
+        Ws {
+            _dir: dir,
+            ws: root,
+            checkout,
+            copy,
+            app,
+        }
+    }
+
+    #[test]
+    fn leftovers_of_a_copy_change_ignore_the_checkout() {
+        let w = ws();
+        std::fs::write(w.checkout.join("notes.md"), "engineer edit").unwrap();
+        std::fs::write(w.checkout.join("mine.md"), "mine").unwrap();
+        let before = take(&w.copy).unwrap();
+        assert_eq!(before.folder, w.copy.to_string_lossy());
+        std::fs::write(w.copy.join("run.md"), "x").unwrap();
+        let l = leftovers(&w.copy, &before, &product_repos(&w.ws, "demo"), None).unwrap();
+        assert_eq!(l.discardable, vec!["run.md"]);
+        assert!(l.touched_dirty.is_empty());
+    }
+
+    #[test]
+    fn discard_for_a_copy_change_touches_only_the_copy() {
+        let w = ws();
+        std::fs::write(w.checkout.join("notes.md"), "engineer edit").unwrap();
+        let before = take(&w.copy).unwrap();
+        std::fs::write(w.copy.join("notes.md"), "run edit").unwrap();
+        std::fs::write(w.copy.join("run.md"), "x").unwrap();
+        let placing = Placing::Change(Ok(w.copy.as_path()));
+        discard_placed(
+            &placing,
+            &before,
+            &["notes.md".into(), "run.md".into()],
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(w.copy.join("notes.md")).unwrap(),
+            "orig"
+        );
+        assert!(!w.copy.join("run.md").exists());
+        assert_eq!(
+            std::fs::read(w.checkout.join("notes.md")).unwrap(),
+            b"engineer edit"
+        );
+    }
+
+    #[test]
+    fn leftovers_find_product_repos_in_the_workspace() {
+        let w = ws();
+        std::fs::write(w.app.join("dirty.txt"), "x").unwrap();
+        let repos = product_repos(&w.ws, "demo");
+        assert_eq!(repos, vec![w.ws.join("app")]);
+        let before = take(&w.copy).unwrap();
+        let l = leftovers(&w.copy, &before, &repos, None).unwrap();
+        assert_eq!(l.product_repos_changed, vec!["app"]);
+        assert!(l.product_repos_unchecked.is_empty());
+    }
+
+    #[test]
+    fn discard_refuses_per_table() {
+        let w = ws();
+        let before = take(&w.copy).unwrap();
+        std::fs::write(w.copy.join("notes.md"), "run edit").unwrap();
+        std::fs::write(w.copy.join("run.md"), "x").unwrap();
+        std::fs::write(w.checkout.join("notes.md"), "engineer edit").unwrap();
+        let paths: Vec<String> = vec!["notes.md".into(), "run.md".into()];
+        let unchanged = |w: &Ws| {
+            assert_eq!(
+                std::fs::read_to_string(w.copy.join("notes.md")).unwrap(),
+                "run edit"
+            );
+            assert_eq!(std::fs::read_to_string(w.copy.join("run.md")).unwrap(), "x");
+            assert_eq!(
+                std::fs::read_to_string(w.checkout.join("notes.md")).unwrap(),
+                "engineer edit"
+            );
+        };
+        let moved = w.checkout.to_string_lossy().into_owned();
+        let wrong = format!(
+            "Nothing discarded: this change now lives in {moved}, not where the run left its files."
+        );
+
+        // Row 1: the plugin cannot say where the change lives.
+        let e = HomeError::Unanswered("boom".into());
+        let p = Placing::Change(Err(&e));
+        assert_eq!(
+            discard_folder(&p, &before).unwrap_err(),
+            "Nothing discarded: Could not find where this change lives: boom"
+        );
+        assert!(discard_placed(&p, &before, &paths, None).is_err());
+        unchanged(&w);
+        let e = HomeError::NotListed;
+        let p = Placing::Change(Err(&e));
+        assert_eq!(
+            discard_folder(&p, &before).unwrap_err(),
+            "Nothing discarded: This change's copy was removed and the plugin no longer lists it."
+        );
+
+        // Row 2: the copy was removed since the run stopped.
+        let e = HomeError::Gone(w.copy.clone());
+        let p = Placing::Change(Err(&e));
+        assert_eq!(
+            discard_folder(&p, &before).unwrap_err(),
+            "Nothing discarded: This change's copy was removed and the plugin no longer lists it."
+        );
+        assert!(discard_placed(&p, &before, &paths, None).is_err());
+        unchanged(&w);
+
+        // Row 3: the plugin now reports a different folder.
+        let p = Placing::Change(Ok(w.checkout.as_path()));
+        assert_eq!(discard_folder(&p, &before).unwrap_err(), wrong);
+        assert_eq!(
+            discard_placed(&p, &before, &paths, None).unwrap_err(),
+            wrong
+        );
+        unchanged(&w);
+
+        // Row 4: the same folder.
+        let p = Placing::Change(Ok(w.copy.as_path()));
+        assert_eq!(discard_folder(&p, &before).unwrap(), w.copy);
+
+        // Row 5: a named folder, equal and unequal.
+        let p = Placing::Workspace(w.copy.as_path());
+        assert_eq!(discard_folder(&p, &before).unwrap(), w.copy);
+        let p = Placing::Workspace(w.checkout.as_path());
+        assert_eq!(discard_folder(&p, &before).unwrap_err(), wrong);
+        unchanged(&w);
+    }
+
+    #[test]
+    fn discard_itself_refuses_a_folder_other_than_the_snapshots() {
+        let w = ws();
+        let before = take(&w.copy).unwrap();
+        std::fs::write(w.checkout.join("new.md"), "x").unwrap();
+        let err = discard(&w.checkout, &before, &["new.md".into()], None).unwrap_err();
+        assert!(matches!(err, DiscardError::WrongFolder { .. }), "{err:?}");
+        assert!(w.checkout.join("new.md").exists());
     }
 }

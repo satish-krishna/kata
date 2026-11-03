@@ -6,6 +6,10 @@ import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { ParsedRequirement } from '@bindings/ParsedRequirement';
+import type { OpenedChange } from '@bindings/OpenedChange';
+import type { OpenNotice } from '@bindings/OpenNotice';
+import type { ParsedRead } from '@bindings/ParsedRead';
+import type { ReadFailure } from '@bindings/ReadFailure';
 import type { ReadResult } from '@bindings/ReadResult';
 import type { Readiness } from '@bindings/Readiness';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
@@ -71,7 +75,7 @@ import { section } from '../../lib/doc';
 import { fullPipelineIdea } from '../../lib/sdlc-fix';
 import { inTauri } from '../../lib/mock';
 import { taskRecord, withRows, type TaskView } from '../../lib/task-view';
-import { masterPath, masterRepo, productRepos } from '../../lib/sdlc-workspace';
+import { masterPath, masterRepo } from '../../lib/sdlc-workspace';
 import { namingRefusal } from '../../lib/sdlc-naming';
 
 export type ChangeState = 'loading' | 'ready' | 'not-found';
@@ -111,6 +115,9 @@ const rejectedSaid = (branch: string): string => `Rejected. Its record stays on 
 const outputTail = (output: string): string => output.trim().split('\n').slice(-12).join('\n');
 /** A change by system and folder name, with the workspace it belongs to. */
 type ChangeRef = ChangeWithWorkspace;
+/** The format program's read as the page keeps it: a failure becomes the page's own error shape. */
+const shownRead = (parsed: ParsedRead | null): ReadResult | ReadError | null =>
+  parsed === null ? null : parsed.kind === 'error' ? { kind: 'error', message: (parsed as ReadFailure).message } : (parsed as ReadResult);
 type StageRun = { kind: 'intent' | 'spec' | 'plan' | 'fix'; title: string; label: string };
 
 /** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result.
@@ -266,7 +273,8 @@ export class ChangePageViewModel {
   private setCopyNote(note: DocNotice | null): void {
     this.copyResult.set(note === null ? null : { key: this.changeKey(), note });
   }
-  private copyRef(): ChangeRef | null {
+  /** The change this page shows, as the backend names it; null until the workspace is known. */
+  private changeRef(): ChangeRef | null {
     const workspace = this.current();
     return workspace === null ? null : { workspace: workspace.folder, system: this.system(), change: this.changeName() };
   }
@@ -296,7 +304,7 @@ export class ChangePageViewModel {
   /** The engineer confirmed. Every outcome has a visible result: the copy goes, or it stays and the note says why. */
   async confirmRemoveCopy(): Promise<void> {
     this.removeAsked.set(false);
-    const ref = this.copyRef();
+    const ref = this.changeRef();
     if (ref === null) return;
     let out: RemoveOutcome;
     try {
@@ -325,7 +333,7 @@ export class ChangePageViewModel {
     }
   }
   async openCopyFolder(): Promise<void> {
-    const ref = this.copyRef();
+    const ref = this.changeRef();
     if (ref === null) return;
     try {
       await this.transport.sdlcOpenCopyFolder(ref);
@@ -338,6 +346,8 @@ export class ChangePageViewModel {
   private readonly linksFrom = signal<PullRequestsView['source']>(null);
   /** The shown document, raw as it is on disk, or null when the file is missing. */
   readonly doc = signal<string | null>(null);
+  /** The backend's message when it could not place the change or read its document; null when the last read succeeded. */
+  readonly resolutionError = signal<string | null>(null);
   /** The shown spec or plan as the format program read it; null for the other documents, or when the program could not run. */
   private readonly read = signal<ReadResult | ReadError | null>(null);
   /** Whether the ai-sdlc plugin can be used; null until the first load has asked. */
@@ -345,7 +355,26 @@ export class ChangePageViewModel {
   /** The review document as the format program reads it; null when the change has none or it could not be read. */
   private readonly reviewRecord = signal<ReviewRecord | null>(null);
   /** The notice above the open spec or plan; null when it needs none. */
-  readonly docNotice = computed<DocNotice | null>(() => this.unsettledNotice() ?? this.shown()?.notice ?? this.refusalNotice());
+  readonly docNotice = computed<DocNotice | null>(() => {
+    const resolution = this.resolutionNotice();
+    if (resolution !== null) return resolution;
+    // The plan tab shows the build status, so a failed status read concerns it; the other tabs show neither part.
+    const base = this.unsettledNotice() ?? this.shown()?.notice ?? this.refusalNotice();
+    return this.shownDoc() === 'plan' ? this.withOpenNotices(base, ['buildStatus']) : base;
+  });
+  /** What the backend sent for the parts of the change it could not read when it opened it (the build status, the review), with the part each concerns. */
+  private readonly openNotices = signal<OpenNotice[]>([]);
+  /** The open notices of these parts added to a notice as extra lines, or shown as a warning of their own when there is no notice. */
+  private withOpenNotices(base: DocNotice | null, parts: OpenNotice['part'][]): DocNotice | null {
+    const [first, ...rest] = this.openNotices().filter((n) => parts.includes(n.part)).map((n) => n.message);
+    if (first === undefined) return base;
+    return base === null ? { tone: 'warning', text: first, lines: rest } : { ...base, lines: [...base.lines, first, ...rest] };
+  }
+  /** The backend's message when it could not place the change or read the shown document, as it sent it. */
+  private readonly resolutionNotice = computed<DocNotice | null>(() => {
+    const text = this.resolutionError();
+    return text === null ? null : { tone: 'warning', text, lines: [] };
+  });
   /** A fix whose documents carry statuses the workflow never leaves on a fix: the page lists them, on every tab. */
   private readonly unsettledNotice = computed<DocNotice | null>(() => {
     const c = this.change();
@@ -376,7 +405,7 @@ export class ChangePageViewModel {
     const status = this.status();
     const review = this.reviewRecord();
     // Every log, the plan's and logs' problems and the review are judged together: no one's label hides another's problems.
-    return shownBuild(
+    const base = shownBuild(
       [
         ...(status?.logLayouts ?? []).map((l) => ({ layout: l.layout, problems: [] })),
         { layout: null, problems: status?.problems ?? [] },
@@ -384,6 +413,8 @@ export class ChangePageViewModel {
       ],
       readiness,
     ).notice ?? this.refusalNotice();
+    // The Build tab shows both the status and the review, so a failure of either is added beside the rest.
+    return this.withOpenNotices(base, ['buildStatus', 'review']);
   });
   /** The shown spec or plan as the format program read it, unless a notice says the document is shown as plain text. */
   private readonly parsed = computed<ReadResult | null>(() => {
@@ -456,7 +487,7 @@ export class ChangePageViewModel {
   readonly changesContext = computed<ChangesContext | null>(() => {
     const w = this.current();
     const master = this.scanMaster();
-    return w && master !== null ? { folder: w.folder, masterRepo: master, system: this.system(), change: this.changeName() } : null;
+    return w && master !== null ? { ref: { workspace: w.folder, system: this.system(), change: this.changeName() }, masterRepo: master } : null;
   });
   readonly docName = computed(() => `${this.shownDoc()}.md`);
   readonly stems: readonly DocStem[] = ['intent', 'spec', 'plan'];
@@ -980,10 +1011,10 @@ export class ChangePageViewModel {
   });
   /** Read the fix's intent and open New change on the full pipeline with the fix as its description. */
   private async openFullPipeline(): Promise<void> {
-    const master = this.masterDir();
-    if (master === null) return;
+    const ref = this.changeRef();
+    if (ref === null) return;
     try {
-      const text = await this.transport.sdlcReadDoc(master, this.system(), this.changeName(), 'intent');
+      const text = await this.transport.sdlcReadDoc(ref, 'intent');
       this.pipelineIdea.set(fullPipelineIdea(text ?? ''));
     } catch (e) {
       this.toasts.error(`Could not read the fix: ${message(e)}`);
@@ -1027,7 +1058,7 @@ export class ChangePageViewModel {
         this.toasts.error(namingRefusal(system, branches.default_base, naming.message));
         return;
       }
-      outcome = await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, 'full', (spec) => this.confirmRun(spec));
+      outcome = await this.runner.newChange({ workspace, master }, system, idea, 'full', (spec) => this.confirmRun(spec));
     } catch (e) {
       this.toasts.error(`Could not start the change: ${message(e)}`);
       return;
@@ -1100,8 +1131,8 @@ export class ChangePageViewModel {
       this.progress.end('doc');
       return;
     }
-    const master = this.masterDir();
-    if (!master) {
+    const ref = this.changeRef();
+    if (!ref) {
       this.pendingDoc.set(null);
       this.progress.end('doc');
       return;
@@ -1110,21 +1141,25 @@ export class ChangePageViewModel {
     this.pendingDoc.set(stem);
     this.progress.begin('reading-change', progressLabels.readingDoc(stem), 'doc');
     try {
-      const text = await this.transport.sdlcReadDoc(master, this.system(), this.changeName(), stem);
-      const read = await this.readParsed(master, this.system(), this.changeName(), stem);
+      const { text, read } = await this.readDocument(ref, stem);
       // The tab and its text change together, once the text is here, so no tab ever shows another document's text.
       if (seq !== this.pickSeq) return;
       this.doc.set(text);
       this.read.set(read);
+      this.resolutionError.set(null);
       this.picked.set(stem);
       this.rememberTab();
       this.pendingDoc.set(null);
       this.progress.end('doc');
     } catch (e) {
       if (seq !== this.pickSeq) return;
+      // The picked tab shows the backend's message and nothing of the document that was shown before.
+      this.doc.set(null);
+      this.read.set(null);
+      this.resolutionError.set(message(e));
+      this.picked.set(stem);
       this.pendingDoc.set(null);
       this.progress.fail('doc');
-      this.toasts.error(`Could not read ${stem}.md: ${message(e)}`);
     }
   }
 
@@ -1249,7 +1284,7 @@ export class ChangePageViewModel {
       {
         label: 'Repositories of the change',
         run: async () => {
-          repos = await this.transport.sdlcChangeRepos(folder, master, system, change);
+          repos = await this.transport.sdlcChangeRepos({ workspace: folder, system, change });
           return plural(repos.length, 'repository', 'repositories');
         },
       },
@@ -1350,8 +1385,7 @@ export class ChangePageViewModel {
     }
     const workspace = this.current();
     const scan = this.scan();
-    const master = this.masterDir();
-    if (!workspace || !scan || !master) return;
+    if (!workspace || !scan) return;
     let built;
     try {
       const settings = this.modes.settings() ?? (await this.modes.load());
@@ -1378,8 +1412,7 @@ export class ChangePageViewModel {
     if (!spec) return;
     await this.runner.run(run.title, spec, {
       workspaceId: workspace.id,
-      master,
-      productRepos: productRepos(scan),
+      target: { kind: 'change', ...ref },
       link: { system: this.system(), change: this.changeName(), stage: run.kind },
       label: run.label,
     }, { ref, kind: run.kind });
@@ -1387,16 +1420,13 @@ export class ChangePageViewModel {
   }
 
   /**
-   * The spec or plan as the format program reads it, for the list views. The intent has no parsed form. A program that
-   * cannot read the document leaves it as plain text with the program's message above it, never a failed page.
+   * A document and, for the spec and plan, the format program's read of it for the list views, from one call. The intent has no parsed
+   * form. A program that cannot read the document leaves it as plain text with the program's message above it, never a failed page;
+   * a change that cannot be placed rejects, with the backend's message.
    */
-  private async readParsed(master: string, system: string, name: string, stem: string): Promise<ReadResult | ReadError | null> {
-    if (stem !== 'spec' && stem !== 'plan') return null;
-    try {
-      return await this.transport.sdlcReadParsed(master, system, name, stem);
-    } catch (e) {
-      return { kind: 'error', message: message(e) };
-    }
+  private async readDocument(ref: ChangeRef, stem: string): Promise<{ text: string | null; read: ReadResult | ReadError | null }> {
+    const { text, parsed } = await this.transport.sdlcReadDocument(ref, stem);
+    return { text, read: stem === 'spec' || stem === 'plan' ? shownRead(parsed) : null };
   }
 
   /** Whether the plugin can be used; a failed check counts as a missing plugin, which only shows the documents as plain text. */
@@ -1405,25 +1435,6 @@ export class ChangePageViewModel {
       return await this.transport.sdlcPluginReadiness(folder);
     } catch {
       return { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
-    }
-  }
-
-  /** The review document; a failed read leaves the notice to the build logs alone. */
-  private async readReviewRecord(master: string, system: string, name: string): Promise<ReviewRecord | null> {
-    try {
-      return await this.transport.sdlcReviewRecord(master, system, name);
-    } catch {
-      return null;
-    }
-  }
-
-  /** The plan's tasks and rows; a failure is reported and leaves the log empty, never the whole page. */
-  private async readStatus(master: string, system: string, name: string): Promise<BuildStatus | null> {
-    try {
-      return await this.transport.sdlcBuildStatus(master, system, name);
-    } catch (e) {
-      this.toasts.error(`Could not read the build log: ${message(e)}`);
-      return null;
     }
   }
 
@@ -1461,20 +1472,28 @@ export class ChangePageViewModel {
     this.pullRequests.set(links);
   }
 
-  /** Read this one change; a change the workspace does not have is none, any other failure is raised. */
-  private async readOwnChange(folder: string, system: string, name: string): Promise<{ info: ChangeView | null }> {
+  /**
+   * Open the change with one call: the backend places it, then reads its view, `stem`, the build and the review from that one place.
+   * A change whose stage shows another document is read again for that one. A refusal is the backend's message, as sent.
+   */
+  private async openChange(ref: ChangeRef, stem: DocStem): Promise<{ opened: OpenedChange; text: string | null; read: ReadResult | ReadError | null } | { error: string }> {
     try {
-      return { info: await this.transport.sdlcChangeState(folder, system, name) };
+      const opened = await this.transport.sdlcOpenChange(ref, stem);
+      const want = stemFor(opened.view);
+      if (want !== stem) {
+        const { text, read } = await this.readDocument(ref, want);
+        return { opened, text, read };
+      }
+      return { opened, text: opened.text, read: stem === 'spec' || stem === 'plan' ? shownRead(opened.parsed) : null };
     } catch (e) {
-      if (/there is no change|no change folder/.test(message(e))) return { info: null };
-      throw e;
+      return { error: message(e) };
     }
   }
 
   /** The branch the master repository records for the change; null when it cannot be read, which leaves change/<change>. */
-  private async readRecordedBranch(folder: string, master: string, system: string, name: string): Promise<string | null> {
+  private async readRecordedBranch(ref: ChangeRef, master: string): Promise<string | null> {
     try {
-      return (await this.transport.sdlcChangeRepos(folder, master, system, name)).find((r) => r.repo === master)?.branch ?? null;
+      return (await this.transport.sdlcChangeRepos(ref)).find((r) => r.repo === master)?.branch ?? null;
     } catch {
       return null;
     }
@@ -1544,6 +1563,12 @@ export class ChangePageViewModel {
     this.transport.sdlcMarkOpened({ workspace, system, change }).catch(() => undefined);
   }
 
+  /** The document the first read asks for: the one on show when this change is read again, else the intent every change has. */
+  private openStem(): DocStem {
+    const shown = this.shownDoc();
+    return this.change() !== null && isDocStem(shown) ? shown : 'intent';
+  }
+
   private async load(): Promise<void> {
     const seq = ++this.loadSeq;
     const system = this.system();
@@ -1563,6 +1588,8 @@ export class ChangePageViewModel {
       this.change.set(change);
       this.doc.set(doc);
       this.read.set(read);
+      this.resolutionError.set(null);
+      if (change === null) this.openNotices.set([]);
       this.state.set(state);
     };
     let workspaces: WorkspaceEntry[];
@@ -1591,20 +1618,27 @@ export class ChangePageViewModel {
         return;
       }
       const master = masterPath(w.folder, repo);
-      const [branches, own, links, records, catalog, recorded] = await Promise.all([
+      const ref: ChangeRef = { workspace: w.folder, system, change: name };
+      const [branches, opening, links, records, catalog, recorded] = await Promise.all([
         this.transport.sdlcBranches(master),
-        this.readOwnChange(w.folder, system, name),
+        this.openChange(ref, this.openStem()),
         this.transport.sdlcRunLinks(),
         this.transport.listRuns(),
         this.transport.catalog(w.folder),
-        this.readRecordedBranch(w.folder, repo, system, name),
+        this.readRecordedBranch(ref, repo),
       ]);
-      const found = own.info;
-      const doc = found ? await this.transport.sdlcReadDoc(master, system, name, stemFor(found)) : null;
-      const read = found ? await this.readParsed(master, system, name, stemFor(found)) : null;
-      const status = found?.state.documents.plan.exists ? await this.readStatus(master, system, name) : null;
+      if ('error' in opening) {
+        failRead();
+        finish('not-found', null, null);
+        if (seq === this.loadSeq) this.resolutionError.set(opening.error);
+        return;
+      }
+      const found = opening.opened.view;
+      const doc = opening.text;
+      const read = opening.read;
+      const status = opening.opened.status;
       const readiness = await this.readReadiness(w.folder);
-      const review = found?.state.documents.plan.exists ? await this.readReviewRecord(master, system, name) : null;
+      const review = opening.opened.review;
       const buildFinished = stageNameOf(found ?? null) === 'build-finished';
       const pulls = found?.state.documents.plan.exists
         ? await this.readPullRequests(w.folder, w.id, system, name, buildFinished)
@@ -1612,6 +1646,7 @@ export class ChangePageViewModel {
       if (seq !== this.loadSeq) return;
       this.applyPullRequests(pulls.view, pulls.failed);
       this.status.set(status);
+      this.openNotices.set(opening.opened.notices);
       this.readiness.set(readiness);
       this.reviewRecord.set(review);
       this.scan.set(scan);
@@ -1631,7 +1666,7 @@ export class ChangePageViewModel {
       }
       // The build page shows the change's tasks, sessions and findings whether or not a build ran on this page.
       const context = this.buildContext();
-      if (found && context !== null) this.build.loaded.set({ ctx: context, master: { repo, path: master }, change: found, status, done: this.done(), review });
+      if (found && context !== null) this.build.loaded.set({ ctx: context, masterRepo: repo, change: found, status, done: this.done(), review });
       // The recorded links show first; the plugin reads their states from GitHub in the background. Pull requests an earlier version of Kata saved are not read: the plugin does not know them.
       if (found && pulls.view.source === 'plugin' && pulls.view.links.length > 0) void this.refreshLinks(seq, w.folder, w.id, system, name);
     } catch (e) {

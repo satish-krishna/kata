@@ -107,9 +107,10 @@ pub fn other_change_branches(master: &Path) -> Vec<OtherBranch> {
     };
     let current = repo.current_branch();
     let base = diff::base_branch(master).and_then(|b| diff::compare_ref(master, &b));
+    let held = repo.worktree_branches();
     let mut found = Vec::new();
     for name in repo.local_branches() {
-        if Some(name.as_str()) == current.as_deref() {
+        if Some(name.as_str()) == current.as_deref() || held.contains_key(&name) {
             continue;
         }
         // A `change/pending-*` branch is one an older Kata made before a change was named; it is not a change.
@@ -158,6 +159,8 @@ pub enum BranchError {
     Dirty(Vec<String>),
     #[error("invalid branch name: {0}")]
     InvalidName(String),
+    #[error("`{branch}` is held by the copy of `{change}`; open that change instead.")]
+    HeldByCopy { branch: String, change: String },
     #[error(transparent)]
     Git(#[from] GitError),
 }
@@ -182,11 +185,29 @@ pub(crate) fn ensure_clean(master: &Path) -> Result<(), BranchError> {
     }
 }
 
-/// Switch branches. Refuses a dirty working tree.
+/// The change a copy folder belongs to: its folder name when it sits in `.ai-sdlc/copies`, else the path.
+fn copy_change_name(folder: &Path) -> String {
+    let in_copies = folder
+        .parent()
+        .is_some_and(|p| p.ends_with(".ai-sdlc/copies"));
+    match folder.file_name() {
+        Some(name) if in_copies => name.to_string_lossy().into_owned(),
+        _ => folder.display().to_string(),
+    }
+}
+
+/// Switch branches. Refuses a dirty working tree, and a branch a change's copy holds.
 pub fn checkout(master: &Path, branch: &str) -> Result<(), BranchError> {
     require_local_branch(master, branch)?;
+    let repo = git::Repo::open(master)?;
+    if let Some(folder) = repo.worktree_branches().get(branch) {
+        return Err(BranchError::HeldByCopy {
+            branch: branch.to_string(),
+            change: copy_change_name(folder),
+        });
+    }
     ensure_clean(master)?;
-    git::Repo::open(master)?.checkout_branch(branch)?;
+    repo.checkout_branch(branch)?;
     Ok(())
 }
 
@@ -194,6 +215,7 @@ pub fn checkout(master: &Path, branch: &str) -> Result<(), BranchError> {
 /// branch (one the build never changed) is left out.
 pub fn heads(
     folder: &Path,
+    master: &Path,
     master_repo: &str,
     system: &str,
     repos: &[String],
@@ -210,7 +232,7 @@ pub fn heads(
             "invalid master repository or system name: {master_repo}, {system}"
         ));
     }
-    let branch = change_branch(&folder.join(master_repo), system, change)?;
+    let branch = change_branch(master, system, change)?;
     let mut out = BTreeMap::new();
     for repo in repos {
         if !is_safe_system(repo) {
@@ -236,6 +258,7 @@ pub fn heads(
 pub fn missing_change_branches(
     plugin: &Path,
     folder: &Path,
+    master: &Path,
     master_repo: &str,
     system: &str,
     change: &str,
@@ -245,9 +268,8 @@ pub fn missing_change_branches(
             "invalid master repository, system or change name: {master_repo}, {system}, {change}"
         ));
     }
-    let master = folder.join(master_repo);
-    let branch = change_branch(&master, system, change)?;
-    let status = build::status(plugin, &master, system, change).map_err(|e| e.to_string())?;
+    let branch = change_branch(master, system, change)?;
+    let status = build::status(plugin, master, system, change).map_err(|e| e.to_string())?;
     let scan = workspace::scan(folder).map_err(|e| e.to_string())?;
     let in_system = system_repos(&scan, system);
     let mut out = Vec::new();
@@ -347,7 +369,7 @@ mod tests {
     }
 
     fn missing(fx: &Fx) -> Result<Vec<String>, String> {
-        missing_change_branches(testutil::plugin_dir(), &fx.folder, "m", S, C)
+        missing_change_branches(testutil::plugin_dir(), &fx.folder, &fx.master, "m", S, C)
     }
 
     /// Commit a `branch.md` naming `branch` on the master and put the master on that branch.
@@ -395,20 +417,36 @@ mod tests {
             testutil::checkout(&fx.repo(r), &format!("change/{C}"), true);
         }
         testutil::commit_msg(&fx.repo("app"), "a.txt", "a\n", OWN);
-        let got = heads(&fx.folder, "m", S, &["app".into(), "api".into()], C).unwrap();
+        let got = heads(
+            &fx.folder,
+            &fx.master,
+            "m",
+            S,
+            &["app".into(), "api".into()],
+            C,
+        )
+        .unwrap();
         for r in ["app", "api"] {
             let want = git::run(&fx.repo(r), &["rev-parse", &format!("change/{C}")]).unwrap();
             assert_eq!(got[r], want);
         }
         assert_ne!(got["app"], got["api"]);
-        assert!(heads(&fx.folder, "m", S, &["../x".into()], C).is_err());
+        assert!(heads(&fx.folder, &fx.master, "m", S, &["../x".into()], C).is_err());
     }
 
     #[test]
     fn heads_skips_repos_without_the_branch() {
         let fx = fixture();
         testutil::checkout(&fx.repo("app"), &format!("change/{C}"), true);
-        let got = heads(&fx.folder, "m", S, &["app".into(), "api".into()], C).unwrap();
+        let got = heads(
+            &fx.folder,
+            &fx.master,
+            "m",
+            S,
+            &["app".into(), "api".into()],
+            C,
+        )
+        .unwrap();
         assert_eq!(got.keys().collect::<Vec<_>>(), ["app"]);
     }
 
@@ -440,7 +478,15 @@ mod tests {
         }
         testutil::commit_msg(&fx.repo("app"), "a.txt", "a\n", OWN);
         let decoy = git::run(&fx.repo("app"), &["rev-parse", &format!("change/{C}")]).unwrap();
-        let got = heads(&fx.folder, "m", S, &["app".into(), "api".into()], C).unwrap();
+        let got = heads(
+            &fx.folder,
+            &fx.master,
+            "m",
+            S,
+            &["app".into(), "api".into()],
+            C,
+        )
+        .unwrap();
         let want = git::run(&fx.repo("app"), &["rev-parse", RECORDED]).unwrap();
         assert_eq!(got["app"], want);
         assert_ne!(got["app"], decoy);
@@ -709,5 +755,90 @@ base: \"main\"
         )
         .unwrap();
         assert!(branch().unwrap_err().contains("not a usable branch name"));
+    }
+}
+
+#[cfg(test)]
+mod copy_tests {
+    use super::*;
+    use crate::testutil;
+
+    #[test]
+    fn heads_reads_the_branch_recorded_in_the_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().to_path_buf();
+        let master = testutil::repo(&folder, "m");
+        let app = testutil::repo(&folder, "app");
+        let change = "2026-11-02-c";
+        // The decoy a reader of the checkout would look for.
+        git::run(&app, &["branch", &format!("change/{change}"), "main"]).unwrap();
+        testutil::checkout(&app, "feat/x", true);
+        testutil::commit_file(&app, "a.txt", "a\n", "work");
+        let copy = folder.join(".ai-sdlc").join("copies").join(change);
+        std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        git::run(
+            &master,
+            &["worktree", "add", "-b", "feat/x", &copy.to_string_lossy()],
+        )
+        .unwrap();
+        testutil::commit_file(
+            &copy,
+            &format!("intent/s/{change}/change.yml"),
+            "branch: \"feat/x\"\n",
+            "record",
+        );
+        let got = heads(&folder, &copy, "m", "s", &["app".into()], change).unwrap();
+        let want = git::run(&app, &["rev-parse", "feat/x"]).unwrap();
+        assert_eq!(got["app"], want);
+    }
+
+    /// A master with `change/a` checked out in a copy under `<ws>/.ai-sdlc/copies/a` and `change/b` only a branch.
+    fn master_with_copy() -> (tempfile::TempDir, std::path::PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = testutil::repo(tmp.path(), "m");
+        git::run(&master, &["branch", "change/b"]).unwrap();
+        let copies = tmp.path().join(".ai-sdlc").join("copies");
+        std::fs::create_dir_all(&copies).unwrap();
+        let copy = copies.join("a");
+        git::run(
+            &master,
+            &["worktree", "add", "-b", "change/a", &copy.to_string_lossy()],
+        )
+        .unwrap();
+        (tmp, master)
+    }
+
+    #[test]
+    fn other_change_branches_leave_out_branches_held_by_a_copy() {
+        let (_tmp, master) = master_with_copy();
+        assert_eq!(
+            other_change_branches(&master),
+            [OtherBranch {
+                branch: "change/b".into(),
+                change: "b".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn checkout_refuses_a_branch_held_by_a_copy() {
+        let (_tmp, master) = master_with_copy();
+        let err = checkout(&master, "change/a").unwrap_err();
+        assert!(
+            matches!(&err, BranchError::HeldByCopy { branch, change } if branch == "change/a" && change == "a"),
+            "{err:?}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "`change/a` is held by the copy of `a`; open that change instead."
+        );
+        assert_eq!(current_branch(&master).as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn checkout_switches_to_a_branch_no_copy_holds() {
+        let (_tmp, master) = master_with_copy();
+        checkout(&master, "change/b").unwrap();
+        assert_eq!(current_branch(&master).as_deref(), Some("change/b"));
     }
 }

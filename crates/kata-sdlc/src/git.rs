@@ -666,6 +666,33 @@ impl Repo {
         Ok(Some(blob.content().to_vec()))
     }
 
+    /// The branches checked out in the repository's linked worktrees, each with its worktree's folder.
+    pub fn worktree_branches(&self) -> std::collections::BTreeMap<String, std::path::PathBuf> {
+        let mut held = std::collections::BTreeMap::new();
+        let Ok(names) = self.inner.worktrees() else {
+            return held;
+        };
+        for name in names.iter().flatten().flatten() {
+            let Ok(wt) = self.inner.find_worktree(name) else {
+                continue;
+            };
+            // A worktree whose folder is gone is prunable; it holds nothing.
+            if !wt.path().is_dir() {
+                continue;
+            }
+            let Ok(repo) = git2::Repository::open_from_worktree(&wt) else {
+                continue;
+            };
+            let Ok(head) = repo.head() else {
+                continue;
+            };
+            if let Some(branch) = head.shorthand().ok().filter(|_| head.is_branch()) {
+                held.insert(branch.to_string(), wt.path().to_path_buf());
+            }
+        }
+        held
+    }
+
     /// What `git checkout -q <name> --` does: switches to the local branch `name`, refusing to
     /// overwrite a local edit with the refusal git gives, and runs the repository's `post-checkout`
     /// hook afterward (its failure is ignored, as git ignores it for the switch).

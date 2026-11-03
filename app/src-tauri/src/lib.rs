@@ -726,50 +726,144 @@ fn sdlc_branches(master: String) -> sdlc::branch::BranchInfo {
 }
 
 #[tauri::command(async)]
-fn sdlc_read_doc(master: String, system: String, change: String, doc: String) -> Option<String> {
-    sdlc::changes::read_doc(Path::new(&master), &system, &change, &doc)
+fn sdlc_read_doc(change: build_host::ChangeRef, doc: String) -> Result<Option<String>, String> {
+    let (_, home) = resolved(&change)?;
+    Ok(read_doc_in(&home, &doc))
 }
 
-/// The spec or plan of a change read by the format program, for the Workbench's list views. An error
-/// (no plugin, no Node.js) is the caller's cue to show the document as plain text.
+/// A document's text and, for the spec and plan, the format program's read of it, from one resolution. A program
+/// that cannot read the document answers with its message inside `parsed`, so the text still shows as plain text.
 #[tauri::command(async)]
-fn sdlc_read_parsed(
-    master: String,
-    system: String,
-    change: String,
-    doc: String,
-) -> Result<Option<sdlc::format::ReadResult>, String> {
-    let plugin = ai_sdlc_dir(&master)?;
-    sdlc::changes::read_parsed(&plugin, Path::new(&master), &system, &change, &doc)
-        .map_err(|e| e.to_string())
+fn sdlc_read_document(change: build_host::ChangeRef, doc: String) -> Result<DocumentRead, String> {
+    let (plugin, home) = resolved(&change)?;
+    Ok(read_document_in(&home, &plugin, &change.system, &doc))
+}
+
+/// Where a run's folder is taken, listed and discarded: a folder the caller names (setup, context and
+/// triage runs), or a change, whose folder is wherever the plugin says it lives.
+#[derive(serde::Deserialize, Clone, Debug)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum SnapshotTarget {
+    Workspace { master: String },
+    Change(build_host::ChangeRef),
+}
+
+/// A `SnapshotTarget` after asking the plugin where the change lives. Short-lived, so not boxed.
+#[allow(clippy::large_enum_variant)]
+enum Placed {
+    Workspace(std::path::PathBuf),
+    Change {
+        workspace: std::path::PathBuf,
+        system: String,
+        home: Result<sdlc::home::ChangeHome, sdlc::home::HomeError>,
+    },
+}
+
+impl Placed {
+    fn placing(&self) -> sdlc::snapshot::Placing<'_> {
+        match self {
+            Placed::Workspace(master) => sdlc::snapshot::Placing::Workspace(master),
+            Placed::Change { home, .. } => {
+                sdlc::snapshot::Placing::Change(home.as_ref().map(|h| h.master.as_path()))
+            }
+        }
+    }
+}
+
+fn place_target_with(program: &sdlc::ai_sdlc::Program, target: &SnapshotTarget) -> Placed {
+    match target {
+        SnapshotTarget::Workspace { master } => Placed::Workspace(master.into()),
+        SnapshotTarget::Change(change) => Placed::Change {
+            workspace: (&change.workspace).into(),
+            system: change.system.clone(),
+            home: sdlc::home::resolve(
+                program,
+                Path::new(&change.workspace),
+                &change.system,
+                &change.change,
+            ),
+        },
+    }
+}
+
+fn place_target(target: &SnapshotTarget) -> Placed {
+    match target {
+        SnapshotTarget::Workspace { master } => Placed::Workspace(master.into()),
+        SnapshotTarget::Change(change) => match plugin_for_change(&change.workspace) {
+            Ok(dir) => place_target_with(&sdlc::ai_sdlc::Program::locate(&dir), target),
+            Err(e) => Placed::Change {
+                workspace: (&change.workspace).into(),
+                system: change.system.clone(),
+                home: Err(e),
+            },
+        },
+    }
+}
+
+/// The folder a snapshot and a leftovers read are taken in; the plugin's refusal when it cannot be placed.
+fn take_master(placed: &Placed) -> Result<&Path, String> {
+    match placed {
+        Placed::Workspace(master) => Ok(master),
+        Placed::Change { home, .. } => home
+            .as_ref()
+            .map(|h| h.master.as_path())
+            .map_err(|e| e.to_string()),
+    }
+}
+
+fn snapshot_in(placed: &Placed) -> Result<sdlc::snapshot::Snapshot, String> {
+    let master = take_master(placed)?;
+    sdlc::snapshot::take(master).map_err(|e| e.to_string())
+}
+
+fn leftovers_in(
+    placed: &Placed,
+    before: &sdlc::snapshot::Snapshot,
+    build: Option<&sdlc::snapshot::BuildScope>,
+) -> Result<sdlc::snapshot::Leftovers, String> {
+    let master = take_master(placed)?;
+    let repos = match placed {
+        Placed::Workspace(master) => sdlc::snapshot::sibling_repos(master),
+        Placed::Change {
+            workspace, system, ..
+        } => sdlc::snapshot::product_repos(workspace, system),
+    };
+    sdlc::snapshot::leftovers(master, before, &repos, build).map_err(|e| e.to_string())
+}
+
+fn discard_in(
+    placed: &Placed,
+    before: &sdlc::snapshot::Snapshot,
+    paths: &[String],
+    build: Option<&sdlc::snapshot::BuildScope>,
+) -> Result<(), String> {
+    sdlc::snapshot::discard_placed(&placed.placing(), before, paths, build)
 }
 
 #[tauri::command(async)]
-fn sdlc_snapshot(master: String) -> Result<sdlc::snapshot::Snapshot, String> {
-    sdlc::snapshot::take(Path::new(&master)).map_err(|e| e.to_string())
+fn sdlc_snapshot(target: SnapshotTarget) -> Result<sdlc::snapshot::Snapshot, String> {
+    snapshot_in(&place_target(&target))
 }
 
 #[tauri::command(async)]
 fn sdlc_leftovers(
-    master: String,
+    target: SnapshotTarget,
     before: sdlc::snapshot::Snapshot,
-    product_repos: Vec<String>,
     build: Option<sdlc::snapshot::BuildScope>,
 ) -> Result<sdlc::snapshot::Leftovers, String> {
-    let repos: Vec<std::path::PathBuf> = product_repos.into_iter().map(Into::into).collect();
-    sdlc::snapshot::leftovers(Path::new(&master), &before, &repos, build.as_ref())
-        .map_err(|e| e.to_string())
+    leftovers_in(&place_target(&target), &before, build.as_ref())
 }
 
 #[tauri::command(async)]
 fn sdlc_discard(
-    master: String,
+    target: SnapshotTarget,
     before: sdlc::snapshot::Snapshot,
     paths: Vec<String>,
     build: Option<sdlc::snapshot::BuildScope>,
 ) -> Result<(), String> {
-    sdlc::snapshot::discard(Path::new(&master), &before, &paths, build.as_ref())
-        .map_err(|e| e.to_string())
+    discard_in(&place_target(&target), &before, &paths, build.as_ref())
 }
 
 /// The name the plugin will be asked to give a change described by `title`, so a preview can show it.
@@ -913,34 +1007,18 @@ fn sdlc_checkout(
     out
 }
 
-/// Where the plugin has the change, and how it stands: the workspace's own master and the change's state.
-fn change_standing(
+/// Where the plugin has the change: `kata_sdlc::home::resolve` for the change's workspace.
+fn change_home(
     program: &sdlc::ai_sdlc::Program,
     change: &build_host::ChangeRef,
-) -> Result<(sdlc::ai_sdlc::Place, sdlc::ai_sdlc::state::ChangeState), String> {
-    let place = program
-        .resolve(Path::new(&change.workspace))
-        .map_err(|e| e.to_string())?;
-    let answer = program
-        .run(
-            &[
-                "state",
-                "--json",
-                "--system",
-                &change.system,
-                "--change",
-                &change.change,
-            ],
-            &place,
-        )
-        .map_err(|e| e.to_string())?;
-    let state = sdlc::ai_sdlc::state::read_state(answer).map_err(|e| e.to_string())?;
-    let found = state
-        .changes
-        .into_iter()
-        .find(|c| c.change == change.change)
-        .ok_or_else(|| format!("the plugin knows no change {}", change.change))?;
-    Ok((place, found))
+) -> Result<sdlc::home::ChangeHome, String> {
+    sdlc::home::resolve(
+        program,
+        Path::new(&change.workspace),
+        &change.system,
+        &change.change,
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Accept a document of a change: the status edit, the plugin's acceptance commit, then its `doc.accept` event.
@@ -949,13 +1027,13 @@ fn sdlc_accept(
     change: build_host::ChangeRef,
     doc: sdlc::accept::ChangeDocument,
 ) -> Result<sdlc::accept::AcceptOutcome, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
-    let (place, state) = change_standing(&program, &change)?;
+    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
+    let home = change_home(&program, &change)?;
     Ok(sdlc::accept::apply(
         &program,
-        &place,
+        &home.place,
         &change.system,
-        &state,
+        &home.state,
         doc,
     ))
 }
@@ -967,11 +1045,11 @@ fn sdlc_reject(
     control: State<'_, RunControl>,
     change: build_host::ChangeRef,
 ) -> Result<sdlc::accept::RejectOutcome, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
     let key = build_host::key_of(&change);
     control.state.lock().unwrap().begin_rejecting(&key)?;
-    let outcome = change_standing(&program, &change)
-        .map(|(place, state)| sdlc::accept::reject(&program, &place, &change.system, &state));
+    let outcome = change_home(&program, &change)
+        .map(|home| sdlc::accept::reject(&program, &home.place, &change.system, &home.state));
     control.state.lock().unwrap().end_rejecting(&key);
     outcome
 }
@@ -982,15 +1060,15 @@ fn sdlc_reject(
 fn sdlc_copy_removal(
     change: build_host::ChangeRef,
 ) -> Result<sdlc::copy_removal::CopyRemoval, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
-    let (place, state) = change_standing(&program, &change)?;
-    sdlc::copy_removal::offer(&program, &place, &state)
+    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
+    let home = change_home(&program, &change)?;
+    sdlc::copy_removal::offer(&program, &home.place, &home.state)
 }
 
 /// The branch the change's copy holds, as the plugin records it.
 #[tauri::command(async)]
 fn sdlc_copy_branch(change: build_host::ChangeRef) -> Result<String, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
     let place = program
         .resolve(Path::new(&change.workspace))
         .map_err(|e| e.to_string())?;
@@ -1004,11 +1082,11 @@ fn sdlc_remove_copy(
     control: State<'_, RunControl>,
     change: build_host::ChangeRef,
 ) -> Result<sdlc::copy_removal::RemoveOutcome, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
     let key = build_host::key_of(&change);
     control.state.lock().unwrap().begin_rejecting(&key)?;
-    let outcome = change_standing(&program, &change)
-        .map(|(place, state)| sdlc::copy_removal::remove(&program, &place, &state));
+    let outcome = change_home(&program, &change)
+        .map(|home| sdlc::copy_removal::remove(&program, &home.place, &home.state));
     control.state.lock().unwrap().end_rejecting(&key);
     outcome
 }
@@ -1018,9 +1096,9 @@ fn sdlc_remove_copy(
 #[tauri::command(async)]
 fn sdlc_open_copy_folder(app: AppHandle, change: build_host::ChangeRef) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
-    let (_, state) = change_standing(&program, &change)?;
-    open_copy_with(state.in_copy, &state.master, |path| {
+    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
+    let home = change_home(&program, &change)?;
+    open_copy_with(home.in_copy, &home.state.master, |path| {
         app.opener()
             .open_path(path, None::<&str>)
             .map_err(|e| e.to_string())
@@ -1045,13 +1123,10 @@ fn sdlc_task_links() -> Vec<sdlc::store::TaskLink> {
 // ---- AI-SDLC mode: the build, the diff, checks and publishing ----
 
 #[tauri::command(async)]
-fn sdlc_build_status(
-    master: String,
-    system: String,
-    change: String,
-) -> Result<sdlc::build::BuildStatus, String> {
-    let plugin = ai_sdlc_dir(&master)?;
-    sdlc::build::status(&plugin, Path::new(&master), &system, &change).map_err(|e| e.to_string())
+fn sdlc_build_status(change: build_host::ChangeRef) -> Result<sdlc::build::BuildStatus, String> {
+    let (plugin, home) = resolved(&change)?;
+    sdlc::build::status(&plugin, &home.master, &change.system, &change.change)
+        .map_err(|e| e.to_string())
 }
 
 /// The build page's tasks area for the repositories asked for: where each stands and what each task's row shows, from the build log's
@@ -1089,24 +1164,27 @@ fn sdlc_review_standing(
 
 #[tauri::command(async)]
 fn sdlc_review_record(
-    master: String,
-    system: String,
-    change: String,
+    change: build_host::ChangeRef,
 ) -> Result<Option<sdlc::review::ReviewRecord>, String> {
-    let plugin = ai_sdlc_dir(&master)?;
-    sdlc::review::record(&plugin, Path::new(&master), &system, &change).map_err(|e| e.to_string())
+    let (plugin, home) = resolved(&change)?;
+    sdlc::review::record(&plugin, &home.master, &change.system, &change.change)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
 fn sdlc_build_heads(
-    folder: String,
-    master_repo: String,
-    system: String,
+    change: build_host::ChangeRef,
     repos: Vec<String>,
-    change: String,
 ) -> Result<std::collections::BTreeMap<String, String>, String> {
-    sdlc::branch::heads(Path::new(&folder), &master_repo, &system, &repos, &change)
-        .map_err(|e| e.to_string())
+    let (_, home) = resolved(&change)?;
+    sdlc::branch::heads(
+        &home.place.workspace,
+        &home.master,
+        &master_repo_of(&home),
+        &change.system,
+        &repos,
+        &change.change,
+    )
 }
 
 /// What the run table knows about a change: any of its runs (build, review or document) makes it live, and
@@ -1261,17 +1339,8 @@ fn ai_sdlc_readiness(workdir: Option<&str>) -> sdlc::plugin::Readiness {
 }
 
 /// The ai-sdlc plugin folder the format program is read from, or why the build cannot be read. It is
-/// found from the workspace folder (the master repository's parent), the same place `sdlc_plugin_readiness`
-/// is asked about, so a project-scoped plugin there is the one every command uses.
-fn ai_sdlc_dir(master: &str) -> Result<std::path::PathBuf, String> {
-    let folder = Path::new(master)
-        .parent()
-        .and_then(Path::to_str)
-        .unwrap_or(master);
-    ai_sdlc_dir_in(folder)
-}
-
-/// [`ai_sdlc_dir`] for a command that is given the workspace folder itself.
+/// found from the workspace folder, the same place `sdlc_plugin_readiness` is asked about, so a
+/// project-scoped plugin there is the one every command uses.
 fn ai_sdlc_dir_in(folder: &str) -> Result<std::path::PathBuf, String> {
     match ai_sdlc_readiness(Some(folder)) {
         sdlc::plugin::Readiness::Ready { plugin, .. } => Ok(plugin.dir),
@@ -1279,32 +1348,258 @@ fn ai_sdlc_dir_in(folder: &str) -> Result<std::path::PathBuf, String> {
     }
 }
 
+/// The one place a plugin that cannot be used becomes a resolution error: the readiness message, as the
+/// reason the change could not be placed.
+fn plugin_of(
+    readiness: &sdlc::plugin::Readiness,
+) -> Result<std::path::PathBuf, sdlc::home::HomeError> {
+    match readiness {
+        sdlc::plugin::Readiness::Ready { plugin, .. } => Ok(plugin.dir.clone()),
+        sdlc::plugin::Readiness::Blocked { message, .. } => {
+            Err(sdlc::home::HomeError::Unanswered(message.clone()))
+        }
+    }
+}
+
+/// The plugin folder for a command on one change, found from the change's workspace folder.
+fn plugin_for_change(workspace: &str) -> Result<std::path::PathBuf, sdlc::home::HomeError> {
+    plugin_of(&ai_sdlc_readiness(Some(workspace)))
+}
+
+/// `plugin_for_change` with the message a command returns.
+fn change_plugin_dir(workspace: &str) -> Result<std::path::PathBuf, String> {
+    plugin_for_change(workspace).map_err(|e| e.to_string())
+}
+
+/// Everything the change page needs to open a change, read from one resolution of where it lives.
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct OpenedChange {
+    pub view: sdlc_state::ChangeView,
+    pub text: Option<String>,
+    pub parsed: Option<ParsedRead>,
+    pub status: Option<sdlc::build::BuildStatus>,
+    pub review: Option<sdlc::review::ReviewRecord>,
+    /// What part of the open could not be read (the build status, the review record), in the backend's words.
+    /// The part is then `None` and the open still succeeds.
+    pub notices: Vec<OpenNotice>,
+}
+
+/// The part of an opened change a notice concerns.
+#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum NoticePart {
+    BuildStatus,
+    Review,
+}
+
+/// What could not be read when a change was opened, and which part it concerns.
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct OpenNotice {
+    pub part: NoticePart,
+    pub message: String,
+}
+
+/// The format program's read of a document, or its own message when it could not read it.
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum ParsedRead {
+    Read(sdlc::format::ReadResult),
+    Failed(ReadFailure),
+}
+
+/// A document the format program could not read; `kind` is always `error`.
+#[derive(serde::Serialize, Clone, Debug)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct ReadFailure {
+    pub kind: String,
+    pub message: String,
+}
+
+/// A document's text and the format program's read of it, from one resolution of where the change lives.
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct DocumentRead {
+    pub text: Option<String>,
+    pub parsed: Option<ParsedRead>,
+}
+
+fn read_document_in(
+    home: &sdlc::home::ChangeHome,
+    plugin: &Path,
+    system: &str,
+    doc: &str,
+) -> DocumentRead {
+    DocumentRead {
+        text: read_doc_in(home, doc),
+        parsed: parsed_of(home, plugin, system, doc),
+    }
+}
+
+/// The format program's read of a document as the page shows it: a program that cannot read it answers with its
+/// own message, never a failed call.
+fn parsed_of(
+    home: &sdlc::home::ChangeHome,
+    plugin: &Path,
+    system: &str,
+    doc: &str,
+) -> Option<ParsedRead> {
+    match read_parsed_in(home, plugin, system, doc) {
+        Ok(read) => read.map(ParsedRead::Read),
+        Err(e) => Some(ParsedRead::Failed(ReadFailure {
+            kind: "error".into(),
+            message: e.to_string(),
+        })),
+    }
+}
+
+/// The text of a document as the change's own master holds it, uncommitted edits included.
+fn read_doc_in(home: &sdlc::home::ChangeHome, doc: &str) -> Option<String> {
+    if !matches!(doc, "intent" | "spec" | "plan") {
+        return None;
+    }
+    std::fs::read_to_string(home.folder.join(format!("{doc}.md"))).ok()
+}
+
+/// The format program's read of a spec or plan in the change's own master.
+fn read_parsed_in(
+    home: &sdlc::home::ChangeHome,
+    plugin: &Path,
+    system: &str,
+    doc: &str,
+) -> Result<Option<sdlc::format::ReadResult>, sdlc::format::FormatError> {
+    sdlc::changes::read_parsed(plugin, &home.master, system, &home.state.change, doc)
+}
+
+/// The name of the workspace's master checkout, the folder the diff and branch reads call the master repository.
+fn master_repo_of(home: &sdlc::home::ChangeHome) -> String {
+    home.place
+        .master
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// The change page's first read: one resolution, the change's view, the document and the build and review.
+fn open_change_in(
+    home: &sdlc::home::ChangeHome,
+    plugin: &Path,
+    readiness: &sdlc::plugin::Readiness,
+    live: sdlc::offer::LiveFacts,
+    system: &str,
+    doc: &str,
+) -> Result<OpenedChange, String> {
+    let change = &home.state.change;
+    let parsed = parsed_of(home, plugin, system, doc);
+    let planned = home.state.documents.plan.exists;
+    // The change is placed, so a part that cannot be read (a plan written but not yet committed, say) is left
+    // out with its reason; it never fails the open.
+    let mut notices = Vec::new();
+    let status = if planned {
+        match sdlc::build::status(plugin, &home.master, system, change) {
+            Ok(status) => Some(status),
+            Err(e) => {
+                notices.push(OpenNotice {
+                    part: NoticePart::BuildStatus,
+                    message: e.to_string(),
+                });
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let review = if planned {
+        match sdlc::review::record(plugin, &home.master, system, change) {
+            Ok(review) => review,
+            Err(e) => {
+                notices.push(OpenNotice {
+                    part: NoticePart::Review,
+                    message: e.to_string(),
+                });
+                None
+            }
+        }
+    } else {
+        None
+    };
+    Ok(OpenedChange {
+        view: sdlc_state::view_of(home.state.clone(), readiness, live),
+        text: read_doc_in(home, doc),
+        parsed,
+        status,
+        review,
+        notices,
+    })
+}
+
+/// The plugin folder and where the change lives, resolved once for a command.
+fn resolved(
+    change: &build_host::ChangeRef,
+) -> Result<(std::path::PathBuf, sdlc::home::ChangeHome), String> {
+    let plugin = change_plugin_dir(&change.workspace)?;
+    let home = change_home(&sdlc::ai_sdlc::Program::locate(&plugin), change)?;
+    Ok((plugin, home))
+}
+
+/// Open a change: its view, the document asked for and the build and review, from one resolution.
 #[tauri::command(async)]
-fn sdlc_change_repos(
-    folder: String,
-    master_repo: String,
-    system: String,
-    change: String,
-) -> Result<Vec<sdlc::diff::ChangeRepo>, String> {
-    sdlc::diff::change_repos(Path::new(&folder), &master_repo, &system, &change)
+fn sdlc_open_change(
+    control: State<'_, RunControl>,
+    change: build_host::ChangeRef,
+    doc: String,
+) -> Result<OpenedChange, String> {
+    let readiness = ai_sdlc_readiness(Some(&change.workspace));
+    let plugin_dir = plugin_of(&readiness).map_err(|e| e.to_string())?;
+    let program = sdlc::ai_sdlc::Program::locate(&plugin_dir);
+    let home = change_home(&program, &change)?;
+    let live = live_facts(&control, &change.system, &change.change);
+    let mut opened = open_change_in(&home, &plugin_dir, &readiness, live, &change.system, &doc)?;
+    drop_declare_done_after_earlier_declaration(
+        &program,
+        &change.workspace,
+        &change.system,
+        &change.change,
+        &mut opened.view,
+    );
+    Ok(opened)
 }
 
 #[tauri::command(async)]
-fn sdlc_missing_change_branches(
-    folder: String,
-    master_repo: String,
-    system: String,
-    change: String,
-) -> Result<Vec<String>, String> {
-    let plugin = ai_sdlc_dir_in(&folder)?;
+fn sdlc_change_repos(change: build_host::ChangeRef) -> Result<Vec<sdlc::diff::ChangeRepo>, String> {
+    let (_, home) = resolved(&change)?;
+    sdlc::diff::change_repos(
+        &home.place.workspace,
+        &home.master,
+        &master_repo_of(&home),
+        &change.system,
+        &change.change,
+    )
+}
+
+#[tauri::command(async)]
+fn sdlc_missing_change_branches(change: build_host::ChangeRef) -> Result<Vec<String>, String> {
+    let (plugin, home) = resolved(&change)?;
     sdlc::branch::missing_change_branches(
         &plugin,
-        Path::new(&folder),
-        &master_repo,
-        &system,
-        &change,
+        &home.place.workspace,
+        &home.master,
+        &master_repo_of(&home),
+        &change.system,
+        &change.change,
     )
-    .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -1343,8 +1638,9 @@ fn sdlc_diff_base(repo_path: String) -> Result<sdlc::diff::BaseInfo, String> {
 fn sdlc_checks_view(
     change: build_host::ChangeRef,
 ) -> Result<Vec<sdlc::checks_view::RepoCheckView>, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
-    let (place, state) = change_standing(&program, &change)?;
+    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
+    let home = change_home(&program, &change)?;
+    let (place, state) = (home.place, home.state);
     let repos: Vec<String> = state
         .tasks
         .as_ref()
@@ -1360,12 +1656,12 @@ fn sdlc_checks_view(
 #[tauri::command(async)]
 fn sdlc_declare_done(app: AppHandle, change: build_host::ChangeRef) -> sdlc::done::DeclareView {
     let could_not_run = |message: String| sdlc::done::DeclareView::CouldNotRun { message };
-    let program = match ai_sdlc_dir_in(&change.workspace) {
+    let program = match change_plugin_dir(&change.workspace) {
         Ok(dir) => sdlc::ai_sdlc::Program::locate(&dir),
         Err(message) => return could_not_run(message),
     };
-    let (place, state) = match change_standing(&program, &change) {
-        Ok(found) => found,
+    let (place, state) = match change_home(&program, &change) {
+        Ok(home) => (home.place, home.state),
         Err(message) => return could_not_run(message),
     };
     // A change that lives in a copy is declared done from its copy.
@@ -1853,7 +2149,7 @@ pub fn run() {
             sdlc_missing_folders,
             sdlc_branches,
             sdlc_read_doc,
-            sdlc_read_parsed,
+            sdlc_read_document,
             sdlc_snapshot,
             sdlc_leftovers,
             sdlc_discard,
@@ -1878,6 +2174,7 @@ pub fn run() {
             sdlc_build_board,
             sdlc_review_standing,
             sdlc_change_state,
+            sdlc_open_change,
             sdlc_change_repos,
             sdlc_missing_change_branches,
             sdlc_diff_files,
@@ -1902,6 +2199,50 @@ pub fn run() {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// Held by every test that points HOME at another folder.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// F2: a per-change command whose plugin cannot be found says it could not find where the change
+    /// lives, with the readiness message, through the real readiness check.
+    #[test]
+    fn plugin_not_found_is_a_resolution_error_for_a_change_command_f2() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!("kata-f2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let workspace = root.join("ws");
+        let empty_home = root.join("home");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&empty_home).unwrap();
+        let saved: Vec<_> = ["HOME", "USERPROFILE"]
+            .iter()
+            .map(|k| (*k, std::env::var_os(k)))
+            .collect();
+        for (k, _) in &saved {
+            std::env::set_var(k, &empty_home);
+        }
+        let ws = workspace.to_str().unwrap();
+        let readiness = ai_sdlc_readiness(Some(ws));
+        let direct = change_plugin_dir(ws);
+        let through_resolved = resolved(&build_host::ChangeRef {
+            workspace: ws.into(),
+            system: "demo".into(),
+            change: "2026-11-02-greeting".into(),
+        });
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        let sdlc::plugin::Readiness::Blocked { message, .. } = readiness else {
+            panic!("no plugin in the workspace or the home should be blocked, got {readiness:?}");
+        };
+        let expected = format!("Could not find where this change lives: {message}");
+        assert_eq!(direct, Err(expected.clone()));
+        assert_eq!(through_resolved.map(|_| ()), Err(expected));
+    }
 
     #[test]
     fn open_copy_folder_opens_only_a_copy() {
@@ -2116,8 +2457,7 @@ mod tests {
     fn commands_resolve_the_same_plugin_as_readiness_f8() {
         // The catalog reads the user scope from HOME; point it at an empty folder so the machine's own
         // plugins cannot answer. Nothing else in this test binary reads HOME.
-        static HOME: Mutex<()> = Mutex::new(());
-        let _guard = HOME.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap();
         let root = std::env::temp_dir().join(format!("kata-f8-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let workspace = root.join("ws");
@@ -2150,7 +2490,7 @@ name: build
         }
 
         let readiness = ai_sdlc_readiness(Some(workspace.to_str().unwrap()));
-        let resolved = ai_sdlc_dir(master.to_str().unwrap());
+        let resolved = ai_sdlc_dir_in(workspace.to_str().unwrap());
 
         for (k, v) in saved {
             match v {
@@ -2163,6 +2503,421 @@ name: build
             panic!("the workspace's own plugin should be ready, got {readiness:?}");
         };
         assert_eq!(resolved, Ok(found.dir));
+    }
+
+    mod snapshot_target {
+        use super::*;
+        use sdlc::home::HomeError;
+        use std::path::PathBuf;
+
+        fn git(dir: &Path, args: &[&str]) {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+        }
+
+        fn repo(dir: &Path) {
+            std::fs::create_dir_all(dir).unwrap();
+            git(dir, &["init", "-q", "-b", "main"]);
+            git(dir, &["config", "user.name", "Test"]);
+            git(dir, &["config", "user.email", "test@example.com"]);
+            git(dir, &["config", "commit.gpgsign", "false"]);
+            std::fs::write(dir.join("README.md"), "init\n").unwrap();
+            git(dir, &["add", "-A"]);
+            git(dir, &["commit", "-q", "-m", "init"]);
+        }
+
+        fn change_ref(workspace: &Path) -> build_host::ChangeRef {
+            build_host::ChangeRef {
+                workspace: workspace.to_string_lossy().into_owned(),
+                system: "demo".into(),
+                change: "2026-11-02-greeting".into(),
+            }
+        }
+
+        #[test]
+        fn leftovers_for_the_workspace_target_are_unchanged() {
+            let dir = tempfile::tempdir().unwrap();
+            let master = dir.path().join("ai-sdlc");
+            repo(&master);
+            repo(&dir.path().join("app"));
+            repo(&dir.path().join("web"));
+            let placed = Placed::Workspace(master.clone());
+            let before = snapshot_in(&placed).unwrap();
+            assert_eq!(before.folder, master.to_string_lossy());
+            std::fs::write(master.join("run.md"), "x").unwrap();
+            std::fs::write(dir.path().join("app").join("dirty.txt"), "x").unwrap();
+            let l = leftovers_in(&placed, &before, None).unwrap();
+            assert_eq!(l.discardable, vec!["run.md"]);
+            assert_eq!(l.product_repos_changed, vec!["app"]);
+            assert!(l.product_repos_unchecked.is_empty());
+        }
+
+        #[test]
+        fn discard_for_the_workspace_target_acts_in_the_snapshots_folder() {
+            let dir = tempfile::tempdir().unwrap();
+            let master = dir.path().join("ai-sdlc");
+            repo(&master);
+            let placed = Placed::Workspace(master.clone());
+            let before = snapshot_in(&placed).unwrap();
+            std::fs::write(master.join("run.md"), "x").unwrap();
+            discard_in(&placed, &before, &["run.md".into()], None).unwrap();
+            assert!(!master.join("run.md").exists());
+        }
+
+        #[test]
+        fn discard_with_an_unplaceable_change_target_refuses() {
+            let dir = tempfile::tempdir().unwrap();
+            let master = dir.path().join("ai-sdlc");
+            repo(&master);
+            let before = snapshot_in(&Placed::Workspace(master.clone())).unwrap();
+            std::fs::write(master.join("run.md"), "x").unwrap();
+            // A plugin folder with no program: the plugin cannot say where the change lives.
+            let program = sdlc::ai_sdlc::Program::locate(&dir.path().join("no-plugin"));
+            let target = SnapshotTarget::Change(change_ref(dir.path()));
+            let placed = place_target_with(&program, &target);
+            assert!(matches!(
+                placed,
+                Placed::Change {
+                    home: Err(HomeError::Unanswered(_)),
+                    ..
+                }
+            ));
+            let err = discard_in(&placed, &before, &["run.md".into()], None).unwrap_err();
+            assert!(
+                err.starts_with("Nothing discarded: Could not find where this change lives"),
+                "{err}"
+            );
+            assert!(master.join("run.md").exists(), "nothing discarded");
+            let _: PathBuf = master;
+        }
+    }
+
+    mod open {
+        use super::*;
+        use sdlc::ai_sdlc::state::read_state;
+        use sdlc::home::ChangeHome;
+        use std::path::PathBuf;
+
+        const SYSTEM: &str = "demo";
+        const CHANGE: &str = "2026-11-02-greeting";
+        const SPEC: &str =
+            include_str!("../../../crates/kata-sdlc/tests/ai-sdlc-tools/examples/spec/2/valid.md");
+        const PLAN: &str =
+            include_str!("../../../crates/kata-sdlc/tests/ai-sdlc-tools/examples/plan/2/valid.md");
+        const REVIEW: &str = include_str!(
+            "../../../crates/kata-sdlc/tests/ai-sdlc-tools/examples/review/2/valid.md"
+        );
+
+        fn git(dir: &Path, args: &[&str]) {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+        }
+
+        fn repo(dir: &Path) {
+            std::fs::create_dir_all(dir).unwrap();
+            git(dir, &["init", "-q", "-b", "main"]);
+            git(dir, &["config", "user.name", "Test"]);
+            git(dir, &["config", "user.email", "test@example.com"]);
+            git(dir, &["config", "commit.gpgsign", "false"]);
+        }
+
+        fn write(master: &Path, file: &str, text: &str) {
+            let path = master.join("intent").join(SYSTEM).join(CHANGE).join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+
+        fn commit(master: &Path, message: &str) {
+            git(master, &["add", "-A"]);
+            git(master, &["commit", "-q", "-m", message]);
+        }
+
+        fn copy_dir(from: &Path, to: &Path) {
+            std::fs::create_dir_all(to).unwrap();
+            for entry in std::fs::read_dir(from).unwrap().flatten() {
+                let target = to.join(entry.file_name());
+                if entry.path().is_dir() {
+                    copy_dir(&entry.path(), &target);
+                } else {
+                    std::fs::copy(entry.path(), target).unwrap();
+                }
+            }
+        }
+
+        /// A stand-in plugin folder: the vendored format program under `tools/`.
+        fn plugin(root: &Path) -> PathBuf {
+            let dir = root.join("plugin");
+            copy_dir(
+                &Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../crates/kata-sdlc/tests/ai-sdlc-tools"),
+                &dir.join("tools"),
+            );
+            std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
+            std::fs::write(
+                dir.join(".claude-plugin/plugin.json"),
+                r#"{"name":"ai-sdlc","version":"1.1.0"}"#,
+            )
+            .unwrap();
+            dir
+        }
+
+        fn ready(plugin: &Path) -> sdlc::plugin::Readiness {
+            sdlc::plugin::Readiness::Ready {
+                plugin: sdlc::plugin::Plugin {
+                    dir: plugin.to_path_buf(),
+                    version: "1.1.0".into(),
+                    layouts: vec![],
+                },
+                gh: sdlc::plugin::GhPresence::Present,
+            }
+        }
+
+        /// The plugin's `state` entry for the change, with the documents that exist.
+        fn state_of(
+            master: &Path,
+            folder: &Path,
+            in_copy: bool,
+            plan: bool,
+        ) -> sdlc::ai_sdlc::state::ChangeState {
+            let doc = |exists: bool| {
+                format!(
+                    r#"{{"exists":{exists},"inHead":{exists},"headStatus":null,"workingStatus":null,"uncommitted":false,"pin":null}}"#
+                )
+            };
+            let json = format!(
+                r#"{{"system":"{SYSTEM}","problems":[],"changes":[{{"change":"{CHANGE}","master":{},"folder":{},"inCopy":{in_copy},"title":null,"track":"full",
+ "documents":{{"intent":{},"spec":{},"plan":{}}},
+ "scenarios":null,"tasks":null,"buildLogs":{{}},"review":{{"committed":0,"draft":"none"}},"fix":null,
+ "ready":{{"spec":{{"candidate":true,"stop":null,"accept":[]}},"plan":{{"candidate":false,"stop":"no spec","accept":[]}},"build":{{"candidate":false,"stop":"no plan","accept":[]}},"review":{{"candidate":false,"stop":"no build","accept":[]}},"done":{{"candidate":false,"stop":"no review","accept":[]}},"reject":{{"candidate":true,"stop":null,"accept":[]}}}}}}]}}"#,
+                serde_json::to_string(&master.to_string_lossy()).unwrap(),
+                serde_json::to_string(&folder.to_string_lossy()).unwrap(),
+                doc(true),
+                doc(true),
+                doc(plan),
+            );
+            read_state(serde_json::from_str(&json).unwrap())
+                .unwrap()
+                .changes
+                .remove(0)
+        }
+
+        struct Fx {
+            _dir: tempfile::TempDir,
+            checkout: PathBuf,
+            copy: PathBuf,
+            plugin: PathBuf,
+        }
+
+        /// A checkout holding an older version of the change's documents, and a copy whose documents are
+        /// committed, with a review, and whose `spec.md` has an uncommitted edit.
+        fn fx() -> Fx {
+            let dir = tempfile::tempdir().unwrap();
+            let checkout = dir.path().join("ai-sdlc");
+            let copy = dir.path().join(".ai-sdlc/copies").join(CHANGE);
+            repo(&checkout);
+            write(&checkout, "intent.md", "older intent from the checkout\n");
+            write(&checkout, "spec.md", "older spec from the checkout\n");
+            write(&checkout, "plan.md", "older plan from the checkout\n");
+            commit(&checkout, "older");
+            repo(&copy);
+            write(&copy, "intent.md", "the copy's intent\n");
+            write(&copy, "spec.md", SPEC);
+            write(&copy, "plan.md", PLAN);
+            write(&copy, "build/review.md", REVIEW);
+            commit(&copy, "documents");
+            write(
+                &copy,
+                "spec.md",
+                &format!("{SPEC}\nedited, not committed\n"),
+            );
+            let plugin = plugin(dir.path());
+            Fx {
+                _dir: dir,
+                checkout,
+                copy,
+                plugin,
+            }
+        }
+
+        fn home_of_copy(fx: &Fx, plan: bool) -> ChangeHome {
+            let folder = fx.copy.join("intent").join(SYSTEM).join(CHANGE);
+            ChangeHome {
+                place: sdlc::ai_sdlc::Place {
+                    master: fx.checkout.clone(),
+                    workspace: fx.checkout.parent().unwrap().to_path_buf(),
+                },
+                state: state_of(&fx.copy, &folder, true, plan),
+                master: fx.copy.clone(),
+                folder,
+                in_copy: true,
+            }
+        }
+
+        #[test]
+        fn read_doc_never_reads_the_checkout_for_a_copy_change() {
+            let fx = fx();
+            let home = home_of_copy(&fx, true);
+            assert_eq!(
+                read_doc_in(&home, "intent").as_deref(),
+                Some("the copy's intent\n")
+            );
+        }
+
+        #[test]
+        fn read_doc_returns_uncommitted_edits_in_the_copy() {
+            let fx = fx();
+            let home = home_of_copy(&fx, true);
+            let text = read_doc_in(&home, "spec").unwrap();
+            assert!(text.contains("edited, not committed"), "{text}");
+        }
+
+        #[test]
+        fn read_document_returns_the_text_and_the_parsed_read_from_one_home() {
+            let fx = fx();
+            let home = home_of_copy(&fx, true);
+            let read = read_document_in(&home, &fx.plugin, SYSTEM, "plan");
+            assert_eq!(read.text.as_deref(), Some(PLAN));
+            assert!(
+                matches!(
+                    read.parsed,
+                    Some(ParsedRead::Read(sdlc::format::ReadResult::Plan { .. }))
+                ),
+                "{:?}",
+                read.parsed
+            );
+            let intent = read_document_in(&home, &fx.plugin, SYSTEM, "intent");
+            assert_eq!(intent.text.as_deref(), Some("the copy's intent\n"));
+            assert!(intent.parsed.is_none(), "the intent has no parsed form");
+        }
+
+        /// A plugin folder whose format program fails with a message.
+        fn failing_plugin(root: &Path) -> PathBuf {
+            let dir = root.join("failing-plugin");
+            std::fs::create_dir_all(dir.join("tools")).unwrap();
+            std::fs::write(
+                dir.join("tools/ai-sdlc.ts"),
+                "console.error('boom'); process.exit(2);\n",
+            )
+            .unwrap();
+            dir
+        }
+
+        /// F4: a program that cannot read a document comes back as a parsed failure carrying its message, and the
+        /// document's text is still returned, never a missing document.
+        #[test]
+        fn read_document_returns_the_programs_message_when_it_cannot_read_a_document() {
+            let fx = fx();
+            let home = home_of_copy(&fx, true);
+            let failing = failing_plugin(fx.plugin.parent().unwrap());
+            let read = read_document_in(&home, &failing, SYSTEM, "spec");
+            assert!(
+                read.text.as_deref().is_some_and(|t| t.contains(SPEC)),
+                "{:?}",
+                read.text
+            );
+            match read.parsed {
+                Some(ParsedRead::Failed(f)) => assert!(f.message.contains("boom"), "{}", f.message),
+                other => panic!("expected a parsed failure, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn open_change_returns_the_programs_message_when_it_cannot_read_a_document() {
+            let fx = fx();
+            let home = home_of_copy(&fx, true);
+            let failing = failing_plugin(fx.plugin.parent().unwrap());
+            let opened = open_change_in(
+                &home,
+                &failing,
+                &ready(&failing),
+                sdlc::offer::LiveFacts::default(),
+                SYSTEM,
+                "spec",
+            )
+            .unwrap();
+            assert!(
+                opened.text.as_deref().is_some_and(|t| t.contains(SPEC)),
+                "{:?}",
+                opened.text
+            );
+            match opened.parsed {
+                Some(ParsedRead::Failed(f)) => assert!(f.message.contains("boom"), "{}", f.message),
+                other => panic!("expected a parsed failure, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn open_change_bundles_one_resolution() {
+            let fx = fx();
+            let home = home_of_copy(&fx, true);
+            let opened = open_change_in(
+                &home,
+                &fx.plugin,
+                &ready(&fx.plugin),
+                sdlc::offer::LiveFacts::default(),
+                SYSTEM,
+                "plan",
+            )
+            .unwrap();
+            assert_eq!(opened.view.state.change, CHANGE);
+            assert_eq!(opened.text.as_deref(), Some(PLAN));
+            assert!(
+                matches!(
+                    opened.parsed,
+                    Some(ParsedRead::Read(sdlc::format::ReadResult::Plan { .. }))
+                ),
+                "{:?}",
+                opened.parsed
+            );
+            assert!(
+                opened.status.is_some(),
+                "the build status is read from the copy"
+            );
+            let review = opened.review.expect("the review is read from the copy");
+            assert!(!review.reviews.is_empty());
+            assert!(opened.notices.is_empty(), "{:?}", opened.notices);
+        }
+
+        /// F1: a plan written but not committed (a plan run in progress) opens: the status is left out and the
+        /// notice says why; the document text is still there.
+        #[test]
+        fn open_change_with_an_uncommitted_plan_succeeds_with_a_notice_f1() {
+            let fx = fx();
+            let plan = format!("intent/{SYSTEM}/{CHANGE}/plan.md");
+            git(&fx.copy, &["rm", "-q", "--cached", &plan]);
+            git(&fx.copy, &["commit", "-q", "-m", "plan not committed"]);
+            assert!(fx.copy.join(&plan).is_file());
+            let home = home_of_copy(&fx, true);
+            let opened = open_change_in(
+                &home,
+                &fx.plugin,
+                &ready(&fx.plugin),
+                sdlc::offer::LiveFacts::default(),
+                SYSTEM,
+                "plan",
+            )
+            .expect("a failed status read never fails the open");
+            assert!(opened.status.is_none());
+            assert_eq!(opened.text.as_deref(), Some(PLAN));
+            assert!(
+                opened
+                    .notices
+                    .iter()
+                    .any(|n| n.part == NoticePart::BuildStatus && n.message.contains("HEAD")),
+                "{:?}",
+                opened.notices
+            );
+        }
     }
 
     #[test]

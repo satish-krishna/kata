@@ -136,7 +136,7 @@ describe('ChangePage', () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
       tab(container, 'Plan').click();
       await settle();
-      const status = await transport.sdlcBuildStatus('', 'commerce', MOCK_BUILD_CHANGE);
+      const status = await transport.sdlcBuildStatus({ workspace: '', system: 'commerce', change: MOCK_BUILD_CHANGE });
       const nav = container.querySelector('nav[aria-label="Tasks"]')!;
       expect(nav).not.toBeNull();
       expect(nav.querySelectorAll('button').length).toBe(status.tasks.length);
@@ -317,8 +317,8 @@ describe('ChangePage after the pull requests', () => {
 /** The build log of a finished change: every task has its row and every repository is done, as the page requires of a stage past the build. */
 function allBuilt(transport: MockTransport, edit: (status: BuildStatus) => BuildStatus = (status) => status) {
   const status = transport.sdlcBuildStatus.bind(transport);
-  vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => {
-    const got = await status(m, s, c);
+  vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (r) => {
+    const got = await status(r);
     return edit({
       ...got,
       repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })),
