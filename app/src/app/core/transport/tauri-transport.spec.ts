@@ -97,6 +97,7 @@ const rows: Row[] = [
   ['loadBuildLayout', (t) => t.loadBuildLayout(), 'load_build_layout', undefined],
   ['saveBuildLayout', (t) => t.saveBuildLayout(layout), 'save_build_layout', { layout }],
   ['sdlcReadDoc', (t) => t.sdlcReadDoc(change, 'intent'), 'sdlc_read_doc', { change, doc: 'intent' }],
+  ['sdlcReadDocument', (t) => t.sdlcReadDocument(change, 'plan'), 'sdlc_read_document', { change, doc: 'plan' }],
   ['sdlcOpenChange', (t) => t.sdlcOpenChange(change, 'spec'), 'sdlc_open_change', { change, doc: 'spec' }],
   ['sdlcSnapshot of a folder', (t) => t.sdlcSnapshot(folderTarget), 'sdlc_snapshot', { target: folderTarget }],
   ['sdlcSnapshot of a change', (t) => t.sdlcSnapshot(changeTarget), 'sdlc_snapshot', { target: changeTarget }],

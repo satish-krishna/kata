@@ -20,6 +20,7 @@ import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
+import type { DocumentRead } from '@bindings/DocumentRead';
 import type { OpenedChange } from '@bindings/OpenedChange';
 import type { ParsedRead } from '@bindings/ParsedRead';
 import type { Leftovers } from '@bindings/Leftovers';
@@ -113,6 +114,7 @@ export class TauriTransport extends KataTransport {
   sdlcMissingFolders(folders: string[]) { return this.ipc.invoke<string[]>('sdlc_missing_folders', { folders }); }
   sdlcBranches(master: string) { return this.ipc.invoke<BranchInfo>('sdlc_branches', { master }); }
   sdlcOpenChange(change: ChangeRef, doc: string) { return this.ipc.invoke<OpenedChange>('sdlc_open_change', { change, doc }); }
+  sdlcReadDocument(_change: ChangeRef, _doc: string) { return Promise.resolve<DocumentRead>({ text: null, parsed: null }); }
   sdlcReadDoc(change: ChangeRef, doc: string) { return this.ipc.invoke<string | null>('sdlc_read_doc', { change, doc }); }
   sdlcSnapshot(target: SnapshotTarget) { return this.ipc.invoke<Snapshot>('sdlc_snapshot', { target }); }
   sdlcLeftovers(target: SnapshotTarget, before: Snapshot, build?: BuildScope) { return this.ipc.invoke<Leftovers>('sdlc_leftovers', { target, before, build }); }

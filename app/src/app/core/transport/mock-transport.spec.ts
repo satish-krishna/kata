@@ -406,6 +406,17 @@ describe('MockTransport', () => {
       expect(opened.parsed?.kind).toBe('spec');
     });
 
+    it('reads a document and its parsed read together, as the copy holds them', async () => {
+      const t = new MockTransport();
+      const r = ref(MOCK_COPY_CHANGE);
+      const read = await t.sdlcReadDocument(r, 'spec');
+      expect(read.text).toContain('copy holds this spec');
+      expect(read.parsed?.kind).toBe('spec');
+      const intent = await t.sdlcReadDocument(r, 'intent');
+      expect(intent.text).toContain('The copy holds this intent.');
+      expect(intent.parsed).toBeNull();
+    });
+
     it('reads a change in the checkout from the checkout, with the master the checkout path', async () => {
       const t = new MockTransport();
       const r = ref('2026-10-12-product-photo-upload');

@@ -1774,6 +1774,22 @@ describe('ChangePageViewModel: where the change lives', () => {
     expect(read).toHaveBeenCalledWith(copyRef(MOCK_COPY_CHANGE), 'plan');
   });
 
+  it('a_tab_switch_reads_the_document_and_its_parsed_read_with_one_call', async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(MOCK_COPY_CHANGE, transport);
+    await ready(vm);
+    await vm.showDoc('intent');
+    const one = vi.spyOn(transport, 'sdlcReadDocument');
+    const doc = vi.spyOn(transport, 'sdlcReadDoc');
+    const parsed = vi.spyOn(transport, 'sdlcReadParsed');
+    await vm.showDoc('plan');
+    expect(vm.doc()).toContain('The copy holds this plan.');
+    expect(one).toHaveBeenCalledTimes(1);
+    expect(one).toHaveBeenCalledWith(copyRef(MOCK_COPY_CHANGE), 'plan');
+    expect(doc).not.toHaveBeenCalled();
+    expect(parsed).not.toHaveBeenCalled();
+  });
+
   it('full_pipeline_from_a_fix_reads_the_fix_intent_in_its_copy', async () => {
     const transport = new MockTransport();
     const read = vi.spyOn(transport, 'sdlcReadDoc');

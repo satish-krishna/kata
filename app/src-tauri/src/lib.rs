@@ -1409,6 +1409,28 @@ pub struct ReadFailure {
     pub message: String,
 }
 
+/// A document's text and the format program's read of it, from one resolution of where the change lives.
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct DocumentRead {
+    pub text: Option<String>,
+    pub parsed: Option<ParsedRead>,
+}
+
+fn read_document_in(
+    _home: &sdlc::home::ChangeHome,
+    _plugin: &Path,
+    _system: &str,
+    _doc: &str,
+) -> DocumentRead {
+    DocumentRead {
+        text: None,
+        parsed: None,
+    }
+}
+
 /// The text of a document as the change's own master holds it, uncommitted edits included.
 fn read_doc_in(home: &sdlc::home::ChangeHome, doc: &str) -> Option<String> {
     if !matches!(doc, "intent" | "spec" | "plan") {
@@ -2723,6 +2745,25 @@ name: build
             let home = home_of_copy(&fx, true);
             let text = read_doc_in(&home, "spec").unwrap();
             assert!(text.contains("edited, not committed"), "{text}");
+        }
+
+        #[test]
+        fn read_document_returns_the_text_and_the_parsed_read_from_one_home() {
+            let fx = fx();
+            let home = home_of_copy(&fx, true);
+            let read = read_document_in(&home, &fx.plugin, SYSTEM, "plan");
+            assert_eq!(read.text.as_deref(), Some(PLAN));
+            assert!(
+                matches!(
+                    read.parsed,
+                    Some(ParsedRead::Read(sdlc::format::ReadResult::Plan { .. }))
+                ),
+                "{:?}",
+                read.parsed
+            );
+            let intent = read_document_in(&home, &fx.plugin, SYSTEM, "intent");
+            assert_eq!(intent.text.as_deref(), Some("the copy's intent\n"));
+            assert!(intent.parsed.is_none(), "the intent has no parsed form");
         }
 
         #[test]

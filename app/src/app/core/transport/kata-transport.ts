@@ -18,6 +18,7 @@ import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
+import type { DocumentRead } from '@bindings/DocumentRead';
 import type { OpenedChange } from '@bindings/OpenedChange';
 import type { ParsedRead } from '@bindings/ParsedRead';
 import type { Leftovers } from '@bindings/Leftovers';
@@ -166,6 +167,8 @@ export abstract class KataTransport {
   abstract sdlcBranches(master: string): Promise<BranchInfo>;
   /** A change opened from one resolution of where it lives: its view, the document asked for, and the build and review when it has a plan. Rejects with the reason when the change cannot be placed. */
   abstract sdlcOpenChange(ref: ChangeRef, doc: string): Promise<OpenedChange>;
+  /** A change's document and, for the spec and plan, the format program's read of it, from one resolution of where the change lives. Rejects with the reason when the change cannot be placed. */
+  abstract sdlcReadDocument(ref: ChangeRef, doc: string): Promise<DocumentRead>;
   /** The text of a change's document (`intent`, `spec` or `plan`) wherever the change lives; null when the file is not there. */
   abstract sdlcReadDoc(ref: ChangeRef, doc: string): Promise<string | null>;
   /** A run's folder is taken from a folder the caller names, or from a change, wherever the plugin says the change lives. */

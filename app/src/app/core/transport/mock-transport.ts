@@ -18,6 +18,7 @@ import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
+import type { DocumentRead } from '@bindings/DocumentRead';
 import type { OpenedChange } from '@bindings/OpenedChange';
 import type { ParsedRead } from '@bindings/ParsedRead';
 import type { Leftovers } from '@bindings/Leftovers';
@@ -332,6 +333,7 @@ export class MockTransport extends KataTransport {
     const review = planned ? await this.sdlcReviewRecord(ref).catch(failed) : null;
     return { view, text, parsed, status, review, notices };
   }
+  sdlcReadDocument(_ref: ChangeRef, _doc: string): Promise<DocumentRead> { return Promise.resolve({ text: null, parsed: null }); }
   sdlcReadDoc(ref: ChangeRef, doc: string): Promise<string | null> {
     try {
       return Promise.resolve(this.sdlc.readDoc(ref.change, doc));
