@@ -126,7 +126,6 @@ const rows: Row[] = [
   ['sdlcBuildStatus', (t) => t.sdlcBuildStatus(change), 'sdlc_build_status', { change }],
   ['sdlcBuildBoard', (t) => t.sdlcBuildBoard(['a'], { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] }, ['a'], {}), 'sdlc_build_board', { repos: ['a'], status: { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] }, going: ['a'], stopped: {} }],
   ['sdlcReviewStanding', (t) => t.sdlcReviewStanding({ links: [], records: [], heads: { a: 'h' }, scope: { workspaceId: 'w', system: 's', change: 'c' }, document: null, master: 'm' }), 'sdlc_review_standing', { links: [], records: [], heads: { a: 'h' }, scope: { workspaceId: 'w', system: 's', change: 'c' }, document: null, master: 'm' }],
-  ['sdlcReadParsed', (t) => t.sdlcReadParsed(change, 'plan'), 'sdlc_read_parsed', { change, doc: 'plan' }],
   ['sdlcReviewRecord', (t) => t.sdlcReviewRecord(change), 'sdlc_review_record', { change }],
   ['sdlcBuildHeads', (t) => t.sdlcBuildHeads(change, ['r']), 'sdlc_build_heads', { change, repos: ['r'] }],
   ['sdlcPluginReadiness', (t) => t.sdlcPluginReadiness('/p'), 'sdlc_plugin_readiness', { workdir: '/p' }],
@@ -150,15 +149,6 @@ describe('TauriTransport', () => {
     const args = ipc.invoke.mock.calls[0] as unknown[];
     expect(args[0]).toBe(cmd);
     expect(args[1]).toEqual(payload);
-  });
-
-  it("returns the program's message when it cannot read a document, never null (F4)", async () => {
-    const ipc = fakeIpc();
-    ipc.invoke.mockRejectedValueOnce('front matter is not closed');
-    const t = new TauriTransport(asIpc(ipc));
-    expect(await t.sdlcReadParsed(change, 'spec')).toEqual({ kind: 'error', message: 'front matter is not closed' });
-    ipc.invoke.mockRejectedValueOnce(new Error('node is missing'));
-    expect(await t.sdlcReadParsed(change, 'spec')).toEqual({ kind: 'error', message: 'node is missing' });
   });
 
   it('opens the native dialogs with the run-spec filters', async () => {

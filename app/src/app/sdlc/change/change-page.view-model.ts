@@ -1130,8 +1130,7 @@ export class ChangePageViewModel {
     this.pendingDoc.set(stem);
     this.progress.begin('reading-change', progressLabels.readingDoc(stem), 'doc');
     try {
-      const text = await this.transport.sdlcReadDoc(ref, stem);
-      const read = await this.readParsed(ref, stem);
+      const { text, read } = await this.readDocument(ref, stem);
       // The tab and its text change together, once the text is here, so no tab ever shows another document's text.
       if (seq !== this.pickSeq) return;
       this.doc.set(text);
@@ -1410,16 +1409,13 @@ export class ChangePageViewModel {
   }
 
   /**
-   * The spec or plan as the format program reads it, for the list views. The intent has no parsed form. A program that
-   * cannot read the document leaves it as plain text with the program's message above it, never a failed page.
+   * A document and, for the spec and plan, the format program's read of it for the list views, from one call. The intent has no parsed
+   * form. A program that cannot read the document leaves it as plain text with the program's message above it, never a failed page;
+   * a change that cannot be placed rejects, with the backend's message.
    */
-  private async readParsed(ref: ChangeRef, stem: string): Promise<ReadResult | ReadError | null> {
-    if (stem !== 'spec' && stem !== 'plan') return null;
-    try {
-      return shownRead(await this.transport.sdlcReadParsed(ref, stem));
-    } catch (e) {
-      return { kind: 'error', message: message(e) };
-    }
+  private async readDocument(ref: ChangeRef, stem: string): Promise<{ text: string | null; read: ReadResult | ReadError | null }> {
+    const { text, parsed } = await this.transport.sdlcReadDocument(ref, stem);
+    return { text, read: stem === 'spec' || stem === 'plan' ? shownRead(parsed) : null };
   }
 
   /** Whether the plugin can be used; a failed check counts as a missing plugin, which only shows the documents as plain text. */
@@ -1474,8 +1470,8 @@ export class ChangePageViewModel {
       const opened = await this.transport.sdlcOpenChange(ref, stem);
       const want = stemFor(opened.view);
       if (want !== stem) {
-        const text = await this.transport.sdlcReadDoc(ref, want);
-        return { opened, text, read: await this.readParsed(ref, want) };
+        const { text, read } = await this.readDocument(ref, want);
+        return { opened, text, read };
       }
       return { opened, text: opened.text, read: stem === 'spec' || stem === 'plan' ? shownRead(opened.parsed) : null };
     } catch (e) {

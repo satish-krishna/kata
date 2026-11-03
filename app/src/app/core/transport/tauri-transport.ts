@@ -22,7 +22,6 @@ import type { Snapshot } from '@bindings/Snapshot';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
 import type { DocumentRead } from '@bindings/DocumentRead';
 import type { OpenedChange } from '@bindings/OpenedChange';
-import type { ParsedRead } from '@bindings/ParsedRead';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { ChangeStart } from '@bindings/ChangeStart';
 import type { AcceptOutcome } from '@bindings/AcceptOutcome';
@@ -33,7 +32,6 @@ import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
-import type { ReadResult } from '@bindings/ReadResult';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { Part } from '@bindings/Part';
@@ -114,7 +112,7 @@ export class TauriTransport extends KataTransport {
   sdlcMissingFolders(folders: string[]) { return this.ipc.invoke<string[]>('sdlc_missing_folders', { folders }); }
   sdlcBranches(master: string) { return this.ipc.invoke<BranchInfo>('sdlc_branches', { master }); }
   sdlcOpenChange(change: ChangeRef, doc: string) { return this.ipc.invoke<OpenedChange>('sdlc_open_change', { change, doc }); }
-  sdlcReadDocument(_change: ChangeRef, _doc: string) { return Promise.resolve<DocumentRead>({ text: null, parsed: null }); }
+  sdlcReadDocument(change: ChangeRef, doc: string) { return this.ipc.invoke<DocumentRead>('sdlc_read_document', { change, doc }); }
   sdlcReadDoc(change: ChangeRef, doc: string) { return this.ipc.invoke<string | null>('sdlc_read_doc', { change, doc }); }
   sdlcSnapshot(target: SnapshotTarget) { return this.ipc.invoke<Snapshot>('sdlc_snapshot', { target }); }
   sdlcLeftovers(target: SnapshotTarget, before: Snapshot, build?: BuildScope) { return this.ipc.invoke<Leftovers>('sdlc_leftovers', { target, before, build }); }
@@ -157,14 +155,6 @@ export class TauriTransport extends KataTransport {
   sdlcBuildStatus(change: ChangeRef) { return this.ipc.invoke<BuildStatus>('sdlc_build_status', { change }); }
   sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }) { return this.ipc.invoke<RepoBoard[]>('sdlc_build_board', { repos, status, going, stopped }); }
   sdlcReviewStanding(input: ReviewStandingInput) { return this.ipc.invoke<ReviewStanding>('sdlc_review_standing', { ...input }); }
-  async sdlcReadParsed(change: ChangeRef, doc: string): Promise<ParsedRead | null> {
-    try {
-      return await this.ipc.invoke<ReadResult | null>('sdlc_read_parsed', { change, doc });
-    } catch (e) {
-      // The backend rejects with the program's own message; it travels on as a result, never as a missing document.
-      return { kind: 'error', message: e instanceof Error ? e.message : String(e) };
-    }
-  }
   sdlcReviewRecord(change: ChangeRef) { return this.ipc.invoke<ReviewRecord | null>('sdlc_review_record', { change }); }
   sdlcBuildHeads(change: ChangeRef, repos: string[]) { return this.ipc.invoke<Record<string, string>>('sdlc_build_heads', { change, repos }); }
   sdlcPluginReadiness(workdir: string | null) { return this.ipc.invoke<Readiness>('sdlc_plugin_readiness', { workdir }); }

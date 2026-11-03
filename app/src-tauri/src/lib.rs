@@ -731,15 +731,12 @@ fn sdlc_read_doc(change: build_host::ChangeRef, doc: String) -> Result<Option<St
     Ok(read_doc_in(&home, &doc))
 }
 
-/// The spec or plan of a change read by the format program, for the Workbench's list views. An error
-/// (no plugin, no Node.js) is the caller's cue to show the document as plain text.
+/// A document's text and, for the spec and plan, the format program's read of it, from one resolution. A program
+/// that cannot read the document answers with its message inside `parsed`, so the text still shows as plain text.
 #[tauri::command(async)]
-fn sdlc_read_parsed(
-    change: build_host::ChangeRef,
-    doc: String,
-) -> Result<Option<sdlc::format::ReadResult>, String> {
+fn sdlc_read_document(change: build_host::ChangeRef, doc: String) -> Result<DocumentRead, String> {
     let (plugin, home) = resolved(&change)?;
-    read_parsed_in(&home, &plugin, &change.system, &doc).map_err(|e| e.to_string())
+    Ok(read_document_in(&home, &plugin, &change.system, &doc))
 }
 
 /// Where a run's folder is taken, listed and discarded: a folder the caller names (setup, context and
@@ -1420,14 +1417,31 @@ pub struct DocumentRead {
 }
 
 fn read_document_in(
-    _home: &sdlc::home::ChangeHome,
-    _plugin: &Path,
-    _system: &str,
-    _doc: &str,
+    home: &sdlc::home::ChangeHome,
+    plugin: &Path,
+    system: &str,
+    doc: &str,
 ) -> DocumentRead {
     DocumentRead {
-        text: None,
-        parsed: None,
+        text: read_doc_in(home, doc),
+        parsed: parsed_of(home, plugin, system, doc),
+    }
+}
+
+/// The format program's read of a document as the page shows it: a program that cannot read it answers with its
+/// own message, never a failed call.
+fn parsed_of(
+    home: &sdlc::home::ChangeHome,
+    plugin: &Path,
+    system: &str,
+    doc: &str,
+) -> Option<ParsedRead> {
+    match read_parsed_in(home, plugin, system, doc) {
+        Ok(read) => read.map(ParsedRead::Read),
+        Err(e) => Some(ParsedRead::Failed(ReadFailure {
+            kind: "error".into(),
+            message: e.to_string(),
+        })),
     }
 }
 
@@ -1468,13 +1482,7 @@ fn open_change_in(
     doc: &str,
 ) -> Result<OpenedChange, String> {
     let change = &home.state.change;
-    let parsed = match read_parsed_in(home, plugin, system, doc) {
-        Ok(read) => read.map(ParsedRead::Read),
-        Err(e) => Some(ParsedRead::Failed(ReadFailure {
-            kind: "error".into(),
-            message: e.to_string(),
-        })),
-    };
+    let parsed = parsed_of(home, plugin, system, doc);
     let planned = home.state.documents.plan.exists;
     // The change is placed, so a part that cannot be read (a plan written but not yet committed, say) is left
     // out with its reason; it never fails the open.
@@ -2115,7 +2123,7 @@ pub fn run() {
             sdlc_missing_folders,
             sdlc_branches,
             sdlc_read_doc,
-            sdlc_read_parsed,
+            sdlc_read_document,
             sdlc_snapshot,
             sdlc_leftovers,
             sdlc_discard,

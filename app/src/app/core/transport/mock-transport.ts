@@ -322,7 +322,7 @@ export class MockTransport extends KataTransport {
     const planned = view.state.documents.plan.exists;
     // Composed of the transport's own reads, so a test that changes what a read answers changes what the change opens with.
     const text = await this.sdlcReadDoc(ref, doc);
-    const parsed = doc === 'spec' || doc === 'plan' ? await this.sdlcReadParsed(ref, doc).catch((e): ParsedRead => ({ kind: 'error', message: e instanceof Error ? e.message : String(e) })) : null;
+    const parsed = await this.parsedOf(ref, doc);
     // As the backend does: a part that cannot be read is left out with its reason, and the open still succeeds.
     const notices: string[] = [];
     const failed = (e: unknown): null => {
@@ -333,7 +333,16 @@ export class MockTransport extends KataTransport {
     const review = planned ? await this.sdlcReviewRecord(ref).catch(failed) : null;
     return { view, text, parsed, status, review, notices };
   }
-  sdlcReadDocument(_ref: ChangeRef, _doc: string): Promise<DocumentRead> { return Promise.resolve({ text: null, parsed: null }); }
+  /** The text and the parsed read of one document, composed of the transport's own reads, so a test that changes what a read answers changes what this answers. A parsed read that fails is an error result, as the backend answers. */
+  async sdlcReadDocument(ref: ChangeRef, doc: string): Promise<DocumentRead> {
+    const text = await this.sdlcReadDoc(ref, doc);
+    const parsed = await this.parsedOf(ref, doc);
+    return { text, parsed };
+  }
+  private parsedOf(ref: ChangeRef, doc: string): Promise<ParsedRead | null> {
+    if (doc !== 'spec' && doc !== 'plan') return Promise.resolve(null);
+    return this.sdlcReadParsed(ref, doc).catch((e): ParsedRead => ({ kind: 'error', message: e instanceof Error ? e.message : String(e) }));
+  }
   sdlcReadDoc(ref: ChangeRef, doc: string): Promise<string | null> {
     try {
       return Promise.resolve(this.sdlc.readDoc(ref.change, doc));
@@ -381,6 +390,7 @@ export class MockTransport extends KataTransport {
   sdlcBuildStatus(ref: ChangeRef): Promise<BuildStatus> { return settled(() => this.sdlc.buildStatus(ref.change)); }
   sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }): Promise<RepoBoard[]> { return Promise.resolve(mockBoard(repos, status, going, stopped)); }
   sdlcReviewStanding(input: ReviewStandingInput): Promise<ReviewStanding> { return Promise.resolve(mockStanding(input)); }
+  /** The fixture's parsed read; only the transport's own reads call it. */
   sdlcReadParsed(ref: ChangeRef, doc: string): Promise<ParsedRead | null> { return settled(() => this.sdlc.readParsed(ref.change, doc)); }
   sdlcReviewRecord(ref: ChangeRef): Promise<ReviewRecord | null> { return settled(() => { this.sdlc.homeOf(ref.change); return this.sdlc.reviewRecord(); }); }
   sdlcBuildHeads(ref: ChangeRef, repos: string[]): Promise<Record<string, string>> { return settled(() => { this.sdlc.homeOf(ref.change); return this.sdlc.heads(repos); }); }

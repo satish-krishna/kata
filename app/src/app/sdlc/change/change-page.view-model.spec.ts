@@ -1779,7 +1779,9 @@ describe('ChangePageViewModel: where the change lives', () => {
     const { vm } = setup(MOCK_COPY_CHANGE, transport);
     await ready(vm);
     await vm.showDoc('intent');
-    const one = vi.spyOn(transport, 'sdlcReadDocument');
+    // The mock composes this read of the two below, so the call is answered whole to show the page asks for nothing else.
+    const whole = await transport.sdlcReadDocument(copyRef(MOCK_COPY_CHANGE), 'plan');
+    const one = vi.spyOn(transport, 'sdlcReadDocument').mockResolvedValue(whole);
     const doc = vi.spyOn(transport, 'sdlcReadDoc');
     const parsed = vi.spyOn(transport, 'sdlcReadParsed');
     await vm.showDoc('plan');

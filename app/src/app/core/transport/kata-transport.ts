@@ -20,7 +20,6 @@ import type { Snapshot } from '@bindings/Snapshot';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
 import type { DocumentRead } from '@bindings/DocumentRead';
 import type { OpenedChange } from '@bindings/OpenedChange';
-import type { ParsedRead } from '@bindings/ParsedRead';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { ChangeStart } from '@bindings/ChangeStart';
 import type { AcceptOutcome } from '@bindings/AcceptOutcome';
@@ -214,8 +213,6 @@ export abstract class KataTransport {
   abstract sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }): Promise<RepoBoard[]>;
   /** Whether the change's latest review covers its current work, decided from what the page read. */
   abstract sdlcReviewStanding(input: ReviewStandingInput): Promise<ReviewStanding>;
-  /** A change's spec or plan as the format program reads it; null when the file is not there, and an error result with the program's own message when it cannot read it. */
-  abstract sdlcReadParsed(ref: ChangeRef, doc: string): Promise<ParsedRead | null>;
   /** The change's review document as committed, or null when it has none. */
   abstract sdlcReviewRecord(ref: ChangeRef): Promise<ReviewRecord | null>;
   abstract sdlcBuildHeads(ref: ChangeRef, repos: string[]): Promise<Record<string, string>>;
