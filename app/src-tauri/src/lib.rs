@@ -2774,6 +2774,62 @@ name: build
             assert!(intent.parsed.is_none(), "the intent has no parsed form");
         }
 
+        /// A plugin folder whose format program fails with a message.
+        fn failing_plugin(root: &Path) -> PathBuf {
+            let dir = root.join("failing-plugin");
+            std::fs::create_dir_all(dir.join("tools")).unwrap();
+            std::fs::write(
+                dir.join("tools/ai-sdlc.ts"),
+                "console.error('boom'); process.exit(2);\n",
+            )
+            .unwrap();
+            dir
+        }
+
+        /// F4: a program that cannot read a document comes back as a parsed failure carrying its message, and the
+        /// document's text is still returned, never a missing document.
+        #[test]
+        fn read_document_returns_the_programs_message_when_it_cannot_read_a_document() {
+            let fx = fx();
+            let home = home_of_copy(&fx, true);
+            let failing = failing_plugin(fx.plugin.parent().unwrap());
+            let read = read_document_in(&home, &failing, SYSTEM, "spec");
+            assert!(
+                read.text.as_deref().is_some_and(|t| t.contains(SPEC)),
+                "{:?}",
+                read.text
+            );
+            match read.parsed {
+                Some(ParsedRead::Failed(f)) => assert!(f.message.contains("boom"), "{}", f.message),
+                other => panic!("expected a parsed failure, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn open_change_returns_the_programs_message_when_it_cannot_read_a_document() {
+            let fx = fx();
+            let home = home_of_copy(&fx, true);
+            let failing = failing_plugin(fx.plugin.parent().unwrap());
+            let opened = open_change_in(
+                &home,
+                &failing,
+                &ready(&failing),
+                sdlc::offer::LiveFacts::default(),
+                SYSTEM,
+                "spec",
+            )
+            .unwrap();
+            assert!(
+                opened.text.as_deref().is_some_and(|t| t.contains(SPEC)),
+                "{:?}",
+                opened.text
+            );
+            match opened.parsed {
+                Some(ParsedRead::Failed(f)) => assert!(f.message.contains("boom"), "{}", f.message),
+                other => panic!("expected a parsed failure, got {other:?}"),
+            }
+        }
+
         #[test]
         fn open_change_bundles_one_resolution() {
             let fx = fx();

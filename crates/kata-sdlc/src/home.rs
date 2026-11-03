@@ -239,6 +239,9 @@ status: accepted
         assert_eq!(home.folder, PathBuf::from(&state.folder));
         assert_eq!(home.in_copy, state.in_copy);
         assert!(home.folder.is_dir());
+        // R2.4: the plugin puts the change in its copy, so the copy is the folder read, not the checkout.
+        assert!(home.in_copy);
+        assert_eq!(norm(&home.master), norm(&fx.copy));
     }
 
     #[test]
