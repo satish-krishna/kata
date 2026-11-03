@@ -217,9 +217,15 @@ fn start_run(
                 Next::Silent => kata_core::fsutil::pid_alive(engine_pid),
                 _ => true,
             };
-            match relay_step(next, terminal_seen, alive) {
+            let step = relay_step(next, terminal_seen, alive);
+            match step {
                 Step::Wait => continue,
                 Step::End { result } => {
+                    if warns(next, &step) {
+                        let ev = outlived_warning(id, engine_pid);
+                        let seq = history.push(id, &ev);
+                        let _ = app.emit(RUN_EVENT, runs::wrap(id, seq, ev));
+                    }
                     if !result {
                         let message = match exit_code {
                             Some(code) => format!("engine exited ({code}) without a result"),
@@ -2257,14 +2263,20 @@ const RELAY_TICK: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// The `log` event recorded when a run is ended because its engine exited while its output
 /// stayed open.
-fn outlived_warning(_run: u64, _pid: u32) -> Value {
-    Value::Null
+fn outlived_warning(run: u64, pid: u32) -> Value {
+    json!({
+        "type": "log",
+        "level": "warn",
+        "message": format!(
+            "run {run}: the engine (pid {pid}) exited, but its output stayed open; the run was ended without waiting for it"
+        ),
+    })
 }
 
 /// Whether ending the run on this step records the outlived-output warning: only an end
 /// decided on a quiet poll (`Silent`), never one the stream itself reported.
-fn warns(_next: Next, _step: &Step) -> bool {
-    false
+fn warns(next: Next, step: &Step) -> bool {
+    next == Next::Silent && matches!(step, Step::End { .. })
 }
 
 #[cfg(test)]
