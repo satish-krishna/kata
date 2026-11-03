@@ -272,8 +272,10 @@ pub trait Launcher: Send + Sync {
     fn launch(&self, request: LaunchRequest) -> Result<u64, String>;
     /// Ask a live run to stop.
     fn cancel(&self, run_id: u64);
-    /// Announce a change's build state.
+    /// Announce a change's build state. Called under the host's lock, so it must not read the host.
     fn emit(&self, event: &BuildEvent);
+    /// Announce the running changes. Called with no host lock held, so it may read the host.
+    fn announce_running(&self);
 }
 
 /// [`Tools`] over one ai-sdlc program.
@@ -1394,7 +1396,7 @@ impl BuildHost {
         let mut update = Update::default();
         let mut generation = generation;
         loop {
-            let (commands, cancels, mut exec) = {
+            let (commands, cancels, mut exec, emitted) = {
                 let mut guard = self.inner.lock().unwrap();
                 let Inner {
                     builds,
@@ -1487,7 +1489,8 @@ impl BuildHost {
                     BuildPhase::Stopped | BuildPhase::Finished | BuildPhase::Cancelled
                 );
                 let announced = (state, build.review_waiting.clone(), live_runs(build));
-                if build.emitted.as_ref() != Some(&announced) {
+                let emitted = build.emitted.as_ref() != Some(&announced);
+                if emitted {
                     build.emitted = Some(announced.clone());
                     build.changed_ms = now_ms();
                     self.launcher.emit(&BuildEvent {
@@ -1508,8 +1511,12 @@ impl BuildHost {
                     last: build.last.clone(),
                     system_repos: build.ctx.system_repos.clone(),
                 };
-                (commands, cancels, exec)
+                (commands, cancels, exec, emitted)
             };
+            // The host's lock is released: announcing reads the host, so it cannot happen under it.
+            if emitted {
+                self.launcher.announce_running();
+            }
             if commands.is_empty() && cancels.is_empty() {
                 return;
             }
@@ -2069,6 +2076,8 @@ mod tests {
         }
         fn emit(&self, event: &BuildEvent) {
             self.events.lock().unwrap().push(event.clone());
+        }
+        fn announce_running(&self) {
             let host = self.host.lock().unwrap().upgrade();
             if let Some(host) = host {
                 host.views();

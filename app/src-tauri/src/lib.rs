@@ -494,6 +494,9 @@ impl build_host::Launcher for AppLauncher {
 
     fn emit(&self, event: &build_host::BuildEvent) {
         let _ = self.app.emit(build_host::BUILD_EVENT, event);
+    }
+
+    fn announce_running(&self) {
         announce_running(&self.app);
     }
 }
