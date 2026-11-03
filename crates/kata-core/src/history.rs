@@ -446,4 +446,27 @@ mod tests {
         assert!(!runs.join(format!("{missing}.jsonl")).exists());
         drop(home);
     }
+
+    #[test]
+    #[serial]
+    fn an_event_appended_after_a_cut_off_line_is_kept() {
+        let cut_off = format!("{COMPLETED}{}", r#"{"type":"log","level":"info","mess"#);
+        let home = seed(&[("triage-20260618T100000Z.jsonl", cut_off.as_str())]);
+        let id = "triage-20260618T100000Z";
+        let warning = serde_json::json!({
+            "type": "log",
+            "level": "warn",
+            "message": "run 7: the engine (pid 1) exited, but its output stayed open"
+        });
+        append_event(id, &warning).unwrap();
+        let detail = load_run(id).unwrap();
+        match detail.events.last() {
+            Some(KataEvent::Log { level, message }) => {
+                assert_eq!(level, "warn");
+                assert!(message.contains("output stayed open"));
+            }
+            other => panic!("last event should be the warning, got {other:?}"),
+        }
+        drop(home);
+    }
 }
