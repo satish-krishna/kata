@@ -73,8 +73,9 @@ pub fn list_runs() -> Vec<RunRecord> {
     out
 }
 
-/// One run's record plus its full event stream (for the detail view).
-pub fn load_run(id: &str) -> Result<RunDetail, HistoryError> {
+/// The path of an existing transcript, `<runs_dir>/<id>.jsonl`, after the guards every access shares:
+/// a valid id, a file directly under the runs folder, and not a symlink.
+fn transcript_path(id: &str) -> Result<std::path::PathBuf, HistoryError> {
     if !is_valid_id(id) {
         return Err(HistoryError::InvalidId);
     }
@@ -86,11 +87,17 @@ pub fn load_run(id: &str) -> Result<RunDetail, HistoryError> {
     }
     // Reject symlinks: the file's contents are returned to the webview, so a
     // symlink at <id>.jsonl could exfiltrate an arbitrary file. symlink_metadata
-    // does not follow the link; a missing file errors here → NotFound.
+    // does not follow the link; a missing file errors here -> NotFound.
     let meta = std::fs::symlink_metadata(&path).map_err(|_| HistoryError::NotFound)?;
     if meta.file_type().is_symlink() {
         return Err(HistoryError::InvalidId);
     }
+    Ok(path)
+}
+
+/// One run's record plus its full event stream (for the detail view).
+pub fn load_run(id: &str) -> Result<RunDetail, HistoryError> {
+    let path = transcript_path(id)?;
     let events = read_events(&path).map_err(|e| HistoryError::Io(e.to_string()))?;
     let record = build_record(id, &events).ok_or(HistoryError::NotFound)?;
     Ok(RunDetail { record, events })
@@ -100,8 +107,16 @@ pub fn load_run(id: &str) -> Result<RunDetail, HistoryError> {
 ///
 /// Takes the event as a JSON value because the Workbench relay holds its events that way.
 /// The same guards as `load_run` apply, and the file must already exist: this never creates a transcript.
-pub fn append_event(_id: &str, _event: &serde_json::Value) -> Result<(), HistoryError> {
-    Ok(())
+pub fn append_event(id: &str, event: &serde_json::Value) -> Result<(), HistoryError> {
+    use std::io::Write;
+    let path = transcript_path(id)?;
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .map_err(|e| HistoryError::Io(e.to_string()))?;
+    let line = format!("{event}\n");
+    file.write_all(line.as_bytes())
+        .map_err(|e| HistoryError::Io(e.to_string()))
 }
 
 fn is_valid_id(id: &str) -> bool {

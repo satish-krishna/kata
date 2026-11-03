@@ -224,6 +224,13 @@ fn start_run(
                     if warns(next, &step) {
                         let ev = outlived_warning(id, engine_pid);
                         let seq = history.push(id, &ev);
+                        // The in-memory history is gone after a restart, so the transcript keeps the evidence.
+                        // Best-effort: a failure here never stops the run from ending.
+                        let seen: Vec<Value> =
+                            history.replay(id).into_iter().map(|e| e.event).collect();
+                        if let Some(run_id) = build_host::transcript_run_id(&seen) {
+                            let _ = kata_core::history::append_event(&run_id, &ev);
+                        }
                         let _ = app.emit(RUN_EVENT, runs::wrap(id, seq, ev));
                     }
                     if !result {
