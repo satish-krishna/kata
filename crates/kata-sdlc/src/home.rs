@@ -149,8 +149,12 @@ status: accepted
         }
     }
 
+    /// One spelling of a path for comparison: canonical when it exists, which also expands a Windows
+    /// 8.3 short name (`RUNNER~1`, as CI's temp folder is) to the long form the plugin reports.
     fn norm(p: &Path) -> String {
-        p.to_string_lossy()
+        std::fs::canonicalize(p)
+            .unwrap_or_else(|_| p.to_path_buf())
+            .to_string_lossy()
             .replace('\\', "/")
             .trim_start_matches("//?/")
             .to_lowercase()
