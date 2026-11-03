@@ -214,7 +214,7 @@ fn start_run(
                 Err(_) => (Next::Silent, None),
             };
             let alive = match next {
-                Next::Silent => kata_core::fsutil::pid_alive(engine_pid),
+                Next::Silent => kata_core::pid_alive(engine_pid),
                 _ => true,
             };
             let step = relay_step(next, terminal_seen, alive);

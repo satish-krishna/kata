@@ -220,9 +220,6 @@ fn sweep_run_dirs(base: &Path, current: u32, alive: impl Fn(u32) -> bool) {
     }
 }
 
-/// Whether a process with this pid exists. When the check cannot be made, the
-/// process is assumed alive: a leftover folder is better than a live run's
-/// files deleted.
 /// Whether a process with this pid exists, asked of Windows directly (no `tasklist`).
 #[cfg(windows)]
 fn pid_alive_native(pid: u32) -> bool {
@@ -245,11 +242,15 @@ fn pid_alive_native(pid: u32) -> bool {
     }
 }
 
+/// Whether the process with this pid is still running. Answers `true` whenever
+/// it cannot tell, so an unknown never ends a run early.
 #[cfg(windows)]
 pub fn pid_alive(pid: u32) -> bool {
     pid_alive_native(pid)
 }
 
+/// Whether the process with this pid is still running. Answers `true` whenever
+/// it cannot tell, so an unknown never ends a run early.
 #[cfg(not(windows))]
 pub fn pid_alive(pid: u32) -> bool {
     use std::process::Stdio;
