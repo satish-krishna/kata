@@ -178,6 +178,7 @@ fn start_run(
         }
     };
 
+    let engine_pid = child.pid();
     let change_key = match &lane {
         runs::Lane::Change { key, .. } => Some(key.clone()),
         _ => None,
@@ -200,7 +201,44 @@ fn start_run(
     tauri::async_runtime::spawn(async move {
         let mut terminal_seen = false;
         let mut end: Option<build_host::RunEnd> = None;
-        while let Some(event) = rx.recv().await {
+        let mut exit_code: Option<i32> = None;
+        loop {
+            let received = tokio::time::timeout(RELAY_TICK, rx.recv()).await;
+            let (next, event) = match received {
+                Ok(Some(CommandEvent::Terminated(payload))) => {
+                    exit_code = Some(payload.code.unwrap_or(-1));
+                    (Next::Ended, None)
+                }
+                Ok(Some(event)) => (Next::Event, Some(event)),
+                Ok(None) => (Next::Ended, None),
+                Err(_) => (Next::Silent, None),
+            };
+            let alive = match next {
+                Next::Silent => kata_core::fsutil::pid_alive(engine_pid),
+                _ => true,
+            };
+            match relay_step(next, terminal_seen, alive) {
+                Step::Wait => continue,
+                Step::End { result } => {
+                    if !result {
+                        let message = match exit_code {
+                            Some(code) => format!("engine exited ({code}) without a result"),
+                            None => "the engine exited without a result".to_string(),
+                        };
+                        end = Some(build_host::RunEnd {
+                            exit: exit_code,
+                            error: Some(message.clone()),
+                            history_id: None,
+                        });
+                        let ev = json!({ "type": "run.error", "message": message });
+                        let seq = history.push(id, &ev);
+                        let _ = app.emit(RUN_EVENT, runs::wrap(id, seq, ev));
+                    }
+                    break;
+                }
+                Step::Relay => {}
+            }
+            let Some(event) = event else { continue };
             match event {
                 CommandEvent::Stdout(bytes) => match serde_json::from_slice::<Value>(&bytes) {
                     Ok(v) => {
@@ -241,23 +279,6 @@ fn start_run(
                     Err(_) => relay_log(&app, &history, id, &bytes),
                 },
                 CommandEvent::Stderr(bytes) => relay_log(&app, &history, id, &bytes),
-                CommandEvent::Terminated(payload) => {
-                    if !terminal_seen {
-                        let code = payload.code.unwrap_or(-1);
-                        end = Some(build_host::RunEnd {
-                            exit: Some(code),
-                            error: Some(format!("engine exited ({code}) without a result")),
-                            history_id: None,
-                        });
-                        let ev = json!({
-                            "type": "run.error",
-                            "message": format!("engine exited ({code}) without a result"),
-                        });
-                        let seq = history.push(id, &ev);
-                        let _ = app.emit(RUN_EVENT, runs::wrap(id, seq, ev));
-                    }
-                    break;
-                }
                 CommandEvent::Error(err) => {
                     terminal_seen = true;
                     end = Some(build_host::RunEnd {
@@ -2218,9 +2239,21 @@ enum Step {
 
 /// The relay loop's decision, by what it saw, whether the run reported a result and whether
 /// its engine process still exists.
-fn relay_step(_next: Next, _result_seen: bool, _engine_alive: bool) -> Step {
-    Step::Wait
+fn relay_step(next: Next, result_seen: bool, engine_alive: bool) -> Step {
+    match next {
+        Next::Event => Step::Relay,
+        Next::Ended => Step::End {
+            result: result_seen,
+        },
+        Next::Silent if engine_alive => Step::Wait,
+        Next::Silent => Step::End {
+            result: result_seen,
+        },
+    }
 }
+
+/// How often the relay loop checks that the engine still exists while its output is quiet.
+const RELAY_TICK: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[cfg(test)]
 mod tests {

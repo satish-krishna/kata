@@ -246,12 +246,12 @@ fn pid_alive_native(pid: u32) -> bool {
 }
 
 #[cfg(windows)]
-fn pid_alive(pid: u32) -> bool {
+pub fn pid_alive(pid: u32) -> bool {
     pid_alive_native(pid)
 }
 
 #[cfg(not(windows))]
-fn pid_alive(pid: u32) -> bool {
+pub fn pid_alive(pid: u32) -> bool {
     use std::process::Stdio;
     let Ok(mut kill) = crate::proc::hidden_command("kill") else {
         return true;

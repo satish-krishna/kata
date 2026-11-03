@@ -121,4 +121,4 @@ pub mod permission;
 pub(crate) mod assemble;
 pub(crate) mod builtin;
 pub(crate) mod command;
-pub(crate) mod fsutil;
+pub mod fsutil;
