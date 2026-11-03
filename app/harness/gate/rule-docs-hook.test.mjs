@@ -219,6 +219,9 @@ describe('a hook actually writes the docs pointer to stderr, not just computes i
     // directory that only exists to satisfy the hook's own src/-path guard -
     // never under the project's actual src/ - and is removed in `finally`
     // regardless of test outcome.
+    // The spawned hook cold-loads ESLint and the Angular template parser in a
+    // fresh node process, which can take longer than vitest's 5000 ms default
+    // on a slow machine, so this one test gets a longer limit.
     const probeDir = join(repoRoot, 'harness', 'gate', '.tmp-hook-probe', 'src');
     const probeRelPath = 'harness/gate/.tmp-hook-probe/src/dirty.html';
     mkdirSync(probeDir, { recursive: true });
@@ -238,5 +241,5 @@ describe('a hook actually writes the docs pointer to stderr, not just computes i
     } finally {
       rmSync(join(repoRoot, 'harness', 'gate', '.tmp-hook-probe'), { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });
