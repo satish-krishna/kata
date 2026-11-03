@@ -354,7 +354,13 @@ export class ChangePageViewModel {
   /** The review document as the format program reads it; null when the change has none or it could not be read. */
   private readonly reviewRecord = signal<ReviewRecord | null>(null);
   /** The notice above the open spec or plan; null when it needs none. */
-  readonly docNotice = computed<DocNotice | null>(() => this.resolutionNotice() ?? this.unsettledNotice() ?? this.shown()?.notice ?? this.refusalNotice());
+  readonly docNotice = computed<DocNotice | null>(() => this.resolutionNotice() ?? this.openNotice() ?? this.unsettledNotice() ?? this.shown()?.notice ?? this.refusalNotice());
+  /** What the backend sent for the parts of the change it could not read when it opened it (the build status, the review), as it sent it. */
+  private readonly openNotices = signal<string[]>([]);
+  private readonly openNotice = computed<DocNotice | null>(() => {
+    const [text, ...lines] = this.openNotices();
+    return text === undefined ? null : { tone: 'warning', text, lines };
+  });
   /** The backend's message when it could not place the change or read the shown document, as it sent it. */
   private readonly resolutionNotice = computed<DocNotice | null>(() => {
     const text = this.resolutionError();
@@ -390,7 +396,7 @@ export class ChangePageViewModel {
     const status = this.status();
     const review = this.reviewRecord();
     // Every log, the plan's and logs' problems and the review are judged together: no one's label hides another's problems.
-    return shownBuild(
+    return this.openNotice() ?? shownBuild(
       [
         ...(status?.logLayouts ?? []).map((l) => ({ layout: l.layout, problems: [] })),
         { layout: null, problems: status?.problems ?? [] },
@@ -1576,6 +1582,7 @@ export class ChangePageViewModel {
       this.doc.set(doc);
       this.read.set(read);
       this.resolutionError.set(null);
+      if (change === null) this.openNotices.set([]);
       this.state.set(state);
     };
     let workspaces: WorkspaceEntry[];
@@ -1632,6 +1639,7 @@ export class ChangePageViewModel {
       if (seq !== this.loadSeq) return;
       this.applyPullRequests(pulls.view, pulls.failed);
       this.status.set(status);
+      this.openNotices.set(opening.opened.notices);
       this.readiness.set(readiness);
       this.reviewRecord.set(review);
       this.scan.set(scan);

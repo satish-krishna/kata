@@ -322,9 +322,15 @@ export class MockTransport extends KataTransport {
     // Composed of the transport's own reads, so a test that changes what a read answers changes what the change opens with.
     const text = await this.sdlcReadDoc(ref, doc);
     const parsed = doc === 'spec' || doc === 'plan' ? await this.sdlcReadParsed(ref, doc).catch((e): ParsedRead => ({ kind: 'error', message: e instanceof Error ? e.message : String(e) })) : null;
-    const status = planned ? await this.sdlcBuildStatus(ref) : null;
-    const review = planned ? await this.sdlcReviewRecord(ref).catch(() => null) : null;
-    return { view, text, parsed, status, review, notices: [] };
+    // As the backend does: a part that cannot be read is left out with its reason, and the open still succeeds.
+    const notices: string[] = [];
+    const failed = (e: unknown): null => {
+      notices.push(e instanceof Error ? e.message : String(e));
+      return null;
+    };
+    const status = planned ? await this.sdlcBuildStatus(ref).catch(failed) : null;
+    const review = planned ? await this.sdlcReviewRecord(ref).catch(failed) : null;
+    return { view, text, parsed, status, review, notices };
   }
   sdlcReadDoc(ref: ChangeRef, doc: string): Promise<string | null> {
     try {

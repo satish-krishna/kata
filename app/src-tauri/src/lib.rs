@@ -794,12 +794,12 @@ fn place_target_with(program: &sdlc::ai_sdlc::Program, target: &SnapshotTarget) 
 fn place_target(target: &SnapshotTarget) -> Placed {
     match target {
         SnapshotTarget::Workspace { master } => Placed::Workspace(master.into()),
-        SnapshotTarget::Change(change) => match ai_sdlc_dir_in(&change.workspace) {
+        SnapshotTarget::Change(change) => match plugin_for_change(&change.workspace) {
             Ok(dir) => place_target_with(&sdlc::ai_sdlc::Program::locate(&dir), target),
-            Err(message) => Placed::Change {
+            Err(e) => Placed::Change {
                 workspace: (&change.workspace).into(),
                 system: change.system.clone(),
-                home: Err(sdlc::home::HomeError::Unanswered(message)),
+                home: Err(e),
             },
         },
     }
@@ -1030,7 +1030,7 @@ fn sdlc_accept(
     change: build_host::ChangeRef,
     doc: sdlc::accept::ChangeDocument,
 ) -> Result<sdlc::accept::AcceptOutcome, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
     let home = change_home(&program, &change)?;
     Ok(sdlc::accept::apply(
         &program,
@@ -1048,7 +1048,7 @@ fn sdlc_reject(
     control: State<'_, RunControl>,
     change: build_host::ChangeRef,
 ) -> Result<sdlc::accept::RejectOutcome, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
     let key = build_host::key_of(&change);
     control.state.lock().unwrap().begin_rejecting(&key)?;
     let outcome = change_home(&program, &change)
@@ -1063,7 +1063,7 @@ fn sdlc_reject(
 fn sdlc_copy_removal(
     change: build_host::ChangeRef,
 ) -> Result<sdlc::copy_removal::CopyRemoval, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
     let home = change_home(&program, &change)?;
     sdlc::copy_removal::offer(&program, &home.place, &home.state)
 }
@@ -1071,7 +1071,7 @@ fn sdlc_copy_removal(
 /// The branch the change's copy holds, as the plugin records it.
 #[tauri::command(async)]
 fn sdlc_copy_branch(change: build_host::ChangeRef) -> Result<String, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
     let place = program
         .resolve(Path::new(&change.workspace))
         .map_err(|e| e.to_string())?;
@@ -1085,7 +1085,7 @@ fn sdlc_remove_copy(
     control: State<'_, RunControl>,
     change: build_host::ChangeRef,
 ) -> Result<sdlc::copy_removal::RemoveOutcome, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
     let key = build_host::key_of(&change);
     control.state.lock().unwrap().begin_rejecting(&key)?;
     let outcome = change_home(&program, &change)
@@ -1099,7 +1099,7 @@ fn sdlc_remove_copy(
 #[tauri::command(async)]
 fn sdlc_open_copy_folder(app: AppHandle, change: build_host::ChangeRef) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
     let home = change_home(&program, &change)?;
     open_copy_with(home.in_copy, &home.state.master, |path| {
         app.opener()
@@ -1351,9 +1351,27 @@ fn ai_sdlc_dir_in(folder: &str) -> Result<std::path::PathBuf, String> {
     }
 }
 
-/// The plugin folder for a per-change command.
+/// The one place a plugin that cannot be used becomes a resolution error: the readiness message, as the
+/// reason the change could not be placed.
+fn plugin_of(
+    readiness: &sdlc::plugin::Readiness,
+) -> Result<std::path::PathBuf, sdlc::home::HomeError> {
+    match readiness {
+        sdlc::plugin::Readiness::Ready { plugin, .. } => Ok(plugin.dir.clone()),
+        sdlc::plugin::Readiness::Blocked { message, .. } => {
+            Err(sdlc::home::HomeError::Unanswered(message.clone()))
+        }
+    }
+}
+
+/// The plugin folder for a command on one change, found from the change's workspace folder.
+fn plugin_for_change(workspace: &str) -> Result<std::path::PathBuf, sdlc::home::HomeError> {
+    plugin_of(&ai_sdlc_readiness(Some(workspace)))
+}
+
+/// `plugin_for_change` with the message a command returns.
 fn change_plugin_dir(workspace: &str) -> Result<std::path::PathBuf, String> {
-    ai_sdlc_dir_in(workspace)
+    plugin_for_change(workspace).map_err(|e| e.to_string())
 }
 
 /// Everything the change page needs to open a change, read from one resolution of where it lives.
@@ -1436,13 +1454,28 @@ fn open_change_in(
         })),
     };
     let planned = home.state.documents.plan.exists;
+    // The change is placed, so a part that cannot be read (a plan written but not yet committed, say) is left
+    // out with its reason; it never fails the open.
+    let mut notices = Vec::new();
     let status = if planned {
-        Some(sdlc::build::status(plugin, &home.master, system, change).map_err(|e| e.to_string())?)
+        match sdlc::build::status(plugin, &home.master, system, change) {
+            Ok(status) => Some(status),
+            Err(e) => {
+                notices.push(e.to_string());
+                None
+            }
+        }
     } else {
         None
     };
     let review = if planned {
-        sdlc::review::record(plugin, &home.master, system, change).map_err(|e| e.to_string())?
+        match sdlc::review::record(plugin, &home.master, system, change) {
+            Ok(review) => review,
+            Err(e) => {
+                notices.push(e.to_string());
+                None
+            }
+        }
     } else {
         None
     };
@@ -1452,7 +1485,7 @@ fn open_change_in(
         parsed,
         status,
         review,
-        notices: Vec::new(),
+        notices,
     })
 }
 
@@ -1460,7 +1493,7 @@ fn open_change_in(
 fn resolved(
     change: &build_host::ChangeRef,
 ) -> Result<(std::path::PathBuf, sdlc::home::ChangeHome), String> {
-    let plugin = ai_sdlc_dir_in(&change.workspace)?;
+    let plugin = change_plugin_dir(&change.workspace)?;
     let home = change_home(&sdlc::ai_sdlc::Program::locate(&plugin), change)?;
     Ok((plugin, home))
 }
@@ -1473,10 +1506,7 @@ fn sdlc_open_change(
     doc: String,
 ) -> Result<OpenedChange, String> {
     let readiness = ai_sdlc_readiness(Some(&change.workspace));
-    let plugin_dir = match &readiness {
-        sdlc::plugin::Readiness::Ready { plugin, .. } => plugin.dir.clone(),
-        sdlc::plugin::Readiness::Blocked { message, .. } => return Err(message.clone()),
-    };
+    let plugin_dir = plugin_of(&readiness).map_err(|e| e.to_string())?;
     let program = sdlc::ai_sdlc::Program::locate(&plugin_dir);
     let home = change_home(&program, &change)?;
     let live = live_facts(&control, &change.system, &change.change);
@@ -1552,7 +1582,7 @@ fn sdlc_diff_base(repo_path: String) -> Result<sdlc::diff::BaseInfo, String> {
 fn sdlc_checks_view(
     change: build_host::ChangeRef,
 ) -> Result<Vec<sdlc::checks_view::RepoCheckView>, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&change.workspace)?);
+    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
     let home = change_home(&program, &change)?;
     let (place, state) = (home.place, home.state);
     let repos: Vec<String> = state
@@ -1570,7 +1600,7 @@ fn sdlc_checks_view(
 #[tauri::command(async)]
 fn sdlc_declare_done(app: AppHandle, change: build_host::ChangeRef) -> sdlc::done::DeclareView {
     let could_not_run = |message: String| sdlc::done::DeclareView::CouldNotRun { message };
-    let program = match ai_sdlc_dir_in(&change.workspace) {
+    let program = match change_plugin_dir(&change.workspace) {
         Ok(dir) => sdlc::ai_sdlc::Program::locate(&dir),
         Err(message) => return could_not_run(message),
     };
