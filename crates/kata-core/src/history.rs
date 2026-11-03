@@ -107,14 +107,29 @@ pub fn load_run(id: &str) -> Result<RunDetail, HistoryError> {
 ///
 /// Takes the event as a JSON value because the Workbench relay holds its events that way.
 /// The same guards as `load_run` apply, and the file must already exist: this never creates a transcript.
+/// When the transcript ends mid-line, the event starts on a new line so it is not lost.
 pub fn append_event(id: &str, event: &serde_json::Value) -> Result<(), HistoryError> {
-    use std::io::Write;
+    use std::io::{Read, Seek, SeekFrom, Write};
     let path = transcript_path(id)?;
     let mut file = std::fs::OpenOptions::new()
+        .read(true)
         .append(true)
         .open(&path)
         .map_err(|e| HistoryError::Io(e.to_string()))?;
-    let line = format!("{event}\n");
+    let ends_mid_line = match file.seek(SeekFrom::End(-1)) {
+        Ok(_) => {
+            let mut last = [0u8; 1];
+            file.read_exact(&mut last)
+                .map_err(|e| HistoryError::Io(e.to_string()))?;
+            last[0] != b'\n'
+        }
+        Err(_) => false, // empty file
+    };
+    let line = if ends_mid_line {
+        format!("\n{event}\n")
+    } else {
+        format!("{event}\n")
+    };
     file.write_all(line.as_bytes())
         .map_err(|e| HistoryError::Io(e.to_string()))
 }
