@@ -2195,10 +2195,64 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+/// What the relay loop saw next: an event from the engine, the end of its stream or its
+/// termination, or a poll tick that passed with nothing. `Event` is a marker; the loop
+/// keeps the event itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Next {
+    Event,
+    Ended,
+    Silent,
+}
+
+/// What the relay loop does with what it saw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    /// Handle the event as usual.
+    Relay,
+    /// Keep waiting.
+    Wait,
+    /// Leave the loop; `result` says whether the run had already reported its result.
+    End { result: bool },
+}
+
+/// The relay loop's decision, by what it saw, whether the run reported a result and whether
+/// its engine process still exists.
+fn relay_step(_next: Next, _result_seen: bool, _engine_alive: bool) -> Step {
+    Step::Wait
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn relay_ends_per_table() {
+        use Next::*;
+        // (next, result seen, engine alive, expected)
+        let rows = [
+            (Event, true, true, Step::Relay),
+            (Event, true, false, Step::Relay),
+            (Event, false, true, Step::Relay),
+            (Event, false, false, Step::Relay),
+            (Ended, true, true, Step::End { result: true }),
+            (Ended, true, false, Step::End { result: true }),
+            (Ended, false, true, Step::End { result: false }),
+            (Ended, false, false, Step::End { result: false }),
+            (Silent, true, true, Step::Wait),
+            (Silent, true, false, Step::End { result: true }),
+            (Silent, false, true, Step::Wait),
+            (Silent, false, false, Step::End { result: false }),
+        ];
+        for (next, seen, alive, expected) in rows {
+            assert_eq!(
+                relay_step(next, seen, alive),
+                expected,
+                "{next:?} seen={seen} alive={alive}"
+            );
+        }
+    }
 
     /// Held by every test that points HOME at another folder.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
