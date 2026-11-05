@@ -82,6 +82,7 @@ describe('SdlcHomeViewModel init', () => {
       { id: 'old', name: 'old', folder: '/old', last_opened: 5 },
       { id: 'new', name: 'new', folder: '/new', last_opened: 50 },
     ]);
+    vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('new');
     await vm.init();
     expect(vm.current()?.id).toBe('new');
   });
@@ -988,6 +989,7 @@ describe('SdlcHomeViewModel changes list', () => {
       { id: 'c', name: 'c', folder: '/c', last_opened: 10 },
     ];
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue(three);
+    vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('a');
     const missing = vi.spyOn(transport, 'sdlcMissingFolders').mockResolvedValue(['/c']);
     const scan = vi.spyOn(transport, 'sdlcScan');
     const state = vi.spyOn(transport, 'sdlcState');

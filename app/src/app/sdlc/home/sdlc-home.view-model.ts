@@ -351,8 +351,7 @@ export class SdlcHomeViewModel {
     try {
       const list = await this.transport.sdlcWorkspaces();
       this.workspaces.set(list);
-      const newest = [...list].sort((a, b) => b.last_opened - a.last_opened)[0];
-      this.currentId.set(newest?.id ?? null);
+      this.currentId.set(await this.transport.sdlcCurrentWorkspace());
     } catch (e) {
       this.toasts.error(`Could not read the workspace list: ${message(e)}`);
     }
@@ -405,7 +404,8 @@ export class SdlcHomeViewModel {
     this.scanFailed.update((l) => l.filter((x) => x !== id));
     await this.saveList(next);
     if (this.currentId() === id) {
-      this.currentId.set([...next].sort((a, b) => b.last_opened - a.last_opened)[0]?.id ?? null);
+      // The list is saved, so the backend answers for the new list.
+      this.currentId.set(await this.transport.sdlcCurrentWorkspace());
       await this.versions.refresh();
       await Promise.all([this.loadCatalog(), this.loadCurrent()]);
     }

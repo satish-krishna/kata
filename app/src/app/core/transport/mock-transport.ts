@@ -294,7 +294,12 @@ export class MockTransport extends KataTransport {
   sdlcSaveSettings(settings: Settings): Promise<void> { this.sdlc.saveSettings(settings); return Promise.resolve(); }
   sdlcWorkspaces(): Promise<WorkspaceEntry[]> { return Promise.resolve(this.sdlc.getWorkspaces()); }
   sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]): Promise<void> { this.sdlc.saveWorkspaces(workspaces); return Promise.resolve(); }
-  sdlcCurrentWorkspace(): Promise<string | null> { return Promise.resolve(null); }
+  /** Same rule as the backend's `current_workspace`: the highest last_opened, the earliest in the list on a tie. */
+  sdlcCurrentWorkspace(): Promise<string | null> {
+    let best: WorkspaceEntry | null = null;
+    for (const w of this.sdlc.getWorkspaces()) if (best === null || w.last_opened > best.last_opened) best = w;
+    return Promise.resolve(best?.id ?? null);
+  }
   sdlcScan(folder: string): Promise<WorkspaceScan> {
     // The first scan of the demo folder that needs setup is slow, so the "Checking workspace" steps are visible.
     if (folder === MOCK_SETUP_FOLDER && !this.setupScanned) {
