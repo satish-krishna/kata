@@ -117,7 +117,7 @@ try {
   check(await gone(dialog), 'New change closes on Cancel before the close demo');
   await go('/sdlc?demo=close');
   check(await appears(page.getByText('Stop everything that is running and close?')), '?demo=close asks the close question');
-  await page.getByRole('button', { name: /New change/ }).dispatchEvent('click');
+  await page.locator('button', { hasText: /New change/ }).first().dispatchEvent('click');
   await appears(idea);
   await idea.fill('flag suspicious prices');
   check((await visibleCount(page.getByText('Stop everything that is running and close?'))) === 1, 'New change with text adds no question to the close question');
