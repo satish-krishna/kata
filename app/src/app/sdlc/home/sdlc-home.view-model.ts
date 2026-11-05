@@ -19,6 +19,7 @@ import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner, type DiscardChoice, type PickedNaming } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
+import { VersionsStore } from '../../core/versions/versions.store';
 import { defaultWorkType, namingRefusal, orderedWorkTypes, type WorkType } from '../../lib/sdlc-naming';
 import { inTauri } from '../../lib/mock';
 import { shownChangeList } from '../../lib/doc-notice';
@@ -79,6 +80,7 @@ export class SdlcHomeViewModel {
   private readonly toasts = inject(ToastStore);
   private readonly router = inject(Router);
   private readonly progress = inject(ProgressStore);
+  private readonly versions = inject(VersionsStore);
 
   // --- workspaces
   readonly workspaces = signal<WorkspaceEntry[]>([]);
@@ -376,6 +378,8 @@ export class SdlcHomeViewModel {
     this.triageNotice.set(null);
     this.clearDetail();
     await this.saveList(next);
+    // The backend reads the last-opened workspace from the saved list, so ask after the save.
+    await this.versions.refresh();
     await Promise.all([this.loadCatalog(), this.loadCurrent()]);
   }
 
@@ -402,6 +406,7 @@ export class SdlcHomeViewModel {
     await this.saveList(next);
     if (this.currentId() === id) {
       this.currentId.set([...next].sort((a, b) => b.last_opened - a.last_opened)[0]?.id ?? null);
+      await this.versions.refresh();
       await Promise.all([this.loadCatalog(), this.loadCurrent()]);
     }
   }
@@ -512,6 +517,7 @@ export class SdlcHomeViewModel {
     this.currentId.set(id);
     this.clearDetail();
     await this.saveList(next);
+    await this.versions.refresh();
     await Promise.all([this.loadCatalog(), this.loadCurrent(), this.refreshMissing()]);
   }
 
