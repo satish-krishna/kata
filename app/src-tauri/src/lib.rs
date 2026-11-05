@@ -7,6 +7,7 @@ mod running;
 mod runs;
 mod sdlc_state;
 mod start_change;
+#[allow(dead_code)] // the command that calls it arrives with a later task
 mod versions;
 mod zoom;
 

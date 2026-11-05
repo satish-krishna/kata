@@ -31,12 +31,22 @@ pub struct Versions {
 }
 
 /// Build the versions and their texts. `package` is the declared version, `debug` marks a development build.
-pub fn versions(_package: &str, _debug: bool, ai_sdlc: AiSdlc) -> Versions {
+pub fn versions(package: &str, debug: bool, ai_sdlc: AiSdlc) -> Versions {
+    let workbench = if debug {
+        format!("{package} (dev)")
+    } else {
+        package.to_string()
+    };
+    let plugin = match &ai_sdlc {
+        AiSdlc::Found { version } => format!("ai-sdlc {version}"),
+        AiSdlc::NotFound => "ai-sdlc: not found".to_string(),
+        AiSdlc::Unknown => "ai-sdlc: version unknown".to_string(),
+    };
     Versions {
-        workbench: String::new(),
+        line: format!("Workbench {workbench} \u{b7} {plugin}"),
+        copy: format!("Kata Workbench {workbench}, {plugin}"),
+        workbench,
         ai_sdlc,
-        line: String::new(),
-        copy: String::new(),
     }
 }
 
