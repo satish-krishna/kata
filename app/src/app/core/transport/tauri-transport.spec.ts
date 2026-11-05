@@ -95,6 +95,7 @@ const rows: Row[] = [
   ['sdlcWaitRunExit', (t) => t.sdlcWaitRunExit('7', 15000), 'sdlc_wait_run_exit', { runId: '7', timeoutMs: 15000 }],
   ['zoom', (t) => t.zoom('in'), 'zoom', { step: 'in' }],
   ['appVersions', (t) => t.appVersions(), 'app_versions', undefined],
+  ['sdlcCurrentWorkspace', (t) => t.sdlcCurrentWorkspace(), 'sdlc_current_workspace', undefined],
   ['loadBuildLayout', (t) => t.loadBuildLayout(), 'load_build_layout', undefined],
   ['saveBuildLayout', (t) => t.saveBuildLayout(layout), 'save_build_layout', { layout }],
   ['sdlcReadDoc', (t) => t.sdlcReadDoc(change, 'intent'), 'sdlc_read_doc', { change, doc: 'intent' }],

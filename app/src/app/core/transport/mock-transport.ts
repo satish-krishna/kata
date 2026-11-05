@@ -294,6 +294,7 @@ export class MockTransport extends KataTransport {
   sdlcSaveSettings(settings: Settings): Promise<void> { this.sdlc.saveSettings(settings); return Promise.resolve(); }
   sdlcWorkspaces(): Promise<WorkspaceEntry[]> { return Promise.resolve(this.sdlc.getWorkspaces()); }
   sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]): Promise<void> { this.sdlc.saveWorkspaces(workspaces); return Promise.resolve(); }
+  sdlcCurrentWorkspace(): Promise<string | null> { return Promise.resolve(null); }
   sdlcScan(folder: string): Promise<WorkspaceScan> {
     // The first scan of the demo folder that needs setup is slow, so the "Checking workspace" steps are visible.
     if (folder === MOCK_SETUP_FOLDER && !this.setupScanned) {

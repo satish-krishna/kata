@@ -86,6 +86,37 @@ describe('SdlcHomeViewModel init', () => {
     expect(vm.current()?.id).toBe('new');
   });
 
+  it('opens the workspace the backend names as current, even on a tie a TS sort would break the other way', async () => {
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([
+      { id: 'first', name: 'first', folder: '/first', last_opened: 0 },
+      { id: 'last', name: 'last', folder: '/last', last_opened: 0 },
+    ]);
+    const ask = vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('last');
+    await vm.init();
+    expect(ask).toHaveBeenCalled();
+    expect(vm.current()?.id).toBe('last');
+  });
+
+  it('removing the current workspace moves to what the backend names after the save', async () => {
+    const { vm, transport, saveWorkspaces } = setup();
+    const list: WorkspaceEntry[] = [
+      { id: 'a', name: 'a', folder: '/a', last_opened: 0 },
+      { id: 'b', name: 'b', folder: '/b', last_opened: 0 },
+      { id: 'c', name: 'c', folder: '/c', last_opened: 0 },
+    ];
+    vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue(list);
+    const ask = vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('a');
+    await vm.init();
+    expect(vm.current()?.id).toBe('a');
+    ask.mockClear();
+    ask.mockResolvedValue('c');
+    await vm.removeWorkspace('a');
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(ask.mock.invocationCallOrder[0]).toBeGreaterThan(saveWorkspaces.mock.invocationCallOrder.at(-1)!);
+    expect(vm.current()?.id).toBe('c');
+  });
+
   it('is blocked, with every workspace action withheld, when the catalog has no ai-sdlc plugin', async () => {
     const { vm } = setup({ catalogHasPlugin: false });
     await vm.init();

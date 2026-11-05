@@ -153,6 +153,8 @@ export abstract class KataTransport {
   abstract sdlcSaveSettings(settings: Settings): Promise<void>;
   abstract sdlcWorkspaces(): Promise<WorkspaceEntry[]>;
   abstract sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]): Promise<void>;
+  /** The id of the workspace the home opens on, decided in the backend from the saved list; null when there is none. */
+  abstract sdlcCurrentWorkspace(): Promise<string | null>;
   abstract sdlcScan(folder: string): Promise<WorkspaceScan>;
   abstract sdlcContextHealth(folder: string, master: string, system: string, repo: string): Promise<ContextState>;
   abstract sdlcInstructions(folder: string, masterRepo: string): Promise<InstructionsState>;

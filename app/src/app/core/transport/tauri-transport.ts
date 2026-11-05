@@ -104,6 +104,7 @@ export class TauriTransport extends KataTransport {
   sdlcSaveSettings(settings: Settings) { return this.ipc.invoke<void>('sdlc_save_settings', { settings }); }
   sdlcWorkspaces() { return this.ipc.invoke<WorkspaceEntry[]>('sdlc_workspaces'); }
   sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]) { return this.ipc.invoke<void>('sdlc_save_workspaces', { workspaces }); }
+  sdlcCurrentWorkspace(): Promise<string | null> { return Promise.resolve(null); }
   sdlcScan(folder: string) { return this.ipc.invoke<WorkspaceScan>('sdlc_scan', { folder }); }
   sdlcContextHealth(folder: string, master: string, system: string, repo: string) { return this.ipc.invoke<ContextState>('sdlc_context_health', { folder, master, system, repo }); }
   sdlcReadContext(master: string, system: string, repo: string) { return this.ipc.invoke<string | null>('sdlc_read_context', { master, system, repo }); }
