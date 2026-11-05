@@ -786,3 +786,44 @@ describe('MockTransport answers every call the backend gained on this branch (F2
     off();
   });
 });
+
+describe('MockTransport versions', () => {
+  const withDemo = async (demo: string | null, body: (t: MockTransport) => Promise<void>) => {
+    window.history.replaceState({}, '', demo === null ? '/' : `/?demo=${demo}`);
+    try {
+      await body(new MockTransport());
+    } finally {
+      window.history.replaceState({}, '', '/');
+    }
+  };
+
+  it('answers the Workbench version and a found ai-sdlc by default', async () => {
+    await withDemo(null, async (t) => {
+      const v = await t.appVersions();
+      expect(v.workbench).toBe('3.3.0');
+      expect(v.aiSdlc).toEqual({ kind: 'found', version: '1.3.0' });
+      expect(v.line).toBe('Workbench 3.3.0 · ai-sdlc 1.3.0');
+      expect(v.copy).toBe('Kata Workbench 3.3.0, ai-sdlc 1.3.0');
+    });
+  });
+
+  it('answers ai-sdlc not found under ?demo=versions-missing', async () => {
+    await withDemo('versions-missing', async (t) => {
+      const v = await t.appVersions();
+      expect(v.aiSdlc).toEqual({ kind: 'notFound' });
+      expect(v.line).toBe('Workbench 3.3.0 · ai-sdlc: not found');
+      expect(v.copy).toBe('Kata Workbench 3.3.0, ai-sdlc: not found');
+    });
+  });
+
+  it('copyText writes the text to the clipboard', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    try {
+      await new MockTransport().copyText('Kata Workbench 3.3.0');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(writeText).toHaveBeenCalledWith('Kata Workbench 3.3.0');
+  });
+});

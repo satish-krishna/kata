@@ -94,6 +94,7 @@ const rows: Row[] = [
   ['sdlcCloseAnswer', (t) => t.sdlcCloseAnswer(true), 'sdlc_close_answer', { confirm: true }],
   ['sdlcWaitRunExit', (t) => t.sdlcWaitRunExit('7', 15000), 'sdlc_wait_run_exit', { runId: '7', timeoutMs: 15000 }],
   ['zoom', (t) => t.zoom('in'), 'zoom', { step: 'in' }],
+  ['appVersions', (t) => t.appVersions(), 'app_versions', undefined],
   ['loadBuildLayout', (t) => t.loadBuildLayout(), 'load_build_layout', undefined],
   ['saveBuildLayout', (t) => t.saveBuildLayout(layout), 'save_build_layout', { layout }],
   ['sdlcReadDoc', (t) => t.sdlcReadDoc(change, 'intent'), 'sdlc_read_doc', { change, doc: 'intent' }],
@@ -149,6 +150,19 @@ describe('TauriTransport', () => {
     const args = ipc.invoke.mock.calls[0] as unknown[];
     expect(args[0]).toBe(cmd);
     expect(args[1]).toEqual(payload);
+  });
+
+  it('copyText writes to the system clipboard through the browser and invokes no command', async () => {
+    const ipc = fakeIpc();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    try {
+      await new TauriTransport(asIpc(ipc)).copyText('Kata Workbench 3.3.0');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(writeText).toHaveBeenCalledWith('Kata Workbench 3.3.0');
+    expect(ipc.invoke).not.toHaveBeenCalled();
   });
 
   it('opens the native dialogs with the run-spec filters', async () => {
