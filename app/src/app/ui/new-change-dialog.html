@@ -1,4 +1,4 @@
-<hlm-dialog [state]="open() ? 'open' : 'closed'" (stateChanged)="onState($event)">
+<hlm-dialog [state]="open() ? 'open' : 'closed'" [disableClose]="true">
   <hlm-dialog-content *hlmDialogPortal="let ctx">
     <div hlmDialogTitle>New change</div>
     <div class="k-form">

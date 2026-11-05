@@ -1,5 +1,4 @@
 import { Component, computed, input, linkedSignal, output } from '@angular/core';
-import type { BrnDialogState } from '@spartan-ng/brain/dialog';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmDialogImports } from '@spartan-ng/helm/dialog';
 import { HlmInputImports } from '@spartan-ng/helm/input';
@@ -126,10 +125,5 @@ export class NewChangeDialog {
     if (!this.ready() || system === null) return;
     const branch = this.asksBranch() ? this.branch().trim() : '';
     this.start.emit({ system, idea: this.idea().trim(), track: this.track(), ...(branch === '' ? {} : { branch }) });
-  }
-
-  /** Escape and a backdrop click close the overlay from inside; surface that as cancel. */
-  protected onState(state: BrnDialogState): void {
-    if (state === 'closed' && this.open()) this.cancel.emit();
   }
 }
