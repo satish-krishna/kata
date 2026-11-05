@@ -52,6 +52,7 @@ import { ToastStore } from '../../core/toast/toast.store';
 import { documentForm } from '../../lib/build-host';
 import { progressLabels } from '../../lib/progress-steps';
 import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
+import { VersionsStore } from '../../core/versions/versions.store';
 import {
   actionLabel,
   actionLabelAt,
@@ -213,6 +214,7 @@ export class ChangePageViewModel {
   private readonly build = inject(BuildPageViewModel);
   private readonly modes = inject(ModeStore);
   private readonly toasts = inject(ToastStore);
+  private readonly versions = inject(VersionsStore);
   private readonly progress = inject(ProgressStore);
   /** Reading the change, reading a picked document, preparing a build, and the lock's long step: one progress entry for each place on the page. */
   readonly readingChange = this.progress.view('page');
@@ -227,7 +229,9 @@ export class ChangePageViewModel {
 
   readonly state = signal<ChangeState>('loading');
   readonly workspaces = signal<WorkspaceEntry[]>([]);
-  readonly current = computed(() => [...this.workspaces()].sort((a, b) => b.last_opened - a.last_opened)[0] ?? null);
+  /** Which workspace is current is the backend's answer (`sdlcCurrentWorkspace`); the list only supplies the entry. */
+  private readonly currentId = signal<string | null>(null);
+  readonly current = computed(() => this.workspaces().find((w) => w.id === this.currentId()) ?? null);
   private readonly scan = signal<WorkspaceScan | null>(null);
   private readonly branches = signal<BranchInfo | null>(null);
   private readonly catalog = signal<CatalogEntry[]>([]);
@@ -1175,6 +1179,8 @@ export class ChangePageViewModel {
     this.workspaces.set(next);
     try {
       await this.transport.sdlcSaveWorkspaces(next);
+      this.currentId.set(await this.transport.sdlcCurrentWorkspace());
+      await this.versions.refresh();
     } catch (e) {
       this.toasts.error(`Could not save the workspace list: ${message(e)}`);
     }
@@ -1510,6 +1516,8 @@ export class ChangePageViewModel {
     this.workspaces.set(next);
     try {
       await this.transport.sdlcSaveWorkspaces(next);
+      this.currentId.set(await this.transport.sdlcCurrentWorkspace());
+      await this.versions.refresh();
     } catch (e) {
       this.toasts.error(`Could not save the workspace list: ${message(e)}`);
     }
@@ -1603,6 +1611,7 @@ export class ChangePageViewModel {
     }
     if (seq !== this.loadSeq) return;
     this.workspaces.set(workspaces);
+    this.currentId.set(await this.transport.sdlcCurrentWorkspace());
     await this.openAskedWorkspace(workspaces, system, name);
     if (seq !== this.loadSeq) return;
     const w = this.current();
