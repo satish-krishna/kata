@@ -131,23 +131,42 @@ describe('App version line', () => {
   });
 
   it('the line reads not found or version unknown, and the AI-SDLC home keeps its readiness message', async () => {
-    for (const [versions, line] of [[missing, 'ai-sdlc: not found'], [unknown, 'ai-sdlc: version unknown']] as const) {
-      TestBed.resetTestingModule();
-      const transport = new MockTransport();
-      vi.spyOn(transport, 'appVersions').mockResolvedValue(versions);
-      vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' });
-      const container = await open(transport, '/sdlc');
-      expect(container.querySelector('.wb-statusbar')?.textContent).toContain(line);
-      await vi.waitFor(() => expect(container.textContent).toContain('The ai-sdlc plugin was not found'));
-    }
+    const blocked = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' } as const;
+    // Not installed: the catalog has no ai-sdlc plugin, and the home says so as it always did.
+    const gone = new MockTransport();
+    vi.spyOn(gone, 'appVersions').mockResolvedValue(missing);
+    vi.spyOn(gone, 'catalog').mockResolvedValue([]);
+    vi.spyOn(gone, 'sdlcPluginReadiness').mockResolvedValue(blocked);
+    const goneView = await open(gone, '/sdlc');
+    expect(goneView.querySelector('.wb-statusbar')?.textContent).toContain('ai-sdlc: not found');
+    await vi.waitFor(() => expect(goneView.textContent).toContain('The ai-sdlc plugin was not found'));
+    // Unreadable version: the home is what it is with any version answer, and the line carries the backend's text.
+    TestBed.resetTestingModule();
+    const base = new MockTransport();
+    vi.spyOn(base, 'appVersions').mockResolvedValue(found('1.3.0'));
+    vi.spyOn(base, 'sdlcPluginReadiness').mockResolvedValue(blocked);
+    const baseline = (await open(base, '/sdlc')).querySelector('.k-home')?.textContent;
+    TestBed.resetTestingModule();
+    const odd = new MockTransport();
+    vi.spyOn(odd, 'appVersions').mockResolvedValue(unknown);
+    vi.spyOn(odd, 'sdlcPluginReadiness').mockResolvedValue(blocked);
+    const oddView = await open(odd, '/sdlc');
+    expect(oddView.querySelector('.wb-statusbar')?.textContent).toContain('ai-sdlc: version unknown');
+    await vi.waitFor(() => expect(oddView.querySelector('.k-home')?.textContent).toBe(baseline));
   });
 
-  it('an ai-sdlc older than the minimum shows its version and the minimum message', async () => {
+  it('an ai-sdlc older than the minimum shows its version while the home keeps its message', async () => {
+    const tooOld = { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 1.0.3.' } as const;
+    const base = new MockTransport();
+    vi.spyOn(base, 'appVersions').mockResolvedValue(found('1.3.0'));
+    vi.spyOn(base, 'sdlcPluginReadiness').mockResolvedValue(tooOld);
+    const baseline = (await open(base, '/sdlc')).querySelector('.k-home')?.textContent;
+    TestBed.resetTestingModule();
     const transport = new MockTransport();
     vi.spyOn(transport, 'appVersions').mockResolvedValue(found('1.0.3'));
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'ai-sdlc 1.0.3 is older than 1.1.0' });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(tooOld);
     const container = await open(transport, '/sdlc');
     expect(container.querySelector('.wb-statusbar')?.textContent).toContain('ai-sdlc 1.0.3');
-    await vi.waitFor(() => expect(container.textContent).toContain('1.1.0'));
+    await vi.waitFor(() => expect(container.querySelector('.k-home')?.textContent).toBe(baseline));
   });
 });

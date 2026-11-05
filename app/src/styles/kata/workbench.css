@@ -8,7 +8,8 @@
 .wb {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
+  min-height: 0;
   background: var(--surface-app);
   color: var(--text-primary);
   overflow: hidden;
@@ -231,7 +232,7 @@
 .wb-detail--empty { align-items: center; justify-content: center; }
 
 /* ---------- Mode choice (launch screen) ---------- */
-.k-mode { display: grid; place-items: center; min-height: 100vh; background: var(--surface-app); color: var(--text-primary); padding: var(--space-6); }
+.k-mode { display: grid; place-items: center; height: 100%; min-height: 0; background: var(--surface-app); color: var(--text-primary); padding: var(--space-6); }
 .k-mode__panel { display: grid; gap: var(--space-5); width: min(100%, 44rem); padding: var(--space-6); background: var(--surface-panel); border: 1px solid var(--border-default); border-radius: var(--radius-md); box-shadow: var(--shadow-md); }
 .k-mode__heading { font: var(--weight-semibold) var(--text-lg)/1.2 var(--font-sans); color: var(--text-primary); margin: 0; }
 .k-mode__cards { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
@@ -273,7 +274,7 @@
 .k-wsitem__note { grid-column: 2; grid-row: 1 / span 2; align-self: center; font: var(--text-xs)/1 var(--font-sans); color: var(--text-muted); }
 .k-wsitem__note--warn { color: var(--warning-text); }
 
-.k-home { display: flex; flex-direction: column; height: 100vh; background: var(--surface-app); color: var(--text-primary); overflow: hidden; }
+.k-home { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--surface-app); color: var(--text-primary); overflow: hidden; }
 .k-home__panes { flex: 1; display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); min-height: 0; }
 .k-home__pane { display: flex; flex-direction: column; min-height: 0; min-width: var(--pane-min); }
 .k-home__pane + .k-home__pane { border-left: 1px solid var(--border-default); background: var(--surface-panel); }
@@ -511,3 +512,9 @@
 .k-round__summary { display: grid; gap: var(--space-2); color: var(--text-secondary); }
 .k-round__summary > p { margin: 0; }
 .k-round__blocked { color: var(--warning); }
+
+/* ---------- App shell: the routed page above the version line ---------- */
+.k-shell { display: grid; grid-template-rows: minmax(0, 1fr) auto; height: 100vh; background: var(--surface-app); }
+.k-shell__page { display: grid; grid-template-rows: minmax(0, 1fr); min-height: 0; overflow: auto; }
+.wb-statusbar__version { color: var(--text-faint); cursor: pointer; }
+.wb-statusbar__version:hover { color: var(--text-muted); }

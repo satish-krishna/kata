@@ -5,10 +5,11 @@ export const routes: Routes = [
   {
     path: '',
     pathMatch: 'full',
+    data: { ownStatusBar: true },
     canActivate: [modeGuard],
     loadComponent: () => import('./workbench/workbench').then((m) => m.Workbench),
   },
-  { path: 'library', loadComponent: () => import('./library/library').then((m) => m.Library) },
+  { path: 'library', data: { ownStatusBar: true }, loadComponent: () => import('./library/library').then((m) => m.Library) },
   { path: 'sdlc', loadComponent: () => import('./sdlc/home/sdlc-home').then((m) => m.SdlcHome) },
   {
     path: 'sdlc/:system/context/:repo',

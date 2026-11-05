@@ -47,7 +47,7 @@ import type { DoneStep } from '@bindings/DoneStep';
 import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
-import { seedCatalog, seedSpec, validateLocal, previewFixture, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, type ScriptStep } from '../../lib/mock';
+import { seedCatalog, seedSpec, validateLocal, previewFixture, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, mockVersions, type ScriptStep } from '../../lib/mock';
 import { history, runDetailFixture, katasFixture, presetsFixture } from '../../lib/library';
 import type { OpenRun } from '@bindings/OpenRun';
 import type { Opens } from '@bindings/Opens';
@@ -426,7 +426,7 @@ export class MockTransport extends KataTransport {
   openUrl(url: string): Promise<void> { window.open(url, '_blank', 'noopener,noreferrer'); return Promise.resolve(); }
   /** A plain browser has no window to zoom. */
   zoom(_step: ZoomStep): Promise<number> { return Promise.resolve(1); }
-  appVersions(): Promise<Versions> { return Promise.reject(new Error('not implemented')); }
+  appVersions(): Promise<Versions> { return Promise.resolve(mockVersions(demoParam())); }
   copyText(text: string): Promise<void> { return navigator.clipboard.writeText(text); }
   pickDirectory(): Promise<string | null> { return Promise.resolve(null); }
   pickOpenSpec(): Promise<string | null> { return Promise.resolve(null); }

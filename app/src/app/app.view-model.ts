@@ -1,22 +1,40 @@
 import { DestroyRef, Injectable, inject, signal } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { ActivatedRouteSnapshot, NavigationEnd, Router } from '@angular/router';
+import { filter, map, startWith } from 'rxjs';
 import type { RunningLine } from '../bindings/RunningLine';
 import { KataTransport } from './core/transport/kata-transport';
 import { ToastStore } from './core/toast/toast.store';
-import { zoomStepFor } from './lib/zoom-keys';
 import { VersionsStore } from './core/versions/versions.store';
+import { zoomStepFor } from './lib/zoom-keys';
+
+/** The deepest route the router has activated. */
+function leaf(route: ActivatedRouteSnapshot): ActivatedRouteSnapshot {
+  return route.firstChild ? leaf(route.firstChild) : route;
+}
 
 @Injectable()
 export class AppViewModel {
   private readonly transport = inject(KataTransport);
   private readonly toasts = inject(ToastStore);
+  private readonly router = inject(Router);
   private readonly versionsStore = inject(VersionsStore);
-
-  readonly versions = this.versionsStore.versions;
-  windowFocused(): void {}
-  async copyVersions(): Promise<void> {}
 
   /** The running changes the window's close asked about; null while nothing is asked. */
   readonly closeAsk = signal<RunningLine[] | null>(null);
+
+  /** The versions the line shows; null until the backend answers. */
+  readonly versions = this.versionsStore.versions;
+
+  /** Whether the shell draws the version line: every route except those whose data says `ownStatusBar`, which draw it in their own footer. */
+  readonly shellLine = toSignal(
+    this.router.events.pipe(
+      filter((e) => e instanceof NavigationEnd),
+      startWith(null),
+      map(() => leaf(this.router.routerState.snapshot.root).data['ownStatusBar'] !== true),
+    ),
+    { initialValue: true },
+  );
 
   constructor() {
     const gone = inject(DestroyRef);
@@ -29,6 +47,17 @@ export class AppViewModel {
     void this.transport.onCloseAsked((outcome) => {
       if (outcome.type === 'ask') this.closeAsk.set(outcome.running);
     }).then((off) => (alive ? (unlisten = off) : off()));
+    void this.versionsStore.refresh();
+  }
+
+  /** The window regained focus: an ai-sdlc update or removal made elsewhere shows now. */
+  windowFocused(): void {
+    void this.versionsStore.refresh();
+  }
+
+  /** Clicking the line copies both versions as plain text. */
+  copyVersions(): Promise<void> {
+    return this.versionsStore.copy();
   }
 
   /** The engineer's answer goes to the backend, which stops every run and closes, or leaves the window and the runs alone. */
