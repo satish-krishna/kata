@@ -167,6 +167,7 @@
     </span>
     <div class="wb-statusbar__spacer"></div>
     <span class="wb-statusbar__item"><ng-icon name="lucideFolder" size="13" /> ~/.kata/runs</span>
+    <app-version-line [versions]="vm.versions()" (copy)="vm.copyVersions()" />
   </footer>
 </div>
 

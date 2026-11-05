@@ -10,6 +10,7 @@ import { ObservePane } from '../ui/observe-pane';
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import { RunPreviewDialog } from '../ui/run-preview-dialog';
 import { RunPreviewViewModel } from '../core/given/run-preview.view-model';
+import { VersionLine } from '../ui/version-line';
 import { WorkbenchViewModel } from './workbench.view-model';
 
 @Component({
@@ -19,7 +20,7 @@ import { WorkbenchViewModel } from './workbench.view-model';
     RunPreviewViewModel,
     provideIcons({ lucideCircleCheck, lucideFolder, lucideHash, lucideTerminal, lucideTriangleAlert }),
   ],
-  imports: [NgIcon, Toolbar, RunningChanges, ValidationBanner, ComposePane, ObservePane, ConfirmDialog, RunPreviewDialog],
+  imports: [NgIcon, Toolbar, RunningChanges, ValidationBanner, ComposePane, ObservePane, ConfirmDialog, RunPreviewDialog, VersionLine],
   templateUrl: './workbench.html',
   host: { '(document:keydown)': 'vm.onKey($event)' },
 })

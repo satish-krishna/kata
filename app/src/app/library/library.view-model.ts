@@ -8,6 +8,7 @@ import type { KataLoadFailure } from '@bindings/KataLoadFailure';
 import { KataTransport } from '../core/transport/kata-transport';
 import { LaunchStore } from '../core/launch/launch.store';
 import { ToastStore } from '../core/toast/toast.store';
+import { VersionsStore } from '../core/versions/versions.store';
 import { givenFrom, isStreamEvent, messagesFrom, type MessageRecord, statusForExit, type RunGiven, type RunDetail, type RunRecord, type RunState } from '../lib/events';
 import { modeOf } from '../lib/given';
 import { kataViews, withTask } from '../lib/katas';
@@ -26,6 +27,14 @@ export class LibraryViewModel {
   private readonly toasts = inject(ToastStore);
   private readonly router = inject(Router);
   private readonly query = toSignal(inject(ActivatedRoute).queryParamMap);
+  private readonly versionsStore = inject(VersionsStore);
+  /** The versions the footer's line shows; null until the backend answers. */
+  readonly versions = this.versionsStore.versions;
+
+  /** Clicking the version line copies both versions as plain text. */
+  copyVersions(): Promise<void> {
+    return this.versionsStore.copy();
+  }
 
   readonly runs = signal<RunRecord[]>([]);
   private readonly katas = signal<RunSpec[]>([]);

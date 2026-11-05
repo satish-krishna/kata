@@ -27,6 +27,7 @@ import { SummaryStat } from '../ui/summary-stat';
 import { OperatorMessage } from '../ui/operator-message';
 import { TaskEditor } from '../ui/task-editor';
 import { ToolCard } from '../ui/tool-card';
+import { VersionLine } from '../ui/version-line';
 import { LibraryViewModel } from './library.view-model';
 
 @Component({
@@ -50,7 +51,7 @@ import { LibraryViewModel } from './library.view-model';
       lucideTriangleAlert,
     }),
   ],
-  imports: [NgIcon, RouterLink, HlmButtonImports, HlmDialogImports, DetailActions, GivenView, EventRow, MarkdownBody, OperatorMessage, SummaryStat, TaskEditor, ToolCard],
+  imports: [NgIcon, RouterLink, HlmButtonImports, HlmDialogImports, DetailActions, GivenView, EventRow, MarkdownBody, OperatorMessage, SummaryStat, TaskEditor, ToolCard, VersionLine],
   templateUrl: './library.html',
 })
 export class Library {
