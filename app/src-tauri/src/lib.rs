@@ -2345,7 +2345,7 @@ mod tests {
     }
 
     /// Held by every test that points HOME at another folder.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// F2: a per-change command whose plugin cannot be found says it could not find where the change
     /// lives, with the readiness message, through the real readiness check.
