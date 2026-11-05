@@ -125,6 +125,11 @@ pub fn load_workspaces() -> Vec<WorkspaceEntry> {
     read_or_default("workspaces.json")
 }
 
+/// The workspace the home opens on: the highest `last_opened`; on a tie, the earliest in the saved order.
+pub fn current_workspace(_list: &[WorkspaceEntry]) -> Option<&WorkspaceEntry> {
+    None
+}
+
 pub fn save_workspaces(w: &[WorkspaceEntry]) -> Result<(), StoreError> {
     write("workspaces.json", w)
 }
@@ -182,6 +187,34 @@ pub fn save_build_layout(v: &serde_json::Value) -> Result<(), StoreError> {
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    fn entry(id: &str, last_opened: u64) -> WorkspaceEntry {
+        WorkspaceEntry {
+            id: id.into(),
+            name: id.into(),
+            folder: format!("/{id}"),
+            last_opened,
+        }
+    }
+
+    #[test]
+    fn current_workspace_of_an_empty_list_is_none() {
+        assert!(current_workspace(&[]).is_none());
+    }
+
+    #[test]
+    fn current_workspace_is_the_highest_last_opened() {
+        let list = [entry("a", 5), entry("b", 50), entry("c", 7)];
+        assert_eq!(current_workspace(&list).unwrap().id, "b");
+    }
+
+    #[test]
+    fn current_workspace_on_a_tie_is_the_earliest_in_the_list() {
+        let zeros = [entry("a", 0), entry("b", 0), entry("c", 0)];
+        assert_eq!(current_workspace(&zeros).unwrap().id, "a");
+        let top = [entry("a", 1), entry("b", 9), entry("c", 9), entry("d", 3)];
+        assert_eq!(current_workspace(&top).unwrap().id, "b");
+    }
 
     struct HomeGuard {
         temp: tempfile::TempDir,
