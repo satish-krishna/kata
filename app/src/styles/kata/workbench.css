@@ -514,7 +514,8 @@
 .k-round__blocked { color: var(--warning); }
 
 /* ---------- App shell: the routed page above the version line ---------- */
-.k-shell { display: grid; grid-template-rows: minmax(0, 1fr) auto; height: 100vh; background: var(--surface-app); }
-.k-shell__page { display: grid; grid-template-rows: minmax(0, 1fr); min-height: 0; overflow: auto; }
+.k-shell { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; height: 100vh; background: var(--surface-app); }
+.k-shell__page { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); min-height: 0; overflow: auto; }
+.k-shell__page > router-outlet { display: contents; }
 .wb-statusbar__version { color: var(--text-faint); cursor: pointer; }
 .wb-statusbar__version:hover { color: var(--text-muted); }
