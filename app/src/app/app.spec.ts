@@ -155,6 +155,17 @@ describe('App version line', () => {
     await vi.waitFor(() => expect(oddView.querySelector('.k-home')?.textContent).toBe(baseline));
   });
 
+  it('the window regaining focus reads the versions again and the line shows the new answer', async () => {
+    const transport = new MockTransport();
+    const ask = vi.spyOn(transport, 'appVersions').mockResolvedValueOnce(found('1.3.0')).mockResolvedValueOnce(found('1.4.0'));
+    const container = await open(transport, '/mode');
+    await vi.waitFor(() => expect(container.querySelector('.wb-statusbar')?.textContent).toContain('ai-sdlc 1.3.0'), { timeout: 5000 });
+    expect(ask).toHaveBeenCalledTimes(1);
+    window.dispatchEvent(new FocusEvent('focus'));
+    await vi.waitFor(() => expect(container.querySelector('.wb-statusbar')?.textContent).toContain('ai-sdlc 1.4.0'), { timeout: 5000 });
+    expect(ask).toHaveBeenCalledTimes(2);
+  }, 15000);
+
   it('an ai-sdlc older than the minimum shows its version while the home keeps its message', async () => {
     const tooOld = { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 1.0.3.' } as const;
     const base = new MockTransport();
