@@ -602,6 +602,31 @@ describe('ChangePageViewModel', () => {
     });
   });
 
+  it('the current workspace is the one the backend names, not the newest last_opened', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([
+      { id: 'old', name: 'old', folder: MOCK_WORKSPACE_FOLDER, last_opened: 5 },
+      { id: 'new', name: 'new', folder: MOCK_WORKSPACE_FOLDER, last_opened: 50 },
+    ]);
+    vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('old');
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    await ready(vm);
+    expect(vm.current()?.id).toBe('old');
+  });
+
+  it('switching workspace asks for the current one and the versions again, after the save', async () => {
+    const { vm, transport } = setup(PHOTOS_CHANGE);
+    await ready(vm);
+    const save = vi.spyOn(transport, 'sdlcSaveWorkspaces');
+    const ask = vi.spyOn(transport, 'sdlcCurrentWorkspace');
+    const versions = vi.spyOn(transport, 'appVersions');
+    await vm.selectWorkspace('acme-commerce');
+    const saved = save.mock.invocationCallOrder.at(-1)!;
+    expect(ask.mock.invocationCallOrder[0]).toBeGreaterThan(saved);
+    expect(versions).toHaveBeenCalledTimes(1);
+    expect(versions.mock.invocationCallOrder[0]).toBeGreaterThan(saved);
+  });
+
   it('goes to the workspace home from the workspace controls', async () => {
     const { vm, navigate } = setup(PHOTOS_CHANGE);
     await ready(vm);
