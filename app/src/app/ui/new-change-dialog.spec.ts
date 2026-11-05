@@ -1,4 +1,6 @@
 import { TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
+import { BrnDialog } from '@spartan-ng/brain/dialog';
 import { render } from '../../testing/render';
 import { NewChangeDialog } from './new-change-dialog';
 
@@ -64,6 +66,13 @@ describe('NewChangeDialog', () => {
     await type('an idea');
     button('Start').click();
     expect(got[0].system).toBe('commerce');
+  });
+
+  it('ignores Escape and a backdrop click: the dialog is rendered with disableClose (R13.1)', async () => {
+    const { fixture } = await render(NewChangeDialog, { open: true, systems: ['commerce'] });
+    await settle();
+    const brn = fixture.debugElement.query(By.directive(BrnDialog)).injector.get(BrnDialog);
+    expect(brn.disableClose()).toBe(true);
   });
 
   it('emits cancel from Cancel', async () => {
