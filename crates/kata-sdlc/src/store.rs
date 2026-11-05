@@ -126,8 +126,13 @@ pub fn load_workspaces() -> Vec<WorkspaceEntry> {
 }
 
 /// The workspace the home opens on: the highest `last_opened`; on a tie, the earliest in the saved order.
-pub fn current_workspace(_list: &[WorkspaceEntry]) -> Option<&WorkspaceEntry> {
-    None
+pub fn current_workspace(list: &[WorkspaceEntry]) -> Option<&WorkspaceEntry> {
+    // `max_by_key` keeps the last of equal maxima; a strict comparison keeps the first.
+    list.iter()
+        .fold(None, |best: Option<&WorkspaceEntry>, w| match best {
+            Some(b) if b.last_opened >= w.last_opened => Some(b),
+            _ => Some(w),
+        })
 }
 
 pub fn save_workspaces(w: &[WorkspaceEntry]) -> Result<(), StoreError> {

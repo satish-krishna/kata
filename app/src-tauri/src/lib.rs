@@ -1361,15 +1361,20 @@ fn drop_declare_done_after_earlier_declaration(
 /// workspace the home opens on (the most recently opened), or the engineer's own scope when none.
 #[tauri::command(async)]
 fn app_versions(app: tauri::AppHandle) -> versions::Versions {
-    let folder = sdlc::store::load_workspaces()
-        .into_iter()
-        .max_by_key(|w| w.last_opened)
-        .map(|w| std::path::PathBuf::from(w.folder));
+    let list = sdlc::store::load_workspaces();
+    let folder = sdlc::store::current_workspace(&list).map(|w| std::path::PathBuf::from(&w.folder));
     versions::versions(
         &app.package_info().version.to_string(),
         cfg!(debug_assertions),
         versions::find_ai_sdlc(folder.as_deref()),
     )
+}
+
+/// The id of the workspace the home opens on, decided once here (see `store::current_workspace`).
+#[tauri::command(async)]
+fn sdlc_current_workspace() -> Option<String> {
+    let list = sdlc::store::load_workspaces();
+    sdlc::store::current_workspace(&list).map(|w| w.id.clone())
 }
 
 #[tauri::command(async)]
@@ -2158,6 +2163,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             catalog,
             app_versions,
+            sdlc_current_workspace,
             load_spec,
             save_spec,
             validate_spec,
