@@ -1,5 +1,8 @@
-import { provideRouter } from '@angular/router';
+import { TestBed } from '@angular/core/testing';
+import { Router, provideRouter } from '@angular/router';
 import { toastState } from '@spartan-ng/brain/sonner';
+import type { Versions } from '@bindings/Versions';
+import { routes } from './app.routes';
 import { render } from '../testing/render';
 import { App } from './app';
 import { ToastStore } from './core/toast/toast.store';
@@ -81,5 +84,70 @@ describe('App zoom keys', () => {
     document.dispatchEvent(plain);
     expect(zoom).not.toHaveBeenCalled();
     expect(plain.defaultPrevented).toBe(false);
+  });
+});
+
+describe('App version line', () => {
+  const found = (version: string): Versions => ({
+    workbench: '3.3.0',
+    aiSdlc: { kind: 'found', version },
+    line: `Workbench 3.3.0 · ai-sdlc ${version}`,
+    copy: `Kata Workbench 3.3.0, ai-sdlc ${version}`,
+  });
+  const missing: Versions = {
+    workbench: '3.3.0',
+    aiSdlc: { kind: 'notFound' },
+    line: 'Workbench 3.3.0 · ai-sdlc: not found',
+    copy: 'Kata Workbench 3.3.0, ai-sdlc: not found',
+  };
+  const unknown: Versions = {
+    workbench: '3.3.0',
+    aiSdlc: { kind: 'unknown' },
+    line: 'Workbench 3.3.0 · ai-sdlc: version unknown',
+    copy: 'Kata Workbench 3.3.0, ai-sdlc: version unknown',
+  };
+  const change = 'commerce/2026-10-12-product-photo-upload';
+
+  async function open(transport: MockTransport, url: string) {
+    const { fixture, container } = await render(App, {}, [provideRouter(routes), { provide: KataTransport, useValue: transport }]);
+    await TestBed.inject(Router).navigateByUrl(url);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(container.querySelector('.wb-statusbar')).not.toBeNull();
+    });
+    return container;
+  }
+
+  it('shows the version line on every route without its own footer', async () => {
+    for (const url of ['/mode', '/sdlc', `/sdlc/${change}`, '/sdlc/commerce/2026-10-19-build-demo', '/sdlc/commerce/context/commerce-core']) {
+      TestBed.resetTestingModule();
+      const transport = new MockTransport();
+      vi.spyOn(transport, 'appVersions').mockResolvedValue(found('1.3.0'));
+      const container = await open(transport, url);
+      const bars = container.querySelectorAll('.wb-statusbar');
+      expect(bars, url).toHaveLength(1);
+      expect(bars[0].textContent, url).toContain('Workbench 3.3.0 · ai-sdlc 1.3.0');
+    }
+  });
+
+  it('the line reads not found or version unknown, and the AI-SDLC home keeps its readiness message', async () => {
+    for (const [versions, line] of [[missing, 'ai-sdlc: not found'], [unknown, 'ai-sdlc: version unknown']] as const) {
+      TestBed.resetTestingModule();
+      const transport = new MockTransport();
+      vi.spyOn(transport, 'appVersions').mockResolvedValue(versions);
+      vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' });
+      const container = await open(transport, '/sdlc');
+      expect(container.querySelector('.wb-statusbar')?.textContent).toContain(line);
+      await vi.waitFor(() => expect(container.textContent).toContain('The ai-sdlc plugin was not found'));
+    }
+  });
+
+  it('an ai-sdlc older than the minimum shows its version and the minimum message', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'appVersions').mockResolvedValue(found('1.0.3'));
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'ai-sdlc 1.0.3 is older than 1.1.0' });
+    const container = await open(transport, '/sdlc');
+    expect(container.querySelector('.wb-statusbar')?.textContent).toContain('ai-sdlc 1.0.3');
+    await vi.waitFor(() => expect(container.textContent).toContain('1.1.0'));
   });
 });

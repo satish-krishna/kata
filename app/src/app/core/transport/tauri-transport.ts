@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open, save } from '@tauri-apps/plugin-dialog';
+import type { Versions } from '@bindings/Versions';
 import type { RepoBoard } from '@bindings/RepoBoard';
 import type { ReviewStanding } from '@bindings/ReviewStanding';
 import type { Stop } from '@bindings/Stop';
@@ -173,6 +174,8 @@ export class TauriTransport extends KataTransport {
   saveBuildLayout(layout: Record<string, unknown>) { return this.ipc.invoke<void>('save_build_layout', { layout }); }
   openUrl(url: string) { return this.ipc.invoke<void>('open_url', { url }); }
   zoom(step: ZoomStep) { return this.ipc.invoke<number>('zoom', { step }); }
+  appVersions() { return this.ipc.invoke<Versions>('app_versions'); }
+  copyText(text: string) { return navigator.clipboard.writeText(text); }
   pickDirectory() { return this.ipc.open({ directory: true, multiple: false }) as Promise<string | null>; }
   pickOpenSpec() { return this.ipc.open({ multiple: false, filters: SPEC_FILTERS }) as Promise<string | null>; }
   pickSaveSpec() { return this.ipc.save({ filters: SPEC_FILTERS }) as Promise<string | null>; }

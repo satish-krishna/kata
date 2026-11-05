@@ -3,11 +3,17 @@ import type { RunningLine } from '../bindings/RunningLine';
 import { KataTransport } from './core/transport/kata-transport';
 import { ToastStore } from './core/toast/toast.store';
 import { zoomStepFor } from './lib/zoom-keys';
+import { VersionsStore } from './core/versions/versions.store';
 
 @Injectable()
 export class AppViewModel {
   private readonly transport = inject(KataTransport);
   private readonly toasts = inject(ToastStore);
+  private readonly versionsStore = inject(VersionsStore);
+
+  readonly versions = this.versionsStore.versions;
+  windowFocused(): void {}
+  async copyVersions(): Promise<void> {}
 
   /** The running changes the window's close asked about; null while nothing is asked. */
   readonly closeAsk = signal<RunningLine[] | null>(null);

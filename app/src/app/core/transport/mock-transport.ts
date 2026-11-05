@@ -67,6 +67,7 @@ import type { ChangeRef } from '@bindings/ChangeRef';
 import type { CloseOutcome } from '@bindings/CloseOutcome';
 import type { HeldRepo } from '@bindings/HeldRepo';
 import type { RunForm } from '@bindings/RunForm';
+import type { Versions } from '@bindings/Versions';
 import type { RunningStrip } from '@bindings/RunningStrip';
 import type { BuildRunRef } from '@bindings/BuildRunRef';
 import type { BuildPreviewKind } from '@bindings/BuildPreviewKind';
@@ -425,6 +426,8 @@ export class MockTransport extends KataTransport {
   openUrl(url: string): Promise<void> { window.open(url, '_blank', 'noopener,noreferrer'); return Promise.resolve(); }
   /** A plain browser has no window to zoom. */
   zoom(_step: ZoomStep): Promise<number> { return Promise.resolve(1); }
+  appVersions(): Promise<Versions> { return Promise.reject(new Error('not implemented')); }
+  copyText(text: string): Promise<void> { return navigator.clipboard.writeText(text); }
   pickDirectory(): Promise<string | null> { return Promise.resolve(null); }
   pickOpenSpec(): Promise<string | null> { return Promise.resolve(null); }
   pickSaveSpec(): Promise<string | null> { return Promise.resolve(null); }

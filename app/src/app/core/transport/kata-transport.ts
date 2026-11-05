@@ -44,6 +44,7 @@ import type { DoneStep } from '@bindings/DoneStep';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { Resolved } from '@bindings/Resolved';
+import type { Versions } from '@bindings/Versions';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import type { BuildState } from '@bindings/BuildState';
@@ -243,6 +244,10 @@ export abstract class KataTransport {
   abstract openUrl(url: string): Promise<void>;
   /** Step the window's zoom. Resolves to the new level, which the backend remembers for the next launch. */
   abstract zoom(step: ZoomStep): Promise<number>;
+  /** The Workbench's version and the ai-sdlc version in use, with the line shown and the text copied; the backend writes both texts. */
+  abstract appVersions(): Promise<Versions>;
+  /** Put plain text on the clipboard. */
+  abstract copyText(text: string): Promise<void>;
   /** Register for the step the plugin is on while a change is declared done. Resolves to the unlisten function. */
   abstract onDoneStep(cb: (step: DoneStep) => void): Promise<() => void>;
   /** Register for a change's build state each time it changes. Resolves to the unlisten function. */
