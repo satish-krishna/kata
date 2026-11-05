@@ -1,5 +1,6 @@
 //! The version line the Workbench shows and the text it copies for a bug report.
 
+use kata_core::catalog;
 use serde::Serialize;
 use std::path::Path;
 
@@ -53,8 +54,16 @@ pub fn versions(package: &str, debug: bool, ai_sdlc: AiSdlc) -> Versions {
 
 /// The ai-sdlc plugin the catalog finds for `folder` (the engineer's own scope alone when none), and the
 /// version it declares. It reads files only and starts no process.
-pub fn find_ai_sdlc(_folder: Option<&Path>) -> AiSdlc {
-    todo!("read the installed plugin")
+pub fn find_ai_sdlc(folder: Option<&Path>) -> AiSdlc {
+    let roots = catalog::roots_for_workdir(folder.and_then(Path::to_str));
+    let found = catalog::discover(&roots);
+    let Some(entry) = crate::ai_sdlc_entry(&found) else {
+        return AiSdlc::NotFound;
+    };
+    match kata_sdlc::plugin::version(&entry.path) {
+        Some(version) => AiSdlc::Found { version },
+        None => AiSdlc::Unknown,
+    }
 }
 
 #[cfg(test)]

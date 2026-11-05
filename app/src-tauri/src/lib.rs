@@ -7,7 +7,6 @@ mod running;
 mod runs;
 mod sdlc_state;
 mod start_change;
-#[allow(dead_code)] // the command that calls it arrives with a later task
 mod versions;
 mod zoom;
 
@@ -1358,20 +1357,40 @@ fn drop_declare_done_after_earlier_declaration(
     }
 }
 
+/// The Workbench and ai-sdlc versions for the version line. The ai-sdlc plugin is looked up from the
+/// workspace the home opens on (the most recently opened), or the engineer's own scope when none.
+#[tauri::command(async)]
+fn app_versions(app: tauri::AppHandle) -> versions::Versions {
+    let folder = sdlc::store::load_workspaces()
+        .into_iter()
+        .max_by_key(|w| w.last_opened)
+        .map(|w| std::path::PathBuf::from(w.folder));
+    versions::versions(
+        &app.package_info().version.to_string(),
+        cfg!(debug_assertions),
+        versions::find_ai_sdlc(folder.as_deref()),
+    )
+}
+
 #[tauri::command(async)]
 fn sdlc_plugin_readiness(workdir: Option<String>) -> sdlc::plugin::Readiness {
     ai_sdlc_readiness(workdir.as_deref())
+}
+
+/// The installed plugin that is the ai-sdlc plugin: a plugin named `ai-sdlc` that provides the build skill.
+pub(crate) fn ai_sdlc_entry(found: &[CatalogEntry]) -> Option<&CatalogEntry> {
+    found.iter().find(|e| {
+        e.kind == catalog::EntryKind::Plugin
+            && e.name == "ai-sdlc"
+            && e.provides.iter().any(|p| p == "skill:build")
+    })
 }
 
 /// Whether the ai-sdlc plugin that `workdir`'s catalog finds can be used, and where it is.
 fn ai_sdlc_readiness(workdir: Option<&str>) -> sdlc::plugin::Readiness {
     let roots = catalog::roots_for_workdir(workdir);
     let found = catalog::discover(&roots);
-    let plugin = found.iter().find(|e| {
-        e.kind == catalog::EntryKind::Plugin
-            && e.name == "ai-sdlc"
-            && e.provides.iter().any(|p| p == "skill:build")
-    });
+    let plugin = ai_sdlc_entry(&found);
     sdlc::plugin::readiness(&sdlc::plugin::Machine::detect(
         plugin.map(|e| e.path.as_path()),
     ))
@@ -2138,6 +2157,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             catalog,
+            app_versions,
             load_spec,
             save_spec,
             validate_spec,
