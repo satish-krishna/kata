@@ -37,6 +37,23 @@ describe('the library footer and the version line', () => {
     expect(copy).toHaveBeenCalledWith('Kata Workbench 3.3.0, ai-sdlc 1.3.0');
   });
 
+  it('with ai-sdlc not installed the footer reads not found and the library shows no AI-SDLC readiness message', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'appVersions').mockResolvedValue({
+      workbench: '3.3.0',
+      aiSdlc: { kind: 'notFound' },
+      line: 'Workbench 3.3.0 · ai-sdlc: not found',
+      copy: 'Kata Workbench 3.3.0, ai-sdlc: not found',
+    });
+    const { fixture, container } = await render(Library, {}, [provideRouter([]), { provide: KataTransport, useValue: transport }]);
+    await TestBed.inject(VersionsStore).refresh();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(footerLast(container)).toBe('Workbench 3.3.0 · ai-sdlc: not found');
+    });
+    expect(container.textContent).not.toMatch(/ai-sdlc plugin was not found|AI-SDLC mode needs/i);
+  });
+
   it('the shell draws no line on the library route, so the page footer is the only one', async () => {
     const transport = new MockTransport();
     const { fixture, container } = await render(App, {}, [provideRouter(routes), { provide: KataTransport, useValue: transport }]);
