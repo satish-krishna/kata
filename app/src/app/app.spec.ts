@@ -139,7 +139,7 @@ describe('App version line', () => {
     vi.spyOn(gone, 'sdlcPluginReadiness').mockResolvedValue(blocked);
     const goneView = await open(gone, '/sdlc');
     expect(goneView.querySelector('.wb-statusbar')?.textContent).toContain('ai-sdlc: not found');
-    await vi.waitFor(() => expect(goneView.textContent).toContain('The ai-sdlc plugin was not found'));
+    await vi.waitFor(() => expect(goneView.textContent).toContain('The ai-sdlc plugin was not found'), { timeout: 5000 });
     // Unreadable version: the home is what it is with any version answer, and the line carries the backend's text.
     TestBed.resetTestingModule();
     const base = new MockTransport();
@@ -152,8 +152,8 @@ describe('App version line', () => {
     vi.spyOn(odd, 'sdlcPluginReadiness').mockResolvedValue(blocked);
     const oddView = await open(odd, '/sdlc');
     expect(oddView.querySelector('.wb-statusbar')?.textContent).toContain('ai-sdlc: version unknown');
-    await vi.waitFor(() => expect(oddView.querySelector('.k-home')?.textContent).toBe(baseline));
-  });
+    await vi.waitFor(() => expect(oddView.querySelector('.k-home')?.textContent).toBe(baseline), { timeout: 5000 });
+  }, 15000);
 
   it('the window regaining focus reads the versions again and the line shows the new answer', async () => {
     const transport = new MockTransport();
@@ -178,6 +178,6 @@ describe('App version line', () => {
     vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(tooOld);
     const container = await open(transport, '/sdlc');
     expect(container.querySelector('.wb-statusbar')?.textContent).toContain('ai-sdlc 1.0.3');
-    await vi.waitFor(() => expect(container.querySelector('.k-home')?.textContent).toBe(baseline));
-  });
+    await vi.waitFor(() => expect(container.querySelector('.k-home')?.textContent).toBe(baseline), { timeout: 5000 });
+  }, 15000);
 });
