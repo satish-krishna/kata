@@ -12,10 +12,15 @@ export class VersionsStore {
   /** The last answer; null until the first one arrives, and kept when a later read fails. */
   readonly versions = signal<Versions | null>(null);
 
-  /** Ask the backend again. A failed read leaves the line as it was. */
+  /** The number of the newest refresh; an answer that belongs to an older one is dropped. */
+  private latest = 0;
+
+  /** Ask the backend again. A failed read leaves the line as it was, and so does an answer a newer refresh has overtaken. */
   async refresh(): Promise<void> {
+    const mine = ++this.latest;
     try {
-      this.versions.set(await this.transport.appVersions());
+      const answer = await this.transport.appVersions();
+      if (mine === this.latest) this.versions.set(answer);
     } catch {
       // The line keeps the last answer; nothing here is worth interrupting the engineer for.
     }
