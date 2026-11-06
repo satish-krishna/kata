@@ -567,6 +567,77 @@ mod tests {
         assert!(answer.check.is_empty());
     }
 
+    /// A stand-in for the ai-sdlc program that logs each command it is started with, so a test can count the
+    /// `resolve` starts. It answers `resolve`, `list` and `state`; a `fail` file next to it makes the next
+    /// `list` or `state` exit 2 and removes the file.
+    fn recording_program(dir: &Path) -> Program {
+        let entry = dir.join("ai-sdlc.ts");
+        let script = r#"const fs = require('node:fs');
+const path = require('node:path');
+const here = __dirname;
+const command = process.argv[2];
+fs.appendFileSync(path.join(here, 'calls.log'), command + '\n');
+if (command === 'resolve') {
+  console.log(JSON.stringify({ master: here, workspace: here, problems: [] }));
+} else if (fs.existsSync(path.join(here, 'fail'))) {
+  fs.unlinkSync(path.join(here, 'fail'));
+  console.error('boom');
+  process.exit(2);
+} else if (command === 'list') {
+  console.log(JSON.stringify({ system: 'kata', changes: [], problems: [] }));
+} else {
+  console.log(JSON.stringify(JSON.parse(fs.readFileSync(path.join(here, 'state.json'), 'utf8'))));
+}
+"#;
+        std::fs::write(&entry, script).unwrap();
+        let state = STATE.replace("NAME", "a").replace("DONE", "false");
+        std::fs::write(dir.join("state.json"), state).unwrap();
+        Program {
+            node: "node".into(),
+            entry,
+        }
+    }
+
+    fn resolves(dir: &Path) -> usize {
+        std::fs::read_to_string(dir.join("calls.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| *l == "resolve")
+            .count()
+    }
+
+    #[test]
+    fn the_program_resolves_a_folder_once_and_again_after_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = recording_program(dir.path());
+        let readiness = ready("1.3.1");
+        let systems = names(&["kata"]);
+        let memory = HomeMemory::default();
+        let folder = dir.path();
+        home_list(&program, &readiness, None, folder, &systems).unwrap();
+        home_open(
+            &program,
+            &readiness,
+            &no_live,
+            folder,
+            "kata",
+            &names(&["a"]),
+            Refresh::Open,
+            &memory,
+        )
+        .unwrap();
+        assert_eq!(resolves(dir.path()), 1, "list then open resolve once");
+        std::fs::write(dir.path().join("fail"), "").unwrap();
+        assert!(home_list(&program, &readiness, None, folder, &systems).is_err());
+        assert_eq!(resolves(dir.path()), 1, "the failed call used the cache");
+        home_list(&program, &readiness, None, folder, &systems).unwrap();
+        assert_eq!(
+            resolves(dir.path()),
+            2,
+            "after an error the next call resolves again"
+        );
+    }
+
     // The speed targets (R11.1). Timings depend on the machine, so this runs only with KATA_SPEED_CHECK=1, the way the
     // real-claude smoke test waits for KATA_SMOKE_REAL; the routine suite and CI pass it without measuring.
 
