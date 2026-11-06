@@ -618,15 +618,15 @@ mod tests {
         .unwrap();
         init_repo(&ws, "kata");
         for n in 0..finished {
-            let folder = master.join(format!(
-                "intent/kata/2026-09-{:02}-done-{n:03}",
-                n % 28 + 1
-            ));
+            let folder = master.join(format!("intent/kata/2026-09-{:02}-done-{n:03}", n % 28 + 1));
             std::fs::create_dir_all(&folder).unwrap();
             std::fs::write(folder.join("intent.md"), INTENT).unwrap();
         }
         git(&master, &["add", "."]);
-        git(&master, &["commit", "-q", "-m", "marker and finished changes"]);
+        git(
+            &master,
+            &["commit", "-q", "-m", "marker and finished changes"],
+        );
         let place = program.resolve(&ws).unwrap();
         for n in 0..open {
             let name = format!("2026-11-0{}-open-{n}", n + 1);
