@@ -2,9 +2,9 @@
 //! refresh must list again, and which open changes the GitHub merge check asks about.
 use crate::ai_sdlc::list::{ChangeList, Finished};
 use crate::ai_sdlc::state::ChangeState;
-use serde::{Deserialize, Serialize};
 use crate::offer::HomeReading;
 use crate::view::ChangeView;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 /// An open change as the home lists it at once: its name and title.

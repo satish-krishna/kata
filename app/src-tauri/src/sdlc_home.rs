@@ -1,15 +1,18 @@
 //! The AI-SDLC home's commands: the open changes of the shown system, read alone, and what the pull request
 //! merge check last said about each. The Tauri commands in `lib.rs` are one-line wrappers over [`home_list`],
 //! [`home_open`] and [`home_pull_requests`], so this module is testable without Tauri.
+use crate::sdlc_state::view_of;
 use kata_sdlc::ai_sdlc::list::ChangeList;
 use kata_sdlc::ai_sdlc::state::{ChangeState, SystemState};
 use kata_sdlc::ai_sdlc::{Program, ProgramError};
 use kata_sdlc::copy_removal::CopyRemoval;
-use kata_sdlc::offer::LiveFacts;
-use kata_sdlc::open_changes::{HomeChecked, HomeList, HomeOpen, Refresh};
+use kata_sdlc::offer::{home_reading, LiveFacts};
+use kata_sdlc::open_changes::{
+    relist, shown_system, split, to_check, HomeChecked, HomeList, HomeOpen, HomeRow, Refresh,
+};
 use kata_sdlc::plugin::Readiness;
 use kata_sdlc::view::ChangeView;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -74,40 +77,171 @@ pub struct HomeMemory {
 /// The home's list for the saved workspace: the shown system's open and finished changes. A plugin older than
 /// 1.3.0 answers `Legacy`, and the program is not asked.
 pub fn home_list(
-    _source: &dyn HomeSource,
-    _readiness: &Readiness,
-    _remembered: Option<&str>,
-    _folder: &Path,
-    _systems: &[String],
+    source: &dyn HomeSource,
+    readiness: &Readiness,
+    remembered: Option<&str>,
+    folder: &Path,
+    systems: &[String],
 ) -> Result<HomeList, String> {
-    todo!()
+    if !kata_sdlc::plugin::lists_changes(readiness) {
+        return Ok(HomeList::Legacy);
+    }
+    let system = shown_system(remembered, systems);
+    let (open, finished) = match &system {
+        Some(system) => split(source.list(folder, system)?),
+        None => (Vec::new(), Vec::new()),
+    };
+    let (can_start_change, start_change_reason) = match readiness {
+        Readiness::Blocked { message, .. } => (false, Some(message.clone())),
+        Readiness::Ready { .. } => (true, None),
+    };
+    Ok(HomeList::Listed {
+        system,
+        systems: systems.to_vec(),
+        open,
+        finished_count: finished.len(),
+        finished,
+        can_start_change,
+        start_change_reason,
+    })
+}
+
+fn key(folder: &Path, system: &str, change: &str) -> Key {
+    (folder.display().to_string(), system.into(), change.into())
 }
 
 /// The open changes of `system` with their views and rows. `shown` is the change names the screen shows.
 #[allow(clippy::too_many_arguments)]
 pub fn home_open(
-    _source: &dyn HomeSource,
-    _readiness: &Readiness,
-    _live: &dyn Fn(&str, &str) -> LiveFacts,
-    _folder: &Path,
-    _system: &str,
-    _shown: &[String],
-    _trigger: Refresh,
-    _memory: &HomeMemory,
+    source: &dyn HomeSource,
+    readiness: &Readiness,
+    live: &dyn Fn(&str, &str) -> LiveFacts,
+    folder: &Path,
+    system: &str,
+    shown: &[String],
+    trigger: Refresh,
+    memory: &HomeMemory,
 ) -> Result<HomeOpen, String> {
-    todo!()
+    if !kata_sdlc::plugin::lists_changes(readiness) {
+        return Err("the installed ai-sdlc plugin cannot read open changes alone".into());
+    }
+    let found = source.open_states(folder, system)?;
+    let mut problems = found.problems.clone();
+    // Declaring done needs a committed review and every task logged, which is what the candidate means, so
+    // any other change is not declared and costs no read.
+    let reads: Vec<(String, Result<bool, String>)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = found
+            .changes
+            .iter()
+            .filter(|c| c.ready.done.candidate)
+            .map(|c| {
+                let name = c.change.clone();
+                scope.spawn(move || {
+                    let read = source.declared(folder, system, &name);
+                    (name, read)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| {
+                h.join()
+                    .unwrap_or_else(|_| (String::new(), Err("reading a change failed".into())))
+            })
+            .collect()
+    });
+    let mut declared = BTreeSet::new();
+    for (name, read) in reads {
+        match read {
+            Ok(true) => {
+                declared.insert(name);
+            }
+            Ok(false) => {}
+            Err(reason) => problems.push(reason),
+        }
+    }
+    let check = to_check(trigger, &found.changes, &declared);
+    let relisted = relist(shown, &found.changes);
+    let mut remembered = memory.rows.lock().unwrap();
+    let open_keys: BTreeSet<Key> = found
+        .changes
+        .iter()
+        .map(|c| key(folder, system, &c.change))
+        .collect();
+    remembered.retain(|k, _| {
+        k.0 != folder.display().to_string() || k.1 != system || open_keys.contains(k)
+    });
+    let mut rows = Vec::new();
+    for state in found.changes {
+        let is_declared = declared.contains(&state.change);
+        let k = key(folder, system, &state.change);
+        let facts = live(system, &state.change);
+        let view = view_of(state, readiness, facts);
+        let entry = remembered.entry(k).or_default();
+        if !is_declared {
+            entry.check = None;
+        }
+        entry.view = Some(view.clone());
+        let reading = home_reading(&view.offer, is_declared, entry.check.as_ref());
+        rows.push(HomeRow { view, reading });
+    }
+    Ok(HomeOpen {
+        rows,
+        check,
+        relist: relisted,
+        problems,
+    })
 }
 
-/// Asks the merge check about `changes` side by side and relabels their rows.
+/// Asks the merge check about `changes` side by side and relabels their rows. A change the home has not
+/// read is skipped; a check that fails leaves its row out, so it keeps its last reading.
 pub fn home_pull_requests(
-    _source: &dyn HomeSource,
-    _readiness: &Readiness,
-    _folder: &Path,
-    _system: &str,
-    _changes: &[String],
-    _memory: &HomeMemory,
+    source: &dyn HomeSource,
+    readiness: &Readiness,
+    folder: &Path,
+    system: &str,
+    changes: &[String],
+    memory: &HomeMemory,
 ) -> Result<HomeChecked, String> {
-    todo!()
+    if !kata_sdlc::plugin::lists_changes(readiness) {
+        return Err("the installed ai-sdlc plugin cannot read open changes alone".into());
+    }
+    let views: Vec<ChangeView> = {
+        let remembered = memory.rows.lock().unwrap();
+        changes
+            .iter()
+            .filter_map(|c| remembered.get(&key(folder, system, c))?.view.clone())
+            .collect()
+    };
+    let answers: Vec<Result<CopyRemoval, String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = views
+            .iter()
+            .map(|v| scope.spawn(move || source.merge_check(folder, &v.state)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| {
+                h.join()
+                    .unwrap_or_else(|_| Err("checking a change failed".into()))
+            })
+            .collect()
+    });
+    let mut rows = Vec::new();
+    let mut problems = Vec::new();
+    let mut remembered = memory.rows.lock().unwrap();
+    for (view, answer) in views.into_iter().zip(answers) {
+        match answer {
+            Ok(check) => {
+                let reading = home_reading(&view.offer, true, Some(&check));
+                if let Some(entry) = remembered.get_mut(&key(folder, system, &view.state.change)) {
+                    entry.check = Some(check);
+                }
+                rows.push(HomeRow { view, reading });
+            }
+            Err(reason) => problems.push(reason),
+        }
+    }
+    Ok(HomeChecked { rows, problems })
 }
 
 #[cfg(test)]
@@ -182,7 +316,7 @@ mod tests {
                         track: kata_sdlc::ai_sdlc::state::ChangeTrack::Full,
                         master: "/m".into(),
                         in_copy: false,
-                        finished: finished.clone(),
+                        finished: *finished,
                     })
                     .collect(),
                 problems: vec![],
@@ -270,15 +404,32 @@ mod tests {
 
         let mut fake = three();
         fake.merge.insert("a".into(), Ok(CopyRemoval::Offer));
-        let checked =
-            home_pull_requests(&fake, &ready("1.3.1"), Path::new("/ws"), "kata", &names(&["a"]), &memory)
-                .unwrap();
-        assert_eq!(checked.rows[0].reading.label.text, "Done · merged, remove the copy");
+        let checked = home_pull_requests(
+            &fake,
+            &ready("1.3.1"),
+            Path::new("/ws"),
+            "kata",
+            &names(&["a"]),
+            &memory,
+        )
+        .unwrap();
+        assert_eq!(
+            checked.rows[0].reading.label.text,
+            "Done · merged, remove the copy"
+        );
         let answer = open(&fake, Refresh::Focus, &shown, &memory).unwrap();
         assert_eq!(text(&answer, "a"), "Done · merged, remove the copy");
-        let row = answer.rows.iter().find(|r| r.view.state.change == "a").unwrap();
+        let row = answer
+            .rows
+            .iter()
+            .find(|r| r.view.state.change == "a")
+            .unwrap();
         assert_eq!(row.reading.action, HomeAction::RemoveCopy);
-        assert_eq!(*fake.merge_asked.lock().unwrap(), ["a"], "one check, none on focus");
+        assert_eq!(
+            *fake.merge_asked.lock().unwrap(),
+            ["a"],
+            "one check, none on focus"
+        );
         let asked = fake.declared_asked.lock().unwrap();
         assert!(asked.iter().all(|c| c == "a" || c == "b"), "{asked:?}");
         assert!(!asked.iter().any(|c| c == "c"));
@@ -404,7 +555,13 @@ mod tests {
             declared_fails: names(&["a"]),
             ..three()
         };
-        let answer = open(&fake, Refresh::Open, &["a", "b", "c"], &HomeMemory::default()).unwrap();
+        let answer = open(
+            &fake,
+            Refresh::Open,
+            &["a", "b", "c"],
+            &HomeMemory::default(),
+        )
+        .unwrap();
         assert_eq!(answer.problems.len(), 1);
         assert_ne!(text(&answer, "a"), "Done · pull requests open");
         assert!(answer.check.is_empty());

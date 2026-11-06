@@ -1332,6 +1332,88 @@ fn sdlc_state(
     Ok(sdlc_state::workspace_view(views))
 }
 
+/// The home's list for a saved workspace: the system shown (the one used last, else the first) with its open and
+/// finished changes, or `Legacy` where the plugin cannot list changes.
+#[tauri::command(async)]
+fn sdlc_home_list(
+    workspace_id: String,
+    systems: Vec<String>,
+) -> Result<sdlc::open_changes::HomeList, String> {
+    let entry = sdlc::store::load_workspaces()
+        .into_iter()
+        .find(|w| w.id == workspace_id)
+        .ok_or_else(|| "that workspace is not saved".to_string())?;
+    let (program, readiness) = state_inputs(&entry.folder);
+    let Some(program) = program else {
+        return Ok(sdlc::open_changes::HomeList::Legacy);
+    };
+    sdlc_home::home_list(
+        &program,
+        &readiness,
+        entry.last_system.as_deref(),
+        Path::new(&entry.folder),
+        &systems,
+    )
+}
+
+/// The engineer picked a system on the home: remember it, then list it.
+#[tauri::command(async)]
+fn sdlc_home_pick(
+    workspace_id: String,
+    system: String,
+    systems: Vec<String>,
+) -> Result<sdlc::open_changes::HomeList, String> {
+    if !systems.contains(&system) {
+        return Err(format!("{system} is not a system of this workspace"));
+    }
+    sdlc::store::remember_system(&workspace_id, &system).map_err(|e| e.to_string())?;
+    sdlc_home_list(workspace_id, systems)
+}
+
+/// The open changes of the shown system, read alone, as rows.
+#[tauri::command(async)]
+fn sdlc_home_open(
+    control: State<'_, RunControl>,
+    memory: State<'_, sdlc_home::HomeMemory>,
+    folder: String,
+    system: String,
+    shown: Vec<String>,
+    trigger: sdlc::open_changes::Refresh,
+) -> Result<sdlc::open_changes::HomeOpen, String> {
+    let (program, readiness) = state_inputs(&folder);
+    let program = program.ok_or_else(|| "the AI-SDLC mode cannot run here".to_string())?;
+    sdlc_home::home_open(
+        &program,
+        &readiness,
+        &|s, c| live_facts(&control, s, c),
+        Path::new(&folder),
+        &system,
+        &shown,
+        trigger,
+        &memory,
+    )
+}
+
+/// The merge check for the named open changes, side by side.
+#[tauri::command(async)]
+fn sdlc_home_pull_requests(
+    memory: State<'_, sdlc_home::HomeMemory>,
+    folder: String,
+    system: String,
+    changes: Vec<String>,
+) -> Result<sdlc::open_changes::HomeChecked, String> {
+    let (program, readiness) = state_inputs(&folder);
+    let program = program.ok_or_else(|| "the AI-SDLC mode cannot run here".to_string())?;
+    sdlc_home::home_pull_requests(
+        &program,
+        &readiness,
+        Path::new(&folder),
+        &system,
+        &changes,
+        &memory,
+    )
+}
+
 /// One change of a system, as [`sdlc_state`] shows it.
 #[tauri::command(async)]
 fn sdlc_change_state(
@@ -2167,6 +2249,7 @@ pub fn run() {
             }
         })
         .manage(RunControl::default())
+        .manage(sdlc_home::HomeMemory::default())
         .manage(Arc::new(history::RunHistory::default()))
         .manage(Arc::new(running::OpenedMarks::default()))
         .setup(|app| {
@@ -2267,6 +2350,10 @@ pub fn run() {
             sdlc_review_record,
             sdlc_plugin_readiness,
             sdlc_state,
+            sdlc_home_list,
+            sdlc_home_pick,
+            sdlc_home_open,
+            sdlc_home_pull_requests,
             sdlc_build_board,
             sdlc_review_standing,
             sdlc_change_state,
