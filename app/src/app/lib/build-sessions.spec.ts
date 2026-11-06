@@ -214,6 +214,10 @@ describe('tabOf', () => {
     expect(tabOf(run, null)).toEqual({ word: 'running', tone: 'running' });
     expect(tabOf({ ...run, state: 'awaiting', waiting: true }, null)).toEqual({ word: 'question waiting', tone: 'warning' });
   });
+  it('says running for a live run that has no events yet, and a waiting question for one that waits', () => {
+    expect(tabOf({ ...run, state: 'idle' }, null)).toEqual({ word: 'running', tone: 'running' });
+    expect(tabOf({ ...run, state: 'idle', waiting: true }, null)).toEqual({ word: 'question waiting', tone: 'warning' });
+  });
   it('names each ending in words, from the record', () => {
     const ended = { live: false, state: 'idle' as const, waiting: false, outcome: 'Outcome not recorded' };
     const words = (['finished', 'failed', 'cancelled', 'out-of-time', 'nobody-answered', 'turn-cap', 'budget'] as const).map((e) => tabOf(ended, e).word);
