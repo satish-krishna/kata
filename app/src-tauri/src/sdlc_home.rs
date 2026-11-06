@@ -723,6 +723,45 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
         );
     }
 
+    #[test]
+    fn a_cold_open_with_several_declared_reads_resolves_the_master_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = recording_program(dir.path(), true);
+        let mut state: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.path().join("state.json")).unwrap())
+                .unwrap();
+        let first = state["changes"][0].clone();
+        state["changes"] = serde_json::Value::Array(
+            ["a", "b", "c"]
+                .iter()
+                .map(|name| {
+                    let mut one = first.clone();
+                    one["change"] = (*name).into();
+                    one
+                })
+                .collect(),
+        );
+        std::fs::write(dir.path().join("state.json"), state.to_string()).unwrap();
+        let answer = home_open(
+            &program,
+            &ready("1.3.1"),
+            &no_live,
+            dir.path(),
+            "kata",
+            &names(&["a", "b", "c"]),
+            Refresh::Open,
+            &HomeMemory::default(),
+        )
+        .unwrap();
+        assert_eq!(answer.rows.len(), 3);
+        assert_eq!(
+            resolves(dir.path()),
+            1,
+            "three declared reads share one resolve: {:?}",
+            calls(dir.path())
+        );
+    }
+
     // The speed targets (R11.1). Timings depend on the machine, so this runs only with KATA_SPEED_CHECK=1, the way the
     // real-claude smoke test waits for KATA_SMOKE_REAL; the routine suite and CI pass it without measuring.
 
