@@ -506,7 +506,7 @@ describe('ChangePage opens an existing change on the build page', () => {
     if (review) vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(REVIEW);
     if (built.length > 0) {
       await transport.sdlcLinkRun({ workspace_id: 'acme-commerce', system: 'commerce', change: MOCK_BUILD_CHANGE, stage: 'build:commerce-core', run_id: EARLIER, started_at: 1790000000, heads: {} });
-      vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: EARLIER, kata: 'k', started_at: 1790000000, isolation: 'none', steered: false, exit: 0 }]);
+      vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: EARLIER, kata: 'k', started_at: 1790000000, isolation: 'none', steered: false, ending: 'finished', exit: 0 }]);
     }
     return open(MOCK_BUILD_CHANGE, transport);
   }
@@ -557,7 +557,7 @@ describe('ChangePage opens an existing change on the build page', () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(REVIEW);
     await transport.sdlcLinkRun({ workspace_id: 'acme-commerce', system: 'commerce', change: MOCK_DONE_CHANGE, stage: 'build:commerce-core', run_id: EARLIER, started_at: 1790000000, heads: {} });
-    vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: EARLIER, kata: 'k', started_at: 1790000000, isolation: 'none', steered: false, exit: 0 }]);
+    vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: EARLIER, kata: 'k', started_at: 1790000000, isolation: 'none', steered: false, ending: 'finished', exit: 0 }]);
     const { container } = await open(MOCK_DONE_CHANGE, transport);
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
     expect(text(pill(container, 'Build'))).toBe('Build · done');

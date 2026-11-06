@@ -11,6 +11,7 @@ use std::path::Path;
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", ts(rename_all = "kebab-case"))]
 pub enum RunEnding {
     Finished,
     Failed,
@@ -24,8 +25,18 @@ pub enum RunEnding {
 impl RunEnding {
     /// The ending for a run whose transcript ends with `run.cancelled` (`cancelled`) or whose terminal event carried `exit`.
     pub fn from_exit(exit: Option<i32>, cancelled: bool) -> RunEnding {
-        let _ = (exit, cancelled);
-        RunEnding::Failed
+        if cancelled {
+            return RunEnding::Cancelled;
+        }
+        match exit {
+            Some(0) => RunEnding::Finished,
+            Some(122) => RunEnding::Budget,
+            Some(123) => RunEnding::NobodyAnswered,
+            Some(124) => RunEnding::OutOfTime,
+            Some(125) => RunEnding::TurnCap,
+            Some(130) => RunEnding::Cancelled,
+            _ => RunEnding::Failed,
+        }
     }
 }
 
@@ -255,15 +266,7 @@ fn build_record(stem: &str, events: &[KataEvent]) -> Option<RunRecord> {
         steered: is_steered(events),
         ending: RunEnding::from_exit(
             exit,
-            matches!(
-                events.iter().rev().find(|e| matches!(
-                    e,
-                    KataEvent::RunCompleted { .. }
-                        | KataEvent::RunError { .. }
-                        | KataEvent::RunCancelled { .. }
-                )),
-                Some(KataEvent::RunCancelled { .. })
-            ),
+            matches!(terminal, Some(KataEvent::RunCancelled { .. })),
         ),
     })
 }

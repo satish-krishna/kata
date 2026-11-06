@@ -276,8 +276,8 @@ describe('ChangePageViewModel', () => {
       { workspace_id: 'acme-commerce', system: 'commerce', change: PHOTOS_CHANGE, stage: 'spec', run_id: 'r2', started_at: 2 },
     ]);
     vi.spyOn(transport, 'listRuns').mockResolvedValue([
-      { id: 'r2', kata: `sdlc-commerce-${PHOTOS_CHANGE}-spec`, started_at: 2, isolation: 'none', steered: false },
-      { id: 'r3', kata: `sdlc-commerce-${PHOTOS_CHANGE}-spec`, started_at: 3, isolation: 'none', steered: false },
+      { id: 'r2', kata: `sdlc-commerce-${PHOTOS_CHANGE}-spec`, started_at: 2, isolation: 'none', steered: false, ending: 'failed' },
+      { id: 'r3', kata: `sdlc-commerce-${PHOTOS_CHANGE}-spec`, started_at: 3, isolation: 'none', steered: false, ending: 'failed' },
     ]);
     const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
