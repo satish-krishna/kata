@@ -603,30 +603,38 @@ mod tests {
         assert!(answer.check.is_empty());
     }
 
-    /// A stand-in for the ai-sdlc program that logs each command it is started with, so a test can count the
-    /// `resolve` starts. It answers `resolve`, `list` and `state`; a `fail` file next to it makes the next
-    /// `list` or `state` exit 2 and removes the file.
-    fn recording_program(dir: &Path) -> Program {
+    /// A stand-in for the ai-sdlc program that logs each start as one line (its arguments), so a test can count
+    /// the starts and the `resolve` ones. It answers `resolve`, `list`, `state`, `change show` and `status`; a
+    /// `fail` file naming a command makes the next start of that command exit 2 and removes the file.
+    fn recording_program(dir: &Path, done_candidate: bool) -> Program {
         let entry = dir.join("ai-sdlc.ts");
         let script = r#"const fs = require('node:fs');
 const path = require('node:path');
 const here = __dirname;
-const command = process.argv[2];
-fs.appendFileSync(path.join(here, 'calls.log'), command + '\n');
-if (command === 'resolve') {
-  console.log(JSON.stringify({ master: here, workspace: here, problems: [] }));
-} else if (fs.existsSync(path.join(here, 'fail'))) {
-  fs.unlinkSync(path.join(here, 'fail'));
+const args = process.argv.slice(2);
+const command = args[0];
+fs.appendFileSync(path.join(here, 'calls.log'), args.join(' ') + '\n');
+const fail = path.join(here, 'fail');
+if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
+  fs.unlinkSync(fail);
   console.error('boom');
   process.exit(2);
+} else if (command === 'resolve') {
+  console.log(JSON.stringify({ master: here, workspace: here, problems: [] }));
 } else if (command === 'list') {
   console.log(JSON.stringify({ system: 'kata', changes: [], problems: [] }));
+} else if (command === 'change') {
+  console.log(JSON.stringify({ change: 'a', system: 'kata', branch: 'change/a', record: null }));
+} else if (command === 'status') {
+  console.log(JSON.stringify({ repos: [] }));
 } else {
   console.log(JSON.stringify(JSON.parse(fs.readFileSync(path.join(here, 'state.json'), 'utf8'))));
 }
 "#;
         std::fs::write(&entry, script).unwrap();
-        let state = STATE.replace("NAME", "a").replace("DONE", "false");
+        let state = STATE
+            .replace("NAME", "a")
+            .replace("DONE", &done_candidate.to_string());
         std::fs::write(dir.join("state.json"), state).unwrap();
         Program {
             node: "node".into(),
@@ -634,23 +642,33 @@ if (command === 'resolve') {
         }
     }
 
-    fn resolves(dir: &Path) -> usize {
+    fn calls(dir: &Path) -> Vec<String> {
         std::fs::read_to_string(dir.join("calls.log"))
             .unwrap_or_default()
             .lines()
-            .filter(|l| *l == "resolve")
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn resolves(dir: &Path) -> usize {
+        calls(dir)
+            .iter()
+            .filter(|l| l.starts_with("resolve "))
             .count()
     }
 
     #[test]
-    fn the_program_resolves_a_folder_once_and_again_after_an_error() {
+    fn the_cold_list_and_open_start_one_program_each_and_no_resolve() {
         let dir = tempfile::tempdir().unwrap();
-        let program = recording_program(dir.path());
+        let program = recording_program(dir.path(), false);
         let readiness = ready("1.3.1");
-        let systems = names(&["kata"]);
-        let memory = HomeMemory::default();
         let folder = dir.path();
-        home_list(&program, &readiness, None, folder, &systems).unwrap();
+        home_list(&program, &readiness, None, folder, &names(&["kata"])).unwrap();
+        let started = calls(dir.path());
+        assert_eq!(started.len(), 1, "the cold list is one start: {started:?}");
+        assert!(started[0].starts_with("list "), "{started:?}");
+        assert!(started[0].contains(" --workspace "), "{started:?}");
+        assert!(!started[0].contains(" --master "), "{started:?}");
         home_open(
             &program,
             &readiness,
@@ -659,18 +677,47 @@ if (command === 'resolve') {
             "kata",
             &names(&["a"]),
             Refresh::Open,
-            &memory,
+            &HomeMemory::default(),
         )
         .unwrap();
-        assert_eq!(resolves(dir.path()), 1, "list then open resolve once");
-        std::fs::write(dir.path().join("fail"), "").unwrap();
-        assert!(home_list(&program, &readiness, None, folder, &systems).is_err());
-        assert_eq!(resolves(dir.path()), 1, "the failed call used the cache");
-        home_list(&program, &readiness, None, folder, &systems).unwrap();
+        let started = calls(dir.path());
+        assert_eq!(started.len(), 2, "the open read is one start: {started:?}");
+        assert!(started[1].starts_with("state "), "{started:?}");
+        assert_eq!(resolves(dir.path()), 0, "{started:?}");
+    }
+
+    #[test]
+    fn a_read_that_needs_the_master_resolves_once_and_again_after_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = recording_program(dir.path(), true);
+        let readiness = ready("1.3.1");
+        let memory = HomeMemory::default();
+        let folder = dir.path();
+        let open = || {
+            home_open(
+                &program,
+                &readiness,
+                &no_live,
+                folder,
+                "kata",
+                &names(&["a"]),
+                Refresh::Open,
+                &memory,
+            )
+            .unwrap()
+        };
+        assert!(open().problems.is_empty());
+        assert_eq!(resolves(dir.path()), 1, "the first declared read resolves");
+        assert!(open().problems.is_empty());
+        assert_eq!(resolves(dir.path()), 1, "a later read reuses the master");
+        std::fs::write(dir.path().join("fail"), "change").unwrap();
+        assert_eq!(open().problems.len(), 1, "the failed read is a problem");
+        assert_eq!(resolves(dir.path()), 1, "the failed read used the cache");
+        assert!(open().problems.is_empty());
         assert_eq!(
             resolves(dir.path()),
             2,
-            "after an error the next call resolves again"
+            "after an error the next read resolves again"
         );
     }
 
@@ -734,8 +781,7 @@ if (command === 'resolve') {
             &master,
             &["commit", "-q", "-m", "marker and finished changes"],
         );
-        // The app resolves the saved workspace once when it opens it; the cache holds that answer for the reads below.
-        let place = in_place(program, &ws, |place| Ok(place.clone())).unwrap();
+        let place = program.resolve(&ws).unwrap();
         for n in 0..open {
             let name = format!("2026-11-0{}-open-{n}", n + 1);
             let started = program
