@@ -229,6 +229,29 @@ mod tests {
         assert_eq!(finished, expected_finished);
     }
 
+    #[test]
+    fn split_answers_finished_newest_first_and_keeps_open_order() {
+        let list = ChangeList {
+            system: "kata".into(),
+            changes: vec![
+                listing("2026-11-01-a", None, Some(Finished::Merged)),
+                listing("2026-11-02-b", None, None),
+                listing("2026-11-03-c", None, Some(Finished::Rejected)),
+                listing("2026-11-04-d", None, None),
+                listing("2026-11-05-e", None, Some(Finished::Merged)),
+            ],
+            problems: vec![],
+        };
+        let (open, finished) = split(list);
+        let open_names: Vec<&str> = open.iter().map(|c| c.change.as_str()).collect();
+        assert_eq!(open_names, ["2026-11-02-b", "2026-11-04-d"]);
+        let finished_names: Vec<&str> = finished.iter().map(|c| c.change.as_str()).collect();
+        assert_eq!(
+            finished_names,
+            ["2026-11-05-e", "2026-11-03-c", "2026-11-01-a"]
+        );
+    }
+
     fn open_states(list: &[&str]) -> Vec<ChangeState> {
         list.iter().map(|c| change_state(c, "/m", false)).collect()
     }
