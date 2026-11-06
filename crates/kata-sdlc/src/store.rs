@@ -10,6 +10,8 @@ pub enum StoreError {
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Json(#[from] serde_json::Error),
+    #[error("no workspace with id {0}")]
+    UnknownWorkspace(String),
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -139,6 +141,38 @@ pub fn save_workspaces(w: &[WorkspaceEntry]) -> Result<(), StoreError> {
     write("workspaces.json", w)
 }
 
+/// The saved workspace list and the workspace the home opens on, answered after a change to the list.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct WorkspaceChoice {
+    pub workspaces: Vec<WorkspaceEntry>,
+    pub current: Option<String>,
+}
+
+pub fn update_workspaces<F>(_f: F) -> Result<Vec<WorkspaceEntry>, StoreError>
+where
+    F: FnOnce(&mut Vec<WorkspaceEntry>) -> Result<(), StoreError>,
+{
+    todo!()
+}
+
+pub fn stamp(_list: &[WorkspaceEntry], _id: &str, _now: u64) -> u64 {
+    todo!()
+}
+
+pub fn open_workspace(_id: &str, _now: u64) -> Result<WorkspaceChoice, StoreError> {
+    todo!()
+}
+
+pub fn add_workspace(_name: &str, _folder: &str, _now: u64) -> Result<WorkspaceChoice, StoreError> {
+    todo!()
+}
+
+pub fn remove_workspace(_id: &str) -> Result<WorkspaceChoice, StoreError> {
+    todo!()
+}
+
 pub fn load_run_links() -> Vec<RunLink> {
     read_or_default("runs.json")
 }
@@ -219,6 +253,92 @@ mod tests {
         assert_eq!(current_workspace(&zeros).unwrap().id, "a");
         let top = [entry("a", 1), entry("b", 9), entry("c", 9), entry("d", 3)];
         assert_eq!(current_workspace(&top).unwrap().id, "b");
+    }
+
+    #[test]
+    #[serial]
+    fn stamp_rows() {
+        let rows: Vec<(Vec<WorkspaceEntry>, &str, u64, u64)> = vec![
+            (vec![entry("a", 0)], "a", 100, 100),
+            (vec![entry("a", 0), entry("b", 50)], "a", 100, 100),
+            (vec![entry("a", 0), entry("b", 100)], "a", 100, 101),
+            (vec![entry("a", 0), entry("b", 105)], "a", 100, 106),
+            (vec![entry("a", 200), entry("b", 100)], "a", 100, 101),
+            (vec![entry("a", 200), entry("b", 50)], "a", 100, 100),
+        ];
+        for (list, id, now, expected) in rows {
+            assert_eq!(stamp(&list, id, now), expected, "{list:?} {id} {now}");
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn open_workspace_wins_a_same_second_tie() {
+        let _home = with_home();
+        save_workspaces(&[entry("first", 1000), entry("second", 1000)]).unwrap();
+        let choice = open_workspace("second", 1000).unwrap();
+        assert_eq!(choice.current.as_deref(), Some("second"));
+        let on_disk = load_workspaces();
+        assert_eq!(on_disk, choice.workspaces);
+        assert_eq!(
+            on_disk
+                .iter()
+                .find(|w| w.id == "second")
+                .unwrap()
+                .last_opened,
+            1001
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn open_workspace_of_an_unknown_id_saves_nothing() {
+        let _home = with_home();
+        save_workspaces(&[entry("a", 5)]).unwrap();
+        let err = open_workspace("nope", 10).unwrap_err();
+        assert!(matches!(err, StoreError::UnknownWorkspace(ref id) if id == "nope"));
+        assert_eq!(load_workspaces(), vec![entry("a", 5)]);
+    }
+
+    #[test]
+    #[serial]
+    fn remove_workspace_answers_from_the_saved_list() {
+        let _home = with_home();
+        save_workspaces(&[entry("a", 5), entry("b", 50), entry("c", 7)]).unwrap();
+        let choice = remove_workspace("b").unwrap();
+        assert_eq!(choice.current.as_deref(), Some("c"));
+        assert_eq!(choice.workspaces.len(), 2);
+        assert_eq!(load_workspaces(), choice.workspaces);
+        let unknown = remove_workspace("zzz").unwrap();
+        assert_eq!(unknown.workspaces.len(), 2);
+    }
+
+    #[test]
+    #[serial]
+    fn a_failed_save_changes_nothing() {
+        let home = with_home();
+        save_workspaces(&[entry("a", 5), entry("b", 6)]).unwrap();
+        let before = load_workspaces();
+        let blocker = home.temp.path().join("not-a-folder");
+        std::fs::write(&blocker, "x").unwrap();
+        std::env::set_var("KATA_HOME", &blocker);
+        assert!(open_workspace("a", 100).is_err());
+        assert!(remove_workspace("a").is_err());
+        std::env::set_var("KATA_HOME", home.temp.path());
+        assert_eq!(load_workspaces(), before);
+    }
+
+    #[test]
+    #[serial]
+    fn add_workspace_makes_a_unique_id() {
+        let _home = with_home();
+        add_workspace("My Repo", "/one", 10).unwrap();
+        let second = add_workspace("My Repo", "/two", 10).unwrap();
+        let ids: Vec<&str> = second.workspaces.iter().map(|w| w.id.as_str()).collect();
+        assert_eq!(ids, ["my-repo", "my-repo-2"]);
+        assert_eq!(second.current.as_deref(), Some("my-repo-2"));
+        let odd = add_workspace("!!!", "/three", 10).unwrap();
+        assert_eq!(odd.workspaces.last().unwrap().id, "workspace");
     }
 
     struct HomeGuard {
