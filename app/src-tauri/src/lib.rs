@@ -391,7 +391,10 @@ struct PluginTools;
 impl PluginTools {
     fn program(workspace: &Path) -> Result<build_host::ProgramTools, sdlc::ai_sdlc::ProgramError> {
         match state_inputs(&workspace.display().to_string()) {
-            (Some(program), _) => Ok(build_host::ProgramTools::new(program)),
+            (Some(program), readiness) => Ok(build_host::ProgramTools::new(
+                program,
+                sdlc::plugin::lists_changes(&readiness),
+            )),
             (None, sdlc::plugin::Readiness::Blocked { message, .. }) => {
                 Err(sdlc::ai_sdlc::ProgramError::CouldNotRun { message })
             }
@@ -431,6 +434,22 @@ impl build_host::Tools for PluginTools {
         system: &str,
     ) -> Result<Vec<sdlc::ai_sdlc::state::ChangeState>, sdlc::ai_sdlc::ProgramError> {
         Self::program(&place.workspace)?.states(place, system)
+    }
+    fn change_state(
+        &self,
+        place: &sdlc::ai_sdlc::Place,
+        system: &str,
+        change: &str,
+    ) -> Result<Option<sdlc::ai_sdlc::state::ChangeState>, sdlc::ai_sdlc::ProgramError> {
+        Self::program(&place.workspace)?.change_state(place, system, change)
+    }
+    fn other_copies(
+        &self,
+        place: &sdlc::ai_sdlc::Place,
+        system: &str,
+        change: &str,
+    ) -> Result<Vec<std::path::PathBuf>, sdlc::ai_sdlc::ProgramError> {
+        Self::program(&place.workspace)?.other_copies(place, system, change)
     }
     fn plan(
         &self,

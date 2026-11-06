@@ -249,6 +249,20 @@ pub trait Tools: Send + Sync {
     fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String>;
     /// Every change of `system`.
     fn states(&self, place: &Place, system: &str) -> Result<Vec<ChangeState>, ProgramError>;
+    /// Where `change` stands, read for that change alone; `None` when the plugin knows no such change.
+    fn change_state(
+        &self,
+        place: &Place,
+        system: &str,
+        change: &str,
+    ) -> Result<Option<ChangeState>, ProgramError>;
+    /// The `master` of every change of `system` that lives in a copy and is not `change`.
+    fn other_copies(
+        &self,
+        place: &Place,
+        system: &str,
+        change: &str,
+    ) -> Result<Vec<PathBuf>, ProgramError>;
     /// The change's plan, as committed.
     fn plan(&self, place: &Place, state: &ChangeState) -> Result<ParsedPlan, String>;
     /// The change's committed review document, if it has one.
@@ -281,11 +295,13 @@ pub trait Launcher: Send + Sync {
 /// [`Tools`] over one ai-sdlc program.
 pub struct ProgramTools {
     program: Program,
+    /// Whether the plugin can list changes (1.3.0 or later), so the copies come from the light list.
+    lists: bool,
 }
 
 impl ProgramTools {
-    pub fn new(program: Program) -> Self {
-        ProgramTools { program }
+    pub fn new(program: Program, lists: bool) -> Self {
+        ProgramTools { program, lists }
     }
 }
 
@@ -307,6 +323,25 @@ impl Tools for ProgramTools {
             .program
             .run(&["state", "--json", "--system", system], place)?;
         Ok(read_state(answer)?.changes)
+    }
+
+    fn change_state(
+        &self,
+        _place: &Place,
+        _system: &str,
+        _change: &str,
+    ) -> Result<Option<ChangeState>, ProgramError> {
+        let _ = self.lists;
+        Ok(None)
+    }
+
+    fn other_copies(
+        &self,
+        _place: &Place,
+        _system: &str,
+        _change: &str,
+    ) -> Result<Vec<PathBuf>, ProgramError> {
+        Ok(Vec::new())
     }
 
     fn plan(&self, _place: &Place, state: &ChangeState) -> Result<ParsedPlan, String> {
@@ -1985,6 +2020,32 @@ mod tests {
                 release.recv().unwrap();
             }
             Ok(self.states.lock().unwrap().clone())
+        }
+        fn change_state(
+            &self,
+            place: &Place,
+            system: &str,
+            change: &str,
+        ) -> Result<Option<ChangeState>, ProgramError> {
+            Ok(self
+                .states(place, system)?
+                .into_iter()
+                .find(|s| s.change == change))
+        }
+        fn other_copies(
+            &self,
+            _place: &Place,
+            _system: &str,
+            change: &str,
+        ) -> Result<Vec<PathBuf>, ProgramError> {
+            Ok(self
+                .states
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|s| s.in_copy && s.change != change)
+                .map(|s| PathBuf::from(&s.master))
+                .collect())
         }
         fn plan(&self, _place: &Place, state: &ChangeState) -> Result<ParsedPlan, String> {
             self.plans
@@ -3679,6 +3740,22 @@ mod tests {
         fn states(&self, place: &Place, system: &str) -> Result<Vec<ChangeState>, ProgramError> {
             self.fake.states(place, system)
         }
+        fn change_state(
+            &self,
+            place: &Place,
+            system: &str,
+            change: &str,
+        ) -> Result<Option<ChangeState>, ProgramError> {
+            self.fake.change_state(place, system, change)
+        }
+        fn other_copies(
+            &self,
+            place: &Place,
+            system: &str,
+            change: &str,
+        ) -> Result<Vec<PathBuf>, ProgramError> {
+            self.fake.other_copies(place, system, change)
+        }
         fn plan(&self, place: &Place, state: &ChangeState) -> Result<ParsedPlan, String> {
             self.fake.plan(place, state)
         }
@@ -3713,7 +3790,7 @@ mod tests {
             );
         }
         let tools = Arc::new(RealRun {
-            real: ProgramTools::new(vendored()),
+            real: ProgramTools::new(vendored(), true),
             fake: fake.clone(),
         });
         let launcher = Arc::new(FakeLauncher::default());
@@ -3731,6 +3808,156 @@ mod tests {
             system: SYSTEM.into(),
             change: change.into(),
         }
+    }
+
+    /// The real program for the two reads the build makes of a change, with a plan from the fake.
+    struct ReadsReal {
+        real: ProgramTools,
+        fake: Arc<FakeTools>,
+    }
+
+    impl Tools for ReadsReal {
+        fn resolve(&self, workspace: &Path) -> Result<Place, ProgramError> {
+            self.real.resolve(workspace)
+        }
+        fn run(&self, command: &[&str], place: &Place) -> Result<Value, ProgramError> {
+            self.real.run(command, place)
+        }
+        fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String> {
+            self.real.exec(command, place)
+        }
+        fn states(&self, place: &Place, system: &str) -> Result<Vec<ChangeState>, ProgramError> {
+            self.real.states(place, system)
+        }
+        fn change_state(
+            &self,
+            place: &Place,
+            system: &str,
+            change: &str,
+        ) -> Result<Option<ChangeState>, ProgramError> {
+            self.real.change_state(place, system, change)
+        }
+        fn other_copies(
+            &self,
+            place: &Place,
+            system: &str,
+            change: &str,
+        ) -> Result<Vec<PathBuf>, ProgramError> {
+            self.real.other_copies(place, system, change)
+        }
+        fn plan(&self, place: &Place, state: &ChangeState) -> Result<ParsedPlan, String> {
+            self.fake.plan(place, state)
+        }
+        fn review_record(
+            &self,
+            place: &Place,
+            system: &str,
+            state: &ChangeState,
+        ) -> Result<Option<ReviewRecord>, String> {
+            self.fake.review_record(place, system, state)
+        }
+        fn workspace_id(&self, folder: &Path) -> Option<String> {
+            self.fake.workspace_id(folder)
+        }
+        fn link_tasks(&self, links: &[kata_sdlc::store::TaskLink]) -> Result<(), String> {
+            self.fake.link_tasks(links)
+        }
+        fn head(&self, dir: &Path) -> Result<String, String> {
+            self.fake.head(dir)
+        }
+    }
+
+    /// The vendored program behind a script that appends each call's arguments to a log. Returns the
+    /// program and the log's path.
+    fn recording_program(dir: &Path) -> (Program, PathBuf) {
+        let log = dir.join("calls.log");
+        let script = dir.join("record.mjs");
+        let source = r#"import { appendFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const log = LOG;
+const entry = ENTRY;
+const args = process.argv.slice(2);
+appendFileSync(log, args.join(' ') + '\n');
+const r = spawnSync(process.execPath, [entry, ...args], { stdio: 'inherit' });
+process.exit(r.status ?? 1);
+"#
+        .replace(
+            "LOG",
+            &serde_json::to_string(&log.display().to_string()).unwrap(),
+        )
+        .replace(
+            "ENTRY",
+            &serde_json::to_string(&vendored().entry.display().to_string()).unwrap(),
+        );
+        std::fs::write(&script, source).unwrap();
+        (
+            Program {
+                node: "node".into(),
+                entry: script,
+            },
+            log,
+        )
+    }
+
+    /// What `snapshot` of the first of two started changes reads, and the calls it made.
+    fn snapshot_with(lists: bool) -> (Snapshot, Vec<String>, String) {
+        let real = real_workspace(&["2026-11-01-a", "2026-11-02-b"]);
+        let logs = tempfile::tempdir().unwrap();
+        let (program, log) = recording_program(logs.path());
+        let fake = FakeTools::new(real.place.clone());
+        fake.plans
+            .lock()
+            .unwrap()
+            .insert("2026-11-01-a".into(), plan(&[("T1", "kata", &[])]));
+        let tools = Arc::new(ReadsReal {
+            real: ProgramTools::new(program, lists),
+            fake,
+        });
+        let host = BuildHost::new(
+            tools,
+            Arc::new(FakeLauncher::default()),
+            PathBuf::from("D:/wb"),
+        );
+        let (snapshot, _) = host.snapshot(&real.place, SYSTEM, "2026-11-01-a").unwrap();
+        let calls = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .filter(|l| l.starts_with("list") || l.starts_with("state"))
+            .map(str::to_string)
+            .collect();
+        (snapshot, calls, real.copies["2026-11-02-b"].clone())
+    }
+
+    // R4.3
+    #[test]
+    fn build_reads_its_change_and_the_light_list() {
+        let (snapshot, calls, other) = snapshot_with(true);
+        assert_eq!(snapshot.state.change, "2026-11-01-a");
+        assert_eq!(snapshot.others, vec![PathBuf::from(other)]);
+        assert_eq!(
+            calls.iter().filter(|c| c.starts_with("list")).count(),
+            1,
+            "{calls:?}"
+        );
+        let states: Vec<&String> = calls.iter().filter(|c| c.starts_with("state")).collect();
+        assert!(
+            !states.is_empty() && states.iter().all(|c| c.contains("--change")),
+            "{calls:?}"
+        );
+    }
+
+    // R4.3
+    #[test]
+    fn an_older_plugin_reads_copies_from_state() {
+        let (snapshot, calls, other) = snapshot_with(false);
+        assert_eq!(snapshot.others, vec![PathBuf::from(other)]);
+        assert!(!calls.iter().any(|c| c.starts_with("list")), "{calls:?}");
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.starts_with("state --json --system") && !c.contains("--change")),
+            "{calls:?}"
+        );
     }
 
     // R4.3
