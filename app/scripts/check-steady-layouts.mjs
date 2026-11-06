@@ -140,6 +140,8 @@ function measureRefresh() {
     progress: progress ? box(progress.getBoundingClientRect()) : null,
     text: progress ? progress.textContent.replace(/\s+/g, ' ').trim() : '',
     head: head ? box(head.getBoundingClientRect()) : null,
+    pane: head?.parentElement ? box(head.parentElement.getBoundingClientRect()) : null,
+    next: head?.parentElement?.nextElementSibling ? box(head.parentElement.nextElementSibling.getBoundingClientRect()) : null,
     wrapped: progress ? progress.getClientRects().length > 1 || progress.scrollWidth > progress.clientWidth : false,
   };
 }
@@ -163,7 +165,7 @@ function sameRows(at, before, now, filled = false) {
 }
 
 /** While the progress shows and after it hides, the rows stay where they were and the progress sits in the heading. */
-async function watchRefresh(page, before, at, wantLong, filled = false) {
+async function watchRefresh(page, before, at, wantLong, filled = false, inPane = false) {
   const fails = [];
   const progress = page.locator('[data-testid="reading-progress"]');
   await progress.waitFor({ state: 'visible', timeout: 8000 });
@@ -172,6 +174,13 @@ async function watchRefresh(page, before, at, wantLong, filled = false) {
   if (!m.progress || !m.head) return [`${at}: no progress or no Changes heading`];
   if (!inside(m.progress, m.head)) fails.push(`${at}: the progress is not inside the Changes heading`);
   if (m.rows.some((r) => overlaps(r, m.progress))) fails.push(`${at}: the progress overlaps a row`);
+  if (inPane) {
+    if (!m.pane) fails.push(`${at}: no Changes pane`);
+    else {
+      if (m.progress.right > m.pane.right + 0.5) fails.push(`${at}: the progress runs past the Changes pane (right ${m.progress.right.toFixed(1)} over ${m.pane.right.toFixed(1)})`);
+      if (m.next && m.progress.right > m.next.left + 0.5) fails.push(`${at}: the progress runs into the next pane (right ${m.progress.right.toFixed(1)} over ${m.next.left.toFixed(1)})`);
+    }
+  }
   if (m.wrapped) fails.push(`${at}: the progress text wraps or is cut`);
   if (wantLong && !/longer than usual/.test(m.text)) fails.push(`${at}: the long notice does not show`);
   fails.push(...sameRows(`${at}, while it shows`, before, m));
@@ -183,8 +192,8 @@ async function watchRefresh(page, before, at, wantLong, filled = false) {
 
 async function refresh(browser, origin) {
   const fails = [];
-  for (const long of [false, true]) {
-    const { context, page } = await openPage(browser, origin, `sdlc?demo=slow-read${long ? '&long=1' : ''}`, 1280, 900, 'domcontentloaded');
+  for (const [long, three] of [[false, false], [true, false], [true, true]]) {
+    const { context, page } = await openPage(browser, origin, `sdlc?demo=slow-read${long ? '&long=1' : ''}${three ? '&systems=3' : ''}`, 1280, 900, 'domcontentloaded');
     try {
       await page.locator('app-changes-table tbody tr').first().waitFor({ timeout: 5000 });
       await page.locator('app-changes-table tbody tr').first().hover();
@@ -193,8 +202,12 @@ async function refresh(browser, origin) {
         fails.push('the progress already showed before the rows were recorded; the check cannot compare');
         continue;
       }
-      const at = long ? 'the long refresh on load' : 'the refresh on load';
-      fails.push(...(await watchRefresh(page, first.rows, at, long, true)));
+      const at = three ? 'the long refresh on load with three systems' : long ? 'the long refresh on load' : 'the refresh on load';
+      if (three) {
+        const segs = await page.locator('#changes-heading ~ app-segmented button').count();
+        if (segs < 3) fails.push(`${at}: the system picker has ${segs} segments, not 3`);
+      }
+      fails.push(...(await watchRefresh(page, first.rows, at, long, true, three)));
       if (long) continue;
       const settled = await page.evaluate(measureRefresh);
       await page.evaluate(() => {

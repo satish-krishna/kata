@@ -110,6 +110,8 @@ export const MOCK_NOT_LISTED = "This change's copy was removed and the plugin no
 export const MOCK_SYSTEM = 'commerce';
 /** The second system `?demo=finished-many` adds. */
 export const MOCK_SECOND_SYSTEM = 'payments';
+/** The third system `?demo=slow-read&systems=3` adds, so the system picker has three segments. */
+export const MOCK_THIRD_SYSTEM = 'customer-onboarding';
 export const MOCK_BASE = 'main';
 export const MOCK_NEW_CHANGE = '2026-10-18-new-change';
 
@@ -783,9 +785,14 @@ export class SdlcMock {
       folder,
       repos: MOCK_REPOS,
       master: { kind: 'one', repo: MOCK_MASTER, committed: true },
-      marker: { version: 1, systems: { [MOCK_SYSTEM]: { repos: MOCK_REPOS }, ...(this.demo === 'finished-many' ? { [MOCK_SECOND_SYSTEM]: { repos: ['commerce-core'] } } : {}) } },
+      marker: { version: 1, systems: { [MOCK_SYSTEM]: { repos: MOCK_REPOS }, ...(this.demo === 'finished-many' || this.threeSystems() ? { [MOCK_SECOND_SYSTEM]: { repos: ['commerce-core'] } } : {}), ...(this.threeSystems() ? { [MOCK_THIRD_SYSTEM]: { repos: ['commerce-core'] } } : {}) } },
       marker_error: null,
     };
+  }
+
+  /** `?demo=slow-read&systems=3`: the workspace shows three systems. */
+  private threeSystems(): boolean {
+    return this.demo === 'slow-read' && typeof location !== 'undefined' && new URLSearchParams(location.search).get('systems') === '3';
   }
 
   contextHealth(repo: string): ContextState {

@@ -39,4 +39,14 @@ describe('ProgressLine', () => {
     });
     expect(norm(container.textContent)).toBe('Reading the change is taking longer than usual (12 s)');
   });
+
+  it('shows the short notice when compact and the step runs long, and keeps the full notice for assistive technology', async () => {
+    const { container } = await render(ProgressLine, {
+      entry: { line: 'Reading the change is taking longer than usual (12 s)', label: 'Reading the change', long: true },
+      compact: true,
+    });
+    const visible = container.querySelector('[data-testid="progress-label"]');
+    expect(norm(visible!.textContent)).toBe('longer than usual');
+    expect(norm(container.querySelector('p[role="status"]')!.textContent)).toContain('Reading the change is taking longer than usual (12 s)');
+  });
 });
