@@ -48,11 +48,11 @@ const ENDING_TONE: Record<RunEnding, TabTone> = {
 const TONE_OF_STATE: Record<RunState, TabTone> = { idle: 'idle', running: 'running', awaiting: 'warning', success: 'success', error: 'error', warning: 'warning' };
 
 /**
- * A session's tab: "running" while the run is live, "question waiting" (warning tone) when it waits on the engineer, else the ending
+ * A session's tab: "running" while the run is live and has not ended, including before its first event, "question waiting" (warning tone) when it waits on the engineer, else the ending
  * from its record in words; until the record is read, the run's own outcome text.
  */
 export const tabOf = (session: { live: boolean; state: RunState; waiting: boolean; outcome: string }, ending: RunEnding | null): SessionTab => {
-  if (session.live && (session.state === 'running' || session.state === 'awaiting')) {
+  if (session.live && (session.state === 'idle' || session.state === 'running' || session.state === 'awaiting')) {
     return session.waiting ? { word: 'question waiting', tone: 'warning' } : { word: 'running', tone: 'running' };
   }
   if (ending !== null) return { word: ENDING_WORD[ending], tone: ENDING_TONE[ending] };
