@@ -44,6 +44,8 @@ export class ChangesTable {
 
   readonly open = output<OpenedChange>();
   readonly openOther = output<string>();
+  /** The engineer asked to remove a merged change's copy. */
+  readonly removeCopy = output<string>();
 
   protected readonly groups = computed<Group[]>(() => {
     const bySystem = new Map<string, ChangeRow[]>();

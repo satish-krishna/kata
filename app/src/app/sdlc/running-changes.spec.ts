@@ -184,6 +184,14 @@ describe('RunningChanges', () => {
     expect(text(entryButton(container, A.change))).toContain('working');
   });
 
+  it('running strip lists a change of a system the home is not showing', async () => {
+    // The strip reads the backend's table of live runs, never the home's shown system: a bob change waiting on an answer is listed beside a kata one.
+    const { container } = await mount(strip(working(A, 4), asking(B, 'Which tag?')));
+    expect(entryButton(container, B.change)).not.toBeNull();
+    expect(text(entryButton(container, B.change))).toContain('bob');
+    expect(text(entryButton(container, B.change))).toContain('needs an answer');
+  });
+
   it('All running lists every entry', async () => {
     const entries = [asking(A, 'Which branch?'), working(B, 3), working(key('c-three'), 4), working(key('c-four'), 5), working(key('c-five', 'bob'), 6)];
     const { container, fixture } = await mount(strip(...entries));
