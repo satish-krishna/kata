@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchChromium, serveStatic } from '../harness/playwright/serve-and-visit.mjs';
 import { installClipping } from './clipping.mjs';
+import { ROUTE, startBuild } from './check-build-support.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = join(ROOT, 'dist', 'angular-jig', 'browser');
@@ -208,11 +209,121 @@ async function refresh(browser, origin) {
   return fails;
 }
 
+/** Runs in the page: the heights of the panes on show in the Activity area (there must be exactly one), and the session tabs with their boxes. */
+function measureSessions() {
+  const panes = [...document.querySelectorAll('[data-area="activity"] [data-session]:not([hidden]) [data-pane]:not([hidden])')];
+  const row = document.querySelector('[data-area="activity"] [data-session-tabs]');
+  const box = (r) => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+  return {
+    panes: panes.map((p) => p.getBoundingClientRect().height),
+    row: row ? box(row.getBoundingClientRect()) : null,
+    tabs: row ? [...row.querySelectorAll('[data-session-tab]')].map((t) => ({ text: t.textContent.replace(/s+/g, ' ').trim(), selected: t.getAttribute('aria-selected'), box: box(t.getBoundingClientRect()) })) : [],
+  };
+}
+
+/** Opens the build page of the sessions demo with `earlier` earlier sessions, and starts the build so the repository's session is running. */
+async function openSessions(browser, origin, earlier) {
+  const { context, page } = await openPage(browser, origin, `${ROUTE.slice(1)}?demo=sessions&earlier=${earlier}`, 1280, 800);
+  await startBuild(page);
+  await page.locator('[data-area="activity"] [data-session]:not([hidden]) [data-pane]:not([hidden])').first().waitFor({ timeout: 8000 });
+  await page.waitForTimeout(400);
+  return { context, page };
+}
+
+const ENDINGS = ['finished', 'failed', 'cancelled', 'out of time', 'nobody answered'];
+
+/** Heights of the pane on show for 0, 1, 6 and 8 earlier sessions: all equal within a pixel. */
+async function sameHeights(browser, origin) {
+  const heights = {};
+  const fails = [];
+  for (const n of [0, 1, 6, 8]) {
+    const { context, page } = await openSessions(browser, origin, n);
+    try {
+      const m = await page.evaluate(measureSessions);
+      if (m.panes.length !== 1) fails.push(`${n} earlier: ${m.panes.length} panes on show, not 1`);
+      else heights[n] = m.panes[0];
+    } finally {
+      await context.close();
+    }
+  }
+  const values = Object.values(heights);
+  if (values.length && Math.max(...values) - Math.min(...values) > 1) {
+    fails.push(`the running pane is not the same height for 0, 1, 6 and 8 earlier sessions (${Object.entries(heights).map(([n, h]) => `${n}: ${h.toFixed(1)}`).join(', ')})`);
+  }
+  return fails;
+}
+
+/** With 5 earlier sessions: each earlier tab says how it ended, and picking it shows its pane as tall as the running pane was. */
+async function endings(browser, origin) {
+  const fails = [];
+  const { context, page } = await openSessions(browser, origin, 5);
+  try {
+    const running = (await page.evaluate(measureSessions)).panes[0];
+    const tabs = page.locator('[data-area="activity"] [data-session-tab]');
+    const count = await tabs.count();
+    if (count !== 6) return [`${count} tabs, not 6`];
+    const text = (await page.evaluate(measureSessions)).tabs.map((t) => t.text);
+    if (!/running/i.test(text[0])) fails.push(`the first tab does not say running (${text[0]})`);
+    // Newest first: the earlier sessions follow the running one, the newest of them first (the last one made is the fifth ending).
+    for (let i = 1; i < count; i++) {
+      const want = ENDINGS[5 - i];
+      if (!text[i].includes(want)) fails.push(`tab ${i + 1} does not say "${want}" (${text[i]})`);
+      await tabs.nth(i).click();
+      await page.waitForTimeout(150);
+      const m = await page.evaluate(measureSessions);
+      if (m.panes.length !== 1 || Math.abs(m.panes[0] - running) > 1) fails.push(`picking the "${want}" tab shows ${m.panes.length} panes of heights ${m.panes.join(', ')}, not one of ${running.toFixed(1)}`);
+      if (m.tabs[i].selected !== 'true') fails.push(`the "${want}" tab is not selected after it was picked`);
+    }
+  } finally {
+    await context.close();
+  }
+  return fails;
+}
+
+/** With 8 earlier sessions: the running tab shows on load, and scrolling the row brings every tab into view. */
+async function reach(browser, origin) {
+  const fails = [];
+  const { context, page } = await openSessions(browser, origin, 8);
+  try {
+    const m = await page.evaluate(measureSessions);
+    if (m.tabs.length !== 9) return [`${m.tabs.length} tabs, not 9`];
+    if (!inside(m.tabs[0].box, m.row)) fails.push('the running tab is not inside the tab row on load');
+    const seen = new Set();
+    const steps = await page.evaluate(async () => {
+      const row = document.querySelector('[data-area="activity"] [data-session-tabs]');
+      const out = [];
+      const tabs = () => [...row.querySelectorAll('[data-session-tab]')];
+      const mark = () => {
+        const r = row.getBoundingClientRect();
+        out.push(tabs().map((t) => { const b = t.getBoundingClientRect(); return b.left >= r.left - 0.5 && b.right <= r.right + 0.5; }));
+      };
+      for (let x = 0; ; x += Math.max(1, row.clientWidth / 2)) {
+        row.scrollLeft = x;
+        await new Promise((res) => requestAnimationFrame(res));
+        mark();
+        if (x >= row.scrollWidth) break;
+      }
+      return out;
+    });
+    for (const step of steps) step.forEach((on, i) => on && seen.add(i));
+    const missed = [...Array(9).keys()].filter((i) => !seen.has(i));
+    if (missed.length) fails.push(`scrolling the row never brought tab(s) ${missed.map((i) => i + 1).join(', ')} fully into view`);
+  } finally {
+    await context.close();
+  }
+  return fails;
+}
+
+async function sessions(browser, origin) {
+  return [...(await sameHeights(browser, origin)), ...(await endings(browser, origin)), ...(await reach(browser, origin))];
+}
+
 /** Part name to an async function (browser, origin) returning failure lines. */
 export const PARTS = {
   'done-row': doneRow,
   finished,
   refresh,
+  sessions,
 };
 
 /** Runs the named parts (all when `only` is empty or missing); returns the failures as readable lines. */

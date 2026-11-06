@@ -90,6 +90,8 @@ const MESSAGE_READ_MS = 600;
 
 /** The `?demo=` value of the address in a plain browser, or null; this class never runs under Tauri. */
 const demoParam = (): string | null => (typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('demo'));
+/** The `earlier=<n>` of the address: how many earlier sessions `?demo=sessions` has; 0 without it. */
+const earlierParam = (): number => (typeof location === 'undefined' ? 0 : Math.max(0, Number(new URLSearchParams(location.search).get('earlier')) || 0));
 
 /** One scripted run in flight: what to play after an answer or a decision, and what finishing it does. */
 interface ScriptedRun {
@@ -133,7 +135,7 @@ export class MockTransport extends KataTransport {
   private readonly triageStarted = new Map<string, string>();
   private nextRun = 0;
   /** `?demo=build-long` (browser only) widens the build demo to three repositories, seventeen tasks, many files and findings, so every area of the build page overflows at 1280 by 800. */
-  private readonly sdlc = new SdlcMock(demoParam() === 'build-long', demoParam());
+  private readonly sdlc = new SdlcMock(demoParam() === 'build-long', demoParam(), earlierParam());
   private setupScanned = false;
   /** The build layout a browser session has saved; a fresh session starts with none. */
   private buildLayout: Record<string, unknown> = {};
@@ -257,6 +259,8 @@ export class MockTransport extends KataTransport {
         const round = roundRunScript(repo);
         return { run: make('build', round.mid), head: round.head };
       }
+      // `?demo=sessions`: the repository's session reads the plan and keeps working, so it is still running when the browser check looks.
+      if (demoParam() === 'sessions') return { run: make('build', []), head: buildRunScript(repo, [], false).head.slice(0, 4) };
       const script = buildRunScript(repo, tasks, repo === 'customer-portal' && tasks.length > 0 && tasks[0].id === 'T2', repo === 'billing-api' && tasks.length > 0);
       return { run: make('build', script.mid, () => this.sdlc.commitRows(tasks)), head: script.head };
     }
@@ -278,8 +282,10 @@ export class MockTransport extends KataTransport {
   catalog(workdir: string | null): Promise<CatalogEntry[]> {
     return Promise.resolve(workdir === MOCK_WORKSPACE_FOLDER ? [...seedCatalog, ...MOCK_SDLC_CATALOG] : seedCatalog);
   }
-  listRuns(): Promise<RunRecord[]> { return Promise.resolve(history); }
+  listRuns(): Promise<RunRecord[]> { return Promise.resolve([...history, ...this.sdlc.sessionRecords()]); }
   loadRun(id: string): Promise<RunDetail> {
+    const earlier = this.sdlc.sessionRecords().find((r) => r.id === id);
+    if (earlier !== undefined) return Promise.resolve({ record: earlier, events: [{ type: 'assistant.text', text: 'An earlier session of this repository.' }] });
     const detail = runDetailFixture(id);
     // The scripted review run: its transcript closes with the findings the build view reads.
     if (id.includes('-review-')) return Promise.resolve({ record: { ...detail.record, id }, events: reviewRunScript.head.map((step) => step.ev) });

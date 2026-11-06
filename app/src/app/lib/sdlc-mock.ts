@@ -633,10 +633,30 @@ export function changeViewOf(
   };
 }
 
+/** How the earlier sessions of `?demo=sessions` ended, in turn: the exit code each recorded and the ending the backend computes for it. */
+const SESSION_ENDS: { exit: number; ending: RunRecord['ending'] }[] = [
+  { exit: 0, ending: 'finished' },
+  { exit: 1, ending: 'failed' },
+  { exit: 130, ending: 'cancelled' },
+  { exit: 124, ending: 'out-of-time' },
+  { exit: 123, ending: 'nobody-answered' },
+];
+
+/** The records of `count` earlier build sessions of commerce-core, oldest first (ids `earlier-0`, `earlier-1`, ...), a day before now. */
+export function earlierSessions(count: number): RunRecord[] {
+  const first = Math.floor(Date.now() / 1000) - 86400;
+  return Array.from({ length: count }, (_, i) => ({
+    id: `earlier-${i}`, kata: 'sdlc-build-commerce-core', started_at: first + i * 600, isolation: 'none', steered: false,
+    ...SESSION_ENDS[i % SESSION_ENDS.length], turns: 3, cost_usd: null, duration_ms: null, result: null,
+  }));
+}
+
 export class SdlcMock {
   /** What the demo builds. `?demo=build-long` (browser only) widens it so every area of the build page overflows; unit tests keep the short one. */
   private readonly plan: PlanTask[];
-  private readonly repos: string[];
+  private repos: string[];
+  /** The records of the earlier sessions of `?demo=sessions`; none in any other demo. */
+  private earlierRecords: RunRecord[] = [];
   private readonly planTasks: ParsedTask[];
   private readonly departed: Set<string>;
   private readonly diff: ChangedFile[];
@@ -649,8 +669,17 @@ export class SdlcMock {
   /** `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` leave the finished change undeclared and give each answer of the plugin to declaring it done. */
   private readonly demo: string | null;
 
-  constructor(long = false, demo: string | null = null) {
+  constructor(long = false, demo: string | null = null, earlier = 0) {
     this.demo = demo;
+    if (demo === 'sessions') {
+      // `?demo=sessions&earlier=<n>` (browser only): the demo build runs in one repository, which has `earlier` sessions behind it.
+      BUILD_REPOS_OF[MOCK_BUILD_CHANGE] = ['commerce-core'];
+      this.repos = ['commerce-core'];
+      this.links = earlierSessions(earlier).map((r) => ({
+        workspace_id: 'acme-commerce', system: MOCK_SYSTEM, change: MOCK_BUILD_CHANGE, stage: 'build:commerce-core', run_id: r.id, started_at: r.started_at,
+      }));
+      this.earlierRecords = earlierSessions(earlier);
+    }
     this.unreadable = long ? '2026-10-09-merchant-reassign' : null;
     this.plan = long ? [...BUILD_PLAN, ...LONG_PLAN] : BUILD_PLAN;
     this.repos = long ? [...BUILD_REPOS, 'billing-api'] : BUILD_REPOS;
@@ -1054,6 +1083,8 @@ export class SdlcMock {
     return { outcome: 'rejected', recordBranch: `change/${changeName}` };
   }
 
+  /** The records `?demo=sessions` adds to the run history. */
+  sessionRecords(): RunRecord[] { return this.earlierRecords.map((r) => ({ ...r })); }
   runLinks(): RunLink[] { return this.links.map((l) => ({ ...l })); }
   linkRun(link: RunLink): void { this.links = [...this.links, { ...link }]; }
   taskLinks(): TaskLink[] { return this.taskLinksList.map((l) => ({ ...l })); }
