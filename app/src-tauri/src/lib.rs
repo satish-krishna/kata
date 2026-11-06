@@ -5,6 +5,7 @@ mod history;
 mod rename_change;
 mod running;
 mod runs;
+mod sdlc_home;
 mod sdlc_state;
 mod start_change;
 mod versions;

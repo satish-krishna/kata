@@ -3,6 +3,8 @@
 use crate::ai_sdlc::list::{ChangeList, Finished};
 use crate::ai_sdlc::state::ChangeState;
 use serde::{Deserialize, Serialize};
+use crate::offer::HomeReading;
+use crate::view::ChangeView;
 use std::collections::BTreeSet;
 
 /// An open change as the home lists it at once: its name and title.
@@ -34,6 +36,60 @@ pub enum Refresh {
     Open,
     ActionEnded,
     Focus,
+}
+
+/// What the home lists for a workspace: nothing new on a plugin older than 1.3.0 (the page asks `sdlc_state`
+/// as before), else the shown system with its open and finished changes.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "ts", ts(rename_all = "camelCase"))]
+pub enum HomeList {
+    Legacy,
+    Listed {
+        system: Option<String>,
+        systems: Vec<String>,
+        open: Vec<ListedChange>,
+        finished: Vec<FinishedChange>,
+        finished_count: usize,
+        can_start_change: bool,
+        start_change_reason: Option<String>,
+    },
+}
+
+/// One open change's row: its view and what the row reads and offers.
+#[derive(Serialize, Clone, Debug)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct HomeRow {
+    pub view: ChangeView,
+    pub reading: HomeReading,
+}
+
+/// The answer to opening or refreshing the home: the open changes' rows, the changes the merge check should
+/// now be asked about, whether the light list must be read again, and what could not be read.
+#[derive(Serialize, Clone, Debug)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct HomeOpen {
+    pub rows: Vec<HomeRow>,
+    pub check: Vec<String>,
+    pub relist: bool,
+    pub problems: Vec<String>,
+}
+
+/// The rows the merge check relabelled, and the checks that failed.
+#[derive(Serialize, Clone, Debug)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct HomeChecked {
+    pub rows: Vec<HomeRow>,
+    pub problems: Vec<String>,
 }
 
 /// The system the home shows: the remembered one when the marker still has it, else the first.
