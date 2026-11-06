@@ -7,6 +7,7 @@ import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { Readiness } from '@bindings/Readiness';
 import type { Settings } from '@bindings/Settings';
+import type { WorkspaceChoice } from '@bindings/WorkspaceChoice';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { RunSpec } from '@bindings/RunSpec';
@@ -56,7 +57,6 @@ const PROGRESS_OWNER = 'home';
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
-const nowSecs = (): number => Math.floor(Date.now() / 1000);
 /** One spelling per folder: forward slashes, no trailing separator, case-insensitive (Windows paths). */
 const sameFolder = (a: string, b: string): boolean => {
   const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
@@ -369,15 +369,12 @@ export class SdlcHomeViewModel {
   // --- workspace list
 
   async selectWorkspace(id: string): Promise<void> {
-    const w = this.workspaces().find((x) => x.id === id);
-    if (!w) return;
-    const next = this.workspaces().map((x) => (x.id === id ? { ...x, last_opened: nowSecs() } : x));
-    this.workspaces.set(next);
-    this.currentId.set(id);
+    if (!this.workspaces().some((x) => x.id === id)) return;
+    const choice = await this.change(() => this.transport.sdlcOpenWorkspace(id));
+    if (choice === null) return;
+    this.adopt(choice);
     this.triageNotice.set(null);
     this.clearDetail();
-    await this.saveList(next);
-    // The backend reads the last-opened workspace from the saved list, so ask after the save.
     await this.versions.refresh();
     await Promise.all([this.loadCatalog(), this.loadCurrent()]);
   }
@@ -398,14 +395,13 @@ export class SdlcHomeViewModel {
 
   /** Forget a workspace. Nothing on disk is touched. */
   async removeWorkspace(id: string): Promise<void> {
-    const next = this.workspaces().filter((w) => w.id !== id);
-    this.workspaces.set(next);
+    const choice = await this.change(() => this.transport.sdlcRemoveWorkspace(id));
+    if (choice === null) return;
+    const shown = this.currentId();
     this.foldersGone.update((l) => l.filter((x) => x !== id));
     this.scanFailed.update((l) => l.filter((x) => x !== id));
-    await this.saveList(next);
-    if (this.currentId() === id) {
-      // The list is saved, so the backend answers for the new list.
-      this.currentId.set(await this.transport.sdlcCurrentWorkspace());
+    this.adopt(choice);
+    if (choice.current !== shown) {
       await this.versions.refresh();
       await Promise.all([this.loadCatalog(), this.loadCurrent()]);
     }
@@ -507,16 +503,10 @@ export class SdlcHomeViewModel {
     const c = this.candidate();
     this.candidate.set(null);
     if (!c || !isSetUp(c.scan)) return;
-    const taken = new Set(this.workspaces().map((w) => w.id));
-    const slug = c.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'workspace';
-    let id = slug;
-    for (let n = 2; taken.has(id); n++) id = `${slug}-${n}`;
-    const entry: WorkspaceEntry = { id, name: c.name, folder: c.folder, last_opened: nowSecs() };
-    const next = [...this.workspaces(), entry];
-    this.workspaces.set(next);
-    this.currentId.set(id);
+    const choice = await this.change(() => this.transport.sdlcAddWorkspace(c.name, c.folder));
+    if (choice === null) return;
+    this.adopt(choice);
     this.clearDetail();
-    await this.saveList(next);
     await this.versions.refresh();
     await Promise.all([this.loadCatalog(), this.loadCurrent(), this.refreshMissing()]);
   }
@@ -871,13 +861,20 @@ export class SdlcHomeViewModel {
     return this.modes.settings() ?? (await this.modes.load());
   }
 
-  private async saveList(list: WorkspaceEntry[], adopt = false): Promise<void> {
+  /** Ask the backend to change the saved list; null, with the toast shown, when it could not. */
+  private async change(call: () => Promise<WorkspaceChoice>): Promise<WorkspaceChoice | null> {
     try {
-      await this.transport.sdlcSaveWorkspaces(list);
-      if (adopt) this.workspaces.set(list);
+      return await call();
     } catch (e) {
       this.toasts.error(`Could not save the workspace list: ${message(e)}`);
+      return null;
     }
+  }
+
+  /** The list and the current workspace are the backend's answer, taken only once it has saved. */
+  private adopt(choice: WorkspaceChoice): void {
+    this.workspaces.set(choice.workspaces);
+    this.currentId.set(choice.current);
   }
 
   private async loadCatalog(): Promise<void> {

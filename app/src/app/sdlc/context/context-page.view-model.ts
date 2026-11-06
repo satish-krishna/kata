@@ -14,7 +14,6 @@ import { parseFrontMatter } from '../../lib/sdlc';
 import { contextAction, contextLabel, masterPath, masterRepo, readContextStates, repoRows } from '../../lib/sdlc-workspace';
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-const nowSecs = () => Math.floor(Date.now() / 1000);
 
 export type ContextPageState = 'loading' | 'not-found' | 'ready';
 
@@ -95,11 +94,10 @@ export class ContextPageViewModel {
 
   /** Switching workspace leaves this screen: the repo belongs to the workspace that was open. */
   async selectWorkspace(id: string): Promise<void> {
-    const next = this.workspaces().map((w) => (w.id === id ? { ...w, last_opened: nowSecs() } : w));
-    this.workspaces.set(next);
     try {
-await this.transport.sdlcSaveWorkspaces(next);
-      this.currentId.set(await this.transport.sdlcCurrentWorkspace());
+      const choice = await this.transport.sdlcOpenWorkspace(id);
+      this.workspaces.set(choice.workspaces);
+      this.currentId.set(choice.current);
       await this.versions.refresh();
     } catch (e) {
       this.toasts.error(`Could not save the workspace list: ${message(e)}`);

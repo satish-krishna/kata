@@ -717,11 +717,6 @@ fn sdlc_workspaces() -> Vec<sdlc::store::WorkspaceEntry> {
     sdlc::store::load_workspaces()
 }
 
-#[tauri::command]
-fn sdlc_save_workspaces(workspaces: Vec<sdlc::store::WorkspaceEntry>) -> Result<(), String> {
-    sdlc::store::save_workspaces(&workspaces).map_err(|e| e.to_string())
-}
-
 fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2231,7 +2226,6 @@ pub fn run() {
             load_build_layout,
             save_build_layout,
             sdlc_workspaces,
-            sdlc_save_workspaces,
             sdlc_open_workspace,
             sdlc_add_workspace,
             sdlc_remove_workspace,

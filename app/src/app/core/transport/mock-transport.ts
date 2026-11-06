@@ -294,15 +294,14 @@ export class MockTransport extends KataTransport {
   sdlcSettings(): Promise<Settings> { return Promise.resolve(this.sdlc.getSettings()); }
   sdlcSaveSettings(settings: Settings): Promise<void> { this.sdlc.saveSettings(settings); return Promise.resolve(); }
   sdlcWorkspaces(): Promise<WorkspaceEntry[]> { return Promise.resolve(this.sdlc.getWorkspaces()); }
-  sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]): Promise<void> { this.sdlc.saveWorkspaces(workspaces); return Promise.resolve(); }
-  sdlcOpenWorkspace(_id: string): Promise<WorkspaceChoice> { return Promise.reject(new Error('not implemented')); }
-  sdlcAddWorkspace(_name: string, _folder: string): Promise<WorkspaceChoice> { return Promise.reject(new Error('not implemented')); }
-  sdlcRemoveWorkspace(_id: string): Promise<WorkspaceChoice> { return Promise.reject(new Error('not implemented')); }
+  sdlcOpenWorkspace(id: string): Promise<WorkspaceChoice> {
+    try { return Promise.resolve(this.sdlc.openWorkspace(id)); } catch (e) { return Promise.reject(e); }
+  }
+  sdlcAddWorkspace(name: string, folder: string): Promise<WorkspaceChoice> { return Promise.resolve(this.sdlc.addWorkspace(name, folder)); }
+  sdlcRemoveWorkspace(id: string): Promise<WorkspaceChoice> { return Promise.resolve(this.sdlc.removeWorkspace(id)); }
   /** Same rule as the backend's `current_workspace`: the highest last_opened, the earliest in the list on a tie. */
   sdlcCurrentWorkspace(): Promise<string | null> {
-    let best: WorkspaceEntry | null = null;
-    for (const w of this.sdlc.getWorkspaces()) if (best === null || w.last_opened > best.last_opened) best = w;
-    return Promise.resolve(best?.id ?? null);
+    return Promise.resolve(this.sdlc.currentWorkspace());
   }
   sdlcScan(folder: string): Promise<WorkspaceScan> {
     // The first scan of the demo folder that needs setup is slow, so the "Checking workspace" steps are visible.

@@ -86,6 +86,7 @@ import type { Snapshot } from '@bindings/Snapshot';
 import type { ParsedFinding } from '@bindings/ParsedFinding';
 import type { Severity } from '@bindings/Severity';
 import type { Concern } from '@bindings/Concern';
+import type { WorkspaceChoice } from '@bindings/WorkspaceChoice';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { DEMO_SETUP_FOLDER, DEMO_WORKSPACE_FOLDER } from './demo';
@@ -696,7 +697,39 @@ export class SdlcMock {
   getSettings(): Settings { return { ...this.settings }; }
   saveSettings(s: Settings): void { this.settings = { ...s }; }
   getWorkspaces(): WorkspaceEntry[] { return this.workspaces.map((w) => ({ ...w })); }
-  saveWorkspaces(w: WorkspaceEntry[]): void { this.workspaces = w.map((e) => ({ ...e })); }
+  /** The workspace the backend opens on: the highest last_opened, the earliest in the list on a tie. */
+  currentWorkspace(): string | null {
+    let best: WorkspaceEntry | null = null;
+    for (const w of this.workspaces) if (best === null || w.last_opened > best.last_opened) best = w;
+    return best?.id ?? null;
+  }
+
+  private choice(): WorkspaceChoice { return { workspaces: this.getWorkspaces(), current: this.currentWorkspace() }; }
+
+  /** Stamps the way the backend's `store::stamp` does: now, or one past every other entry when one is at or ahead of it. */
+  private stamp(id: string): number {
+    return this.workspaces.filter((w) => w.id !== id).reduce((at, w) => Math.max(at, w.last_opened + 1), Math.floor(Date.now() / 1000));
+  }
+
+  openWorkspace(id: string): WorkspaceChoice {
+    const entry = this.workspaces.find((w) => w.id === id);
+    if (entry === undefined) throw new Error(`no workspace with id ${id}`);
+    entry.last_opened = this.stamp(id);
+    return this.choice();
+  }
+
+  addWorkspace(name: string, folder: string): WorkspaceChoice {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'workspace';
+    let id = slug;
+    for (let n = 2; this.workspaces.some((w) => w.id === id); n++) id = `${slug}-${n}`;
+    this.workspaces.push({ id, name, folder, last_opened: this.stamp(id) });
+    return this.choice();
+  }
+
+  removeWorkspace(id: string): WorkspaceChoice {
+    this.workspaces = this.workspaces.filter((w) => w.id !== id);
+    return this.choice();
+  }
 
   scan(folder: string): WorkspaceScan {
     if (folder === MOCK_SETUP_FOLDER) {

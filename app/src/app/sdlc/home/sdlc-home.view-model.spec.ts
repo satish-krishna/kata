@@ -1054,7 +1054,7 @@ describe('SdlcHomeViewModel changes list', () => {
     const { vm, transport } = setup();
     const state = vi.spyOn(transport, 'sdlcState');
     await vm.init();
-    vm.workspaces.set([...vm.workspaces(), second]);
+    vm.workspaces.set((await transport.sdlcAddWorkspace(second.name, second.folder)).workspaces);
     await vm.selectWorkspace('second');
     expect(state.mock.calls.at(-1)![0]).toBe('/second');
   });

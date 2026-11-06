@@ -3,7 +3,6 @@ import { seedSpec } from '../../lib/mock';
 import type { DoneStep } from '@bindings/DoneStep';
 import type { KataEvent } from '../../lib/events';
 import type { Settings } from '@bindings/Settings';
-import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { RunLink } from '@bindings/RunLink';
 import type { RoundPicks } from '@bindings/RoundPicks';
@@ -16,7 +15,6 @@ import type { RunningStrip } from '@bindings/RunningStrip';
 
 const spec = seedSpec();
 const settings: Settings = { mode: 'sdlc', remember: true, permission_mode: 'bypass' };
-const entry: WorkspaceEntry = { id: 'w', name: 'w', folder: '/w', last_opened: 1 };
 const snap: Snapshot = { head: 'abc', folder: '/m', dirty: {} };
 const link: RunLink = { workspace_id: 'w', system: 's', change: 'c', stage: 'intent', run_id: 'r', started_at: 1 };
 const change: ChangeRef = { workspace: '/w', system: 's', change: 'c' };
