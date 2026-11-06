@@ -109,7 +109,7 @@ export class BuildPage {
   readonly draft = output<{ runId: string; text: string }>();
   readonly decide = output<{ runId: string; id: string; allow: boolean; message: string | null }>();
   readonly goTo = output<string>();
-  readonly toggleRun = output<string>();
+  readonly pickSession = output<string>();
   /** The engineer chose a task filter. */
   readonly setFilter = output<TaskFilter>();
   /** The engineer opened or closed a repository's fold. */

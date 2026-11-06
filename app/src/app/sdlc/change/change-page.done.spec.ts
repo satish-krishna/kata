@@ -60,7 +60,7 @@ async function finished(tweak: (t: MockTransport) => void = () => undefined) {
   vi.spyOn(transport, 'sdlcDiffFiles').mockResolvedValue({ files: [], loc: [] });
   const status = transport.sdlcBuildStatus.bind(transport);
   vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (r) => ({ ...(await status(r)), departures: [DEPARTURE] }));
-  vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 0 }]);
+  vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, ending: 'finished', exit: 0 }]);
   tweak(transport);
   const s = setup(transport);
   await ready(s.vm);
@@ -211,7 +211,7 @@ describe('declaring done from the build page', () => {
       const got = await status(r);
       return { ...got, repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })), tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } })), departures: [DEPARTURE] };
     });
-    vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 0 }]);
+    vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, ending: 'finished', exit: 0 }]);
     const heads = await transport.sdlcBuildHeads({ workspace: '', system: 'commerce', change: BUILD }, ['commerce-docs', ...REPOS]);
     await transport.sdlcLinkRun({ workspace_id: 'acme-commerce', system: 'commerce', change: BUILD, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
     const publish = vi.spyOn(transport, 'sdlcDeclareDone');

@@ -54,7 +54,7 @@ import type { OpenRun } from '@bindings/OpenRun';
 import type { Opens } from '@bindings/Opens';
 import type { RunningEntry } from '@bindings/RunningEntry';
 import type { RunRef } from '@bindings/RunRef';
-import { BUILD_REPOS_OF, MOCK_BUILD_CHANGE, MOCK_LAYOUTS, MOCK_MASTER, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_LAYOUTS, MOCK_MASTER, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import type { BuildState } from '@bindings/BuildState';
 import type { RoundOffer } from '@bindings/RoundOffer';
@@ -90,6 +90,8 @@ const MESSAGE_READ_MS = 600;
 
 /** The `?demo=` value of the address in a plain browser, or null; this class never runs under Tauri. */
 const demoParam = (): string | null => (typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('demo'));
+/** The `earlier=<n>` of the address: how many earlier sessions `?demo=sessions` has; 0 without it. */
+const earlierParam = (): number => (typeof location === 'undefined' ? 0 : Math.max(0, Number(new URLSearchParams(location.search).get('earlier')) || 0));
 
 /** One scripted run in flight: what to play after an answer or a decision, and what finishing it does. */
 interface ScriptedRun {
@@ -133,7 +135,7 @@ export class MockTransport extends KataTransport {
   private readonly triageStarted = new Map<string, string>();
   private nextRun = 0;
   /** `?demo=build-long` (browser only) widens the build demo to three repositories, seventeen tasks, many files and findings, so every area of the build page overflows at 1280 by 800. */
-  private readonly sdlc = new SdlcMock(demoParam() === 'build-long', demoParam());
+  private readonly sdlc = new SdlcMock(demoParam() === 'build-long', demoParam(), earlierParam());
   private setupScanned = false;
   /** The build layout a browser session has saved; a fresh session starts with none. */
   private buildLayout: Record<string, unknown> = {};
@@ -153,6 +155,7 @@ export class MockTransport extends KataTransport {
       this.announceRunning();
     },
     now: () => Date.now(),
+    repos: (change) => this.sdlc.buildRepos(change.change),
   });
 
   private emit(runId: string, ev: KataEvent): void {
@@ -257,6 +260,8 @@ export class MockTransport extends KataTransport {
         const round = roundRunScript(repo);
         return { run: make('build', round.mid), head: round.head };
       }
+      // `?demo=sessions`: the repository's session reads the plan and keeps working, so it is still running when the browser check looks.
+      if (demoParam() === 'sessions') return { run: make('build', []), head: buildRunScript(repo, [], false).head.slice(0, 4) };
       const script = buildRunScript(repo, tasks, repo === 'customer-portal' && tasks.length > 0 && tasks[0].id === 'T2', repo === 'billing-api' && tasks.length > 0);
       return { run: make('build', script.mid, () => this.sdlc.commitRows(tasks)), head: script.head };
     }
@@ -278,8 +283,10 @@ export class MockTransport extends KataTransport {
   catalog(workdir: string | null): Promise<CatalogEntry[]> {
     return Promise.resolve(workdir === MOCK_WORKSPACE_FOLDER ? [...seedCatalog, ...MOCK_SDLC_CATALOG] : seedCatalog);
   }
-  listRuns(): Promise<RunRecord[]> { return Promise.resolve(history); }
+  listRuns(): Promise<RunRecord[]> { return Promise.resolve([...history, ...this.sdlc.sessionRecords()]); }
   loadRun(id: string): Promise<RunDetail> {
+    const earlier = this.sdlc.sessionRecords().find((r) => r.id === id);
+    if (earlier !== undefined) return Promise.resolve({ record: earlier, events: [{ type: 'assistant.text', text: 'An earlier session of this repository.' }] });
     const detail = runDetailFixture(id);
     // The scripted review run: its transcript closes with the findings the build view reads.
     if (id.includes('-review-')) return Promise.resolve({ record: { ...detail.record, id }, events: reviewRunScript.head.map((step) => step.ev) });
@@ -331,7 +338,16 @@ export class MockTransport extends KataTransport {
   /** Scripted from the home fixtures; `?demo=old-plugin` answers `legacy`, `?demo=finished-many` adds a second system and sixty finished changes. */
   async sdlcHomeList(_workspaceId: string, systems: string[]): Promise<HomeList> { return this.sdlc.homeList(systems, await this.sdlcPluginReadiness(null)); }
   async sdlcHomePick(_workspaceId: string, system: string, systems: string[]): Promise<HomeList> { return this.sdlc.homePick(system, systems, await this.sdlcPluginReadiness(null)); }
-  async sdlcHomeOpen(folder: string, system: string, shown: string[], trigger: Refresh): Promise<HomeOpen> { return this.sdlc.homeOpen(system, shown, trigger, await this.sdlcPluginReadiness(folder)); }
+  async sdlcHomeOpen(folder: string, system: string, shown: string[], trigger: Refresh): Promise<HomeOpen> {
+    await this.slowRead();
+    return this.sdlc.homeOpen(system, shown, trigger, await this.sdlcPluginReadiness(folder));
+  }
+  /** `?demo=slow-read`: the stage read of the home takes 4 s; with `&long=1` it takes 11 s, past the 10 s the notice needs for a step with a 3 s usual time. */
+  private slowRead(): Promise<void> {
+    if (demoParam() !== 'slow-read') return Promise.resolve();
+    const long = typeof location !== 'undefined' && new URLSearchParams(location.search).get('long') === '1';
+    return new Promise((resolve) => setTimeout(resolve, long ? 11_000 : 4_000));
+  }
   async sdlcHomePullRequests(folder: string, system: string, changes: string[]): Promise<HomeChecked> { return this.sdlc.homePullRequests(system, changes, await this.sdlcPluginReadiness(folder)); }
   /** Every demo folder is there. */
   sdlcMissingFolders(_folders: string[]): Promise<string[]> { return Promise.resolve([]); }
@@ -510,7 +526,7 @@ export class MockTransport extends KataTransport {
   }
   async sdlcPreviewBuild(change: ChangeRef, which: BuildPreviewKind, repo: string | null, form: StartForm): Promise<BuildSection[]> {
     const status = this.sdlc.buildStatus(change.change);
-    const planned = status.repos.length > 0 ? status.repos.map((r) => r.repo) : (BUILD_REPOS_OF[change.change] ?? []);
+    const planned = status.repos.length > 0 ? status.repos.map((r) => r.repo) : this.sdlc.buildRepos(change.change);
     const section = (title: string, folder: string | null): BuildSection => ({
       title,
       repo: folder,

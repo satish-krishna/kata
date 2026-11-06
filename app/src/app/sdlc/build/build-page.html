@@ -95,18 +95,22 @@
                     <span class="k-mono">{{ r.line.id }}</span>
                     <span class="k-bp__task-name">{{ r.line.name }}</span>
                     <span [class]="'k-status k-status--' + r.line.status.tone"><span class="k-status__dot"></span><span class="k-bp__status-label">{{ r.line.status.label }}</span></span>
-                    @if (r.line.commits.length > 0) {
-                      <span class="k-mono k-bp__commits" data-commits>
-                        @for (sha of r.line.commits; track sha) {
-                          <span>{{ sha.slice(0, 7) }}</span>
+                    @if (r.line.commits.length > 0 || r.line.departure !== null) {
+                      <span class="k-bp__task-meta" data-task-meta>
+                        @if (r.line.commits.length > 0) {
+                          <span class="k-mono k-bp__commits" data-commits>
+                            @for (sha of r.line.commits; track sha) {
+                              <span>{{ sha.slice(0, 7) }}</span>
+                            }
+                          </span>
+                        }
+                        @if (r.line.departure !== null) {
+                          <span class="k-bp__departed k-status k-status--warning" data-departure><span class="k-status__dot" aria-hidden="true"></span>departed</span>
+                        }
+                        @if (r.showDeparture && r.line.departure !== null) {
+                          <span class="k-mono k-bp__departure" data-departure-text>{{ r.line.departure }}</span>
                         }
                       </span>
-                    }
-                    @if (r.line.departure !== null) {
-                      <span class="k-bp__departed k-status k-status--warning" data-departure><span class="k-status__dot" aria-hidden="true"></span>departed</span>
-                    }
-                    @if (r.showDeparture && r.line.departure !== null) {
-                      <span class="k-mono k-bp__departure" data-departure-text>{{ r.line.departure }}</span>
                     }
                   </button>
                 </li>
@@ -216,23 +220,46 @@
           @if (view().sessionNote; as note) {
             <p class="k-state__body">{{ note }}</p>
           }
-          @for (s of view().sessions; track s.id) {
-            <div class="k-bp__session" [class.k-bp__session--open]="s.latest || s.expanded" [attr.data-session]="s.id" [hidden]="s.shown === false">
-              @if (s.latest) {
-                <div class="k-bp__run-start">Started <span class="k-mono">{{ s.startedAt }}</span></div>
-              } @else {
-                <div class="k-bp__run-start">
-                  <button hlmBtn variant="ghost" size="sm" type="button" data-run-line [attr.aria-expanded]="s.expanded" (click)="toggleRun.emit(s.id)">
-                    <ng-icon [name]="s.expanded ? 'lucideChevronDown' : 'lucideChevronRight'" size="14" />
-                    Started <span class="k-mono">{{ s.startedAt }}</span> · {{ s.outcome }}
-                  </button>
-                </div>
+          @let tabs = view().sessionTabs;
+          @if (tabs.length > 0) {
+            <!-- Where the "Started" line was: one tab per session, newest first, so the running session is always the first in view. -->
+            <div class="k-bp__tabs" role="tablist" aria-label="Sessions" data-session-tabs>
+              @for (s of tabs; track s.id) {
+                <button
+                  hlmBtn
+                  variant="bare"
+                  size="bare"
+                  type="button"
+                  role="tab"
+                  class="k-bp__tab"
+                  [class.k-bp__tab--on]="s.shown"
+                  [attr.id]="'session-tab-' + s.id"
+                  [attr.aria-selected]="s.shown"
+                  [attr.aria-controls]="'session-pane-' + s.id"
+                  data-session-tab
+                  (click)="pickSession.emit(s.id)"
+                >
+                  <span class="k-mono">{{ s.startedAt }}</span>
+                  <span class="k-status" [class]="'k-status--' + s.tab.tone"><span class="k-status__dot"></span>{{ s.tab.word }}</span>
+                </button>
               }
+            </div>
+          }
+          @for (s of view().sessions; track s.id) {
+            <div
+              class="k-bp__session"
+              [class.k-bp__session--open]="s.shown"
+              role="tabpanel"
+              [attr.id]="'session-pane-' + s.id"
+              [attr.aria-labelledby]="'session-tab-' + s.id"
+              [attr.data-session]="s.id"
+              [hidden]="!s.shown"
+            >
               @if (s.note; as sessionNote) {
                 <p class="k-state__body">{{ sessionNote }}</p>
               }
-              <!-- An earlier session folds to its line, but its pane stays mounted: RunStore keeps folding its events. -->
-              <div class="k-bp__pane" data-pane [hidden]="!s.latest && !s.expanded">
+              <!-- Only the session in view shows, but every pane stays mounted: RunStore keeps folding its events. -->
+              <div class="k-bp__pane" data-pane [hidden]="!s.shown">
                 <app-observe-pane
                   [state]="s.state"
                   [events]="s.events"

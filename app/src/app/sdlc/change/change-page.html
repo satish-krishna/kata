@@ -257,7 +257,7 @@
                 (say)="build.sendMessage($event.runId, $event.text)"
                 (decide)="build.decide($event.runId, $event)"
                 (goTo)="build.goTo($event)"
-                (toggleRun)="build.toggleRun($event)"
+                (pickSession)="build.pickSession(build.selected() ?? '', $event)"
                 (setFilter)="build.setTaskFilter($event)"
                 (toggleFold)="build.toggleFold($event)"
                 (toggleLow)="build.toggleLow($event)"

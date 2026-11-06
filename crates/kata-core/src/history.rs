@@ -6,6 +6,40 @@ use crate::fsutil;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// How a recorded run ended, decided once here from the outcome-code contract so no screen maps exit codes.
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", ts(rename_all = "kebab-case"))]
+pub enum RunEnding {
+    Finished,
+    Failed,
+    Cancelled,
+    OutOfTime,
+    NobodyAnswered,
+    TurnCap,
+    Budget,
+}
+
+impl RunEnding {
+    /// The ending for a run whose transcript ends with `run.cancelled` (`cancelled`) or whose terminal event carried `exit`.
+    pub fn from_exit(exit: Option<i32>, cancelled: bool) -> RunEnding {
+        if cancelled {
+            return RunEnding::Cancelled;
+        }
+        match exit {
+            Some(0) => RunEnding::Finished,
+            Some(122) => RunEnding::Budget,
+            Some(123) => RunEnding::NobodyAnswered,
+            Some(124) => RunEnding::OutOfTime,
+            Some(125) => RunEnding::TurnCap,
+            Some(130) => RunEnding::Cancelled,
+            _ => RunEnding::Failed,
+        }
+    }
+}
+
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -27,6 +61,8 @@ pub struct RunRecord {
     pub result: Option<String>,
     /// True when the operator's message was accepted during the run.
     pub steered: bool,
+    /// How the run ended.
+    pub ending: RunEnding,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -228,6 +264,10 @@ fn build_record(stem: &str, events: &[KataEvent]) -> Option<RunRecord> {
         duration_ms,
         result,
         steered: is_steered(events),
+        ending: RunEnding::from_exit(
+            exit,
+            matches!(terminal, Some(KataEvent::RunCancelled { .. })),
+        ),
     })
 }
 
@@ -319,6 +359,34 @@ mod tests {
         let cancelled = runs.iter().find(|r| r.kata == "perf").unwrap();
         assert_eq!(cancelled.exit, Some(130));
         assert_eq!(cancelled.result.as_deref(), Some("cancelled"));
+    }
+
+    #[test]
+    fn run_ending_follows_the_outcome_codes() {
+        assert_eq!(RunEnding::from_exit(Some(0), true), RunEnding::Cancelled);
+        assert_eq!(RunEnding::from_exit(Some(130), true), RunEnding::Cancelled);
+        assert_eq!(RunEnding::from_exit(None, true), RunEnding::Cancelled);
+        assert_eq!(RunEnding::from_exit(None, false), RunEnding::Failed);
+        assert_eq!(RunEnding::from_exit(Some(0), false), RunEnding::Finished);
+        assert_eq!(RunEnding::from_exit(Some(122), false), RunEnding::Budget);
+        assert_eq!(
+            RunEnding::from_exit(Some(123), false),
+            RunEnding::NobodyAnswered
+        );
+        assert_eq!(RunEnding::from_exit(Some(124), false), RunEnding::OutOfTime);
+        assert_eq!(RunEnding::from_exit(Some(125), false), RunEnding::TurnCap);
+        assert_eq!(RunEnding::from_exit(Some(130), false), RunEnding::Cancelled);
+        assert_eq!(RunEnding::from_exit(Some(1), false), RunEnding::Failed);
+        assert_eq!(RunEnding::from_exit(Some(2), false), RunEnding::Failed);
+    }
+
+    #[test]
+    #[serial]
+    fn a_cancelled_transcript_records_cancelled() {
+        let _h = seed(&[("perf-20260617T080000Z.jsonl", CANCELLED)]);
+        let runs = list_runs();
+        assert_eq!(runs[0].exit, Some(130));
+        assert_eq!(runs[0].ending, RunEnding::Cancelled);
     }
 
     #[test]

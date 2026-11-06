@@ -61,7 +61,7 @@ describe('parseFrontMatter', () => {
 describe('stageRuns', () => {
   const link = (stage: string, run_id: string, started_at: number, change = 'c1', system = 'commerce', workspace_id = 'ws'): RunLink =>
     ({ workspace_id, system, change, stage, run_id, started_at });
-  const rec = (id: string, kata: string, started_at: number): RunRecord => ({ id, kata, started_at, isolation: 'none', steered: false });
+  const rec = (id: string, kata: string, started_at: number): RunRecord => ({ id, kata, started_at, isolation: 'none', steered: false, ending: 'failed' });
 
   it('lists the stage’s linked runs and its unlinked history records, newest first', () => {
     const links = [link('spec', 'r1', 5), link('spec', 'r3', 9), link('plan', 'p1', 20)];
@@ -71,7 +71,7 @@ describe('stageRuns', () => {
 
   it('names a link whose record is missing by the stage’s deterministic run name', () => {
     const got = stageRuns([link('intent', 'gone', 4)], [], 'ws', 'commerce', 'c1', 'intent');
-    expect(got).toEqual([{ id: 'gone', kata: 'sdlc-commerce-c1-intent', started_at: 4, isolation: 'none', steered: false }]);
+    expect(got).toEqual([{ id: 'gone', kata: 'sdlc-commerce-c1-intent', started_at: 4, isolation: 'none', steered: false, ending: 'failed' }]);
   });
 
   it('leaves out other changes, systems and workspaces', () => {

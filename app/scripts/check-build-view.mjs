@@ -124,7 +124,7 @@ async function reach(areaId, inside, what) {
   let clicks = 0;
   if (!(await visible())) {
     const rail = page.locator('[data-rail]').getByRole('button', { name: new RegExp(`^Bring back ${AREA_NAMES[areaId]}`) });
-    const tab = page.locator('[data-area]:not([inert]) [role="tablist"]').getByRole('tab', { name: new RegExp(`^${AREA_NAMES[areaId]}`) });
+    const tab = page.locator('[data-area]:not([inert]) [role="tablist"]:not([data-session-tabs])').getByRole('tab', { name: new RegExp(`^${AREA_NAMES[areaId]}`) });
     if ((await rail.count()) > 0) {
       await rail.click();
       clicks = 1;
@@ -544,7 +544,7 @@ async function listIsWhole(mode) {
     await area('tasks').getByRole('button', { name: 'Place Tasks' }).click();
     await page.getByRole('menuitem', { name: 'Right' }).click();
     await settle();
-    const stack = { getByRole: (...a) => page.locator('[data-area]:not([inert]) [role="tablist"]').first().getByRole(...a) };
+    const stack = { getByRole: (...a) => page.locator('[data-area]:not([inert]) [role="tablist"]:not([data-session-tabs])').first().getByRole(...a) };
     await stack.getByRole('tab', { name: /^Tasks/ }).click();
     await settle();
     const tasksBefore = await scrollPartWay(tasksBody);

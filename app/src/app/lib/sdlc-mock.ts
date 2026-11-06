@@ -110,6 +110,8 @@ export const MOCK_NOT_LISTED = "This change's copy was removed and the plugin no
 export const MOCK_SYSTEM = 'commerce';
 /** The second system `?demo=finished-many` adds. */
 export const MOCK_SECOND_SYSTEM = 'payments';
+/** The third system `?demo=slow-read&systems=3` adds, so the system picker has three segments. */
+export const MOCK_THIRD_SYSTEM = 'customer-onboarding';
 export const MOCK_BASE = 'main';
 export const MOCK_NEW_CHANGE = '2026-10-18-new-change';
 
@@ -633,10 +635,30 @@ export function changeViewOf(
   };
 }
 
+/** How the earlier sessions of `?demo=sessions` ended, in turn: the exit code each recorded and the ending the backend computes for it. */
+const SESSION_ENDS: { exit: number; ending: RunRecord['ending'] }[] = [
+  { exit: 0, ending: 'finished' },
+  { exit: 1, ending: 'failed' },
+  { exit: 130, ending: 'cancelled' },
+  { exit: 124, ending: 'out-of-time' },
+  { exit: 123, ending: 'nobody-answered' },
+];
+
+/** The records of `count` earlier build sessions of commerce-core, oldest first (ids `earlier-0`, `earlier-1`, ...), a day before now. */
+export function earlierSessions(count: number): RunRecord[] {
+  const first = Math.floor(Date.now() / 1000) - 86400;
+  return Array.from({ length: count }, (_, i) => ({
+    id: `earlier-${i}`, kata: 'sdlc-build-commerce-core', started_at: first + i * 600, isolation: 'none', steered: false,
+    ...SESSION_ENDS[i % SESSION_ENDS.length], turns: 3, cost_usd: null, duration_ms: null, result: null,
+  }));
+}
+
 export class SdlcMock {
   /** What the demo builds. `?demo=build-long` (browser only) widens it so every area of the build page overflows; unit tests keep the short one. */
   private readonly plan: PlanTask[];
   private readonly repos: string[];
+  /** The records of the earlier sessions of `?demo=sessions`; none in any other demo. */
+  private earlierRecords: RunRecord[] = [];
   private readonly planTasks: ParsedTask[];
   private readonly departed: Set<string>;
   private readonly diff: ChangedFile[];
@@ -649,11 +671,18 @@ export class SdlcMock {
   /** `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` leave the finished change undeclared and give each answer of the plugin to declaring it done. */
   private readonly demo: string | null;
 
-  constructor(long = false, demo: string | null = null) {
+  constructor(long = false, demo: string | null = null, earlier = 0) {
     this.demo = demo;
+    if (demo === 'sessions') {
+      // `?demo=sessions&earlier=<n>` (browser only): the demo build runs in one repository, which has `earlier` sessions behind it.
+      this.links = earlierSessions(earlier).map((r) => ({
+        workspace_id: 'acme-commerce', system: MOCK_SYSTEM, change: MOCK_BUILD_CHANGE, stage: 'build:commerce-core', run_id: r.id, started_at: r.started_at,
+      }));
+      this.earlierRecords = earlierSessions(earlier);
+    }
     this.unreadable = long ? '2026-10-09-merchant-reassign' : null;
     this.plan = long ? [...BUILD_PLAN, ...LONG_PLAN] : BUILD_PLAN;
-    this.repos = long ? [...BUILD_REPOS, 'billing-api'] : BUILD_REPOS;
+    this.repos = demo === 'sessions' ? ['commerce-core'] : long ? [...BUILD_REPOS, 'billing-api'] : BUILD_REPOS;
     this.planTasks = long ? parsedTasks(this.plan) : BUILD_TASKS;
     this.departed = new Set(long ? LONG_DEPARTED_TASKS : DEPARTED_TASKS);
     this.diff = long ? [...DIFF_FILES, ...LONG_DIFF_FILES] : DIFF_FILES;
@@ -754,9 +783,14 @@ export class SdlcMock {
       folder,
       repos: MOCK_REPOS,
       master: { kind: 'one', repo: MOCK_MASTER, committed: true },
-      marker: { version: 1, systems: { [MOCK_SYSTEM]: { repos: MOCK_REPOS }, ...(this.demo === 'finished-many' ? { [MOCK_SECOND_SYSTEM]: { repos: ['commerce-core'] } } : {}) } },
+      marker: { version: 1, systems: { [MOCK_SYSTEM]: { repos: MOCK_REPOS }, ...(this.demo === 'finished-many' || this.threeSystems() ? { [MOCK_SECOND_SYSTEM]: { repos: ['commerce-core'] } } : {}), ...(this.threeSystems() ? { [MOCK_THIRD_SYSTEM]: { repos: ['commerce-core'] } } : {}) } },
       marker_error: null,
     };
+  }
+
+  /** `?demo=slow-read&systems=3`: the workspace shows three systems. */
+  private threeSystems(): boolean {
+    return this.demo === 'slow-read' && typeof location !== 'undefined' && new URLSearchParams(location.search).get('systems') === '3';
   }
 
   contextHealth(repo: string): ContextState {
@@ -837,11 +871,12 @@ export class SdlcMock {
   private shownSystem(systems: string[]): string | null {
     return this.rememberedSystem !== null && systems.includes(this.rememberedSystem) ? this.rememberedSystem : (systems[0] ?? null);
   }
-  /** `?demo=finished-many`: sixty finished changes, merged and rejected alternately, newest first. */
+  /** `?demo=finished-many`: sixty finished changes, merged and rejected alternately, newest first; `?demo=finished-few` has three. */
   private finishedChanges(system: string): FinishedChange[] {
-    if (this.demo !== 'finished-many' || system !== MOCK_SYSTEM) return [];
-    return Array.from({ length: 60 }, (_, i): FinishedChange => {
-      const n = String(60 - i).padStart(2, '0');
+    if ((this.demo !== 'finished-many' && this.demo !== 'finished-few') || system !== MOCK_SYSTEM) return [];
+    const count = this.demo === 'finished-few' ? 3 : 60;
+    return Array.from({ length: count }, (_, i): FinishedChange => {
+      const n = String(count - i).padStart(2, '0');
       return { change: `2026-09-${n}-finished-change-${n}`, title: `Finished change ${n}`, finished: i % 2 === 0 ? 'merged' : 'rejected' };
     });
   }
@@ -1053,11 +1088,16 @@ export class SdlcMock {
     return { outcome: 'rejected', recordBranch: `change/${changeName}` };
   }
 
+  /** The records `?demo=sessions` adds to the run history. */
+  sessionRecords(): RunRecord[] { return this.earlierRecords.map((r) => ({ ...r })); }
   runLinks(): RunLink[] { return this.links.map((l) => ({ ...l })); }
   linkRun(link: RunLink): void { this.links = [...this.links, { ...link }]; }
   taskLinks(): TaskLink[] { return this.taskLinksList.map((l) => ({ ...l })); }
 
   // ---- the build ----
+
+  /** The repositories `change` builds in; `?demo=sessions` narrows the demo build to the one it has sessions in, on this mock only. */
+  buildRepos(change: string): string[] { return this.demo === 'sessions' && change === MOCK_BUILD_CHANGE ? [...this.repos] : (BUILD_REPOS_OF[change] ?? []); }
 
   buildStatus(changeName: string): BuildStatus {
     this.homeOf(changeName);
@@ -1518,6 +1558,8 @@ export interface MockBuildIo {
   status(change: ChangeRef): BuildStatus | null;
   announce(event: BuildEvent): void;
   now(): number;
+  /** The repositories a change builds in. */
+  repos(change: ChangeRef): string[];
 }
 
 const NO_FORM: StartForm = { timeoutSecs: 7200 };
@@ -1677,7 +1719,7 @@ export class MockBuildHost {
     const id = this.id(key);
     if (this.builds.get(id)?.going.size) return { kind: 'alreadyRunning' };
     const status = this.io.status(ref);
-    const repos = [...new Set([...(BUILD_REPOS_OF[ref.change] ?? []), ...(form.rounds ?? []).map((r) => r.repo)])];
+    const repos = [...new Set([...this.io.repos(ref), ...(form.rounds ?? []).map((r) => r.repo)])];
     const held = this.heldBy(key, repos);
     if (held.length > 0) {
       this.heldStarts.set(id, { key, held, at: this.io.now() });
@@ -1707,7 +1749,7 @@ export class MockBuildHost {
     if (build.going.has(repo)) return { kind: 'alreadyRunning' };
     build.stopped.delete(repo);
     build.cancelledAll = false;
-    for (const r of repoKeys(build)) this.holds.set(r, key);
+    for (const r of this.io.repos(build.ref)) this.holds.set(r, key);
     const status = this.io.status(ref);
     if (status === null) {
       this.launch(build, repo);
@@ -1752,7 +1794,7 @@ export class MockBuildHost {
   reviewStart(ref: ChangeRef): StartOutcome {
     const key = mockChangeKey(ref);
     const id = this.id(key);
-    const held = this.heldBy(key, BUILD_REPOS_OF[ref.change] ?? []);
+    const held = this.heldBy(key, this.io.repos(ref));
     if (held.length > 0) {
       this.reviewWaits.set(id, { key, held, at: this.io.now() });
       return { kind: 'held', held };
@@ -1792,7 +1834,6 @@ export class MockBuildHost {
   }
 }
 
-const repoKeys = (build: MockBuild): string[] => BUILD_REPOS_OF[build.ref.change] ?? [];
 
 // ---- the review and the round, as the backend answers them
 

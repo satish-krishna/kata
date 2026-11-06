@@ -11,6 +11,7 @@ import { assertResponsive } from '../harness/gate/check-responsive.mjs';
 import { launchChromium, serveStatic } from '../harness/playwright/serve-and-visit.mjs';
 import { checkDocLayoutLeft } from './check-doc-layout.mjs';
 import { checkHomePage } from './check-home-page.mjs';
+import { checkSteadyLayouts } from './check-steady-layouts.mjs';
 import { CHANGE_ROUTES, LONG_FIXTURES, STRIP_STATES, checkBuildStrip, checkChangeToolbar, checkPrPopover, checkStripHeight } from './check-change-toolbar.mjs';
 import { formatCorrectiveMessage } from '../harness/gate/responsive-guidance.mjs';
 
@@ -84,6 +85,14 @@ try {
     // The workspace home page, down to the window's minimum width.
     for (const width of CHANGE_WIDTHS) {
       const fails = await checkHomePage(browser, srv.origin, width);
+      if (fails.length) {
+        process.stderr.write(`${fails.join('\n')}\n`);
+        failed = true;
+      }
+    }
+    // Places where two things side by side keep a gap or wrap: every part of check-steady-layouts.mjs.
+    {
+      const fails = await checkSteadyLayouts(browser, srv.origin);
       if (fails.length) {
         process.stderr.write(`${fails.join('\n')}\n`);
         failed = true;

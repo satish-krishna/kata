@@ -76,7 +76,9 @@ const session = (id: string, over: Partial<ShownSession> = {}): ShownSession => 
   refusal: null,
   unseenFrom: null,
   latest: true,
-  expanded: false,
+  shown: true,
+  waiting: false,
+  tab: { word: 'running', tone: 'running' },
   outcome: 'running',
   live: true,
   note: null,
@@ -84,6 +86,7 @@ const session = (id: string, over: Partial<ShownSession> = {}): ShownSession => 
 });
 
 const base = (over: Partial<BuildPageView> = {}): BuildPageView => ({
+  sessionTabs: (over.sessions ?? []).filter((s) => s.offPick !== true).reverse(),
   stage: 'running',
   stageMessage: null,
   facts: { tasks: '1/3 tasks', elapsed: null },
@@ -158,7 +161,7 @@ const stopMessage = (exit: number, _error: null, _cancelled = false, _recorded =
       (answer)="answers.push($event)"
       (say)="says.push($event)"
       (goTo)="goTos.push($event)"
-      (toggleRun)="toggles.push($event)"
+      (pickSession)="toggles.push($event)"
       (setFilter)="onFilter($event)"
       (toggleFold)="onFold($event)"
       (reveal)="revealed.push($event)"
@@ -441,8 +444,8 @@ describe('the build page, questions and stops', () => {
       groups: [group('commerce-core', RUNNING, 'cancel', [task('T1', RUNNING)]), group('customer-portal', RUNNING, 'cancel', [task('T2', RUNNING)], true)],
       pick: { kind: 'repo', repo: 'customer-portal' },
       sessions: [
-        session('hidden', { state: 'awaiting', asks: [ask('h1', null)], shown: false }),
-        session('answered', { state: 'running', asks: [ask('a1', [['isolate']])], latest: false, expanded: true }),
+        session('hidden', { state: 'awaiting', asks: [ask('h1', null)], shown: false, offPick: true }),
+        session('answered', { state: 'running', asks: [ask('a1', [['isolate']])], latest: false }),
         session('open', { state: 'awaiting', asks: [ask('q1', null)] }),
       ],
       waiting: [{ repo: 'customer-portal', kind: 'answer', countdown: null, waited: '0:05' }],
@@ -564,50 +567,68 @@ describe('the build page, picking and folding', () => {
     expect(area('tasks')!.querySelector('[data-departure]')!.querySelector('.k-status__dot')).not.toBeNull();
   });
 
-  it('folds an earlier session to one line, keeps its pane mounted, and opens it when picked', async () => {
+  const ended = (id: string, word: string): Partial<ShownSession> => ({ latest: false, shown: false, startedAt: '08:00:00', live: false, tab: { word, tone: 'warning' } });
+
+  it('tabs the sessions newest first, says how each went, keeps every pane mounted and picks on a click', async () => {
     const v = base({
       pick: { kind: 'repo', repo: 'commerce-core' },
-      sessions: [session('r0', { latest: false, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
+      sessions: [session('r0', ended('r0', 'out of time')), session('r1')],
     });
     const { area, host, el } = await mount(v);
+    const tabs = [...area('activity')!.querySelectorAll<HTMLButtonElement>('[role="tablist"] [role="tab"]')];
+    expect(tabs).toHaveLength(2);
+    expect(norm(tabs[0].textContent)).toContain('running');
+    expect(tabs[0].getAttribute('aria-selected')).toBe('true');
+    expect(norm(tabs[1].textContent)).toContain('08:00:00');
+    expect(norm(tabs[1].textContent)).toContain('out of time');
+    expect(tabs[1].getAttribute('aria-selected')).toBe('false');
+    expect(tabs[1].querySelector('.k-status__dot')).not.toBeNull();
     const panes = area('activity')!.querySelectorAll<HTMLElement>('[data-session]');
     expect(panes).toHaveLength(2);
     expect(panes[0].querySelector<HTMLElement>('[data-pane]')!.hidden).toBe(true);
     expect(panes[0].querySelector('app-observe-pane')).not.toBeNull();
-    const line = panes[0].querySelector<HTMLButtonElement>('[data-run-line]')!;
-    expect(norm(line.textContent)).toContain('08:00:00');
-    expect(norm(line.textContent)).toContain('exit 124');
-    line.click();
+    expect(tabs[1].getAttribute('aria-controls')).toBe(panes[0].id);
+    tabs[1].click();
     expect(host.toggles).toEqual(['r0']);
     expect(el.querySelector('[data-session="r1"] [data-pane]')).not.toBeNull();
   });
 
-  it('lets only a session with a showing pane grow', async () => {
+  it('says a question is waiting in the warning tone', async () => {
     const v = base({
       pick: { kind: 'repo', repo: 'commerce-core' },
-      sessions: [session('r0', { latest: false, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
+      sessions: [session('r1', { waiting: true, tab: { word: 'question waiting', tone: 'warning' } })],
+    });
+    const { area } = await mount(v);
+    const tab = area('activity')!.querySelector<HTMLElement>('[role="tab"]')!;
+    expect(norm(tab.textContent)).toContain('question waiting');
+    expect(tab.querySelector('.k-status--warning .k-status__dot')).not.toBeNull();
+  });
+
+  it('lets only the session in view grow', async () => {
+    const v = base({
+      pick: { kind: 'repo', repo: 'commerce-core' },
+      sessions: [session('r0', ended('r0', 'finished')), session('r1')],
     });
     const { el } = await mount(v);
     const grow = (id: string) => getComputedStyle(el.querySelector<HTMLElement>(`[data-session="${id}"]`)!).flexGrow;
-    expect(grow('r0')).toBe('0');
     expect(grow('r1')).toBe('1');
   });
 
-  it('lets an expanded finished session grow like the live one', async () => {
+  it('shows the picked earlier session, whose pane grows like the running one', async () => {
     const v = base({
       pick: { kind: 'repo', repo: 'commerce-core' },
-      sessions: [session('r0', { latest: false, expanded: true, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
+      sessions: [session('r0', { latest: false, tab: { word: 'finished', tone: 'success' }, startedAt: '08:00:00', live: false }), session('r1', { shown: false, tab: { word: 'running', tone: 'running' } })],
     });
     const { el } = await mount(v);
     const grow = (id: string) => getComputedStyle(el.querySelector<HTMLElement>(`[data-session="${id}"]`)!).flexGrow;
     expect(grow('r0')).toBe('1');
-    expect(grow('r1')).toBe('1');
+    expect(el.querySelector<HTMLElement>('[data-session="r1"]')!.hidden).toBe(true);
   });
 
   it('a live pane stays mounted, hidden, when another repository is picked', async () => {
     const v = base({
       pick: { kind: 'repo', repo: 'customer-portal' },
-      sessions: [session('a', { shown: false }), session('b')],
+      sessions: [session('a', { shown: false, offPick: true }), session('b')],
     });
     const { el } = await mount(v);
     const a = el.querySelector<HTMLElement>('[data-session="a"]');
@@ -723,7 +744,7 @@ class ArrangedHost {
     this.view = {
       ...this.view,
       pick,
-      sessions: this.sessionOf === null ? this.view.sessions : this.view.sessions.map((x) => ({ ...x, shown: this.sessionOf![repo ?? ''] === x.id })),
+      sessions: this.sessionOf === null ? this.view.sessions : this.view.sessions.map((x) => ({ ...x, shown: this.sessionOf![repo ?? ''] === x.id, offPick: this.sessionOf![repo ?? ''] !== x.id })),
       groups: this.view.groups.map((g) => ({ ...g, picked: g.repo === repo, tasks: g.tasks.map((t) => ({ ...t, picked: pick.kind === 'task' && pick.task === t.id })) })),
     };
   }
@@ -1371,7 +1392,7 @@ describe('the arranged build page from the keyboard', () => {
     expect(Array.from(bringBack).sort()).toEqual(['Bring back Activity', 'Bring back Changed files', 'Bring back Findings', 'Bring back Tasks']);
     // A stack holds at most three areas, so the four names show in two stacks: the findings with the tasks and the activity, then the changed files in their place.
     await page.mode('review');
-    const tabNames = () => Array.from(page.area('findings').parentElement!.querySelectorAll<HTMLElement>('[role="tablist"]')).flatMap((l) => Array.from(l.querySelectorAll<HTMLElement>('[role="tab"]')).map((t) => page.text(t)));
+    const tabNames = () => Array.from(page.area('findings').parentElement!.querySelectorAll<HTMLElement>('[role="tablist"]:not([data-session-tabs])')).flatMap((l) => Array.from(l.querySelectorAll<HTMLElement>('[role="tab"]')).map((t) => page.text(t)));
     for (const a of ['tasks', 'activity'] as const) page.host.layout.arrange({ kind: 'bring-back', area: a });
     page.host.layout.arrange({ kind: 'place', area: 'tasks', to: 'left' });
     page.host.layout.arrange({ kind: 'place', area: 'activity', to: 'left' });
@@ -1475,7 +1496,7 @@ describe('a waiting question on the arranged page', () => {
     page.host.sessionOf = { 'commerce-core': 'mine', 'customer-portal': 'asking' };
     page.host.view = {
       ...page.host.view,
-      sessions: [session('mine', { shown: true }), session('asking', { state: 'awaiting', asks: [asking], shown: false })],
+      sessions: [session('mine'), session('asking', { state: 'awaiting', asks: [asking], shown: false, offPick: true })],
       waiting: WAIT,
     };
     page.host.choose({ kind: 'repo', repo: 'commerce-core' });
@@ -1649,7 +1670,7 @@ describe('the message box on the build page', () => {
     const v = base({
       groups: [group('api', RUNNING, 'cancel', [task('T1', RUNNING)], true), group('web', RUNNING, 'cancel', [task('T2', RUNNING)])],
       pick: { kind: 'repo', repo: 'api' },
-      sessions: [session('api-run'), session('web-run', { shown: false })],
+      sessions: [session('api-run'), session('web-run', { shown: false, offPick: true })],
     });
     const { el, host } = await mount(v);
     sayIn(el, 'api-run', 'use the v2 route');
@@ -1665,8 +1686,7 @@ describe('the build page folds, filters and explains a departure', () => {
     { id: 'T3', name: 'Task T3', status: RUNNING, finished: false, departure: null, commits: [] },
   ];
   type State = { filter: TaskFilter; open: Set<string>; picked: string | null };
-  const viewFor = (departed: boolean, st: State): BuildPageView => {
-    const ls = lines(departed);
+  const viewFor = (departed: boolean, st: State, ls: TaskLine[] = lines(departed)): BuildPageView => {
     const counts = filterCounts(ls);
     const list = taskList(ls, st.filter, st.open.has('commerce-core'), st.picked);
     const dep = ls.find((l) => l.id === st.picked && l.departure !== null);
@@ -1684,11 +1704,11 @@ describe('the build page folds, filters and explains a departure', () => {
       sessions: [session('r1')],
     });
   };
-  async function open(departed: boolean, st: Partial<State> = {}) {
+  async function open(departed: boolean, st: Partial<State> = {}, ls: TaskLine[] = lines(departed)) {
     const state: State = { filter: 'all', open: new Set(), picked: null, ...st };
-    const m = await mount(viewFor(departed, state));
+    const m = await mount(viewFor(departed, state, ls));
     m.host.state = state;
-    m.host.rebuild = (s) => viewFor(departed, s);
+    m.host.rebuild = (s) => viewFor(departed, s, ls);
     return m;
   }
   const rowIds = (el: HTMLElement) => Array.from(el.querySelectorAll('[data-task]')).map((r) => norm(r.querySelector('.k-mono')?.textContent));
@@ -1748,6 +1768,48 @@ describe('the build page folds, filters and explains a departure', () => {
     const session = area('activity')!.querySelector<HTMLElement>('[data-session]')!;
     expect(block.compareDocumentPosition(session) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
+});
+
+describe('the build page folds three finished tasks and filters the open ones', () => {
+  const three: TaskLine[] = [
+    { id: 'T1', name: 'Task T1', status: DONE, finished: true, departure: null, commits: ['aaaaaaa1'] },
+    { id: 'T2', name: 'Task T2', status: DONE, finished: true, departure: 'Used a queue instead', commits: [] },
+    { id: 'T3', name: 'Task T3', status: DONE, finished: true, departure: null, commits: [] },
+    { id: 'T4', name: 'Task T4', status: RUNNING, finished: false, departure: null, commits: [] },
+    { id: 'T5', name: 'Task T5', status: RUNNING, finished: false, departure: null, commits: [] },
+  ];
+  const ids = (el: HTMLElement) => Array.from(el.querySelectorAll('[data-task]')).map((r) => norm(r.querySelector('.k-mono')?.textContent));
+
+  it('R6.2: the fold is one line for the three done and one departed', async () => {
+    const { area } = await mountWith(three, {});
+    const fold = area('tasks')!.querySelector('[data-fold]')!;
+    expect(norm(fold.textContent)).toContain('3 done');
+    expect(norm(fold.textContent)).toContain('1 departed');
+    expect(ids(area('tasks')!)).toEqual(['T4', 'T5']);
+  });
+
+  it('R6.2: picking a task inside the fold shows the fold open with that task picked', async () => {
+    const { area } = await mountWith(three, { open: new Set(['commerce-core']), picked: 'T3' });
+    expect(ids(area('tasks')!)).toEqual(['T1', 'T2', 'T3', 'T4', 'T5']);
+    expect(area('tasks')!.querySelector('[data-task][aria-current="true"]')?.querySelector('.k-mono')?.textContent?.trim()).toBe('T3');
+  });
+
+  it('R6.2: the open filter lists the two open tasks', async () => {
+    const { area } = await mountWith(three, { filter: 'open' });
+    expect(ids(area('tasks')!)).toEqual(['T4', 'T5']);
+  });
+
+  async function mountWith(ls: TaskLine[], st: Partial<{ filter: TaskFilter; open: Set<string>; picked: string | null }>) {
+    const state = { filter: 'all' as TaskFilter, open: new Set<string>(), picked: null as string | null, ...st };
+    const counts = filterCounts(ls);
+    const list = taskList(ls, state.filter, state.open.has('commerce-core'), state.picked);
+    return mount(base({
+      groups: [group('commerce-core', RUNNING, null, ls.map((l) => task(l.id, l.status, { departure: l.departure, picked: l.id === state.picked })), false, { list, progress: { done: 3, total: 5 } })],
+      filter: { value: state.filter, counts },
+      pick: state.picked === null ? null : { kind: 'task', task: state.picked },
+      sessions: [session('r1')],
+    }));
+  }
 });
 
 describe('the held panel', () => {

@@ -34,8 +34,8 @@ import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { ChangeDraftStore } from '../../core/sdlc/change-draft.store';
 import { RunLandingStore } from '../../core/run/run-landing.store';
-import { type AskRecord, type MessageRecord, type MessageRefusal, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
-import { activityFor, linksOfFollowedRuns, outcomeOf, recordOutcome, repoSessions, sessionsFor, type Chosen, type LiveRun, type Pick, type SessionRef } from '../../lib/build-sessions';
+import { pendingKind, type AskRecord, type MessageRecord, type MessageRefusal, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
+import { activityFor, linksOfFollowedRuns, outcomeOf, recordOutcome, repoSessions, sessionsFor, tabOf, type Chosen, type LiveRun, type Pick, type SessionRef, type SessionTab } from '../../lib/build-sessions';
 import { sameChange } from '../../lib/build-host';
 import { buildStage, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
 import { hms, ms, situationView, type Situation, type SituationView, type TaskState } from '../../lib/build-state';
@@ -80,8 +80,6 @@ export type ShownRun = {
   unseenFrom: number | null;
   /** True for the newest run of its repository, which always shows in full. */
   latest: boolean;
-  /** True when the engineer opened this earlier run; an earlier run shows as one line otherwise. */
-  expanded: boolean;
   /** How the run went, for its one line: the status, then exit, turns and cost once it completed. */
   outcome: string;
 };
@@ -92,8 +90,14 @@ export type ShownSession = ShownRun & {
   live: boolean;
   /** Why an earlier run shows nothing, or null. */
   note: string | null;
-  /** False for a live run kept mounted while another pick is on show; absent or true means on show. */
-  shown?: boolean;
+  /** True for the one session of its repository in view: the one the engineer picked, else the newest. */
+  shown: boolean;
+  /** True when the session has an unanswered question or a pending permission. */
+  waiting: boolean;
+  /** What the session's tab says: running, a question waiting, or how it ended. */
+  tab: SessionTab;
+  /** True for a live run kept mounted while another pick is on show; it is not on the page at all. */
+  offPick?: boolean;
 };
 
 /** What the tasks area says about the review. */
@@ -232,6 +236,8 @@ export type BuildPageView = {
   review: ReviewEntryView;
   pick: Pick | null;
   sessions: ShownSession[];
+  /** The sessions of the pick as tabs, newest first; a live run kept mounted for another pick has none. */
+  sessionTabs: ShownSession[];
   sessionNote: string | null;
   /** Each repository that stopped and why, for the activity area. */
   stops: { repo: string; reason: string }[];
@@ -432,8 +438,8 @@ export class BuildPageViewModel {
   private readonly bases = signal<Readonly<Record<string, BuildStatus>>>({});
   /** The transcripts already linked to the change, so a run is linked once. */
   private readonly linkedTranscripts = new Set<string>();
-  /** The earlier runs the engineer opened in full, by run id. */
-  private readonly openedRuns = signal<ReadonlySet<string>>(new Set());
+  /** The session the engineer picked in each repository, by repository; a repository with none follows its newest session. */
+  private readonly pickedSession = signal<Readonly<Record<string, string>>>({});
   /** True from the moment the review's run leaves the build until its result is read. */
   private readonly readingNow = signal(false);
   private readonly changes = signal<BuildChanges | null>(null);
@@ -522,7 +528,6 @@ export class BuildPageViewModel {
   /** Every run of the build, grouped by the repository (or the review) it belongs to. All stay mounted; only the selected group shows. */
   readonly groups = computed<{ key: string; runs: ShownRun[] }[]>(() => {
     const marks = this.marks();
-    const opened = this.openedRuns();
     const out = new Map<string, ShownRun[]>();
     for (const e of this.log()) {
       const snap = this.snapOf(e.id);
@@ -540,7 +545,6 @@ export class BuildPageViewModel {
         refusal: snap.refusal,
         unseenFrom: marks[e.id] ?? null,
         latest: false,
-        expanded: opened.has(e.id),
         outcome: outcomeOf(snap.state, snap.summary),
       };
       out.set(e.key, [...(out.get(e.key) ?? []), run]);
@@ -666,9 +670,22 @@ export class BuildPageViewModel {
       this.runRefs();
       untracked(() => void this.readSessions());
     });
+    // A picked session that left its repository's list is forgotten, so the page follows the live session again.
+    effect(() => {
+      const refs = this.sessionRefs();
+      const picked = untracked(() => this.pickedSession());
+      const gone = Object.entries(picked).filter(([repo, id]) => {
+        const list = refs.get(repo);
+        return list !== undefined && list.length > 0 && !list.some((r) => r.runId === id);
+      });
+      if (gone.length === 0) return;
+      const next = { ...picked };
+      for (const [repo] of gone) delete next[repo];
+      untracked(() => this.pickedSession.set(next));
+    });
     // An earlier session's transcript is read when it is first shown open.
     effect(() => {
-      const open = this.shownSessions().filter((s) => !s.live && (s.latest || s.expanded));
+      const open = this.shownSessions().filter((s) => !s.live && s.shown);
       untracked(() => open.forEach((s) => void this.readDetail(s.id)));
     });
     // The clocks run while a build or a run goes.
@@ -983,7 +1000,6 @@ export class BuildPageViewModel {
   /** Every session by run id: the live ones from the run store, the earlier ones from their transcripts. */
   private readonly sessionById = computed<Map<string, ShownSession>>(() => {
     const live = new Map(this.groups().flatMap((g) => g.runs.map((r) => [r.id, r] as const)));
-    const opened = this.openedRuns();
     const details = this.details();
     const records = this.records();
     const out = new Map<string, ShownSession>();
@@ -991,11 +1007,18 @@ export class BuildPageViewModel {
       for (const ref of refs) {
         const run = live.get(ref.runId);
         if (run !== undefined) {
-          out.set(ref.runId, { ...run, live: true, note: null });
+          const waiting = pendingKind(run.asks, run.permissions) !== 'none';
+          // The record of a followed run is filed under its transcript's id.
+          const transcript = transcriptRunId(run.events);
+          const record = records.find((r) => r.id === ref.runId || r.id === transcript);
+          out.set(ref.runId, { ...run, live: true, note: null, shown: false, waiting, tab: tabOf({ live: true, state: run.state, waiting, outcome: run.outcome }, record?.ending ?? null) });
           continue;
         }
         const detail = details[ref.runId];
         const snap = detail === undefined || detail === 'unreadable' ? IDLE : detail;
+        const record = records.find((r) => r.id === ref.runId) ?? null;
+        const outcome = recordOutcome(record);
+        const waiting = pendingKind(snap.asks, snap.permissions) !== 'none';
         out.set(ref.runId, {
           id: ref.runId,
           startedAt: timeOf(ref.startedAt * 1000),
@@ -1010,10 +1033,12 @@ export class BuildPageViewModel {
           refusal: snap.refusal,
           unseenFrom: null,
           latest: false,
-          expanded: opened.has(ref.runId),
-          outcome: recordOutcome(records.find((r) => r.id === ref.runId) ?? null),
+          outcome,
           live: false,
           note: detail === 'unreadable' ? 'Transcript not available' : null,
+          shown: false,
+          waiting,
+          tab: tabOf({ live: false, state: snap.state, waiting, outcome }, record?.ending ?? null),
         });
       }
     }
@@ -1025,13 +1050,14 @@ export class BuildPageViewModel {
     return pick === null ? { sessions: [] as SessionRef[], unknown: false } : sessionsFor(pick, this.status()?.tasks ?? [], this.sessionRefs(), this.activity().taskLinks);
   });
 
-  /** The sessions of the pick: the latest shows open, every earlier one folds to its start time and outcome until picked. */
+  /** The sessions of the pick, oldest first: the one the engineer picked, else the newest, is in view; every other one waits to be picked. */
   readonly shownSessions = computed<ShownSession[]>(() => {
     const refs = this.sessionPick().sessions;
     const byId = this.sessionById();
+    const inView = this.shownFor(this.selected() ?? '', refs.map((r) => ({ id: r.runId })));
     return refs.flatMap((ref, i) => {
       const session = byId.get(ref.runId);
-      return session === undefined ? [] : [{ ...session, latest: i === refs.length - 1 }];
+      return session === undefined ? [] : [{ ...session, latest: i === refs.length - 1, shown: ref.runId === inView }];
     });
   });
 
@@ -1044,8 +1070,8 @@ export class BuildPageViewModel {
     const out: ShownSession[] = [];
     for (const [id, session] of this.sessionById()) {
       const on = shown.get(id);
-      if (on !== undefined) out.push({ ...on, shown: true });
-      else if (session.live) out.push({ ...session, latest: true, shown: false });
+      if (on !== undefined) out.push(on);
+      else if (session.live) out.push({ ...session, latest: true, shown: false, offPick: true });
     }
     return out;
   });
@@ -1214,6 +1240,7 @@ export class BuildPageViewModel {
       review: { status: reviewStatus(entry), action: this.reviewAction(), picked: pick?.kind === 'review', ...this.reviewList(entry) },
       pick,
       sessions: this.mountedSessions(),
+      sessionTabs: this.shownSessions().slice().reverse(),
       sessionNote: this.sessionNote(),
       stops: areas.flatMap((g) => (g.heading.stopLine === null ? [] : [{ repo: g.repo, reason: g.heading.stopLine }])),
       findingsArea,
@@ -1355,12 +1382,20 @@ export class BuildPageViewModel {
     this.details.update((d) => ({ ...d, [id]: snap }));
   }
 
-  /** Open an earlier run in full, or fold it back to its one line. */
-  toggleRun(id: string): void {
-    const next = new Set(this.openedRuns());
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    this.openedRuns.set(next);
+  /** The id of the session in view among a repository's sessions, oldest first: the one the engineer picked while it is still listed, else the newest; null with none. */
+  private shownFor(repo: string, sessions: readonly { id: string }[]): string | null {
+    const picked = this.pickedSession()[repo];
+    if (picked !== undefined && sessions.some((s) => s.id === picked)) return picked;
+    return sessions.at(-1)?.id ?? null;
+  }
+
+  /** The engineer picks a session of a repository to read; picking the newest one goes back to following the live session. */
+  pickSession(repo: string, runId: string): void {
+    const sessions = repo === this.selected() ? this.sessionPick().sessions : (this.sessionRefs().get(repo) ?? []);
+    const next = { ...this.pickedSession() };
+    if (sessions.at(-1)?.runId === runId) delete next[repo];
+    else next[repo] = runId;
+    this.pickedSession.set(next);
   }
 
   select(name: string): void {

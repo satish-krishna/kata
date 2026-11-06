@@ -144,6 +144,9 @@
               @if (vm.systemChoice().length > 1) {
                 <app-segmented [options]="vm.systemOptions()" [value]="vm.shownSystem() ?? ''" (valueChange)="vm.showSystem($event)" ariaLabel="System" />
               }
+              @if (vm.readingProgress(); as entry) {
+                <div class="wb-pane__progress" data-testid="reading-progress"><app-progress-line [entry]="entry" [compact]="true" /></div>
+              }
             </div>
             @if (vm.listNotice(); as notice) {
               <div class="wb-banner wb-banner--warn" data-testid="list-notice" role="status">
@@ -170,10 +173,7 @@
                 }
               </div>
             }
-            <div class="k-home__body">
-              @if (vm.readingProgress(); as entry) {
-                <div data-testid="reading-progress"><app-progress-line [entry]="entry" /></div>
-              }
+            <div class="k-home__body k-home__body--changes">
               <app-changes-table
                 [rows]="vm.rows()"
                 [others]="vm.otherBranches()"

@@ -360,6 +360,7 @@ mod tests {
             duration_ms: None,
             result: None,
             steered: false,
+            ending: kata_core::history::RunEnding::from_exit(exit, false),
         }
     }
 
