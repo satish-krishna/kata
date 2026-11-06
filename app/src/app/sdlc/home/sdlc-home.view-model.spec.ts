@@ -10,6 +10,7 @@ import type { HomeOpen } from '@bindings/HomeOpen';
 import type { HomeRow } from '@bindings/HomeRow';
 import type { HomeChecked } from '@bindings/HomeChecked';
 import type { HomeAction } from '@bindings/HomeAction';
+import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
@@ -1602,4 +1603,68 @@ describe('SdlcHomeViewModel failed reads and an older plugin', () => {
     expect(vm.shownSystem()).toBe('bob');
     expect(state).toHaveBeenCalledTimes(1);
   });
+});
+
+describe('SdlcHomeViewModel removing a merged change\'s copy', () => {
+  async function homeWith(actions: HomeAction[]) {
+    const ctx = setup({ home: 'listed' });
+    vi.spyOn(ctx.transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+    const open = vi.spyOn(ctx.transport, 'sdlcHomeOpen').mockResolvedValue(openOf(NAMES.map((n, i) => homeRowOf(n, 'Stage', actions[i]))));
+    const checked = vi.spyOn(ctx.transport, 'sdlcHomePullRequests').mockResolvedValue({ rows: [], problems: [] });
+    await ctx.vm.init();
+    open.mockClear();
+    open.mockResolvedValue(openOf(NAMES.map((n) => homeRowOf(n, 'Stage')), { check: [NAMES[0]] }));
+    return { ...ctx, open, checked };
+  }
+
+  it("removing the copy from the home goes through the change page's removal", async () => {
+    const { vm, transport, open, checked } = await homeWith(['remove-copy', 'workflow', 'workflow']);
+    const remove = vi.spyOn(transport, 'sdlcRemoveCopy').mockResolvedValue({ outcome: 'removed', kept: [] });
+    vm.askRemoveCopy(NAMES[0]);
+    expect(vm.removeAsked()).toBe(NAMES[0]);
+    await vm.confirmRemoveCopy();
+    expect(remove).toHaveBeenCalledWith({ workspace: vm.current()!.folder, system: 'commerce', change: NAMES[0] });
+    expect(vm.removeAsked()).toBeNull();
+    expect(toastText()).toContain('The copy is removed. The change branch and its commits stay in the master repository.');
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open.mock.calls[0][3]).toBe('action-ended');
+    expect(checked).toHaveBeenCalledTimes(1);
+    expect(checked.mock.calls[0][2]).toEqual([NAMES[0]]);
+  });
+
+  it('declining the removal closes the question and removes nothing', async () => {
+    const { vm, transport } = await homeWith(['remove-copy', 'workflow', 'workflow']);
+    const remove = vi.spyOn(transport, 'sdlcRemoveCopy');
+    vm.askRemoveCopy(NAMES[0]);
+    vm.declineRemoveCopy();
+    expect(vm.removeAsked()).toBeNull();
+    await vm.confirmRemoveCopy();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('the home only asks about a row that offers removal', async () => {
+    const { vm } = await homeWith(['remove-copy', 'workflow', 'open']);
+    vm.askRemoveCopy(NAMES[1]);
+    expect(vm.removeAsked()).toBeNull();
+    vm.askRemoveCopy(NAMES[2]);
+    expect(vm.removeAsked()).toBeNull();
+  });
+
+  const outcomes: { name: string; answer: () => Promise<RemoveOutcome>; toast: string }[] = [
+    { name: 'keep', answer: async () => ({ outcome: 'keep', uncommitted: ['a.txt', 'b.txt'] }), toast: 'The copy holds uncommitted files, so it is kept: a.txt, b.txt' },
+    { name: 'refused', answer: async () => ({ outcome: 'refused', problems: ['branch not merged'] }), toast: 'The plugin did not remove the copy: branch not merged' },
+    { name: 'couldNotRun', answer: async () => ({ outcome: 'couldNotRun', message: 'no node' }), toast: 'The copy was not removed: the plugin could not run: no node' },
+    { name: 'a rejection', answer: async () => Promise.reject(new Error('boom')), toast: 'The copy was not removed: boom' },
+  ];
+  for (const o of outcomes) {
+    it(`each removal outcome is shown: ${o.name}`, async () => {
+      const { vm, transport, open } = await homeWith(['remove-copy', 'workflow', 'workflow']);
+      vi.spyOn(transport, 'sdlcRemoveCopy').mockImplementation(o.answer);
+      vm.askRemoveCopy(NAMES[0]);
+      await vm.confirmRemoveCopy();
+      expect(toastText()).toContain(o.toast);
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(open.mock.calls[0][3]).toBe('action-ended');
+    });
+  }
 });

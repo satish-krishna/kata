@@ -701,6 +701,14 @@ export class SdlcHomeViewModel {
     this.runner.closeLeftovers();
   }
 
+  // --- removing a merged change's copy
+
+  /** The change the engineer is being asked about, or null. */
+  readonly removeAsked = signal<string | null>(null);
+  askRemoveCopy(_change: string): void {}
+  declineRemoveCopy(): void {}
+  async confirmRemoveCopy(): Promise<void> {}
+
   // --- navigation
 
   async openChange(system: string, change: string): Promise<void> {
