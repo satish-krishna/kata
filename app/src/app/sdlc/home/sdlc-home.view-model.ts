@@ -705,9 +705,41 @@ export class SdlcHomeViewModel {
 
   /** The change the engineer is being asked about, or null. */
   readonly removeAsked = signal<string | null>(null);
-  askRemoveCopy(_change: string): void {}
-  declineRemoveCopy(): void {}
-  async confirmRemoveCopy(): Promise<void> {}
+  /** Only a row whose action is `remove-copy` is asked about. */
+  askRemoveCopy(change: string): void {
+    if (this.rows().some((r) => r.change === change && r.action === 'remove-copy')) this.removeAsked.set(change);
+  }
+  declineRemoveCopy(): void {
+    this.removeAsked.set(null);
+  }
+  /** The engineer confirmed. The change page's removal runs; every outcome is a toast, then the home reads again. */
+  async confirmRemoveCopy(): Promise<void> {
+    const change = this.removeAsked();
+    this.removeAsked.set(null);
+    const workspace = this.current()?.folder;
+    const system = this.rows().find((r) => r.change === change)?.system;
+    if (change === null || !workspace || !system) return;
+    try {
+      const out = await this.transport.sdlcRemoveCopy({ workspace, system, change });
+      switch (out.outcome) {
+        case 'removed':
+          this.toasts.info('The copy is removed. The change branch and its commits stay in the master repository.');
+          break;
+        case 'keep':
+          this.toasts.error(`The copy holds uncommitted files, so it is kept: ${out.uncommitted.join(', ')}`);
+          break;
+        case 'refused':
+          this.toasts.error(`The plugin did not remove the copy: ${out.problems.join('; ')}`);
+          break;
+        case 'couldNotRun':
+          this.toasts.error(`The copy was not removed: the plugin could not run: ${out.message}`);
+          break;
+      }
+    } catch (e) {
+      this.toasts.error(`The copy was not removed: ${message(e)}`);
+    }
+    await this.loadCurrent('action-ended');
+  }
 
   // --- navigation
 
