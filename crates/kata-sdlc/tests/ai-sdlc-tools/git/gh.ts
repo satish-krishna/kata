@@ -6,8 +6,28 @@ import { CouldNotRun } from '../common/types.ts';
 
 export type GhResult = { ok: boolean; stdout: string; stderr: string };
 
+/**
+ * The gh program and its leading arguments: `AI_SDLC_GH` when set, a JSON list such as `["node", "/path/fake-gh.js"]`
+ * (as a hook's `run` is), else `gh` from PATH. The tests use it to play GitHub; on Windows a script on PATH cannot.
+ */
+function ghCommand(): string[] {
+  const value = process.env.AI_SDLC_GH;
+  if (value === undefined || value === '') return ['gh'];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    parsed = null;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every((a) => typeof a === 'string' && a !== '')) {
+    throw new CouldNotRun('AI_SDLC_GH must be a JSON list of the gh program and its arguments, as non-empty strings');
+  }
+  return parsed as string[];
+}
+
 export function gh(cwd: string, args: string[]): GhResult {
-  const r = spawnSync('gh', args, { cwd, encoding: 'utf8', env: { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' } });
+  const [program, ...leading] = ghCommand() as [string, ...string[]];
+  const r = spawnSync(program, [...leading, ...args], { cwd, encoding: 'utf8', env: { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' } });
   if (r.error) {
     const code = (r.error as NodeJS.ErrnoException).code;
     throw new CouldNotRun(code === 'ENOENT' ? 'declaring a change done needs the GitHub command-line tool, gh, which is not installed or not on PATH' : `cannot run gh: ${code ?? r.error.message}`);

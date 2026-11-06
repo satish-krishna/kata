@@ -7,7 +7,8 @@ import { join } from 'node:path';
 import { gitPath } from '../git/git.ts';
 import type { EventName } from './config.ts';
 
-export type HookRecord = { id: string; when: 'before' | 'after'; outcome: 'passed' | 'failed' | 'could-not-run'; exitCode: number | null; output: string };
+/** `ids`: what a failed hook said failed (AI_SDLC_FAILURES), or null; absent in records written before it existed. */
+export type HookRecord = { id: string; when: 'before' | 'after'; outcome: 'passed' | 'failed' | 'could-not-run'; exitCode: number | null; output: string; ids?: string[] | null };
 
 export type EventRecord = {
   event: EventName;
@@ -22,6 +23,8 @@ export type EventRecord = {
   problems: string[];
   /** The blocking hook that failed, and what it asks for. */
   failed: { id: string; onFailure: 'fix' | 'stop' } | null;
+  /** What the event's step reported, such as the baseline of build.start and build.finish; absent when nothing. */
+  details?: Record<string, unknown>;
 };
 
 export type Outcome = 'passed' | 'failed' | 'refused' | 'could-not-run';
@@ -36,7 +39,11 @@ export type RepoLedger = {
   runs: EventRecord[];
   /** How many times the Stop gate blocked a stop for one hook at one key: `<hook id>@<key>`. */
   gateBlocks: Record<string, number>;
+  /** Checks the engineer let fail at a base commit for this change's build (`baseline approve`); absent means none. */
+  approvals?: Approval[];
 };
+
+export type Approval = { hook: string; base: string; at: string };
 
 /** The ledger folder of one change, in the master repository's common git folder. */
 export const ledgerFolder = (master: string, system: string, change: string): string => gitPath(master, join('ai-sdlc', system, change), true);

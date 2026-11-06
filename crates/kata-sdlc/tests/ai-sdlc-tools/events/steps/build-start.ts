@@ -14,6 +14,11 @@
 // ai-sdlc trailer, so unrelated work under the same name is never built on. Otherwise the branch is created off
 // the base (or from the remote's copy, when the change was pushed from another machine). The master repository,
 // when it is one of the system's repositories, is built in the change's copy, which is already on the branch.
+// Once the event's after hooks have run (so whatever they install is there), the step takes the baseline of the
+// repository's checks on its base commit, or reuses the stored one, and fails, asking the engineer, when a check
+// already fails there without saying what failed and has no approval for this change.
+import { approvalProblem, approvedHooks, ledgerOf, needsApproval } from '../../baseline/approvals.ts';
+import { storedBaseline, takeBaseline } from '../../baseline/take.ts';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { branchOf } from '../../changes/record.ts';
@@ -118,5 +123,24 @@ export const buildStart: Step = {
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, JSON.stringify(active, null, 2) + '\n');
     return { problems: [], details: { branch, created, uncommitted: uncommittedFiles(ctx.repoPath), from } };
+  },
+  async finish(ctx, config) {
+    // A build resumed mid-task may hold uncommitted files; with no stored baseline it cannot be taken now, so
+    // build.finish takes it once everything is committed, rather than this run refusing to resume.
+    const stored = storedBaseline(ctx, config);
+    if (stored.base !== null && stored.entry === null && uncommittedFiles(ctx.repoPath).length > 0) {
+      return { problems: [], details: { baseline: { base: stored.base, deferred: `${ctx.repo} has uncommitted files, so build.finish takes the baseline` } } };
+    }
+    const taken = await takeBaseline(ctx, config);
+    if (taken.problems.length > 0) return { problems: taken.problems, outcome: taken.outcome === 'could-not-run' ? 'could-not-run' : 'failed', ...(taken.fault ? { failed: { ...taken.fault, onFailure: 'stop' as const } } : {}) };
+    if (taken.entry === null || taken.base === null) return { problems: [] };
+    const base = taken.base;
+    const approved = approvedHooks(ledgerOf(ctx), base);
+    const failing = taken.entry.hooks.filter((h) => h.outcome === 'failed').map(({ id, ids }) => ({ id, ids }));
+    const baseline = { base, reused: taken.reused, failing, approved: failing.map((f) => f.id).filter((id) => approved.includes(id)) };
+    const waiting = needsApproval(taken.entry, approved);
+    if (waiting.length === 0) return { problems: [], details: { baseline } };
+    const first = taken.entry.hooks.find((h) => h.id === waiting[0]);
+    return { problems: waiting.map((id) => approvalProblem(ctx, base, id)), details: { baseline }, failed: { id: waiting[0] as string, onFailure: 'stop', output: first?.output ?? '' } };
   },
 };

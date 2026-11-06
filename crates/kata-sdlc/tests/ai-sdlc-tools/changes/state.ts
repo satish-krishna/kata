@@ -6,25 +6,14 @@ import { join } from 'node:path';
 import { CouldNotRun } from '../common/types.ts';
 import { readReview } from '../documents/review.ts';
 import { readSpec } from '../documents/spec.ts';
-import { changeHolders, copiesFolder, findChange } from '../events/context.ts';
 import { baseBranch, baseRevision, commitOf, commitsWithTrailer, mergeBase } from '../git/git.ts';
-import { readMarker } from '../workspace/marker.ts';
 import { uncommittedFiles } from '../workspace/own-files.ts';
-import { gitDirs, real, resolveWorkspace, type ResolveOptions } from '../workspace/resolve.ts';
-import {
-  DIFF_OPTIONS,
-  differs,
-  differsFromHead,
-  fieldOf,
-  fixState,
-  git,
-  gitMaybe,
-  readable,
-  reportedPaths,
-  statusOf,
-  type FixState,
-} from './fix-state.ts';
+import { gitDirs, type ResolveOptions } from '../workspace/resolve.ts';
+import { DIFF_OPTIONS, differsFromHead, fieldOf, fixStateOf, git, readable, statusOf, type FixState } from './fix-state.ts';
+import { finishedOf, type Finished } from './finished.ts';
+import { placeChanges, titleAndTrack } from './place.ts';
 import { entriesOf, tasksOf } from './progress.ts';
+import { SystemRead } from './system-read.ts';
 
 type Doc = 'intent' | 'spec' | 'plan';
 const DOCS: readonly Doc[] = ['intent', 'spec', 'plan'];
@@ -51,6 +40,8 @@ export type ChangeState = {
   review: { committed: number; draft: 'none' | 'next-section' | 'other' };
   fix: FixState | null;
   ready: Record<Skill, Ready>;
+  /** Null when open; see GRAMMAR.md ("Listing a system's changes"). */
+  finished: Finished;
 };
 
 export type TaskState = {
@@ -64,7 +55,7 @@ export type TaskState = {
 
 export type StateResult = { system: string; changes: ChangeState[]; problems: string[] };
 
-export type StateOptions = ResolveOptions & { system?: string; change?: string };
+export type StateOptions = ResolveOptions & { system?: string; change?: string; open?: boolean };
 
 const isDir = (p: string): boolean => existsSync(p) && statSync(p).isDirectory();
 
@@ -76,32 +67,31 @@ function readText(path: string): string | null {
   }
 }
 
-/** The changes of a system a repository holds: folders with an `intent.md` in the working tree or in `HEAD`. */
-function changesIn(top: string, system: string, hasHead: boolean): Set<string> {
-  const base = join(top, 'intent', system);
-  const names = new Set<string>();
-  if (isDir(base)) for (const name of readdirSync(base)) if (existsSync(join(base, name, 'intent.md'))) names.add(name);
-  if (hasHead) {
-    const prefix = `intent/${system}/`;
-    for (const path of git(top, ['ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', prefix]).split('\0')) {
-      const rest = path.startsWith(prefix) ? path.slice(prefix.length).split('/') : [];
-      if (rest.length === 2 && rest[1] === 'intent.md') names.add(rest[0] as string);
-    }
-  }
-  return names;
+/** The commit a source pin names, or null when the field is absent, empty, `pending acceptance` or not a commit name. */
+function pinValue(text: string | null, file: string, field: string): string | null {
+  const value = text === null ? undefined : fieldOf(text, file, field);
+  const sha = value === undefined || value === null ? '' : String(value).trim();
+  return sha === '' || sha === 'pending acceptance' || sha.startsWith('-') ? null : sha;
 }
 
-const hasHeadIn = (top: string): boolean => gitMaybe(top, ['rev-parse', '--verify', '-q', 'HEAD']) !== null;
+/** What one `changeStates` call learns once and reuses: git directories by folder and each repository's work by path. */
+type RunCache = {
+  dirs: Map<string, ReturnType<typeof gitDirs>>;
+  work: Map<string, RepositoryFacts>;
+};
 
-/** Every change copy in the workspace that is a worktree of the master's repository. */
-function copiesOf(workspace: string, master: string): string[] {
-  const common = gitDirs(master)?.common;
-  const folder = copiesFolder(workspace);
-  if (common === undefined || !isDir(folder)) return [];
-  return readdirSync(folder)
-    .sort()
-    .map((name) => real(join(folder, name)))
-    .filter((dir) => isDir(dir) && gitMaybe(dir, ['rev-parse', '--show-prefix'])?.trim() === '' && gitDirs(dir)?.common === common);
+type RepositoryFacts = {
+  uncommitted: string[];
+  /** The merge base with the base branch; null without a base or a `HEAD`. */
+  from: string | null;
+  trailers: { sha: string; values: string[] }[];
+};
+
+const newRun = (): RunCache => ({ dirs: new Map(), work: new Map() });
+
+function dirsOf(run: RunCache, dir: string): ReturnType<typeof gitDirs> {
+  if (!run.dirs.has(dir)) run.dirs.set(dir, gitDirs(dir));
+  return run.dirs.get(dir) ?? null;
 }
 
 const STOP = {
@@ -137,13 +127,13 @@ function onlyAddedLines(top: string, path: string): boolean {
 }
 
 /** Reads where one change stands, in the repository (master or copy) that holds it. */
-function changeState(top: string, workspace: string, system: string, change: string, inCopy: boolean, problems: string[]): ChangeState {
+function changeState(read: SystemRead, run: RunCache, workspace: string, change: string, inCopy: boolean, problems: string[]): Omit<ChangeState, 'finished'> {
+  const { top, system, hasHead } = read;
   const prefix = `intent/${system}/${change}/`;
   const folder = join(top, 'intent', system, change);
-  const hasHead = hasHeadIn(top);
-  const inHead = new Set(hasHead ? git(top, ['ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', prefix]).split('\0').filter(Boolean) : []);
-  const reported = reportedPaths(top, [prefix]);
-  const headText = (name: string): string | null => (inHead.has(prefix + name) ? git(top, ['show', `HEAD:${prefix}${name}`]) : null);
+  const inHead = new Set(read.headPaths(prefix));
+  const reported = new Set([...read.reported].filter((p) => p.startsWith(prefix)));
+  const headText = (name: string): string | null => read.headText(prefix + name);
   const workingText = (name: string): string | null => readText(join(folder, name));
   const uncommitted = (name: string): boolean => reported.has(prefix + name) && (!inHead.has(prefix + name) || differsFromHead(top, prefix + name));
 
@@ -161,23 +151,16 @@ function changeState(top: string, workspace: string, system: string, change: str
   const pin = (d: 'spec' | 'plan'): Pin | null => {
     const working = texts[d].working;
     if (working === null) return null;
-    const value = fieldOf(working, join(folder, FILE[d]), d === 'spec' ? 'source_intent_commit' : 'source_spec_commit');
-    const sha = value === undefined || value === null ? '' : String(value).trim();
-    if (sha === '' || sha === 'pending acceptance' || sha.startsWith('-')) return 'missing';
-    if (!hasHead || gitMaybe(top, ['rev-parse', '--verify', '-q', `${sha}^{commit}`]) === null) return 'missing';
-    return differs(top, [sha, 'HEAD'], prefix + (d === 'spec' ? FILE.intent : FILE.spec)) ? 'broken' : 'holds';
+    const sha = pinValue(working, join(folder, FILE[d]), d === 'spec' ? 'source_intent_commit' : 'source_spec_commit');
+    if (sha === null) return 'missing';
+    if (!hasHead || read.objectOf(`${sha}^{commit}`) === null) return 'missing';
+    const path = prefix + (d === 'spec' ? FILE.intent : FILE.spec);
+    // Content only: a difference in file mode alone does not break the pin.
+    return read.objectOf(`${sha}:${path}`) !== (read.headBlobs.get(path) ?? null) ? 'broken' : 'holds';
   };
   const documents = { intent: facts('intent'), spec: { ...facts('spec'), pin: pin('spec') }, plan: { ...facts('plan'), pin: pin('plan') } };
 
-  const intentFile = join(folder, FILE.intent);
-  const fromIntent = (field: string): unknown => {
-    const working = texts.intent.working === null ? undefined : fieldOf(texts.intent.working, intentFile, field);
-    if (working !== undefined && working !== null) return working;
-    return texts.intent.head === null ? undefined : fieldOf(texts.intent.head, `HEAD:${prefix}${FILE.intent}`, field);
-  };
-  const titleValue = fromIntent('title');
-  const title = titleValue === undefined || titleValue === null ? null : String(titleValue);
-  const track = fromIntent('track') === 'fix' ? 'fix' : 'full';
+  const { title, track } = titleAndTrack(texts.intent.working, texts.intent.head, join(folder, FILE.intent), `HEAD:${prefix}${FILE.intent}`);
 
   const specFile = join(folder, FILE.spec);
   const specRead = texts.spec.working === null ? null : readable(() => readSpec(texts.spec.working as string, specFile));
@@ -201,7 +184,7 @@ function changeState(top: string, workspace: string, system: string, change: str
       entry.all.push(t.id);
       (logged.has(t.id) ? entry.logged : entry.unlogged).push(t.id);
     }
-    for (const [repo, entry] of Object.entries(tasks)) Object.assign(entry, repositoryWork(top, workspace, repo, entry.all));
+    for (const [repo, entry] of Object.entries(tasks)) Object.assign(entry, repositoryWork(top, workspace, repo, entry.all, run));
   }
 
   const workingLogs = isDir(join(folder, 'build')) ? readdirSync(join(folder, 'build')).filter(isLog) : [];
@@ -222,8 +205,8 @@ function changeState(top: string, workspace: string, system: string, change: str
   if (uncommitted('build/review.md')) {
     draft = 'other';
     const working = workingText('build/review.md');
-    const read = working === null ? null : readable(() => readReview(working, reviewFile));
-    if (working !== null && read?.kind === 'review' && read.problems.length === 0 && read.document.reviews.length === committed + 1) {
+    const draftRead = working === null ? null : readable(() => readReview(working, reviewFile));
+    if (working !== null && draftRead?.kind === 'review' && draftRead.problems.length === 0 && draftRead.document.reviews.length === committed + 1) {
       const appended = reviewHead === null ? null : working.startsWith(reviewHead) ? working.slice(reviewHead.length) : null;
       const next = new RegExp(`^(\\r?\\n)*## Review ${committed + 1}[ \\t]*\\r?(\\n|$)`);
       if (reviewHead === null || (appended !== null && next.test(appended))) draft = 'next-section';
@@ -233,14 +216,16 @@ function changeState(top: string, workspace: string, system: string, change: str
   let fix: FixState | null = null;
   if (track === 'fix') {
     try {
-      fix = fixState(folder);
+      // `fix-state` refuses a folder that is not on disk, even when HEAD still holds its documents; so does `state`.
+      if (!isDir(folder)) throw new CouldNotRun(`${folder} does not exist`);
+      fix = fixStateOf({ top, prefix, folder, hasHead, headText: (p) => read.headText(p), headPaths: (d) => read.headPaths(d), reported: read.reported });
     } catch (e) {
       if (!(e instanceof CouldNotRun)) throw e;
       problems.push(`${change}: ${e.message}`);
     }
   }
 
-  const base: Omit<ChangeState, 'ready'> = { change, master: top, folder, inCopy, title, track, documents, scenarios, tasks, buildLogs, review: { committed, draft }, fix };
+  const base: Omit<ChangeState, 'ready' | 'finished'> = { change, master: top, folder, inCopy, title, track, documents, scenarios, tasks, buildLogs, review: { committed, draft }, fix };
   return { ...base, ready: readiness(base) };
 }
 
@@ -250,27 +235,32 @@ function changeState(top: string, workspace: string, system: string, change: str
  * `<workspace>/<repo>`, except the master listed as a product repository, which is read where the change is (its
  * copy, when it has one). Null when the repository is not checked out; `commits` and `untasked` null without a base.
  */
-function repositoryWork(top: string, workspace: string, repo: string, ids: string[]): Pick<TaskState, 'commits' | 'untasked' | 'uncommitted'> {
+function repositoryWork(top: string, workspace: string, repo: string, ids: string[], run: RunCache): Pick<TaskState, 'commits' | 'untasked' | 'uncommitted'> {
   const listed = join(workspace, repo);
   if (!existsSync(join(listed, '.git'))) return { commits: null, untasked: null, uncommitted: null };
-  const common = gitDirs(listed)?.common;
-  const path = common !== undefined && common === gitDirs(top)?.common ? top : listed;
-  const uncommitted = uncommittedFiles(path);
-  const base = baseBranch(path);
-  const baseRev = base === null ? null : baseRevision(path, base);
-  const from = baseRev === null || commitOf(path, 'HEAD') === null ? null : mergeBase(path, baseRev, 'HEAD');
-  if (from === null) return { commits: null, untasked: null, uncommitted };
+  const common = dirsOf(run, listed)?.common;
+  const path = common !== undefined && common === dirsOf(run, top)?.common ? top : listed;
+  let facts = run.work.get(path);
+  if (facts === undefined) {
+    const uncommitted = uncommittedFiles(path);
+    const base = baseBranch(path);
+    const baseRev = base === null ? null : baseRevision(path, base);
+    const from = baseRev === null || commitOf(path, 'HEAD') === null ? null : mergeBase(path, baseRev, 'HEAD');
+    facts = { uncommitted, from, trailers: from === null ? [] : commitsWithTrailer(path, from, 'HEAD', 'Plan-Task') };
+    run.work.set(path, facts);
+  }
+  if (facts.from === null) return { commits: null, untasked: null, uncommitted: facts.uncommitted };
   const commits: Record<string, string[]> = Object.fromEntries(ids.map((id) => [id, []]));
   const untasked: string[] = [];
-  for (const c of commitsWithTrailer(path, from, 'HEAD', 'Plan-Task')) {
+  for (const c of facts.trailers) {
     if (c.values.length === 0) untasked.push(c.sha);
     for (const id of new Set(c.values)) commits[id]?.push(c.sha);
   }
-  return { commits, untasked, uncommitted };
+  return { commits, untasked, uncommitted: facts.uncommitted };
 }
 
 /** Every skill's gate for a change, by the rules in GRAMMAR.md ("Where a change stands"). */
-function readiness(c: Omit<ChangeState, 'ready'>): Record<Skill, Ready> {
+function readiness(c: Omit<ChangeState, 'ready' | 'finished'>): Record<Skill, Ready> {
   const d = c.documents;
   const status = (doc: Doc): string => d[doc].workingStatus ?? 'missing';
   const accepted = (doc: Doc): boolean => d[doc].workingStatus === 'accepted';
@@ -344,36 +334,38 @@ function readiness(c: Omit<ChangeState, 'ready'>): Record<Skill, Ready> {
   };
 }
 
-/** Where every change of a system stands (or only `options.change`), in the master and in every change copy. */
+/** Where every change of a system stands (or only `options.change`, or only the open ones with `options.open`), in the master and in every change copy. */
 export function changeStates(cwd: string, options: StateOptions): StateResult {
-  const resolution = resolveWorkspace(cwd, { ...(options.master ? { master: options.master } : {}), ...(options.workspace ? { workspace: options.workspace } : {}) });
-  if (resolution.master === null || resolution.workspace === null) throw new CouldNotRun(resolution.problems.join('\n'));
-  const { master, workspace } = resolution;
-  const systems = Object.keys(readMarker(join(master, '.ai-sdlc.json')).systems);
-  let system: string;
-  if (options.system !== undefined) {
-    if (!systems.includes(options.system)) throw new CouldNotRun(`the marker lists no system ${options.system}`);
-    system = options.system;
-  } else if (options.change !== undefined) {
-    system = findChange(master, workspace, options.change).system;
-  } else if (systems.length === 1) {
-    system = systems[0] as string;
-  } else {
-    throw new CouldNotRun(`the marker lists ${systems.length === 0 ? 'no systems' : `several systems (${systems.join(', ')})`}; pass --system <system>`);
-  }
-
-  // Every repository that may hold a change: the master and every copy of it, each with the changes it holds.
-  const repos = [...new Set([master, ...copiesOf(workspace, master)])];
-  const holds = new Map(repos.map((top) => [top, changesIn(top, system, hasHeadIn(top))]));
-  const names = options.change !== undefined ? [options.change] : [...new Set([...holds.values()].flatMap((s) => [...s]))].sort();
-
+  const run = newRun();
+  const place = placeChanges(cwd, options, run.dirs);
+  const { system, workspace, reads, placed } = place;
   const problems: string[] = [];
-  const changes = names.map((change) => {
-    // The change's own copy first, then the master (the order findChange uses), then any other copy.
-    const order = [...new Set([...changeHolders(master, workspace, change).map(real), ...repos])].filter((top) => holds.has(top));
-    const top = order.find((t) => holds.get(t)?.has(change));
-    if (top === undefined) throw new CouldNotRun(`no change ${change} in system ${system} in ${master} or a copy of it`);
-    return changeState(top, workspace, system, change, top === master ? resolution.masterIsCopy : true, problems);
-  });
+
+  // Which changes are finished comes first: it loads only the intent texts, so with `open` the rest of a finished
+  // change's documents are never read.
+  const finished = finishedOf(place);
+  const reported = options.open ? placed.filter(({ change }) => (finished.get(change) ?? null) === null) : placed;
+
+  // Every document text and every source pin of the reported changes, each answered in one git process per repository.
+  const pins = new Map<string, string[]>();
+  const loads = new Map<string, string[]>();
+  for (const { change, top } of reported) {
+    const prefix = `intent/${system}/${change}/`;
+    loads.set(top, [...(loads.get(top) ?? []), ...(reads.get(top) as SystemRead).headPaths(prefix).filter((p) => p.endsWith('.md'))]);
+    for (const [doc, field, upstream] of [['spec.md', 'source_intent_commit', 'intent.md'], ['plan.md', 'source_spec_commit', 'spec.md']] as const) {
+      const file = join(top, 'intent', system, change, doc);
+      const sha = pinValue(readText(file), file, field);
+      if (sha === null) continue;
+      pins.set(top, [...(pins.get(top) ?? []), `${sha}^{commit}`, `${sha}:${prefix}${upstream}`]);
+    }
+  }
+  for (const [top, paths] of loads) (reads.get(top) as SystemRead).loadTexts(paths);
+  // A repository without a HEAD answers every pin `missing` without asking git.
+  for (const [top, list] of pins) if ((reads.get(top) as SystemRead).hasHead) (reads.get(top) as SystemRead).resolve(list);
+
+  const changes = reported.map(({ change, top, inCopy }) => ({
+    ...changeState(reads.get(top) as SystemRead, run, workspace, change, inCopy, problems),
+    finished: finished.get(change) ?? null,
+  }));
   return { system, changes, problems };
 }

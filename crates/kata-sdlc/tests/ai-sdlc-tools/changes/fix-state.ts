@@ -44,7 +44,7 @@ export type FixState = { row: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8; facts: FixFacts };
 export type FixStateEntry = { folder: string; result: FixState } | { folder: string; error: string };
 
 /** Every git call: paths printed as they are, and no lock taken for a refresh nobody asked for. */
-const GIT_OPTIONS = ['-c', 'core.quotepath=off', '--no-optional-locks'];
+export const GIT_OPTIONS = ['-c', 'core.quotepath=off', '--no-optional-locks'];
 
 /** Every `git diff`: git's own comparison, whatever external diff tool or text conversion the user configured. */
 export const DIFF_OPTIONS = ['--no-ext-diff', '--no-textconv'];
@@ -189,21 +189,39 @@ export function readable<T>(read: () => T): T | null {
   }
 }
 
+/** What the fix-state rules need to know about one fix, from any reader: git directly, or a batch read of the system. */
+export type FixInput = {
+  top: string;
+  /** The change folder relative to `top`, with forward slashes and a trailing slash. */
+  prefix: string;
+  folder: string;
+  hasHead: boolean;
+  /** The text of a path in `HEAD`, exactly as stored; null when `HEAD` does not have it. */
+  headText(path: string): string | null;
+  /** Every path in `HEAD` under `dir` (a folder path with a trailing slash). */
+  headPaths(dir: string): string[];
+  /** The paths git reports as changed; only the fix's three documents are ever asked about. */
+  reported: Set<string>;
+};
+
 /** Whether some task of the plan in `HEAD` has an entry in a build log in `HEAD`. `build/review.md` is not a log. */
-function isBuilt(top: string, prefix: string, folder: string, inHead: (path: string) => boolean): boolean {
-  const planPath = `${prefix}plan.md`;
-  if (!inHead(planPath)) return false;
+function isBuilt(input: FixInput): boolean {
+  const { prefix, folder } = input;
+  const planText = input.headText(`${prefix}plan.md`);
+  if (planText === null) return false;
   const planFile = join(folder, 'plan.md');
-  const planText = git(top, ['show', `HEAD:${planPath}`]);
   const planResult = readable(() => readPlan(planText, planFile, findMarker(planFile)));
   if (planResult?.kind !== 'plan') return false;
   const tasks = new Set(planResult.document.tasks.map((t) => t.id));
   if (tasks.size === 0) return false;
-  const logs = git(top, ['ls-tree', '-z', '--name-only', 'HEAD', '--', `${prefix}build/`])
-    .split('\0')
-    .filter((p) => p.endsWith('.md') && !p.endsWith('/review.md'));
+  const dir = `${prefix}build/`;
+  // Direct children only: the folder holds the build logs, one per repository, and `review.md`.
+  const logs = input
+    .headPaths(dir)
+    .filter((p) => p.startsWith(dir) && !p.slice(dir.length).includes('/') && p.endsWith('.md') && !p.endsWith('/review.md'));
   return logs.some((path) => {
-    const text = git(top, ['show', `HEAD:${path}`]);
+    const text = input.headText(path);
+    if (text === null) return false;
     const result = readable(() => readBuildLog(text, join(folder, 'build', basename(path))));
     return result?.kind === 'build-log' && result.document.entries.some((e) => tasks.has(e.task));
   });
@@ -233,11 +251,36 @@ export function fixState(folderArg: string): FixState {
   // The folder relative to the top level, with forward slashes and a trailing slash ('' at the top itself).
   const prefix = git(folder, ['rev-parse', '--show-prefix']).trim();
   const hasHead = gitMaybe(top, ['rev-parse', '--verify', '-q', 'HEAD']) !== null;
-  const inHead = (path: string): boolean =>
-    hasHead && git(top, ['ls-tree', '--name-only', 'HEAD', '--', path]).trim() !== '';
-
+  const texts = new Map<string, string | null>();
   const paths = DOCUMENTS.map((d) => `${prefix}${d}.md`);
-  const head = paths.map((p) => (inHead(p) ? git(top, ['show', `HEAD:${p}`]) : null));
+  let reported: Set<string> | null = null;
+  return fixStateOf({
+    top,
+    prefix,
+    folder,
+    hasHead,
+    headText(path) {
+      if (!texts.has(path)) {
+        const inHead = hasHead && git(top, ['ls-tree', '--name-only', 'HEAD', '--', path]).trim() !== '';
+        texts.set(path, inHead ? git(top, ['show', `HEAD:${path}`]) : null);
+      }
+      return texts.get(path) ?? null;
+    },
+    headPaths(dir) {
+      return git(top, ['ls-tree', '-z', '--name-only', 'HEAD', '--', dir]).split('\0').filter((p) => p !== '');
+    },
+    // Asked only after the track check, as git status was before the split.
+    get reported() {
+      return (reported ??= reportedPaths(top, paths));
+    },
+  });
+}
+
+/** The state of the fix in `input.folder`, by the fix-state table; every fact about `HEAD` comes from the input. */
+export function fixStateOf(input: FixInput): FixState {
+  const { top, prefix, folder, hasHead } = input;
+  const paths = DOCUMENTS.map((d) => `${prefix}${d}.md`);
+  const head = paths.map((p) => (hasHead ? input.headText(p) : null));
   const working = DOCUMENTS.map((d) => {
     try {
       return readFileSync(join(folder, `${d}.md`), 'utf8');
@@ -287,7 +330,7 @@ export function fixState(folderArg: string): FixState {
   };
 
   // Differences are what git reports, so git's own line-ending conversion is never one.
-  const reported = reportedPaths(top, paths);
+  const reported = input.reported;
   // Rows 1 and 2 are decided from the statuses in HEAD alone, before any diff is run and before the plan and the
   // build logs are read, so nothing a later row needs can hide a rejected or unsettled fix. On those rows
   // `unrecorded` lists the documents not in HEAD and every one git reports, and `ownLinesOnly` is false.
@@ -320,7 +363,7 @@ export function fixState(folderArg: string): FixState {
   });
   facts.unrecorded = unrecorded;
   facts.ownLinesOnly = anyDiff && unrecorded.length === 0;
-  facts.built = hasHead && isBuilt(top, prefix, folder, inHead);
+  facts.built = hasHead && isBuilt(input);
   return { row: rowOf(facts), facts };
 }
 

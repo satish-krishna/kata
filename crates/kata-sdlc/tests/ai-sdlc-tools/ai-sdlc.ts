@@ -8,6 +8,7 @@
 // run (the reason on standard error).
 import { UsageError, type Command } from './common/command.ts';
 import { CouldNotRun, EXIT } from './common/types.ts';
+import { baseline } from './commands/baseline.ts';
 import { branchName } from './commands/branch-name.ts';
 import { change } from './commands/change.ts';
 import { check } from './commands/check.ts';
@@ -17,6 +18,7 @@ import { gate } from './commands/gate.ts';
 import { guard } from './commands/guard.ts';
 import { hooks } from './commands/hooks.ts';
 import { instructions } from './commands/instructions.ts';
+import { list } from './commands/list.ts';
 import { naming } from './commands/naming.ts';
 import { read } from './commands/read.ts';
 import { resolve } from './commands/resolve.ts';
@@ -31,6 +33,7 @@ const COMMANDS: Record<string, Command> = {
   read,
   'fix-state': fixState,
   state,
+  list,
   stale,
   naming,
   'branch-name': branchName,
@@ -44,6 +47,7 @@ const COMMANDS: Record<string, Command> = {
   commit,
   gate,
   guard,
+  baseline,
 };
 
 const USAGE = 'usage: ' + Object.values(COMMANDS).map((c) => `node ai-sdlc.ts ${c.usage}`).join('\n       ');

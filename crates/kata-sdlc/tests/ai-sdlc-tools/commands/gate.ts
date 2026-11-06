@@ -8,7 +8,8 @@
 //     agent may not stop; it is told to run build.finish.
 //   - build.finish failed at the current head on a hook that asks to be fixed (`onFailure: fix`), and the gate has
 //     sent the agent back fewer than `gateRetries` times for that hook at that head: the agent may not stop; it is
-//     given the hook's output and told to fix the fault, commit, and run build.finish again.
+//     given the event's problems (for a check that already failed on the base, only its new failures), the
+//     hook's output, and told to fix the fault, commit, and run build.finish again.
 //
 // In every other case, a build still in progress (a stopped task, a question for the engineer), a passed check, a
 // hook that asks to stop, a machine fault, or no build at all, the agent may stop. To block, it prints
@@ -65,8 +66,11 @@ export function decide(cwd: string): { block: string } | { note: string } | null
   }
   writeLedger(ledgers, { ...ledger, gateBlocks: { ...ledger.gateBlocks, [blocks]: count + 1 } });
   const output = (finish.hooks.find((h) => h.id === finish.failed?.id)?.output ?? '').split('\n').slice(-TAIL_LINES).join('\n');
+  // The event's problems say what to fix when the output alone would mislead: for a check that already failed on the
+  // base, they name only the failures that are new, while its output lists the old ones too.
+  const problems = finish.problems.length > 0 ? `\n\nWhat failed:\n${finish.problems.join('\n')}` : '';
   return {
-    block: `The check ${finish.failed.id} failed on ${active.repo} at ${head.slice(0, 7)} (attempt ${count + 1} of ${gateRetries}). Find and fix the fault it reports in the repository, commit the fix following the commit rules, then run build.finish again:\n${run}\n\nThe end of its output:\n${output}`,
+    block: `The check ${finish.failed.id} failed on ${active.repo} at ${head.slice(0, 7)} (attempt ${count + 1} of ${gateRetries}). Find and fix the fault it reports in the repository, commit the fix following the commit rules, then run build.finish again:\n${run}${problems}\n\nThe end of its output:\n${output}`,
   };
 }
 
