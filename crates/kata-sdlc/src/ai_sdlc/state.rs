@@ -1,7 +1,7 @@
 //! Where a change stands: `state --json`, typed field for field as the program's GRAMMAR.md ("Where a
 //! change stands") defines it. Kata reads the answer; the program decides every gate in it.
 use super::list::Finished;
-use super::{Program, ProgramError};
+use super::{Place, Program, ProgramError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -182,6 +182,17 @@ pub fn state(
         command.extend(["--change", change]);
     }
     read_state(program.run(&command, &place)?)
+}
+
+/// Where one change stands, read for that change alone (`state --json --system <s> --change <c>`);
+/// `None` when no repository holds it.
+pub fn one(
+    _program: &Program,
+    _place: &Place,
+    _system: &str,
+    _change: &str,
+) -> Result<Option<ChangeState>, ProgramError> {
+    unimplemented!("T5")
 }
 
 /// Where the open changes of `system` stand in `workspace`: `state --open`, which reads only the changes
