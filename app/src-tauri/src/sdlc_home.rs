@@ -566,4 +566,168 @@ mod tests {
         assert_ne!(text(&answer, "a"), "Done · pull requests open");
         assert!(answer.check.is_empty());
     }
+
+    // The speed targets (R11.1). Timings depend on the machine, so this runs only with KATA_SPEED_CHECK=1, the way the
+    // real-claude smoke test waits for KATA_SMOKE_REAL; the routine suite and CI pass it without measuring.
+
+    #[allow(clippy::disallowed_methods)]
+    fn git(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn init_repo(ws: &Path, name: &str) -> PathBuf {
+        let dir = ws.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "-q", "-b", "main"]);
+        git(&dir, &["config", "user.name", "Test"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(dir.join("README.md"), "init\n").unwrap();
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+        dir
+    }
+
+    const INTENT: &str = "---\ntitle: Speed\nstatus: accepted\n---\n\n# Intent\n";
+
+    /// A workspace shaped like kata's: a master and one product repository, `open` changes started through the
+    /// program (each with a copy and a committed intent), and `finished` changes whose intents are committed on
+    /// `main` with no copy.
+    fn speed_workspace(
+        program: &Program,
+        open: usize,
+        finished: usize,
+    ) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().canonicalize().unwrap();
+        let master = init_repo(&ws, "ai-sdlc");
+        std::fs::write(
+            master.join(".ai-sdlc.json"),
+            r#"{"version":1,"systems":{"kata":{"repos":["kata"]}}}"#,
+        )
+        .unwrap();
+        init_repo(&ws, "kata");
+        for n in 0..finished {
+            let folder = master.join(format!(
+                "intent/kata/2026-09-{:02}-done-{n:03}",
+                n % 28 + 1
+            ));
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join("intent.md"), INTENT).unwrap();
+        }
+        git(&master, &["add", "."]);
+        git(&master, &["commit", "-q", "-m", "marker and finished changes"]);
+        let place = program.resolve(&ws).unwrap();
+        for n in 0..open {
+            let name = format!("2026-11-0{}-open-{n}", n + 1);
+            let started = program
+                .run(
+                    &[
+                        "change", "start", "--json", "--system", "kata", "--change", &name,
+                        "--type", "feat", "--scope", "X-1", "--title", "Speed",
+                    ],
+                    &place,
+                )
+                .unwrap();
+            assert_eq!(started["outcome"], "passed", "{started}");
+            let copy = ws.join(".ai-sdlc").join("copies").join(&name);
+            let folder = copy.join(format!("intent/kata/{name}"));
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join("intent.md"), INTENT).unwrap();
+            git(&copy, &["add", "."]);
+            git(&copy, &["commit", "-q", "-m", "intent"]);
+        }
+        (dir, ws)
+    }
+
+    fn within(label: &str, took: std::time::Duration, limit_secs: u64, misses: &mut Vec<String>) {
+        println!("speed_targets: {label}: {took:?} (limit {limit_secs} s)");
+        if took.as_secs_f64() >= limit_secs as f64 {
+            misses.push(format!("{label} took {took:?}, limit {limit_secs} s"));
+        }
+    }
+
+    #[test]
+    fn speed_targets() {
+        if std::env::var("KATA_SPEED_CHECK").as_deref() != Ok("1") {
+            println!("speed_targets: skipped, set KATA_SPEED_CHECK=1 to measure");
+            return;
+        }
+        let program = Program {
+            node: "node".into(),
+            entry: Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../crates/kata-sdlc/tests/ai-sdlc-tools/ai-sdlc.ts"),
+        };
+        let readiness = ready("1.3.1");
+        let systems = names(&["kata"]);
+        let memory = HomeMemory::default();
+        let mut misses = Vec::new();
+        for finished in [19, 97] {
+            let (_dir, ws) = speed_workspace(&program, 3, finished);
+            let started = std::time::Instant::now();
+            let listed = home_list(&program, &readiness, None, &ws, &systems).unwrap();
+            let list_took = started.elapsed();
+            let shown: Vec<String> = match &listed {
+                HomeList::Listed {
+                    open, finished: f, ..
+                } => {
+                    assert_eq!(f.len(), finished);
+                    open.iter().map(|c| c.change.clone()).collect()
+                }
+                HomeList::Legacy => panic!("a 1.3.1 plugin answered Legacy"),
+            };
+            assert_eq!(shown.len(), 3, "{shown:?}");
+            if finished == 19 {
+                within(
+                    "3 open, 19 finished: every open change's name",
+                    list_took,
+                    1,
+                    &mut misses,
+                );
+            }
+            let opened = home_open(
+                &program,
+                &readiness,
+                &no_live,
+                &ws,
+                "kata",
+                &shown,
+                Refresh::Open,
+                &memory,
+            )
+            .unwrap();
+            let both = started.elapsed();
+            assert_eq!(opened.rows.len(), 3);
+            within(
+                &format!("3 open, {finished} finished: every open change's stage"),
+                both,
+                3,
+                &mut misses,
+            );
+            if finished == 19 {
+                let started = std::time::Instant::now();
+                let home = kata_sdlc::home::resolve(&program, &ws, "kata", &shown[0]).unwrap();
+                let view = view_of(home.state, &readiness, LiveFacts::default());
+                let took = started.elapsed();
+                assert_eq!(view.state.change, shown[0]);
+                within(
+                    "3 open, 19 finished: the change page's stage and actions",
+                    took,
+                    2,
+                    &mut misses,
+                );
+            }
+        }
+        assert!(misses.is_empty(), "speed targets missed: {misses:?}");
+    }
 }
