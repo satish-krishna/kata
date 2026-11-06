@@ -182,12 +182,39 @@ pub struct HomeReading {
 /// the last merge check's answer, if one has answered.
 pub fn home_reading(
     offer: &ChangeOffer,
-    _declared: bool,
-    _check: Option<&CopyRemoval>,
+    declared: bool,
+    check: Option<&CopyRemoval>,
 ) -> HomeReading {
+    if !declared {
+        return HomeReading {
+            label: offer.label.clone(),
+            action: HomeAction::Workflow,
+        };
+    }
+    let (text, tone, action) = match check {
+        Some(CopyRemoval::Offer) => (
+            "Done · merged, remove the copy",
+            LabelTone::Warning,
+            HomeAction::RemoveCopy,
+        ),
+        Some(CopyRemoval::Keep { .. }) => (
+            "Done · merged, copy has changes",
+            LabelTone::Warning,
+            HomeAction::Open,
+        ),
+        Some(CopyRemoval::NotOffered) | None => (
+            "Done · pull requests open",
+            LabelTone::Success,
+            HomeAction::Open,
+        ),
+    };
     HomeReading {
-        label: offer.label.clone(),
-        action: HomeAction::Workflow,
+        label: StageLabel {
+            step: LabelStep::Done,
+            text: text.into(),
+            tone,
+        },
+        action,
     }
 }
 

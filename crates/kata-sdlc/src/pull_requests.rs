@@ -188,16 +188,30 @@ pub fn legacy_entries(workspace_id: &str, system: &str, change: &str) -> Vec<PrE
         .unwrap_or_default()
 }
 
-/// The change's pull requests as the page and the home read them. Not yet written.
+/// The change's pull requests as the page and the home read them: the plugin's record in `change.yml` first,
+/// else what an earlier version of Kata saved (only when `workspace_id` is known). With `refresh` the plugin
+/// also asks GitHub for each state, which starts `gh` and is slow; pull requests an earlier version of Kata
+/// saved are not asked about, since the plugin does not know them. Without it nothing leaves this machine.
 pub fn read_view(
-    _program: &Program,
-    _place: &Place,
-    _workspace_id: Option<&str>,
-    _system: &str,
-    _change: &str,
-    _refresh: bool,
+    program: &Program,
+    place: &Place,
+    workspace_id: Option<&str>,
+    system: &str,
+    change: &str,
+    refresh: bool,
 ) -> Result<PullRequestsView, String> {
-    Err("not implemented".into())
+    let legacy = workspace_id
+        .map(|id| legacy_entries(id, system, change))
+        .unwrap_or_default();
+    let shown = program
+        .change_show(place, change, refresh && legacy.is_empty())
+        .map_err(|e| e.to_string())?;
+    // A change an earlier version of Kata declared done is done from its record; any other is done once the
+    // master's pull request is recorded in `change.yml`, on every clone, unless this machine's ledger shows the
+    // latest `change.done` failed (its final push of the master).
+    let failed_here = legacy.is_empty()
+        && done_failed_here(&program.status(place, change).map_err(|e| e.to_string())?);
+    Ok(view(&shown, &legacy, failed_here))
 }
 
 #[cfg(test)]
