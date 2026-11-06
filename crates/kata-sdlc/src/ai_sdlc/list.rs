@@ -155,7 +155,12 @@ mod tests {
         assert_eq!(listed.changes[1].title.as_deref(), Some("Greeting"));
         assert!(listed.changes[1].in_copy);
 
-        let only_open = state::open(&program(), ws, "demo").unwrap();
+        let only_open = state::read_state(
+            program()
+                .run_in(&["state", "--json", "--system", "demo", "--open"], ws)
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(only_open.system, "demo");
         assert_eq!(only_open.changes.len(), 1);
         assert_eq!(only_open.changes[0].change, open);

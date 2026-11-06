@@ -210,17 +210,6 @@ pub fn one(
     }
 }
 
-/// Where the open changes of `system` stand in `workspace`: `state --open`, which reads only the changes
-/// whose `finished` is null. Needs ai-sdlc 1.3.0 or later.
-pub fn open(
-    program: &Program,
-    workspace: &Path,
-    system: &str,
-) -> Result<SystemState, ProgramError> {
-    let place = program.resolve(workspace)?;
-    read_state(program.run(&["state", "--json", "--system", system, "--open"], &place)?)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
