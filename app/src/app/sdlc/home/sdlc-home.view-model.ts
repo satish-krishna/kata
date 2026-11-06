@@ -118,7 +118,7 @@ export class SdlcHomeViewModel {
   });
   /** The last row the backend gave each open change, by name, and whether its read failed. Replaced entry by entry, never emptied by a read. */
   private readonly homeRows = signal<ReadonlyMap<string, { row: HomeRow | null; failed: boolean }>>(new Map());
-  /** What the last open read and merge check could not read. */
+  /** What the last open read could not read; a failed merge check adds nothing. */
   private readonly openProblems = signal<string[]>([]);
   /** The list the page shows. A listed home shows the shown system's open changes in the workflow's order, each filling in as its row arrives; a legacy home shows every change of every system. */
   readonly rows = computed<ChangeRow[]>(() => {
@@ -1092,8 +1092,8 @@ export class SdlcHomeViewModel {
           this.transport.sdlcHomePullRequests(w.folder, this.listed()?.system ?? system, answer.check),
         );
         if (seq !== this.viewSeq) return;
+        // A merge check that could not be answered shows nothing: its problems are not put up, and the row keeps its last reading.
         this.applyRows(checked.rows);
-        this.openProblems.update((p) => [...p, ...checked.problems]);
       }
     } catch (e) {
       if (seq !== this.viewSeq) return;
