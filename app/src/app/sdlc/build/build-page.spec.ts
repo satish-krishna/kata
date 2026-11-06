@@ -1686,8 +1686,7 @@ describe('the build page folds, filters and explains a departure', () => {
     { id: 'T3', name: 'Task T3', status: RUNNING, finished: false, departure: null, commits: [] },
   ];
   type State = { filter: TaskFilter; open: Set<string>; picked: string | null };
-  const viewFor = (departed: boolean, st: State): BuildPageView => {
-    const ls = lines(departed);
+  const viewFor = (departed: boolean, st: State, ls: TaskLine[] = lines(departed)): BuildPageView => {
     const counts = filterCounts(ls);
     const list = taskList(ls, st.filter, st.open.has('commerce-core'), st.picked);
     const dep = ls.find((l) => l.id === st.picked && l.departure !== null);
@@ -1705,11 +1704,11 @@ describe('the build page folds, filters and explains a departure', () => {
       sessions: [session('r1')],
     });
   };
-  async function open(departed: boolean, st: Partial<State> = {}) {
+  async function open(departed: boolean, st: Partial<State> = {}, ls: TaskLine[] = lines(departed)) {
     const state: State = { filter: 'all', open: new Set(), picked: null, ...st };
-    const m = await mount(viewFor(departed, state));
+    const m = await mount(viewFor(departed, state, ls));
     m.host.state = state;
-    m.host.rebuild = (s) => viewFor(departed, s);
+    m.host.rebuild = (s) => viewFor(departed, s, ls);
     return m;
   }
   const rowIds = (el: HTMLElement) => Array.from(el.querySelectorAll('[data-task]')).map((r) => norm(r.querySelector('.k-mono')?.textContent));
@@ -1769,6 +1768,48 @@ describe('the build page folds, filters and explains a departure', () => {
     const session = area('activity')!.querySelector<HTMLElement>('[data-session]')!;
     expect(block.compareDocumentPosition(session) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
+});
+
+describe('the build page folds three finished tasks and filters the open ones', () => {
+  const three: TaskLine[] = [
+    { id: 'T1', name: 'Task T1', status: DONE, finished: true, departure: null, commits: ['aaaaaaa1'] },
+    { id: 'T2', name: 'Task T2', status: DONE, finished: true, departure: 'Used a queue instead', commits: [] },
+    { id: 'T3', name: 'Task T3', status: DONE, finished: true, departure: null, commits: [] },
+    { id: 'T4', name: 'Task T4', status: RUNNING, finished: false, departure: null, commits: [] },
+    { id: 'T5', name: 'Task T5', status: RUNNING, finished: false, departure: null, commits: [] },
+  ];
+  const ids = (el: HTMLElement) => Array.from(el.querySelectorAll('[data-task]')).map((r) => norm(r.querySelector('.k-mono')?.textContent));
+
+  it('R6.2: the fold is one line for the three done and one departed', async () => {
+    const { area } = await mountWith(three, {});
+    const fold = area('tasks')!.querySelector('[data-fold]')!;
+    expect(norm(fold.textContent)).toContain('3 done');
+    expect(norm(fold.textContent)).toContain('1 departed');
+    expect(ids(area('tasks')!)).toEqual(['T4', 'T5']);
+  });
+
+  it('R6.2: picking a task inside the fold shows the fold open with that task picked', async () => {
+    const { area } = await mountWith(three, { open: new Set(['commerce-core']), picked: 'T3' });
+    expect(ids(area('tasks')!)).toEqual(['T1', 'T2', 'T3', 'T4', 'T5']);
+    expect(area('tasks')!.querySelector('[data-task][aria-current="true"]')?.querySelector('.k-mono')?.textContent?.trim()).toBe('T3');
+  });
+
+  it('R6.2: the open filter lists the two open tasks', async () => {
+    const { area } = await mountWith(three, { filter: 'open' });
+    expect(ids(area('tasks')!)).toEqual(['T4', 'T5']);
+  });
+
+  async function mountWith(ls: TaskLine[], st: Partial<{ filter: TaskFilter; open: Set<string>; picked: string | null }>) {
+    const state = { filter: 'all' as TaskFilter, open: new Set<string>(), picked: null as string | null, ...st };
+    const counts = filterCounts(ls);
+    const list = taskList(ls, state.filter, state.open.has('commerce-core'), state.picked);
+    return mount(base({
+      groups: [group('commerce-core', RUNNING, null, ls.map((l) => task(l.id, l.status, { departure: l.departure, picked: l.id === state.picked })), false, { list, progress: { done: 3, total: 5 } })],
+      filter: { value: state.filter, counts },
+      pick: state.picked === null ? null : { kind: 'task', task: state.picked },
+      sessions: [session('r1')],
+    }));
+  }
 });
 
 describe('the held panel', () => {

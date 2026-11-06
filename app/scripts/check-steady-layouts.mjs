@@ -318,12 +318,90 @@ async function sessions(browser, origin) {
   return [...(await sameHeights(browser, origin)), ...(await endings(browser, origin)), ...(await reach(browser, origin))];
 }
 
+/** Runs in the page: every task row of the Tasks area with the boxes of its id, name, status, commits and second row. */
+function measureTasks() {
+  const box = (r) => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom, height: r.height });
+  const rows = [];
+  for (const ul of document.querySelectorAll('[data-area="tasks"] .k-bp__tasks')) {
+    [...ul.children].forEach((li, i) => {
+      const btn = li.querySelector('[data-task]');
+      const name = btn.querySelector('.k-bp__task-name');
+      const lineHeight = parseFloat(getComputedStyle(name).lineHeight) || 0;
+      const commits = btn.querySelector('[data-commits]');
+      rows.push({
+        id: btn.querySelector('.k-mono').textContent.trim(),
+        first: i === 0,
+        border: parseFloat(getComputedStyle(li).borderTopWidth),
+        idBox: box(btn.querySelector('.k-mono').getBoundingClientRect()),
+        nameBox: box(name.getBoundingClientRect()),
+        wraps: lineHeight > 0 && name.getBoundingClientRect().height > lineHeight * 1.5,
+        status: box(btn.querySelector('.k-status').getBoundingClientRect()),
+        commits: commits ? box(commits.getBoundingClientRect()) : null,
+        meta: btn.querySelector('[data-task-meta]') !== null,
+        departed: btn.querySelector('[data-departure]') !== null,
+      });
+    });
+  }
+  return rows;
+}
+
+/** Opens every fold of the Tasks area so the finished rows show too, and returns the rows measured. */
+async function openedTaskRows(page) {
+  await page.locator('[data-area="tasks"] [data-fold], [data-area="tasks"] [data-task]').first().waitFor({ timeout: 8000 });
+  const closed = page.locator('[data-area="tasks"] [data-fold][aria-expanded="false"]');
+  while ((await closed.count()) > 0) await closed.first().click();
+  await page.waitForTimeout(300);
+  return page.evaluate(measureTasks);
+}
+
+/** The Tasks area on the long build: rows set apart by a hairline, and the id and status in the same place on every row. */
+async function tasks(browser, origin) {
+  const fails = [];
+  const all = [];
+  const compare = (at, rows) => {
+    if (rows.length < 3) fails.push(`${at}: ${rows.length} task rows, too few to compare`);
+    for (const r of rows) {
+      if (!r.first && Math.abs(r.border - 1) > 0.01) fails.push(`${at}: task ${r.id} has a top border of ${r.border}px, not 1px`);
+      if (Math.abs(r.idBox.left - rows[0].idBox.left) > 0.5) fails.push(`${at}: task ${r.id}: its id starts at ${r.idBox.left.toFixed(1)}, not ${rows[0].idBox.left.toFixed(1)}`);
+      if (Math.abs(r.status.right - rows[0].status.right) > 0.5) fails.push(`${at}: task ${r.id}: its status ends at ${r.status.right.toFixed(1)}, not ${rows[0].status.right.toFixed(1)}`);
+      if (r.commits && r.commits.top < r.nameBox.bottom - 0.5) fails.push(`${at}: task ${r.id}: its commits start at ${r.commits.top.toFixed(1)}, above the end of its name at ${r.nameBox.bottom.toFixed(1)}`);
+      if (r.meta !== Boolean(r.commits || r.departed)) fails.push(`${at}: task ${r.id} ${r.meta ? 'has a second row but no commits or departure' : 'has commits or a departure but no second row'}`);
+    }
+    all.push(...rows);
+  };
+  // A finished change: every task has its commits.
+  {
+    const { context, page } = await openPage(browser, origin, 'sdlc/commerce/2026-10-18-photo-limits-shipped?demo=build-long', 1280, 800);
+    try {
+      compare('the finished change', await openedTaskRows(page));
+    } finally {
+      await context.close();
+    }
+  }
+  // A running build: open tasks without commits, and finished ones with a departure.
+  {
+    const { context, page } = await openPage(browser, origin, `${ROUTE.slice(1)}?demo=build-long`, 1280, 800);
+    try {
+      await startBuild(page);
+      await page.locator('[data-area="tasks"] [data-fold]').first().waitFor({ timeout: 20000 }).catch(() => {});
+      compare('the running build', await openedTaskRows(page));
+    } finally {
+      await context.close();
+    }
+  }
+  if (!all.some((r) => r.wraps)) fails.push('no task name wraps at 1280, so the check cannot show a long name keeps the status in place');
+  if (!all.some((r) => r.commits)) fails.push('no task shows commits, so the second row is not checked');
+  if (!all.some((r) => !r.commits && !r.departed)) fails.push('every task has commits or a departure, so the missing second row is not checked');
+  return fails.slice(0, 40);
+}
+
 /** Part name to an async function (browser, origin) returning failure lines. */
 export const PARTS = {
   'done-row': doneRow,
   finished,
   refresh,
   sessions,
+  tasks,
 };
 
 /** Runs the named parts (all when `only` is empty or missing); returns the failures as readable lines. */
