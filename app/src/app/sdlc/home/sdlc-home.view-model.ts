@@ -1193,6 +1193,7 @@ export class SdlcHomeViewModel {
     let views: WorkspaceView | null = null;
     let list: HomeList | null = null;
     let lastRuns: Record<string, number> = {};
+    let readFailed = false;
     const repo = masterRepo(scan);
     let readiness: Readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
     try {
@@ -1211,6 +1212,7 @@ export class SdlcHomeViewModel {
         ]);
         ({ list, views } = home);
       } catch (e) {
+        readFailed = true;
         this.toasts.error(`Could not read the workspace: ${message(e)}`);
       }
     }
@@ -1220,7 +1222,8 @@ export class SdlcHomeViewModel {
     this.branches.set(branches);
     this.workspace.set(views);
     if (list) this.applyList(list);
-    else this.homeList.set(null);
+    else if (!(readFailed && trigger !== 'open')) this.homeList.set(null);
+    // A refresh of the workspace on screen that failed keeps the list it knew, so the rows stay; opening a workspace starts from none.
     this.readiness.set(readiness);
     this.lastRuns.set(lastRuns);
     this.currentRead.set(true);
