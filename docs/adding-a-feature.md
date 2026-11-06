@@ -85,7 +85,7 @@ Work test-first. TDD is the workflow, not a suggestion.
 
 5. **Keep the transport seam.** Every backend call goes through `KataTransport`, so the browser dev path keeps working against `MockTransport` fixtures. Never call `invoke` from a component or ViewModel.
 
-6. **Parity baseline.** `npm run check:parity` diffs the build against the frozen screenshots in `app/parity/baseline/`. A pane that intentionally changes pixels fails it; re-blessing the baseline needs the owner's sign-off, so do not regenerate it on your own.
+6. **Parity baseline.** `npm run check:parity` diffs the build against the frozen screenshots in `app/parity/baseline/`. A pane that intentionally changes pixels fails it; re-blessing the baseline needs the owner's sign-off, so do not regenerate it on your own. With that sign-off, the owner (or an agent acting on it) re-blesses the changed views with `npm run check:parity -- --update --only <views>`: update mode prints each view's drift, copies the capture over the baseline and never fails. It requires `--only` by design, so a whole-baseline re-bless cannot happen by accident. Review the PNG diff before committing.
 
 ## E. Change an AI-SDLC backend type
 

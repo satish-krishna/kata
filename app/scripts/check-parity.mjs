@@ -3,34 +3,24 @@
 // Local gate only (baseline is Windows-rendered; CI's Linux Chrome differs).
 //   npm run check:parity                 all views
 //   npm run check:parity -- --only a,b   named views only
+//   npm run check:parity -- --update --only name,name   update the baseline for named views
 import { spawn, execSync } from 'node:child_process';
-import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PNG } from 'pngjs';
-import pixelmatch from 'pixelmatch';
 import { VIEWS, captureAll } from '../parity/capture.mjs';
+import { compareView } from '../parity/compare.mjs';
+import { parseOptions } from '../parity/options.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const THRESHOLD = 0.001;
-const USAGE = 'usage: npm run check:parity [-- --only name,name]';
-const onlyArg = process.argv.indexOf('--only');
-const onlyValue = onlyArg >= 0 ? process.argv[onlyArg + 1] : undefined;
-if (onlyArg >= 0 && (!onlyValue || onlyValue.startsWith('--'))) {
-  console.error(`--only needs a comma-separated view list
-${USAGE}`);
+let only;
+let update;
+try {
+  ({ only, update } = parseOptions(process.argv.slice(2), VIEWS.map((v) => v.name)));
+} catch (e) {
+  console.error(e.message);
   process.exit(1);
-}
-const only = onlyArg >= 0 ? new Set(onlyValue.split(',').filter(Boolean)) : null;
-if (only) {
-  const valid = VIEWS.map((v) => v.name);
-  const unknown = [...only].filter((n) => !valid.includes(n));
-  if (unknown.length || only.size === 0) {
-    console.error(`unknown view(s): ${unknown.join(', ') || '(none given)'}
-valid views: ${valid.join(', ')}
-${USAGE}`);
-    process.exit(1);
-  }
 }
 
 async function serve() {
@@ -71,16 +61,16 @@ const server = await serve();
 let failed = 0;
 try {
   await captureAll('http://localhost:4317', actualDir);
+  const baselineDir = join(root, 'parity', 'baseline');
   for (const v of VIEWS) {
-    const a = PNG.sync.read(await readFile(join(root, 'parity', 'baseline', `${v.name}.png`)));
-    const b = PNG.sync.read(await readFile(join(actualDir, `${v.name}.png`)));
-    if (a.width !== b.width || a.height !== b.height) { console.log(`FAIL ${v.name}: size ${b.width}x${b.height} vs ${a.width}x${a.height}`); failed++; continue; }
-    const diff = new PNG({ width: a.width, height: a.height });
-    const n = pixelmatch(a.data, b.data, diff.data, a.width, a.height, { threshold: 0.1 });
-    const ratio = n / (a.width * a.height);
-    if (ratio > THRESHOLD) { failed++; await writeFile(join(diffDir, `${v.name}.png`), PNG.sync.write(diff)); }
-    console.log(`${ratio > THRESHOLD ? 'FAIL' : 'ok  '} ${v.name}: ${(ratio * 100).toFixed(3)}%`);
+    const r = await compareView({ name: v.name, baselineDir, actualDir, diffDir, update, threshold: THRESHOLD });
+    if (update) console.log(r.status === 'new' ? `new ${v.name}` : `updated ${v.name}: ${(r.ratio * 100).toFixed(3)}%`);
+    else if (r.status === 'fail') failed++;
   }
 } finally { stop(server); }
+if (update) {
+  console.log(`\nparity: re-blessed ${VIEWS.length} view(s); review the PNG diff before committing`);
+  process.exit(0);
+}
 if (failed) { console.error(`\n${failed} view(s) differ; see parity/diff/`); process.exit(1); }
 console.log('\nparity: all views match');
