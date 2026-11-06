@@ -4,7 +4,7 @@
 use crate::sdlc_state::view_of;
 use kata_sdlc::ai_sdlc::list::ChangeList;
 use kata_sdlc::ai_sdlc::state::{ChangeState, SystemState};
-use kata_sdlc::ai_sdlc::{Program, ProgramError};
+use kata_sdlc::ai_sdlc::{Place, Program, ProgramError};
 use kata_sdlc::copy_removal::CopyRemoval;
 use kata_sdlc::offer::{home_reading, LiveFacts};
 use kata_sdlc::open_changes::{
@@ -13,7 +13,7 @@ use kata_sdlc::open_changes::{
 use kata_sdlc::plugin::Readiness;
 use kata_sdlc::view::ChangeView;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// Where the home's answers come from; the plugin's program in the app, a fake in tests.
@@ -32,30 +32,66 @@ fn program_error(e: ProgramError) -> String {
     e.to_string()
 }
 
+/// The master of each workspace folder, found once per program and reused by every home read: it does not
+/// change while the app runs, and finding it costs a separate Node start. Memory only.
+static PLACES: Mutex<BTreeMap<(PathBuf, PathBuf), Place>> = Mutex::new(BTreeMap::new());
+
+/// Runs `read` in the place of `folder`, resolving it only when no earlier call did. An error from the read
+/// drops the folder's entry, so the next call resolves again.
+fn in_place<T>(
+    program: &Program,
+    folder: &Path,
+    read: impl FnOnce(&Place) -> Result<T, String>,
+) -> Result<T, String> {
+    let at = (program.entry.clone(), folder.to_path_buf());
+    let cached = PLACES.lock().unwrap().get(&at).cloned();
+    let place = match cached {
+        Some(place) => place,
+        None => {
+            let place = program.resolve(folder).map_err(program_error)?;
+            PLACES.lock().unwrap().insert(at.clone(), place.clone());
+            place
+        }
+    };
+    let answer = read(&place);
+    if answer.is_err() {
+        PLACES.lock().unwrap().remove(&at);
+    }
+    answer
+}
+
 impl HomeSource for Program {
     fn list(&self, folder: &Path, system: &str) -> Result<ChangeList, String> {
-        let place = self.resolve(folder).map_err(program_error)?;
-        Program::list(self, &place, system).map_err(program_error)
+        in_place(self, folder, |place| {
+            Program::list(self, place, system).map_err(program_error)
+        })
     }
     fn open_states(&self, folder: &Path, system: &str) -> Result<SystemState, String> {
-        kata_sdlc::ai_sdlc::state::open(self, folder, system).map_err(program_error)
+        in_place(self, folder, |place| {
+            let answer = self
+                .run(&["state", "--json", "--system", system, "--open"], place)
+                .map_err(program_error)?;
+            kata_sdlc::ai_sdlc::state::read_state(answer).map_err(program_error)
+        })
     }
     fn declared(&self, folder: &Path, system: &str, change: &str) -> Result<bool, String> {
-        let place = self.resolve(folder).map_err(program_error)?;
         let workspace_id = crate::build_host::workspace_id_in_store(folder);
-        kata_sdlc::pull_requests::read_view(
-            self,
-            &place,
-            workspace_id.as_deref(),
-            system,
-            change,
-            false,
-        )
-        .map(|view| view.done)
+        in_place(self, folder, |place| {
+            kata_sdlc::pull_requests::read_view(
+                self,
+                place,
+                workspace_id.as_deref(),
+                system,
+                change,
+                false,
+            )
+            .map(|view| view.done)
+        })
     }
     fn merge_check(&self, folder: &Path, change: &ChangeState) -> Result<CopyRemoval, String> {
-        let place = self.resolve(folder).map_err(program_error)?;
-        kata_sdlc::copy_removal::offer(self, &place, change)
+        in_place(self, folder, |place| {
+            kata_sdlc::copy_removal::offer(self, place, change)
+        })
     }
 }
 
@@ -698,7 +734,8 @@ if (command === 'resolve') {
             &master,
             &["commit", "-q", "-m", "marker and finished changes"],
         );
-        let place = program.resolve(&ws).unwrap();
+        // The app resolves the saved workspace once when it opens it; the cache holds that answer for the reads below.
+        let place = in_place(program, &ws, |place| Ok(place.clone())).unwrap();
         for n in 0..open {
             let name = format!("2026-11-0{}-open-{n}", n + 1);
             let started = program
