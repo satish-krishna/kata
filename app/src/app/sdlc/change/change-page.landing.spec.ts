@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
 import type { OpenRun } from '@bindings/OpenRun';
+import { toastState } from '@spartan-ng/brain/sonner';
 import { of } from 'rxjs';
 import { render } from '../../../testing/render';
 import { RunLandingStore, type Landing } from '../../core/run/run-landing.store';
@@ -9,6 +10,7 @@ import { MockTransport } from '../../core/transport/mock-transport';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePage } from './change-page';
+import { ChangePageViewModel } from './change-page.view-model';
 
 const settle = async () => {
   for (let i = 0; i < 4; i++) {
@@ -47,6 +49,7 @@ async function mount(change: string, transport = new MockTransport(), demo: stri
 }
 
 afterEach(() => {
+  toastState.reset();
   vi.useRealTimers();
   TestBed.resetTestingModule();
 });
@@ -95,14 +98,24 @@ describe('ChangePage landing on a run picked from the running changes (R13.2)', 
     expect(landing.pending()?.change).toBe('some-other-change');
   });
 
-  it("a request for another workspace's change makes that workspace the open one before the page loads", async () => {
+  it('a run picked in another workspace opens it through the backend', async () => {
     const transport = new MockTransport();
     const other = { id: 'other', name: 'other', folder: 'D:/elsewhere/other', last_opened: 1 };
     const now = await transport.sdlcWorkspaces();
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([...now, other]);
-    const save = vi.spyOn(transport, 'sdlcSaveWorkspaces');
-    await mount(MOCK_BUILD_CHANGE, transport, null, { workspaceId: other.id, system: 'commerce', change: MOCK_BUILD_CHANGE, run: run({}) });
-    const saved = save.mock.calls[0][0];
-    expect(saved.find((w) => w.id === 'other')!.last_opened).toBeGreaterThan(Math.max(...saved.filter((w) => w.id !== 'other').map((w) => w.last_opened)));
+    const open = vi.spyOn(transport, 'sdlcOpenWorkspace').mockResolvedValue({ workspaces: [...now, { ...other, last_opened: 99 }], current: 'other' });
+    const { fixture } = await mount(MOCK_BUILD_CHANGE, transport, null, { workspaceId: other.id, system: 'commerce', change: MOCK_BUILD_CHANGE, run: run({}) });
+    expect(open).toHaveBeenCalledWith('other');
+    const vm = fixture.debugElement.injector.get(ChangePageViewModel);
+    expect(vm.current()?.id).toBe('other');
+  });
+
+  it("a failed current-workspace read shows not found with today's message", async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcCurrentWorkspace').mockRejectedValue(new Error('no list'));
+    const { fixture } = await mount(MOCK_BUILD_CHANGE, transport);
+    const vm = fixture.debugElement.injector.get(ChangePageViewModel);
+    expect(vm.state()).toBe('not-found');
+    expect(toastState.toasts().map((t) => String(t.title)).join(' | ')).toContain('Could not read the workspace list: no list');
   });
 });

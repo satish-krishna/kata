@@ -5,6 +5,8 @@ import { lucideFolderPlus, lucidePlus } from '@ng-icons/lucide';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { AddWorkspaceDialog } from '../../ui/add-workspace-dialog';
 import { ChangesTable } from '../../ui/changes-table';
+import { FinishedChanges } from '../../ui/finished-changes';
+import { Segmented } from '../../ui/segmented';
 import { ConfirmDialog } from '../../ui/confirm-dialog';
 import { LeftoverDialog } from '../../ui/leftover-dialog';
 import { LockOverlay } from '../../ui/lock-overlay';
@@ -30,6 +32,8 @@ import { SdlcHomeViewModel } from './sdlc-home.view-model';
     RunningChanges,
     SdlcSession,
     ChangesTable,
+    FinishedChanges,
+    Segmented,
     ProgressLine,
     InstructionsRow,
     ReposTable,

@@ -3,7 +3,6 @@ import { seedSpec } from '../../lib/mock';
 import type { DoneStep } from '@bindings/DoneStep';
 import type { KataEvent } from '../../lib/events';
 import type { Settings } from '@bindings/Settings';
-import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { RunLink } from '@bindings/RunLink';
 import type { RoundPicks } from '@bindings/RoundPicks';
@@ -16,7 +15,6 @@ import type { RunningStrip } from '@bindings/RunningStrip';
 
 const spec = seedSpec();
 const settings: Settings = { mode: 'sdlc', remember: true, permission_mode: 'bypass' };
-const entry: WorkspaceEntry = { id: 'w', name: 'w', folder: '/w', last_opened: 1 };
 const snap: Snapshot = { head: 'abc', folder: '/m', dirty: {} };
 const link: RunLink = { workspace_id: 'w', system: 's', change: 'c', stage: 'intent', run_id: 'r', started_at: 1 };
 const change: ChangeRef = { workspace: '/w', system: 's', change: 'c' };
@@ -62,7 +60,9 @@ const rows: Row[] = [
   ['sdlcSettings', (t) => t.sdlcSettings(), 'sdlc_settings', undefined],
   ['sdlcSaveSettings', (t) => t.sdlcSaveSettings(settings), 'sdlc_save_settings', { settings }],
   ['sdlcWorkspaces', (t) => t.sdlcWorkspaces(), 'sdlc_workspaces', undefined],
-  ['sdlcSaveWorkspaces', (t) => t.sdlcSaveWorkspaces([entry]), 'sdlc_save_workspaces', { workspaces: [entry] }],
+  ['sdlcOpenWorkspace', (t) => t.sdlcOpenWorkspace('w'), 'sdlc_open_workspace', { id: 'w' }],
+  ['sdlcAddWorkspace', (t) => t.sdlcAddWorkspace('n', '/f'), 'sdlc_add_workspace', { name: 'n', folder: '/f' }],
+  ['sdlcRemoveWorkspace', (t) => t.sdlcRemoveWorkspace('w'), 'sdlc_remove_workspace', { id: 'w' }],
   ['sdlcScan', (t) => t.sdlcScan('/w'), 'sdlc_scan', { folder: '/w' }],
   ['sdlcReadContext', (t) => t.sdlcReadContext('/m', 's', 'r'), 'sdlc_read_context', { master: '/m', system: 's', repo: 'r' }],
   ['sdlcContextHealth', (t) => t.sdlcContextHealth('/w', 'm', 's', 'r'), 'sdlc_context_health', { folder: '/w', master: 'm', system: 's', repo: 'r' }],
@@ -224,6 +224,21 @@ describe('TauriTransport', () => {
     expect(event).toBe(channel);
     handler({ payload });
     expect(seen).toEqual([payload]);
+  });
+
+  it('each home command invokes its backend command with its arguments', async () => {
+    const ipc = fakeIpc();
+    const t = new TauriTransport(asIpc(ipc));
+    await t.sdlcHomeList('w1', ['s', 't']);
+    await t.sdlcHomePick('w1', 't', ['s', 't']);
+    await t.sdlcHomeOpen('/w', 's', ['c'], 'focus');
+    await t.sdlcHomePullRequests('/w', 's', ['c']);
+    expect(ipc.invoke.mock.calls).toEqual([
+      ['sdlc_home_list', { workspaceId: 'w1', systems: ['s', 't'] }],
+      ['sdlc_home_pick', { workspaceId: 'w1', system: 't', systems: ['s', 't'] }],
+      ['sdlc_home_open', { folder: '/w', system: 's', shown: ['c'], trigger: 'focus' }],
+      ['sdlc_home_pull_requests', { folder: '/w', system: 's', changes: ['c'] }],
+    ]);
   });
 
   it('runSpec resolves to the run id the backend returned', async () => {

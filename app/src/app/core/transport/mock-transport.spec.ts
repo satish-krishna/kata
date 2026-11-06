@@ -9,7 +9,6 @@ import type { DoneStep } from '@bindings/DoneStep';
 import type { Resolved } from '@bindings/Resolved';
 import type { BuildEvent } from '@bindings/BuildEvent';
 import type { ChangeRef } from '@bindings/ChangeRef';
-import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
 import { MOCK_BUILD_CHANGE, MOCK_COPY_CHANGE, MOCK_BUILD_SECOND, MOCK_HELD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MOCK_MASTER, MOCK_STARTED_FIX, TRIAGE_LIGHT, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 
@@ -789,25 +788,48 @@ describe('MockTransport answers every call the backend gained on this branch (F2
 });
 
 describe('MockTransport current workspace', () => {
-  const ws = (id: string, last_opened: number): WorkspaceEntry => ({ id, name: id, folder: `/${id}`, last_opened });
-
-  it('answers the highest last_opened of the saved list', async () => {
+  it('opening a workspace stamps it one past every other entry and answers it as current', async () => {
     const t = new MockTransport();
-    await t.sdlcSaveWorkspaces([ws('a', 5), ws('b', 50), ws('c', 7)]);
-    expect(await t.sdlcCurrentWorkspace()).toBe('b');
+    const added = await t.sdlcAddWorkspace('second', '/second');
+    const first = added.workspaces.find((w) => w.id !== 'second')!;
+    const choice = await t.sdlcOpenWorkspace(first.id);
+    const stamps = choice.workspaces.map((w) => w.last_opened);
+    expect(choice.current).toBe(first.id);
+    expect(await t.sdlcCurrentWorkspace()).toBe(first.id);
+    expect(choice.workspaces.find((w) => w.id === first.id)!.last_opened).toBe(Math.max(...stamps));
+    expect(await t.sdlcWorkspaces()).toEqual(choice.workspaces);
   });
 
-  it('answers the earliest of the tied entries', async () => {
+  it('opening an unknown id rejects and keeps the list', async () => {
     const t = new MockTransport();
-    await t.sdlcSaveWorkspaces([ws('a', 1), ws('b', 9), ws('c', 9), ws('d', 0)]);
-    expect(await t.sdlcCurrentWorkspace()).toBe('b');
-    await t.sdlcSaveWorkspaces([ws('x', 0), ws('y', 0)]);
-    expect(await t.sdlcCurrentWorkspace()).toBe('x');
+    const before = await t.sdlcWorkspaces();
+    await expect(t.sdlcOpenWorkspace('nope')).rejects.toThrow('nope');
+    expect(await t.sdlcWorkspaces()).toEqual(before);
+  });
+
+  it('adding makes a unique id from the name and the new entry is current', async () => {
+    const t = new MockTransport();
+    await t.sdlcAddWorkspace('My Repo', '/one');
+    const second = await t.sdlcAddWorkspace('My Repo', '/two');
+    expect(second.workspaces.map((w) => w.id).slice(-2)).toEqual(['my-repo', 'my-repo-2']);
+    expect(second.current).toBe('my-repo-2');
+    expect((await t.sdlcAddWorkspace('!!!', '/three')).workspaces.at(-1)!.id).toBe('workspace');
+  });
+
+  it('removing answers the next current, and an unknown id changes nothing', async () => {
+    const t = new MockTransport();
+    const added = await t.sdlcAddWorkspace('second', '/second');
+    expect(added.current).toBe('second');
+    const gone = await t.sdlcRemoveWorkspace('second');
+    expect(gone.current).toBe(added.workspaces[0].id);
+    expect((await t.sdlcRemoveWorkspace('zzz')).workspaces).toEqual(gone.workspaces);
   });
 
   it('answers null when no workspace is saved', async () => {
     const t = new MockTransport();
-    await t.sdlcSaveWorkspaces([]);
+    const [only] = await t.sdlcWorkspaces();
+    const choice = await t.sdlcRemoveWorkspace(only.id);
+    expect(choice).toEqual({ workspaces: [], current: null });
     expect(await t.sdlcCurrentWorkspace()).toBeNull();
   });
 });
@@ -850,5 +872,50 @@ describe('MockTransport versions', () => {
       vi.unstubAllGlobals();
     }
     expect(writeText).toHaveBeenCalledWith('Kata Workbench 3.3.0');
+  });
+});
+
+describe('MockTransport home listing', () => {
+  /** Run `body` with `?demo=<demo>` in the address, the way the browser checks reach a demo. */
+  const withDemo = async (demo: string | null, body: (t: MockTransport) => Promise<void>) => {
+    window.history.replaceState({}, '', demo === null ? '/' : `/?demo=${demo}`);
+    try {
+      await body(new MockTransport());
+    } finally {
+      window.history.replaceState({}, '', '/');
+    }
+  };
+
+  it('the mock lists open and finished changes as the backend splits them', async () => {
+    await withDemo(null, async (t) => {
+      const home = await t.sdlcHomeList('acme-commerce', ['commerce']);
+      if (home.kind !== 'listed') throw new Error('expected a listed home');
+      expect(home.system).toBe('commerce');
+      expect(home.systems).toEqual(['commerce']);
+      expect(home.open.map((c) => c.change)).toEqual((await readAllChanges(t)).map((c) => c.state.change));
+      expect(home.finished).toEqual([]);
+      expect(home.finishedCount).toBe(0);
+      const opened = await t.sdlcHomeOpen(MOCK_WORKSPACE_FOLDER, 'commerce', [], 'open');
+      expect(opened.rows.map((r) => r.view.state.change)).toEqual(home.open.map((c) => c.change));
+      expect(opened.check).toEqual([MOCK_DONE_CHANGE]);
+      expect((await t.sdlcHomeOpen(MOCK_WORKSPACE_FOLDER, 'commerce', home.open.map((c) => c.change), 'focus')).check).toEqual([]);
+    });
+    await withDemo('finished-many', async (t) => {
+      const home = await t.sdlcHomeList('acme-commerce', ['commerce', 'payments']);
+      if (home.kind !== 'listed') throw new Error('expected a listed home');
+      expect(home.systems).toEqual(['commerce', 'payments']);
+      expect(home.finished).toHaveLength(60);
+      expect(home.finishedCount).toBe(60);
+      expect(new Set(home.finished.map((f) => f.finished))).toEqual(new Set(['merged', 'rejected']));
+      const picked = await t.sdlcHomePick('acme-commerce', 'payments', ['commerce', 'payments']);
+      if (picked.kind !== 'listed') throw new Error('expected a listed home');
+      expect(picked.system).toBe('payments');
+      const again = await t.sdlcHomeList('acme-commerce', ['commerce', 'payments']);
+      if (again.kind !== 'listed') throw new Error('expected a listed home');
+      expect(again.system).toBe('payments');
+    });
+    await withDemo('old-plugin', async (t) => {
+      expect(await t.sdlcHomeList('acme-commerce', ['commerce'])).toEqual({ kind: 'legacy' });
+    });
   });
 });

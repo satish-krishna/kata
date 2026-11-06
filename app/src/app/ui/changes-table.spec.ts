@@ -4,7 +4,10 @@ import { render } from '../../testing/render';
 import { ChangesTable, type ChangeRow } from './changes-table';
 
 const offerOf = (text: string, tone: LabelTone = 'muted'): ChangeOffer => ({ stage: 'plan-ready', label: { step: 'plan', text, tone }, actions: [] });
-const row = (name: string, over: Partial<ChangeRow> = {}): ChangeRow => ({ system: 'commerce', change: name, title: null, offer: offerOf('Plan · ready to start'), ...over });
+const row = (name: string, over: Partial<ChangeRow> = {}): ChangeRow => {
+  const offer = over.offer ?? offerOf('Plan · ready to start');
+  return { system: 'commerce', change: name, title: null, offer, label: offer.label, action: null, failed: false, ...over };
+};
 const LABELS: Record<string, string> = { 'spec-awaiting': 'Spec · awaiting acceptance', 'plan-awaiting': 'Plan · awaiting acceptance', 'plan-ready': 'Plan · ready to start' };
 const staged = (name: string, stage: string): ChangeRow => row(name, { offer: offerOf(LABELS[stage], 'warning') });
 
@@ -88,5 +91,36 @@ describe('ChangesTable rows from the answer of the plugin (R1.4)', () => {
     expect(open.disabled).toBe(false);
     open.click();
     expect(got).toEqual([{ system: 'commerce', change: 'c1' }]);
+  });
+});
+
+describe('ChangesTable rows being read, failed and offering the copy removal', () => {
+  it('a row still being read opens the change', async () => {
+    const { fixture, container } = await render(ChangesTable, { rows: [row('c1', { offer: null, label: null })], others: [], lastRuns: {} });
+    expect(container.querySelector('[data-slot="skeleton"]')).not.toBeNull();
+    expect(text(container)).not.toContain('could not be read');
+    const got: unknown[] = [];
+    fixture.componentInstance.open.subscribe((v) => got.push(v));
+    const open = buttons(container).find((b) => b.getAttribute('aria-label') === 'Open change c1')!;
+    expect(open.disabled).toBe(false);
+    open.click();
+    expect(got).toEqual([{ system: 'commerce', change: 'c1' }]);
+  });
+
+  it('a failed row says its stage could not be read and still opens', async () => {
+    const { container } = await render(ChangesTable, { rows: [row('c1', { offer: null, label: null, failed: true })], others: [], lastRuns: {} });
+    expect(text(container)).toContain('Stage could not be read');
+    expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
+    expect(buttons(container).find((b) => b.getAttribute('aria-label') === 'Open change c1')!.disabled).toBe(false);
+  });
+
+  it('a remove-copy row offers the removal', async () => {
+    const { fixture, container } = await render(ChangesTable, { rows: [row('c1', { action: 'remove-copy' }), row('c2')], others: [], lastRuns: {} });
+    const got: string[] = [];
+    fixture.componentInstance.removeCopy.subscribe((v) => got.push(v));
+    const removes = buttons(container).filter((b) => text(b) === 'Remove the copy');
+    expect(removes).toHaveLength(1);
+    removes[0].click();
+    expect(got).toEqual(['c1']);
   });
 });

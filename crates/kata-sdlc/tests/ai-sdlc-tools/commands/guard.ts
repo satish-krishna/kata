@@ -8,6 +8,8 @@
 //   - pushing, and the GitHub commands that change something (opening, merging or editing a pull request, an API
 //     call that writes), because those happen only in the change.done event, after its gates;
 //   - skipping a repository's own git hooks (`--no-verify`, `commit -n`, `core.hooksPath`).
+//   - approving a check that already fails on the base, or retaking a baseline (`baseline approve|retake`), which
+//     only the engineer does.
 //
 // To refuse it prints `{ "hookSpecificOutput": { "hookEventName": "PreToolUse", "permissionDecision": "deny",
 // "permissionDecisionReason": ... } }`; otherwise it prints nothing. It exits 0 whatever happens. It is a speed bump
@@ -34,6 +36,7 @@ const RULES: { pattern: RegExp; why: string }[] = [
   { pattern: /\bgh\s+pr\s+(create|merge|edit|close|reopen|ready|review|comment)\b/, why: 'Pull requests are opened only by the change.done event, after its checks: run the ai-sdlc done skill.' },
   { pattern: /\bgh\s+api\b[^|;&\n]*(-X|--method)\s*['"]?(POST|PUT|PATCH|DELETE)\b/i, why: 'GitHub is changed only by the change.done event: run the ai-sdlc done skill.' },
   { pattern: new RegExp(String.raw`\bgit\b[^|;&\n]*\s--no-verify\b|` + GIT + String.raw`(?:commit|merge|am)\b(?:\s+-[a-zA-Z]+)*\s+-[a-zA-Z]*n\b|core\.hooksPath`), why: "A repository's own git hooks always run: commit without --no-verify, and fix what they report." },
+  { pattern: /\bbaseline\s+(approve|retake)\b/, why: 'Only the engineer approves a check that already fails on the base, or retakes a baseline: show them the command and stop.' },
 ];
 
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];

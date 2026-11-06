@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 /// The first plugin release with every plugin step Kata relies on.
 pub const MIN_VERSION: &str = "1.1.0";
 
+/// The first plugin release that lists changes (`list`) and reads only the open ones (`state --open`).
+pub const LIST_MIN_VERSION: &str = "1.3.0";
+
 /// The oldest Node.js the plugin's program runs on.
 pub const MIN_NODE: &str = "22.18";
 
@@ -150,6 +153,12 @@ pub fn readiness(env: &Machine) -> Readiness {
             GhPresence::Missing
         },
     }
+}
+
+/// Whether the installed plugin can list changes and read the open ones alone: a ready machine whose
+/// plugin is [`LIST_MIN_VERSION`] or later. Every path that needs 1.3.0 asks this.
+pub fn lists_changes(readiness: &Readiness) -> bool {
+    matches!(readiness, Readiness::Ready { plugin, .. } if at_least(&plugin.version, LIST_MIN_VERSION))
 }
 
 impl Machine {
@@ -351,6 +360,36 @@ mod tests {
         ];
         for (name, env, expected) in rows {
             assert_eq!(readiness(&env), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn lists_changes_rows() {
+        let rows: Vec<(&str, Readiness, bool)> = vec![
+            ("blocked, plugin missing", Readiness::missing(), false),
+            (
+                "blocked, node missing",
+                blocked_with(BlockReason::NodeMissing, "x"),
+                false,
+            ),
+            (
+                "blocked, plugin too old",
+                blocked_with(BlockReason::PluginTooOld, "x"),
+                false,
+            ),
+            ("ready 1.2.0", ready("1.2.0", GhPresence::Present), false),
+            ("ready 1.2.9", ready("1.2.9", GhPresence::Present), false),
+            (
+                "ready 1.3.0-rc1",
+                ready("1.3.0-rc1", GhPresence::Present),
+                false,
+            ),
+            ("ready 1.3.0", ready("1.3.0", GhPresence::Present), true),
+            ("ready 1.3.1", ready("1.3.1", GhPresence::Missing), true),
+            ("ready 2.0.0", ready("2.0.0", GhPresence::Present), true),
+        ];
+        for (name, readiness, expected) in rows {
+            assert_eq!(lists_changes(&readiness), expected, "{name}");
         }
     }
 

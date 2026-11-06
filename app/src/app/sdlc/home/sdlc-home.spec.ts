@@ -208,3 +208,33 @@ describe('SdlcHome old per-machine checks', () => {
     expect(container.querySelector('[data-testid="old-checks"]')).toBeNull();
   });
 });
+
+describe('SdlcHome finished changes and system choice', () => {
+  afterEach(() => history.replaceState({}, '', '/'));
+
+  it('unfolding the finished section asks the transport nothing and the picker lists the systems', async () => {
+    history.replaceState({}, '', '/?demo=finished-many');
+    const transport = new MockTransport();
+    const { container, fixture } = await mount(transport);
+    const text = () => container.textContent!.replace(/\s+/g, ' ');
+    const fold = container.querySelector<HTMLButtonElement>('app-finished-changes button[aria-expanded]')!;
+    expect(fold.textContent!.replace(/\s+/g, ' ').trim()).toBe('Finished (60)');
+    expect(container.querySelectorAll('[data-testid="finished-row"]')).toHaveLength(0);
+    const spies = ['sdlcHomeList', 'sdlcHomeOpen', 'sdlcHomePick', 'sdlcHomePullRequests', 'sdlcState', 'sdlcChangeState'].map((m) =>
+      vi.spyOn(transport as never, m as never),
+    );
+    fold.click();
+    fixture.detectChanges();
+    expect(container.querySelectorAll('[data-testid="finished-row"]')).toHaveLength(60);
+    expect(text()).toContain('2026-09-60-finished-change-60Finished change 60merged');
+    expect(text()).toContain('rejected');
+    for (const s of spies) expect(s).not.toHaveBeenCalled();
+    const radios = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="radiogroup"] [role="radio"]')).map((b) => b.textContent!.trim());
+    expect(radios).toEqual(['commerce', 'payments']);
+  });
+
+  it('no finished section when the system has none', async () => {
+    const { container } = await mount();
+    expect(container.querySelector('app-finished-changes button')).toBeNull();
+  });
+});

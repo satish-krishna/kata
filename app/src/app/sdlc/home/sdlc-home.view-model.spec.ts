@@ -5,6 +5,12 @@ import type { ChangeView } from '@bindings/ChangeView';
 import type { SystemView } from '@bindings/SystemView';
 import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { Readiness } from '@bindings/Readiness';
+import type { HomeList } from '@bindings/HomeList';
+import type { HomeOpen } from '@bindings/HomeOpen';
+import type { HomeRow } from '@bindings/HomeRow';
+import type { HomeChecked } from '@bindings/HomeChecked';
+import type { HomeAction } from '@bindings/HomeAction';
+import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
@@ -32,8 +38,10 @@ const flush = async () => {
 };
 
 /** `preview: 'confirm'` (the default) lets the preview confirm every run at once, so a test about something else never meets it; `'real'` leaves it to the test. */
-function setup(over: { catalogHasPlugin?: boolean; preview?: 'confirm' | 'real' } = {}) {
+function setup(over: { catalogHasPlugin?: boolean; preview?: 'confirm' | 'real'; home?: 'legacy' | 'listed' } = {}) {
   const transport = new MockTransport();
+  // The tests that spy on `sdlcState` are about the legacy list; the open-changes home has its own describe.
+  if (over.home !== 'listed') vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue({ kind: 'legacy' });
   if (over.catalogHasPlugin === false) vi.spyOn(transport, 'catalog').mockResolvedValue(seedCatalog);
   TestBed.configureTestingModule({
     providers: [SdlcHomeViewModel, RunPreviewViewModel, { provide: KataTransport, useValue: transport }, provideRouter([])],
@@ -42,11 +50,13 @@ function setup(over: { catalogHasPlugin?: boolean; preview?: 'confirm' | 'real' 
   const lock = TestBed.inject(LockStore);
   const runAgent = vi.spyOn(lock, 'runAgent').mockResolvedValue('success');
   const runSteps = vi.spyOn(lock, 'runSteps');
-  const saveWorkspaces = vi.spyOn(transport, 'sdlcSaveWorkspaces');
+  const openWorkspace = vi.spyOn(transport, 'sdlcOpenWorkspace');
+  const addWorkspace = vi.spyOn(transport, 'sdlcAddWorkspace');
+  const removeWorkspace = vi.spyOn(transport, 'sdlcRemoveWorkspace');
   const saveSettings = vi.spyOn(transport, 'sdlcSaveSettings');
   const preview = TestBed.inject(RunPreviewViewModel);
   if (over.preview !== 'real') vi.spyOn(preview, 'open').mockImplementation(async (req) => req.spec);
-  return { vm: TestBed.inject(SdlcHomeViewModel), preview, transport, lock, runAgent, runSteps, navigate, saveWorkspaces, saveSettings, runner: TestBed.inject(SdlcRunner) };
+  return { vm: TestBed.inject(SdlcHomeViewModel), preview, transport, lock, runAgent, runSteps, navigate, openWorkspace, addWorkspace, removeWorkspace, saveSettings, runner: TestBed.inject(SdlcRunner) };
 }
 
 const previewReady = (preview: RunPreviewViewModel) => vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
@@ -99,22 +109,21 @@ describe('SdlcHomeViewModel init', () => {
     expect(vm.current()?.id).toBe('last');
   });
 
-  it('removing the current workspace moves to what the backend names after the save', async () => {
-    const { vm, transport, saveWorkspaces } = setup();
+  it('removing the current workspace moves to what the backend answers', async () => {
+    const { vm, transport, removeWorkspace } = setup();
     const list: WorkspaceEntry[] = [
       { id: 'a', name: 'a', folder: '/a', last_opened: 0 },
       { id: 'b', name: 'b', folder: '/b', last_opened: 0 },
       { id: 'c', name: 'c', folder: '/c', last_opened: 0 },
     ];
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue(list);
-    const ask = vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('a');
+    vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('a');
     await vm.init();
     expect(vm.current()?.id).toBe('a');
-    ask.mockClear();
-    ask.mockResolvedValue('c');
+    removeWorkspace.mockResolvedValue({ workspaces: [list[1], list[2]], current: 'c' });
     await vm.removeWorkspace('a');
-    expect(ask).toHaveBeenCalledTimes(1);
-    expect(ask.mock.invocationCallOrder[0]).toBeGreaterThan(saveWorkspaces.mock.invocationCallOrder.at(-1)!);
+    expect(removeWorkspace).toHaveBeenCalledWith('a');
+    expect(vm.workspaces().map((w) => w.id)).toEqual(['b', 'c']);
     expect(vm.current()?.id).toBe('c');
   });
 
@@ -176,7 +185,7 @@ describe('SdlcHomeViewModel init', () => {
 
 describe('SdlcHomeViewModel add workspace', () => {
   it('on a set-up workspace runs the five checks, saves the entry on confirm with no base branch, and starts no run', async () => {
-    const { vm, transport, runSteps, runAgent, saveWorkspaces } = setup();
+    const { vm, transport, runSteps, runAgent, addWorkspace } = setup();
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
     await vm.init();
     await vm.addWorkspace();
@@ -186,12 +195,12 @@ describe('SdlcHomeViewModel add workspace', () => {
     ]);
     expect(runAgent).not.toHaveBeenCalled();
     expect(vm.candidate()?.folder).toBe(NEW_FOLDER);
-    expect(saveWorkspaces).not.toHaveBeenCalled();
+    expect(addWorkspace).not.toHaveBeenCalled();
 
     await vm.confirmAddWorkspace();
-    const saved = saveWorkspaces.mock.calls[0][0];
-    expect(saved.find((w) => w.folder === NEW_FOLDER)).toMatchObject({ name: 'new-ws' });
-    expect(saved.find((w) => w.folder === NEW_FOLDER)).not.toHaveProperty('base_branch');
+    expect(addWorkspace).toHaveBeenCalledWith('new-ws', NEW_FOLDER);
+    expect(vm.workspaces().find((w) => w.folder === NEW_FOLDER)).toMatchObject({ name: 'new-ws' });
+    expect(vm.workspaces().find((w) => w.folder === NEW_FOLDER)).not.toHaveProperty('base_branch');
     expect(vm.current()?.folder).toBe(NEW_FOLDER);
     expect(vm.candidate()).toBeNull();
     expect(runAgent).not.toHaveBeenCalled();
@@ -211,7 +220,7 @@ describe('SdlcHomeViewModel add workspace', () => {
   });
 
   it('opens the leftover dialog and adds nothing when setup is cancelled', async () => {
-    const { vm, transport, runAgent, saveWorkspaces } = setup();
+    const { vm, transport, runAgent, addWorkspace } = setup();
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
     vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({ new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] });
     runAgent.mockResolvedValue('warning');
@@ -222,7 +231,7 @@ describe('SdlcHomeViewModel add workspace', () => {
     await vm.addWorkspace();
     expect(vm.leftovers()?.[0].data.discardable).toEqual(['.ai-sdlc.json']);
     expect(vm.candidate()).toBeNull();
-    expect(saveWorkspaces).not.toHaveBeenCalled();
+    expect(addWorkspace).not.toHaveBeenCalled();
   });
 
   it('reports leftovers in the master a cancelled first setup created, against its pre-run snapshot', async () => {
@@ -248,14 +257,14 @@ describe('SdlcHomeViewModel add workspace', () => {
   });
 
   it('says so when the workspace check is cancelled, and adds nothing', async () => {
-    const { vm, transport, lock, saveWorkspaces } = setup();
+    const { vm, transport, lock, addWorkspace } = setup();
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
     await vm.init();
     vi.spyOn(lock, 'runSteps').mockResolvedValue('cancelled');
     await vm.addWorkspace();
     expect(toastText()).toContain('Workspace check cancelled. Nothing was added.');
     expect(vm.candidate()).toBeNull();
-    expect(saveWorkspaces).not.toHaveBeenCalled();
+    expect(addWorkspace).not.toHaveBeenCalled();
   });
 
   it('reports a failed context read after setup instead of rejecting', async () => {
@@ -675,48 +684,96 @@ describe('SdlcHomeViewModel navigation', () => {
 });
 
 describe('SdlcHomeViewModel workspaces and settings', () => {
-  it('selectWorkspace stamps last_opened and loads that workspace', async () => {
-    const { vm, transport, saveWorkspaces } = setup();
+  it('selecting a workspace asks the backend and never writes last_opened', async () => {
+    const { vm, transport, openWorkspace } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([]);
-    vm.workspaces.set([
-      ...vm.workspaces(),
-      { id: 'second', name: 'second', folder: '/second', last_opened: 1 },
-    ]);
+    const first = vm.workspaces()[0];
+    const second = { id: 'second', name: 'second', folder: '/second', last_opened: 1 };
+    vm.workspaces.set([first, second]);
+    const appVersions = vi.spyOn(transport, 'appVersions');
+    openWorkspace.mockResolvedValue({ workspaces: [first, { ...second, last_opened: 99 }], current: 'second' });
     await vm.selectWorkspace('second');
+    expect(openWorkspace).toHaveBeenCalledWith('second');
     expect(vm.current()?.id).toBe('second');
-    const saved = saveWorkspaces.mock.calls.at(-1)![0];
-    expect(saved.find((w) => w.id === 'second')!.last_opened).toBeGreaterThan(1);
+    expect(vm.workspaces().find((w) => w.id === 'second')!.last_opened).toBe(99);
+    expect(appVersions).toHaveBeenCalledTimes(1);
   });
 
-  it('selectWorkspace asks for the versions again after the list is saved, and the line shows the new answer', async () => {
-    const { vm, transport, saveWorkspaces } = setup();
+  it('a failed open keeps the shown workspace', async () => {
+    const { vm, transport, openWorkspace } = setup();
+    await vm.init();
+    const before = vm.workspaces();
+    vm.workspaces.set([...before, { id: 'second', name: 'second', folder: '/second', last_opened: 1 }]);
+    const shown = vm.workspaces();
+    const appVersions = vi.spyOn(transport, 'appVersions');
+    openWorkspace.mockRejectedValue(new Error('disk full'));
+    await vm.selectWorkspace('second');
+    expect(vm.current()?.id).toBe(before[0].id);
+    expect(vm.workspaces()).toBe(shown);
+    expect(toastText()).toContain('Could not save the workspace list: disk full');
+    expect(appVersions).not.toHaveBeenCalled();
+  });
+
+  it('a failed removal keeps the shown workspace', async () => {
+    const { vm, transport, removeWorkspace } = setup();
+    await vm.init();
+    const shown = vm.workspaces();
+    const current = vm.current()!.id;
+    const appVersions = vi.spyOn(transport, 'appVersions');
+    removeWorkspace.mockRejectedValue(new Error('disk full'));
+    await vm.removeWorkspace(current);
+    expect(vm.current()?.id).toBe(current);
+    expect(vm.workspaces()).toBe(shown);
+    expect(toastText()).toContain('Could not save the workspace list: disk full');
+    expect(appVersions).not.toHaveBeenCalled();
+  });
+
+  it("adding a workspace takes the backend's id and current", async () => {
+    const { vm, transport, addWorkspace } = setup();
+    vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
+    await vm.init();
+    const first = vm.workspaces()[0];
+    const added = { id: 'backend-chose-this', name: 'new-ws', folder: NEW_FOLDER, last_opened: 77 };
+    addWorkspace.mockResolvedValue({ workspaces: [first, added], current: added.id });
+    await vm.addWorkspace();
+    await vm.confirmAddWorkspace();
+    expect(addWorkspace).toHaveBeenCalledWith('new-ws', NEW_FOLDER);
+    expect(vm.workspaces()).toEqual([first, added]);
+    expect(vm.current()?.id).toBe('backend-chose-this');
+  });
+
+  it('selectWorkspace asks for the versions again after the backend opened it, and the line shows the new answer', async () => {
+    const { vm, transport, openWorkspace } = setup();
     await vm.init();
     const versions = TestBed.inject(VersionsStore);
     const answer = await transport.appVersions();
     const appVersions = vi.spyOn(transport, 'appVersions').mockResolvedValue({ ...answer, copy: 'second workspace' });
-    vm.workspaces.set([...vm.workspaces(), { id: 'second', name: 'second', folder: '/second', last_opened: 1 }]);
+    const second = { id: 'second', name: 'second', folder: '/second', last_opened: 1 };
+    vm.workspaces.set([...vm.workspaces(), second]);
+    openWorkspace.mockResolvedValue({ workspaces: [...vm.workspaces()], current: 'second' });
     await vm.selectWorkspace('second');
     expect(appVersions).toHaveBeenCalledTimes(1);
-    expect(appVersions.mock.invocationCallOrder[0]).toBeGreaterThan(saveWorkspaces.mock.invocationCallOrder.at(-1)!);
+    expect(appVersions.mock.invocationCallOrder[0]).toBeGreaterThan(openWorkspace.mock.invocationCallOrder.at(-1)!);
     expect(versions.versions()?.copy).toBe('second workspace');
   });
 
-  it('adding a workspace asks for the versions again after the list is saved', async () => {
-    const { vm, transport, saveWorkspaces } = setup();
+  it('adding a workspace asks for the versions again after the backend added it', async () => {
+    const { vm, transport, addWorkspace } = setup();
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
     await vm.init();
     const appVersions = vi.spyOn(transport, 'appVersions');
     await vm.addWorkspace();
     await vm.confirmAddWorkspace();
     expect(appVersions).toHaveBeenCalledTimes(1);
-    expect(appVersions.mock.invocationCallOrder[0]).toBeGreaterThan(saveWorkspaces.mock.invocationCallOrder.at(-1)!);
+    expect(appVersions.mock.invocationCallOrder[0]).toBeGreaterThan(addWorkspace.mock.invocationCallOrder.at(-1)!);
   });
 
   it('removing the current workspace asks for the versions again; removing another does not', async () => {
     const { vm, transport } = setup();
     await vm.init();
-    vm.workspaces.set([...vm.workspaces(), { id: 'second', name: 'second', folder: '/second', last_opened: 1 }]);
+    const second = (await transport.sdlcAddWorkspace('second', '/second')).workspaces.find((w) => w.id === 'second')!;
+    await transport.sdlcOpenWorkspace('acme-commerce');
+    vm.workspaces.set([...vm.workspaces(), second]);
     const appVersions = vi.spyOn(transport, 'appVersions');
     await vm.removeWorkspace('second');
     expect(appVersions).not.toHaveBeenCalled();
@@ -725,25 +782,25 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
   });
 
   it('removing asks first, forgets only the list entry, and moves to the next workspace', async () => {
-    const { vm, saveWorkspaces } = setup();
+    const { vm, removeWorkspace } = setup();
     await vm.init();
     vm.askRemove();
     expect(vm.removePrompt()).toContain('acme-commerce');
-    expect(saveWorkspaces).not.toHaveBeenCalled();
+    expect(removeWorkspace).not.toHaveBeenCalled();
     await vm.confirmRemove();
-    expect(saveWorkspaces).toHaveBeenCalledWith([]);
+    expect(removeWorkspace).toHaveBeenCalledWith('acme-commerce');
     expect(vm.workspaces()).toEqual([]);
     expect(vm.current()).toBeNull();
     expect(vm.removePrompt()).toBeNull();
   });
 
   it('declining the removal keeps the workspace', async () => {
-    const { vm, saveWorkspaces } = setup();
+    const { vm, removeWorkspace } = setup();
     await vm.init();
     vm.askRemove();
     vm.cancelRemove();
     expect(vm.removePrompt()).toBeNull();
-    expect(saveWorkspaces).not.toHaveBeenCalled();
+    expect(removeWorkspace).not.toHaveBeenCalled();
   });
 
   it('saving the settings dialog with prompt persists permission_mode prompt', async () => {
@@ -757,10 +814,10 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
   });
 
   it('never rewrites the workspaces when the settings are saved: the base branch is not stored', async () => {
-    const { vm, saveWorkspaces } = setup();
+    const { vm, openWorkspace, addWorkspace, removeWorkspace } = setup();
     await vm.init();
     await vm.saveSettings({ settings: vm.settings()! });
-    expect(saveWorkspaces).not.toHaveBeenCalled();
+    for (const write of [openWorkspace, addWorkspace, removeWorkspace]) expect(write).not.toHaveBeenCalled();
     expect(vm.current()).not.toHaveProperty('base_branch', 'develop');
   });
 });
@@ -1005,7 +1062,7 @@ describe('SdlcHomeViewModel changes list', () => {
     const { vm, transport } = setup();
     const state = vi.spyOn(transport, 'sdlcState');
     await vm.init();
-    vm.workspaces.set([...vm.workspaces(), second]);
+    vm.workspaces.set((await transport.sdlcAddWorkspace(second.name, second.folder)).workspaces);
     await vm.selectWorkspace('second');
     expect(state.mock.calls.at(-1)![0]).toBe('/second');
   });
@@ -1028,6 +1085,8 @@ describe('SdlcHomeViewModel changes list', () => {
       vi.advanceTimersByTime(200);
       expect(line()?.label).toBe('Reading changes');
       expect(PROGRESS_STEPS['reading-stages'].lines).toContain(line()!.line);
+      // The focus asks the list first, so the state read starts a moment later.
+      await vi.waitFor(() => expect(state).toHaveBeenCalledTimes(2));
       answer(oneSystem(systemViewOf(1)));
       await vi.waitFor(() => expect(line()).toBeNull());
     });
@@ -1040,7 +1099,7 @@ describe('SdlcHomeViewModel changes list', () => {
       answer.changes = [viewOf(C, text, READY)];
       return oneSystem(answer);
     };
-    const labelOf = (vm: SdlcHomeViewModel) => vm.rows().find((r) => r.change === C)?.offer.label.text;
+    const labelOf = (vm: SdlcHomeViewModel) => vm.rows().find((r) => r.change === C)?.label?.text;
 
     it('the window regaining focus asks the plugin again and the row follows its new answer', async () => {
       const { vm, transport } = setup();
@@ -1360,6 +1419,285 @@ describe("SdlcHomeViewModel: Close waits on the settling of the run on show, tra
       if (c.shown === 'lock') await lockRun(transport, runner, c.settling);
       expect(vm.session() === null).toBe(c.shown === 'none');
       expect(vm.closeBlocked()).toBe(c.blocked);
+    });
+  }
+});
+
+const listedOf = (system: string, systems: string[], names: string[], finished: { change: string; finished: 'merged' | 'rejected' }[] = [], finishedCount = finished.length): HomeList => ({
+  kind: 'listed',
+  system,
+  systems,
+  open: names.map((change) => ({ change, title: `Title of ${change}` })),
+  finished: finished.map((f) => ({ ...f, title: null })),
+  finishedCount,
+  canStartChange: true,
+  startChangeReason: null,
+});
+const homeRowOf = (change: string, text: string, action: HomeAction = 'workflow'): HomeRow => ({
+  view: viewOf(change, text, READY),
+  reading: { label: { step: 'spec', text, tone: 'muted' }, action },
+});
+const openOf = (rows: HomeRow[], over: Partial<HomeOpen> = {}): HomeOpen => ({ rows, check: [], relist: false, problems: [], ...over });
+const NAMES = ['2026-11-01-a', '2026-11-03-c', '2026-11-02-b'];
+
+describe('SdlcHomeViewModel open changes', () => {
+  it("home opens on the system the backend chose and shows that system's changes only", async () => {
+    const { vm, transport } = setup({ home: 'listed' });
+    vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('bob', ['bob', 'kata'], ['b1', 'b2']));
+    const pick = vi.spyOn(transport, 'sdlcHomePick').mockResolvedValue(listedOf('kata', ['bob', 'kata'], ['k1']));
+    vi.spyOn(transport, 'sdlcHomeOpen').mockImplementation(async (_f, system, shown) => openOf(shown.map((n) => homeRowOf(n, `${system} ${n}`))));
+    await vm.init();
+    expect(vm.shownSystem()).toBe('bob');
+    expect(vm.systemChoice()).toEqual(['bob', 'kata']);
+    expect(vm.rows().map((r) => `${r.system}/${r.change}`)).toEqual(['bob/b1', 'bob/b2']);
+    await vm.showSystem('kata');
+    expect(pick.mock.calls[0][0]).toBe(vm.current()!.id);
+    expect(pick.mock.calls[0][1]).toBe('kata');
+    expect(vm.shownSystem()).toBe('kata');
+    expect(vm.rows().map((r) => `${r.system}/${r.change}`)).toEqual(['kata/k1']);
+    expect(vm.rows()[0].label?.text).toBe('kata k1');
+  });
+
+  it('lists open changes by name and title before their stages arrive', async () => {
+    const { vm, transport } = setup({ home: 'listed' });
+    vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+    let release!: (a: HomeOpen) => void;
+    vi.spyOn(transport, 'sdlcHomeOpen').mockReturnValue(new Promise<HomeOpen>((r) => (release = r)));
+    void vm.init();
+    await vi.waitFor(() => expect(vm.rows().length).toBe(3));
+    expect(vm.rows().map((r) => [r.change, r.title, r.label])).toEqual(NAMES.map((n) => [n, `Title of ${n}`, null]));
+    release(openOf([homeRowOf(NAMES[0], 'Spec A', 'open'), homeRowOf(NAMES[1], 'Spec C'), homeRowOf(NAMES[2], 'Spec B', 'remove-copy')]));
+    await vi.waitFor(() => expect(vm.rows().map((r) => r.label?.text)).toEqual(['Spec A', 'Spec C', 'Spec B']));
+    expect(vm.rows().map((r) => r.action)).toEqual(['open', 'workflow', 'remove-copy']);
+  });
+
+  it("keeps the workflow's order of open changes", async () => {
+    const { vm, transport } = setup({ home: 'listed' });
+    vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+    vi.spyOn(transport, 'sdlcHomeOpen').mockResolvedValue(openOf([homeRowOf(NAMES[2], 'B'), homeRowOf(NAMES[0], 'A'), homeRowOf(NAMES[1], 'C')]));
+    await vm.init();
+    expect(vm.rows().map((r) => r.change)).toEqual(NAMES);
+    expect(vm.rows().map((r) => r.label?.text)).toEqual(['A', 'C', 'B']);
+  });
+
+  it('a refresh asks for the open changes only and keeps the rows', async () => {
+    const { vm, transport } = setup({ home: 'listed' });
+    const list = vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+    const all = (text: string) => NAMES.map((n) => homeRowOf(n, text));
+    const open = vi.spyOn(transport, 'sdlcHomeOpen').mockResolvedValue(openOf(all('First')));
+    const checked = vi.spyOn(transport, 'sdlcHomePullRequests').mockResolvedValue({ rows: [], problems: [] });
+    const state = vi.spyOn(transport, 'sdlcState');
+    await vm.init();
+    list.mockClear();
+    open.mockClear();
+    state.mockClear();
+    checked.mockClear();
+    // The window comes back: only the open read, with `focus`.
+    let release!: (a: HomeOpen) => void;
+    open.mockReturnValueOnce(new Promise<HomeOpen>((r) => (release = r)));
+    vm.windowFocused();
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    expect(open.mock.calls[0][3]).toBe('focus');
+    expect(vm.rows().length).toBe(3);
+    release(openOf(all('Second')));
+    await vi.waitFor(() => expect(vm.rows().map((r) => r.label?.text)).toEqual(['Second', 'Second', 'Second']));
+    expect(list).not.toHaveBeenCalled();
+    expect(state).not.toHaveBeenCalled();
+    expect(checked).not.toHaveBeenCalled();
+    // An action ended: the scan again, then the open read with `action-ended` and the check it names.
+    open.mockClear();
+    let releaseOpen!: (a: HomeOpen) => void;
+    open.mockReturnValueOnce(new Promise<HomeOpen>((r) => (releaseOpen = r)));
+    let releaseChecked!: (a: HomeChecked) => void;
+    checked.mockReturnValueOnce(new Promise<HomeChecked>((r) => (releaseChecked = r)));
+    void vm.discardLeftovers([]);
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    expect(open.mock.calls[0][3]).toBe('action-ended');
+    expect(list).not.toHaveBeenCalled();
+    expect(vm.rows().length).toBe(3);
+    releaseOpen(openOf(all('Third'), { check: [NAMES[1]] }));
+    await vi.waitFor(() => expect(checked).toHaveBeenCalledTimes(1));
+    expect(checked.mock.calls[0][2]).toEqual([NAMES[1]]);
+    expect(vm.rows().length).toBe(3);
+    releaseChecked({ rows: [homeRowOf(NAMES[1], 'Merged', 'remove-copy')], problems: [] });
+    await vi.waitFor(() => expect(vm.rows().map((r) => r.label?.text)).toEqual(['Third', 'Merged', 'Third']));
+    expect(vm.rows()[1].action).toBe('remove-copy');
+  });
+
+  it('a failed merge check shows nothing and the row keeps its last reading (T13)', async () => {
+    const { vm, transport } = setup({ home: 'listed' });
+    vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+    const open = vi.spyOn(transport, 'sdlcHomeOpen').mockResolvedValueOnce(openOf(NAMES.map((n) => homeRowOf(n, 'Stage'))));
+    const checked = vi.spyOn(transport, 'sdlcHomePullRequests').mockResolvedValue({ rows: [], problems: ['gh could not be asked about the merge'] });
+    await vm.init();
+    expect(vm.listNotice()).toBeNull();
+    open.mockResolvedValueOnce(openOf(NAMES.map((n) => homeRowOf(n, 'Stage')), { check: [NAMES[1]] }));
+    vm.windowFocused();
+    await vi.waitFor(() => expect(checked).toHaveBeenCalledTimes(1));
+    await flush();
+    expect(vm.listNotice()).toBeNull();
+    expect(vm.rows().map((r) => r.label?.text)).toEqual(['Stage', 'Stage', 'Stage']);
+    expect(vm.rows().some((r) => r.failed)).toBe(false);
+  });
+
+  it('a change that finishes leaves the open changes and is counted', async () => {
+    const { vm, transport } = setup({ home: 'listed' });
+    const versions = '2026-11-03-versions';
+    const names = ['2026-11-01-a', versions, '2026-11-02-b'];
+    const list = vi
+      .spyOn(transport, 'sdlcHomeList')
+      .mockResolvedValueOnce(listedOf('commerce', ['commerce'], names, [], 0))
+      .mockResolvedValueOnce(listedOf('commerce', ['commerce'], [names[0], names[2]], [{ change: versions, finished: 'merged' }], 1));
+    const open = vi.spyOn(transport, 'sdlcHomeOpen').mockResolvedValueOnce(openOf(names.map((n) => homeRowOf(n, 'Stage'))));
+    await vm.init();
+    expect(vm.rows().length).toBe(3);
+    expect(vm.finishedCount()).toBe(0);
+    open.mockResolvedValueOnce(openOf([homeRowOf(names[0], 'Stage'), homeRowOf(names[2], 'Stage')], { relist: true }));
+    vm.windowFocused();
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(vm.rows().map((r) => r.change)).toEqual([names[0], names[2]]));
+    expect(vm.finishedCount()).toBe(1);
+    expect(vm.finished()).toEqual([{ change: versions, title: null, finished: 'merged' }]);
+    expect(vm.rows().every((r) => r.label?.text === 'Stage')).toBe(true);
+  });
+});
+
+describe('SdlcHomeViewModel failed reads and an older plugin', () => {
+  const failures = [
+    'the ai-sdlc program could not run: ai-sdlc needs Node.js 22.18 or later',
+    'the ai-sdlc program could not run: it did not finish in 60 seconds',
+    'the ai-sdlc program refused: change not found',
+  ];
+  for (const failure of failures) {
+    it(`a failed refresh keeps the rows and shows today's message: ${failure}`, async () => {
+      const { vm, transport } = setup({ home: 'listed' });
+      vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+      const open = vi.spyOn(transport, 'sdlcHomeOpen').mockResolvedValueOnce(openOf(NAMES.map((n) => homeRowOf(n, 'Stage'))));
+      await vm.init();
+      const before = vm.rows();
+      expect(before.length).toBe(3);
+      open.mockRejectedValueOnce(new Error(failure));
+      vm.windowFocused();
+      await vi.waitFor(() => expect(toastText()).toContain(`Could not read the changes: ${failure}`));
+      expect(vm.rows()).toEqual(before);
+      expect(vm.rows().some((r) => r.failed)).toBe(false);
+    });
+  }
+
+  for (const failing of ['sdlcBranches', 'sdlcRunLinks'] as const) {
+    it(`an action-ended refresh whose ${failing} fails keeps the list and the rows on screen (F5)`, async () => {
+      const { vm, transport } = setup({ home: 'listed' });
+      vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+      vi.spyOn(transport, 'sdlcHomeOpen').mockResolvedValue(openOf(NAMES.map((n) => homeRowOf(n, 'Stage'))));
+      await vm.init();
+      const before = vm.rows().map((r) => [r.change, r.title]);
+      expect(before.length).toBe(3);
+      vi.spyOn(transport, failing).mockRejectedValue(new Error('the read failed'));
+      await vm.discardLeftovers([]);
+      await flush();
+      expect(toastText()).toContain('Could not read the workspace: the read failed');
+      expect(vm.rows().map((r) => [r.change, r.title])).toEqual(before);
+      expect(vm.shownSystem()).toBe('commerce');
+    });
+  }
+
+  it('a failed first stage read marks each row unread', async () => {
+    const { vm, transport } = setup({ home: 'listed' });
+    vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+    vi.spyOn(transport, 'sdlcHomeOpen').mockRejectedValue(new Error('the ai-sdlc program refused: nope'));
+    await vm.init();
+    expect(vm.rows().map((r) => r.change)).toEqual(NAMES);
+    expect(vm.rows().every((r) => r.failed)).toBe(true);
+    expect(toastText()).toContain('Could not read the changes: the ai-sdlc program refused: nope');
+  });
+
+  it('an older plugin takes today\'s path', async () => {
+    const { vm, transport } = setup();
+    const state = vi.spyOn(transport, 'sdlcState');
+    await vm.init();
+    expect(state).toHaveBeenCalledTimes(1);
+    expect(state.mock.calls[0][1].length).toBeGreaterThan(0);
+    expect(vm.rows().length).toBe(7);
+    expect(vm.systemChoice()).toEqual([]);
+    expect(vm.finishedCount()).toBe(0);
+  });
+
+  it('an update to 1.3.0 is picked up on window focus', async () => {
+    const { vm, transport } = setup();
+    const list = vi.spyOn(transport, 'sdlcHomeList');
+    const state = vi.spyOn(transport, 'sdlcState');
+    await vm.init();
+    expect(state).toHaveBeenCalledTimes(1);
+    list.mockResolvedValue(listedOf('bob', ['bob', 'kata'], ['b1', 'b2']));
+    vi.spyOn(transport, 'sdlcHomeOpen').mockImplementation(async (_f, _s, shown) => openOf(shown.map((n) => homeRowOf(n, `Stage ${n}`))));
+    vm.windowFocused();
+    await vi.waitFor(() => expect(vm.rows().map((r) => `${r.system}/${r.change}`)).toEqual(['bob/b1', 'bob/b2']));
+    await vi.waitFor(() => expect(vm.rows().map((r) => r.label?.text)).toEqual(['Stage b1', 'Stage b2']));
+    expect(vm.shownSystem()).toBe('bob');
+    expect(state).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('SdlcHomeViewModel removing a merged change\'s copy', () => {
+  async function homeWith(actions: HomeAction[]) {
+    const ctx = setup({ home: 'listed' });
+    vi.spyOn(ctx.transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+    const open = vi.spyOn(ctx.transport, 'sdlcHomeOpen').mockResolvedValue(openOf(NAMES.map((n, i) => homeRowOf(n, 'Stage', actions[i]))));
+    const checked = vi.spyOn(ctx.transport, 'sdlcHomePullRequests').mockResolvedValue({ rows: [], problems: [] });
+    await ctx.vm.init();
+    open.mockClear();
+    open.mockResolvedValue(openOf(NAMES.map((n) => homeRowOf(n, 'Stage')), { check: [NAMES[0]] }));
+    return { ...ctx, open, checked };
+  }
+
+  it("removing the copy from the home goes through the change page's removal", async () => {
+    const { vm, transport, open, checked } = await homeWith(['remove-copy', 'workflow', 'workflow']);
+    const remove = vi.spyOn(transport, 'sdlcRemoveCopy').mockResolvedValue({ outcome: 'removed', kept: [] });
+    vm.askRemoveCopy(NAMES[0]);
+    expect(vm.removeAsked()).toBe(NAMES[0]);
+    await vm.confirmRemoveCopy();
+    expect(remove).toHaveBeenCalledWith({ workspace: vm.current()!.folder, system: 'commerce', change: NAMES[0] });
+    expect(vm.removeAsked()).toBeNull();
+    expect(toastText()).toContain('The copy is removed. The change branch and its commits stay in the master repository.');
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open.mock.calls[0][3]).toBe('action-ended');
+    expect(checked).toHaveBeenCalledTimes(1);
+    expect(checked.mock.calls[0][2]).toEqual([NAMES[0]]);
+  });
+
+  it('declining the removal closes the question and removes nothing', async () => {
+    const { vm, transport } = await homeWith(['remove-copy', 'workflow', 'workflow']);
+    const remove = vi.spyOn(transport, 'sdlcRemoveCopy');
+    vm.askRemoveCopy(NAMES[0]);
+    vm.declineRemoveCopy();
+    expect(vm.removeAsked()).toBeNull();
+    await vm.confirmRemoveCopy();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('the home only asks about a row that offers removal', async () => {
+    const { vm } = await homeWith(['remove-copy', 'workflow', 'open']);
+    vm.askRemoveCopy(NAMES[1]);
+    expect(vm.removeAsked()).toBeNull();
+    vm.askRemoveCopy(NAMES[2]);
+    expect(vm.removeAsked()).toBeNull();
+  });
+
+  const outcomes: { name: string; answer: () => Promise<RemoveOutcome>; toast: string }[] = [
+    { name: 'keep', answer: async () => ({ outcome: 'keep', uncommitted: ['a.txt', 'b.txt'] }), toast: 'The copy holds uncommitted files, so it is kept: a.txt, b.txt' },
+    { name: 'refused', answer: async () => ({ outcome: 'refused', problems: ['branch not merged'] }), toast: 'The plugin did not remove the copy: branch not merged' },
+    { name: 'couldNotRun', answer: async () => ({ outcome: 'couldNotRun', message: 'no node' }), toast: 'The copy was not removed: the plugin could not run: no node' },
+    { name: 'a rejection', answer: async () => Promise.reject(new Error('boom')), toast: 'The copy was not removed: boom' },
+  ];
+  for (const o of outcomes) {
+    it(`each removal outcome is shown: ${o.name}`, async () => {
+      const { vm, transport, open } = await homeWith(['remove-copy', 'workflow', 'workflow']);
+      vi.spyOn(transport, 'sdlcRemoveCopy').mockImplementation(o.answer);
+      vm.askRemoveCopy(NAMES[0]);
+      await vm.confirmRemoveCopy();
+      expect(toastText()).toContain(o.toast);
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(open.mock.calls[0][3]).toBe('action-ended');
     });
   }
 });

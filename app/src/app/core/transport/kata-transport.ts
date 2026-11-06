@@ -8,6 +8,7 @@ import type { Readiness } from '@bindings/Readiness';
 import type { Preset } from '@bindings/Preset';
 import type { KataListing } from '@bindings/KataListing';
 import type { Settings } from '@bindings/Settings';
+import type { WorkspaceChoice } from '@bindings/WorkspaceChoice';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
@@ -61,6 +62,10 @@ import type { HeldRepo } from '@bindings/HeldRepo';
 import type { RunForm } from '@bindings/RunForm';
 import type { RunningStrip } from '@bindings/RunningStrip';
 import type { BuildRunRef } from '@bindings/BuildRunRef';
+import type { HomeList } from '@bindings/HomeList';
+import type { HomeOpen } from '@bindings/HomeOpen';
+import type { HomeChecked } from '@bindings/HomeChecked';
+import type { Refresh } from '@bindings/Refresh';
 import type { BuildPreviewKind } from '@bindings/BuildPreviewKind';
 import type { BuildSection } from '@bindings/BuildSection';
 import type { ReviewView } from '@bindings/ReviewView';
@@ -152,7 +157,9 @@ export abstract class KataTransport {
   abstract sdlcSettings(): Promise<Settings>;
   abstract sdlcSaveSettings(settings: Settings): Promise<void>;
   abstract sdlcWorkspaces(): Promise<WorkspaceEntry[]>;
-  abstract sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]): Promise<void>;
+  abstract sdlcOpenWorkspace(id: string): Promise<WorkspaceChoice>;
+  abstract sdlcAddWorkspace(name: string, folder: string): Promise<WorkspaceChoice>;
+  abstract sdlcRemoveWorkspace(id: string): Promise<WorkspaceChoice>;
   /** The id of the workspace the home opens on, decided in the backend from the saved list; null when there is none. */
   abstract sdlcCurrentWorkspace(): Promise<string | null>;
   abstract sdlcScan(folder: string): Promise<WorkspaceScan>;
@@ -165,6 +172,14 @@ export abstract class KataTransport {
   /** One change as the plugin reports it, with what it shows and offers, from one read. Rejects with the reason when the change cannot be read. */
   abstract sdlcChangeState(folder: string, system: string, change: string): Promise<ChangeView>;
   /** Which of the folders no longer exist. A folder existence check only. */
+  /** The home's list: the shown system's open and finished changes, or `legacy` where the plugin cannot list changes. */
+  abstract sdlcHomeList(workspaceId: string, systems: string[]): Promise<HomeList>;
+  /** The engineer picked a system on the home: the backend remembers it and lists it. */
+  abstract sdlcHomePick(workspaceId: string, system: string, systems: string[]): Promise<HomeList>;
+  /** The open changes of `system`, read alone, as rows; `shown` is the change names on screen and `trigger` what made the home refresh. */
+  abstract sdlcHomeOpen(folder: string, system: string, shown: string[], trigger: Refresh): Promise<HomeOpen>;
+  /** The merge check for the named open changes, side by side. */
+  abstract sdlcHomePullRequests(folder: string, system: string, changes: string[]): Promise<HomeChecked>;
   abstract sdlcMissingFolders(folders: string[]): Promise<string[]>;
   abstract sdlcBranches(master: string): Promise<BranchInfo>;
   /** A change opened from one resolution of where it lives: its view, the document asked for, and the build and review when it has a plan. Rejects with the reason when the change cannot be placed. */

@@ -2,6 +2,7 @@
 //! `change.yml` first, else what Kata saved before the program recorded them.
 use crate::ai_sdlc::show::ChangeShow;
 use crate::ai_sdlc::status::Status;
+use crate::ai_sdlc::{Place, Program};
 use crate::prs::{PrEntry, PrStateKind};
 use serde::Serialize;
 
@@ -185,6 +186,32 @@ pub fn legacy_entries(workspace_id: &str, system: &str, change: &str) -> Vec<PrE
         .find(|r| r.workspace_id == workspace_id && r.system == system && r.change == change)
         .map(|r| r.repos)
         .unwrap_or_default()
+}
+
+/// The change's pull requests as the page and the home read them: the plugin's record in `change.yml` first,
+/// else what an earlier version of Kata saved (only when `workspace_id` is known). With `refresh` the plugin
+/// also asks GitHub for each state, which starts `gh` and is slow; pull requests an earlier version of Kata
+/// saved are not asked about, since the plugin does not know them. Without it nothing leaves this machine.
+pub fn read_view(
+    program: &Program,
+    place: &Place,
+    workspace_id: Option<&str>,
+    system: &str,
+    change: &str,
+    refresh: bool,
+) -> Result<PullRequestsView, String> {
+    let legacy = workspace_id
+        .map(|id| legacy_entries(id, system, change))
+        .unwrap_or_default();
+    let shown = program
+        .change_show(place, change, refresh && legacy.is_empty())
+        .map_err(|e| e.to_string())?;
+    // A change an earlier version of Kata declared done is done from its record; any other is done once the
+    // master's pull request is recorded in `change.yml`, on every clone, unless this machine's ledger shows the
+    // latest `change.done` failed (its final push of the master).
+    let failed_here = legacy.is_empty()
+        && done_failed_here(&program.status(place, change).map_err(|e| e.to_string())?);
+    Ok(view(&shown, &legacy, failed_here))
 }
 
 #[cfg(test)]
@@ -533,5 +560,160 @@ mod tests {
         let got = done_view(&show(vec![]), &[legacy("old", 3)], &status);
         assert!(got.done);
         assert!(!got.declare_offered);
+    }
+
+    mod read {
+        use super::*;
+        use crate::testutil;
+        use std::path::{Path, PathBuf};
+
+        const SYSTEM: &str = "demo";
+        const CHANGE: &str = "2026-11-01-greeting";
+        const MARKER: &str = r#"{"version":1,"systems":{"demo":{"repos":["app"]}}}"#;
+
+        fn program() -> Program {
+            Program {
+                node: "node".into(),
+                entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts"),
+            }
+        }
+
+        struct Fx {
+            dir: tempfile::TempDir,
+            place: Place,
+            copy: PathBuf,
+        }
+
+        fn fx() -> Fx {
+            let dir = tempfile::tempdir().unwrap();
+            let ws = dir.path().to_path_buf();
+            let master = testutil::repo(&ws, "ai-sdlc");
+            testutil::commit_file(&master, ".ai-sdlc.json", MARKER, "marker");
+            testutil::repo(&ws, "app");
+            let place = Place {
+                master,
+                workspace: ws.clone(),
+            };
+            let started = program()
+                .run(
+                    &[
+                        "change", "start", "--json", "--system", SYSTEM, "--change", CHANGE,
+                        "--type", "feat", "--scope", "demo", "--title", "Greeting",
+                    ],
+                    &place,
+                )
+                .unwrap();
+            assert_eq!(started["outcome"], "passed", "{started}");
+            let copy = ws.join(".ai-sdlc").join("copies").join(CHANGE);
+            Fx { dir, place, copy }
+        }
+
+        impl Fx {
+            /// Records pull requests in the change's `change.yml`, as `change.done` would.
+            fn record(&self, repos: &[&str]) {
+                let file = self
+                    .copy
+                    .join("intent")
+                    .join(SYSTEM)
+                    .join(CHANGE)
+                    .join("change.yml");
+                let mut text = std::fs::read_to_string(&file).unwrap();
+                if !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                text.push_str("pullRequests:\n");
+                for (i, repo) in repos.iter().enumerate() {
+                    text.push_str(&format!(
+                        "  - repo: \"{repo}\"\n    url: \"https://github.com/o/{repo}/pull/{n}\"\n    number: {n}\n    pushed: \"abc1234\"\n",
+                        n = i + 1
+                    ));
+                }
+                std::fs::write(file, text).unwrap();
+            }
+
+            /// Writes this machine's ledger with one `change.done` run of the given outcome.
+            fn ledger(&self, outcome: &str) {
+                let common = testutil::run(
+                    &self.place.master,
+                    &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+                )
+                .unwrap();
+                let folder = Path::new(common.trim())
+                    .join("ai-sdlc")
+                    .join(SYSTEM)
+                    .join(CHANGE);
+                std::fs::create_dir_all(&folder).unwrap();
+                let ledger = serde_json::json!({
+                    "version": 1, "system": SYSTEM, "change": CHANGE, "repo": "master",
+                    "path": self.place.master.display().to_string(),
+                    "runs": [{
+                        "event": "change.done", "repo": "master", "key": "abc", "subject": null,
+                        "outcome": outcome, "at": "2026-11-05T10:00:00.000Z",
+                        "hooks": [], "problems": [], "failed": null
+                    }],
+                    "gateBlocks": {}
+                });
+                std::fs::write(folder.join("master.json"), ledger.to_string()).unwrap();
+            }
+
+            fn done(&self) -> bool {
+                read_view(&program(), &self.place, None, SYSTEM, CHANGE, false)
+                    .unwrap()
+                    .done
+            }
+        }
+
+        /// Puts `AI_SDLC_GH` back to what it was, whatever happens in the test.
+        struct GhEnv(Option<std::ffi::OsString>);
+
+        impl GhEnv {
+            fn set(value: String) -> GhEnv {
+                let guard = GhEnv(std::env::var_os("AI_SDLC_GH"));
+                std::env::set_var("AI_SDLC_GH", value);
+                guard
+            }
+        }
+
+        impl Drop for GhEnv {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(v) => std::env::set_var("AI_SDLC_GH", v),
+                    None => std::env::remove_var("AI_SDLC_GH"),
+                }
+            }
+        }
+
+        #[test]
+        #[serial_test::serial]
+        fn declared_is_read_from_change_yml_without_github() {
+            let fx = fx();
+            // A gh that records being started and fails.
+            let marker = fx.dir.path().join("gh-started");
+            let script = fx.dir.path().join("fake-gh.js");
+            std::fs::write(
+                &script,
+                format!(
+                    "require('fs').writeFileSync({:?}, 'x'); process.exit(1);",
+                    marker.display().to_string()
+                ),
+            )
+            .unwrap();
+            let _gh =
+                GhEnv::set(serde_json::json!(["node", script.display().to_string()]).to_string());
+
+            // No record: not done.
+            assert!(!fx.done());
+            // The master's pull request recorded: done.
+            fx.record(&["app", "master"]);
+            assert!(fx.done());
+            // The latest change.done failed on this machine: not done.
+            fx.ledger("failed");
+            assert!(!fx.done());
+            // It passed: done again.
+            fx.ledger("passed");
+            assert!(fx.done());
+
+            assert!(!marker.exists(), "the read started gh");
+        }
     }
 }

@@ -4,6 +4,8 @@ import { ProgressStore } from './progress.store';
 
 /* The plain verb each step's lines must contain, written out here so a line cannot drift from what the step does. */
 const VERB: Record<ProgressStepId, string> = {
+  'listing-changes': 'listing',
+  'reading-open-stages': 'reading',
   'reading-stages': 'reading',
   'reading-change': 'reading',
   'reading-diff': 'reading',

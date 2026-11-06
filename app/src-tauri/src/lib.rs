@@ -5,6 +5,7 @@ mod history;
 mod rename_change;
 mod running;
 mod runs;
+mod sdlc_home;
 mod sdlc_state;
 mod start_change;
 mod versions;
@@ -391,7 +392,10 @@ struct PluginTools;
 impl PluginTools {
     fn program(workspace: &Path) -> Result<build_host::ProgramTools, sdlc::ai_sdlc::ProgramError> {
         match state_inputs(&workspace.display().to_string()) {
-            (Some(program), _) => Ok(build_host::ProgramTools::new(program)),
+            (Some(program), readiness) => Ok(build_host::ProgramTools::new(
+                program,
+                sdlc::plugin::lists_changes(&readiness),
+            )),
             (None, sdlc::plugin::Readiness::Blocked { message, .. }) => {
                 Err(sdlc::ai_sdlc::ProgramError::CouldNotRun { message })
             }
@@ -425,12 +429,21 @@ impl build_host::Tools for PluginTools {
             .map_err(|e| e.to_string())?
             .exec(command, place)
     }
-    fn states(
+    fn change_state(
         &self,
         place: &sdlc::ai_sdlc::Place,
         system: &str,
-    ) -> Result<Vec<sdlc::ai_sdlc::state::ChangeState>, sdlc::ai_sdlc::ProgramError> {
-        Self::program(&place.workspace)?.states(place, system)
+        change: &str,
+    ) -> Result<Option<sdlc::ai_sdlc::state::ChangeState>, sdlc::ai_sdlc::ProgramError> {
+        Self::program(&place.workspace)?.change_state(place, system, change)
+    }
+    fn other_copies(
+        &self,
+        place: &sdlc::ai_sdlc::Place,
+        system: &str,
+        change: &str,
+    ) -> Result<Vec<std::path::PathBuf>, sdlc::ai_sdlc::ProgramError> {
+        Self::program(&place.workspace)?.other_copies(place, system, change)
     }
     fn plan(
         &self,
@@ -717,9 +730,29 @@ fn sdlc_workspaces() -> Vec<sdlc::store::WorkspaceEntry> {
     sdlc::store::load_workspaces()
 }
 
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 #[tauri::command]
-fn sdlc_save_workspaces(workspaces: Vec<sdlc::store::WorkspaceEntry>) -> Result<(), String> {
-    sdlc::store::save_workspaces(&workspaces).map_err(|e| e.to_string())
+async fn sdlc_open_workspace(id: String) -> Result<sdlc::store::WorkspaceChoice, String> {
+    sdlc::store::open_workspace(&id, now_secs()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sdlc_add_workspace(
+    name: String,
+    folder: String,
+) -> Result<sdlc::store::WorkspaceChoice, String> {
+    sdlc::store::add_workspace(&name, &folder, now_secs()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sdlc_remove_workspace(id: String) -> Result<sdlc::store::WorkspaceChoice, String> {
+    sdlc::store::remove_workspace(&id).map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -1299,6 +1332,88 @@ fn sdlc_state(
     Ok(sdlc_state::workspace_view(views))
 }
 
+/// The home's list for a saved workspace: the system shown (the one used last, else the first) with its open and
+/// finished changes, or `Legacy` where the plugin cannot list changes.
+#[tauri::command(async)]
+fn sdlc_home_list(
+    workspace_id: String,
+    systems: Vec<String>,
+) -> Result<sdlc::open_changes::HomeList, String> {
+    let entry = sdlc::store::load_workspaces()
+        .into_iter()
+        .find(|w| w.id == workspace_id)
+        .ok_or_else(|| "that workspace is not saved".to_string())?;
+    let (program, readiness) = state_inputs(&entry.folder);
+    let Some(program) = program else {
+        return Ok(sdlc::open_changes::HomeList::Legacy);
+    };
+    sdlc_home::home_list(
+        &program,
+        &readiness,
+        entry.last_system.as_deref(),
+        Path::new(&entry.folder),
+        &systems,
+    )
+}
+
+/// The engineer picked a system on the home: remember it, then list it.
+#[tauri::command(async)]
+fn sdlc_home_pick(
+    workspace_id: String,
+    system: String,
+    systems: Vec<String>,
+) -> Result<sdlc::open_changes::HomeList, String> {
+    if !systems.contains(&system) {
+        return Err(format!("{system} is not a system of this workspace"));
+    }
+    sdlc::store::remember_system(&workspace_id, &system).map_err(|e| e.to_string())?;
+    sdlc_home_list(workspace_id, systems)
+}
+
+/// The open changes of the shown system, read alone, as rows.
+#[tauri::command(async)]
+fn sdlc_home_open(
+    control: State<'_, RunControl>,
+    memory: State<'_, sdlc_home::HomeMemory>,
+    folder: String,
+    system: String,
+    shown: Vec<String>,
+    trigger: sdlc::open_changes::Refresh,
+) -> Result<sdlc::open_changes::HomeOpen, String> {
+    let (program, readiness) = state_inputs(&folder);
+    let program = program.ok_or_else(|| "the AI-SDLC mode cannot run here".to_string())?;
+    sdlc_home::home_open(
+        &program,
+        &readiness,
+        &|s, c| live_facts(&control, s, c),
+        Path::new(&folder),
+        &system,
+        &shown,
+        trigger,
+        &memory,
+    )
+}
+
+/// The merge check for the named open changes, side by side.
+#[tauri::command(async)]
+fn sdlc_home_pull_requests(
+    memory: State<'_, sdlc_home::HomeMemory>,
+    folder: String,
+    system: String,
+    changes: Vec<String>,
+) -> Result<sdlc::open_changes::HomeChecked, String> {
+    let (program, readiness) = state_inputs(&folder);
+    let program = program.ok_or_else(|| "the AI-SDLC mode cannot run here".to_string())?;
+    sdlc_home::home_pull_requests(
+        &program,
+        &readiness,
+        Path::new(&folder),
+        &system,
+        &changes,
+        &memory,
+    )
+}
+
 /// One change of a system, as [`sdlc_state`] shows it.
 #[tauri::command(async)]
 fn sdlc_change_state(
@@ -1761,18 +1876,14 @@ fn sdlc_pull_requests_view(
     let place = program
         .resolve(Path::new(&folder))
         .map_err(|e| e.to_string())?;
-    let legacy = sdlc::pull_requests::legacy_entries(&workspace_id, &system, &change);
-    let shown = program
-        .change_show(&place, &change, refresh && legacy.is_empty())
-        .map_err(|e| e.to_string())?;
-    // A change an earlier version of Kata declared done is done from its record; any other is done once the
-    // master's pull request is recorded in `change.yml`, on every clone, unless this machine's ledger shows the
-    // latest `change.done` failed (its final push of the master).
-    let failed_here = legacy.is_empty()
-        && sdlc::pull_requests::done_failed_here(
-            &program.status(&place, &change).map_err(|e| e.to_string())?,
-        );
-    Ok(sdlc::pull_requests::view(&shown, &legacy, failed_here))
+    sdlc::pull_requests::read_view(
+        &program,
+        &place,
+        Some(&workspace_id),
+        &system,
+        &change,
+        refresh,
+    )
 }
 
 /// Relay a non-JSON stdout/stderr line as a warn-level log event.
@@ -2138,6 +2249,7 @@ pub fn run() {
             }
         })
         .manage(RunControl::default())
+        .manage(sdlc_home::HomeMemory::default())
         .manage(Arc::new(history::RunHistory::default()))
         .manage(Arc::new(running::OpenedMarks::default()))
         .setup(|app| {
@@ -2206,7 +2318,9 @@ pub fn run() {
             load_build_layout,
             save_build_layout,
             sdlc_workspaces,
-            sdlc_save_workspaces,
+            sdlc_open_workspace,
+            sdlc_add_workspace,
+            sdlc_remove_workspace,
             sdlc_scan,
             sdlc_context_health,
             sdlc_read_context,
@@ -2236,6 +2350,10 @@ pub fn run() {
             sdlc_review_record,
             sdlc_plugin_readiness,
             sdlc_state,
+            sdlc_home_list,
+            sdlc_home_pick,
+            sdlc_home_open,
+            sdlc_home_pull_requests,
             sdlc_build_board,
             sdlc_review_standing,
             sdlc_change_state,

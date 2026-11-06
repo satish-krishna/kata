@@ -11,6 +11,7 @@ import type { Readiness } from '@bindings/Readiness';
 import type { Preset } from '@bindings/Preset';
 import type { KataListing } from '@bindings/KataListing';
 import type { Settings } from '@bindings/Settings';
+import type { WorkspaceChoice } from '@bindings/WorkspaceChoice';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
@@ -60,6 +61,10 @@ import type { ChangeKey } from '@bindings/ChangeKey';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import type { CloseOutcome } from '@bindings/CloseOutcome';
 import type { BuildRunRef } from '@bindings/BuildRunRef';
+import type { HomeList } from '@bindings/HomeList';
+import type { HomeOpen } from '@bindings/HomeOpen';
+import type { HomeChecked } from '@bindings/HomeChecked';
+import type { Refresh } from '@bindings/Refresh';
 import type { BuildPreviewKind } from '@bindings/BuildPreviewKind';
 import type { BuildSection } from '@bindings/BuildSection';
 import type { ReviewView } from '@bindings/ReviewView';
@@ -103,7 +108,9 @@ export class TauriTransport extends KataTransport {
   sdlcSettings() { return this.ipc.invoke<Settings>('sdlc_settings'); }
   sdlcSaveSettings(settings: Settings) { return this.ipc.invoke<void>('sdlc_save_settings', { settings }); }
   sdlcWorkspaces() { return this.ipc.invoke<WorkspaceEntry[]>('sdlc_workspaces'); }
-  sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]) { return this.ipc.invoke<void>('sdlc_save_workspaces', { workspaces }); }
+  sdlcOpenWorkspace(id: string) { return this.ipc.invoke<WorkspaceChoice>('sdlc_open_workspace', { id }); }
+  sdlcAddWorkspace(name: string, folder: string) { return this.ipc.invoke<WorkspaceChoice>('sdlc_add_workspace', { name, folder }); }
+  sdlcRemoveWorkspace(id: string) { return this.ipc.invoke<WorkspaceChoice>('sdlc_remove_workspace', { id }); }
   sdlcCurrentWorkspace() { return this.ipc.invoke<string | null>('sdlc_current_workspace'); }
   sdlcScan(folder: string) { return this.ipc.invoke<WorkspaceScan>('sdlc_scan', { folder }); }
   sdlcContextHealth(folder: string, master: string, system: string, repo: string) { return this.ipc.invoke<ContextState>('sdlc_context_health', { folder, master, system, repo }); }
@@ -111,6 +118,10 @@ export class TauriTransport extends KataTransport {
   sdlcInstructions(folder: string, masterRepo: string) { return this.ipc.invoke<InstructionsState>('sdlc_instructions', { folder, masterRepo }); }
   sdlcState(folder: string, systems: string[]) { return this.ipc.invoke<WorkspaceView>('sdlc_state', { folder, systems }); }
   sdlcChangeState(folder: string, system: string, change: string) { return this.ipc.invoke<ChangeView>('sdlc_change_state', { folder, system, change }); }
+  sdlcHomeList(workspaceId: string, systems: string[]) { return this.ipc.invoke<HomeList>('sdlc_home_list', { workspaceId, systems }); }
+  sdlcHomePick(workspaceId: string, system: string, systems: string[]) { return this.ipc.invoke<HomeList>('sdlc_home_pick', { workspaceId, system, systems }); }
+  sdlcHomeOpen(folder: string, system: string, shown: string[], trigger: Refresh) { return this.ipc.invoke<HomeOpen>('sdlc_home_open', { folder, system, shown, trigger }); }
+  sdlcHomePullRequests(folder: string, system: string, changes: string[]) { return this.ipc.invoke<HomeChecked>('sdlc_home_pull_requests', { folder, system, changes }); }
   sdlcMissingFolders(folders: string[]) { return this.ipc.invoke<string[]>('sdlc_missing_folders', { folders }); }
   sdlcBranches(master: string) { return this.ipc.invoke<BranchInfo>('sdlc_branches', { master }); }
   sdlcOpenChange(change: ChangeRef, doc: string) { return this.ipc.invoke<OpenedChange>('sdlc_open_change', { change, doc }); }

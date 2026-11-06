@@ -88,7 +88,6 @@ export type DocView = 'list' | 'section' | 'whole';
 const SESSION_RUN = 'document';
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-const nowSecs = (): number => Math.floor(Date.now() / 1000);
 const BUSY = 'Another task is already running.';
 /** The stage steps that mean the plan is accepted. */
 
@@ -1175,11 +1174,10 @@ export class ChangePageViewModel {
 
   /** Switching workspace leaves the change: it belongs to the workspace that was open. */
   async selectWorkspace(id: string): Promise<void> {
-    const next = this.workspaces().map((w) => (w.id === id ? { ...w, last_opened: nowSecs() } : w));
-    this.workspaces.set(next);
     try {
-      await this.transport.sdlcSaveWorkspaces(next);
-      this.currentId.set(await this.transport.sdlcCurrentWorkspace());
+      const choice = await this.transport.sdlcOpenWorkspace(id);
+      this.workspaces.set(choice.workspaces);
+      this.currentId.set(choice.current);
       await this.versions.refresh();
     } catch (e) {
       this.toasts.error(`Could not save the workspace list: ${message(e)}`);
@@ -1512,11 +1510,10 @@ export class ChangePageViewModel {
     if (asked === null || asked.system !== system || asked.change !== change) return;
     const target = workspaces.find((w) => w.id === asked.workspaceId);
     if (target === undefined || target.id === this.current()?.id) return;
-    const next = workspaces.map((w) => (w.id === target.id ? { ...w, last_opened: nowSecs() } : w));
-    this.workspaces.set(next);
     try {
-      await this.transport.sdlcSaveWorkspaces(next);
-      this.currentId.set(await this.transport.sdlcCurrentWorkspace());
+      const choice = await this.transport.sdlcOpenWorkspace(target.id);
+      this.workspaces.set(choice.workspaces);
+      this.currentId.set(choice.current);
       await this.versions.refresh();
     } catch (e) {
       this.toasts.error(`Could not save the workspace list: ${message(e)}`);
@@ -1611,8 +1608,15 @@ export class ChangePageViewModel {
     }
     if (seq !== this.loadSeq) return;
     this.workspaces.set(workspaces);
-    this.currentId.set(await this.transport.sdlcCurrentWorkspace());
-    await this.openAskedWorkspace(workspaces, system, name);
+    try {
+      this.currentId.set(await this.transport.sdlcCurrentWorkspace());
+      await this.openAskedWorkspace(workspaces, system, name);
+    } catch (e) {
+      failRead();
+      this.toasts.error(`Could not read the workspace list: ${message(e)}`);
+      finish('not-found', null, null);
+      return;
+    }
     if (seq !== this.loadSeq) return;
     const w = this.current();
     if (!w) {

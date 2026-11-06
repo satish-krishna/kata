@@ -7,6 +7,7 @@ import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { Preset } from '@bindings/Preset';
 import type { KataListing } from '@bindings/KataListing';
 import type { Settings } from '@bindings/Settings';
+import type { WorkspaceChoice } from '@bindings/WorkspaceChoice';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
@@ -70,6 +71,10 @@ import type { RunForm } from '@bindings/RunForm';
 import type { Versions } from '@bindings/Versions';
 import type { RunningStrip } from '@bindings/RunningStrip';
 import type { BuildRunRef } from '@bindings/BuildRunRef';
+import type { HomeList } from '@bindings/HomeList';
+import type { HomeOpen } from '@bindings/HomeOpen';
+import type { HomeChecked } from '@bindings/HomeChecked';
+import type { Refresh } from '@bindings/Refresh';
 import type { BuildPreviewKind } from '@bindings/BuildPreviewKind';
 import type { BuildSection } from '@bindings/BuildSection';
 import type { ReviewView } from '@bindings/ReviewView';
@@ -293,12 +298,14 @@ export class MockTransport extends KataTransport {
   sdlcSettings(): Promise<Settings> { return Promise.resolve(this.sdlc.getSettings()); }
   sdlcSaveSettings(settings: Settings): Promise<void> { this.sdlc.saveSettings(settings); return Promise.resolve(); }
   sdlcWorkspaces(): Promise<WorkspaceEntry[]> { return Promise.resolve(this.sdlc.getWorkspaces()); }
-  sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]): Promise<void> { this.sdlc.saveWorkspaces(workspaces); return Promise.resolve(); }
+  sdlcOpenWorkspace(id: string): Promise<WorkspaceChoice> {
+    try { return Promise.resolve(this.sdlc.openWorkspace(id)); } catch (e) { return Promise.reject(e); }
+  }
+  sdlcAddWorkspace(name: string, folder: string): Promise<WorkspaceChoice> { return Promise.resolve(this.sdlc.addWorkspace(name, folder)); }
+  sdlcRemoveWorkspace(id: string): Promise<WorkspaceChoice> { return Promise.resolve(this.sdlc.removeWorkspace(id)); }
   /** Same rule as the backend's `current_workspace`: the highest last_opened, the earliest in the list on a tie. */
   sdlcCurrentWorkspace(): Promise<string | null> {
-    let best: WorkspaceEntry | null = null;
-    for (const w of this.sdlc.getWorkspaces()) if (best === null || w.last_opened > best.last_opened) best = w;
-    return Promise.resolve(best?.id ?? null);
+    return Promise.resolve(this.sdlc.currentWorkspace());
   }
   sdlcScan(folder: string): Promise<WorkspaceScan> {
     // The first scan of the demo folder that needs setup is slow, so the "Checking workspace" steps are visible.
@@ -321,6 +328,11 @@ export class MockTransport extends KataTransport {
   }
   /** A test or a demo changes what the workspace holds for a change; the next `sdlcChangeState` and `sdlcState` show it. */
   patchChange(change: string, patch: Partial<ChangeInfo>): void { this.sdlc.patch(change, patch); }
+  /** Scripted from the home fixtures; `?demo=old-plugin` answers `legacy`, `?demo=finished-many` adds a second system and sixty finished changes. */
+  async sdlcHomeList(_workspaceId: string, systems: string[]): Promise<HomeList> { return this.sdlc.homeList(systems, await this.sdlcPluginReadiness(null)); }
+  async sdlcHomePick(_workspaceId: string, system: string, systems: string[]): Promise<HomeList> { return this.sdlc.homePick(system, systems, await this.sdlcPluginReadiness(null)); }
+  async sdlcHomeOpen(folder: string, system: string, shown: string[], trigger: Refresh): Promise<HomeOpen> { return this.sdlc.homeOpen(system, shown, trigger, await this.sdlcPluginReadiness(folder)); }
+  async sdlcHomePullRequests(folder: string, system: string, changes: string[]): Promise<HomeChecked> { return this.sdlc.homePullRequests(system, changes, await this.sdlcPluginReadiness(folder)); }
   /** Every demo folder is there. */
   sdlcMissingFolders(_folders: string[]): Promise<string[]> { return Promise.resolve([]); }
   sdlcBranches(_master: string): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches()); }

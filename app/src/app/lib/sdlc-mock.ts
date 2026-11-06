@@ -71,6 +71,13 @@ import type { ReadyGate } from '@bindings/ReadyGate';
 import type { StateDocument } from '@bindings/StateDocument';
 import type { SystemView } from '@bindings/SystemView';
 import type { WorkspaceView } from '@bindings/WorkspaceView';
+import type { FinishedChange } from '@bindings/FinishedChange';
+import type { HomeChecked } from '@bindings/HomeChecked';
+import type { HomeList } from '@bindings/HomeList';
+import type { HomeOpen } from '@bindings/HomeOpen';
+import type { HomeReading } from '@bindings/HomeReading';
+import type { HomeRow } from '@bindings/HomeRow';
+import type { Refresh } from '@bindings/Refresh';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
@@ -86,6 +93,7 @@ import type { Snapshot } from '@bindings/Snapshot';
 import type { ParsedFinding } from '@bindings/ParsedFinding';
 import type { Severity } from '@bindings/Severity';
 import type { Concern } from '@bindings/Concern';
+import type { WorkspaceChoice } from '@bindings/WorkspaceChoice';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { DEMO_SETUP_FOLDER, DEMO_WORKSPACE_FOLDER } from './demo';
@@ -100,6 +108,8 @@ export const MOCK_CHECKOUT = `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`;
 /** What the plugin no longer lists: the message the backend gives for a change it cannot place. */
 export const MOCK_NOT_LISTED = "This change's copy was removed and the plugin no longer lists it.";
 export const MOCK_SYSTEM = 'commerce';
+/** The second system `?demo=finished-many` adds. */
+export const MOCK_SECOND_SYSTEM = 'payments';
 export const MOCK_BASE = 'main';
 export const MOCK_NEW_CHANGE = '2026-10-18-new-change';
 
@@ -696,7 +706,39 @@ export class SdlcMock {
   getSettings(): Settings { return { ...this.settings }; }
   saveSettings(s: Settings): void { this.settings = { ...s }; }
   getWorkspaces(): WorkspaceEntry[] { return this.workspaces.map((w) => ({ ...w })); }
-  saveWorkspaces(w: WorkspaceEntry[]): void { this.workspaces = w.map((e) => ({ ...e })); }
+  /** The workspace the backend opens on: the highest last_opened, the earliest in the list on a tie. */
+  currentWorkspace(): string | null {
+    let best: WorkspaceEntry | null = null;
+    for (const w of this.workspaces) if (best === null || w.last_opened > best.last_opened) best = w;
+    return best?.id ?? null;
+  }
+
+  private choice(): WorkspaceChoice { return { workspaces: this.getWorkspaces(), current: this.currentWorkspace() }; }
+
+  /** Stamps the way the backend's `store::stamp` does: now, or one past every other entry when one is at or ahead of it. */
+  private stamp(id: string): number {
+    return this.workspaces.filter((w) => w.id !== id).reduce((at, w) => Math.max(at, w.last_opened + 1), Math.floor(Date.now() / 1000));
+  }
+
+  openWorkspace(id: string): WorkspaceChoice {
+    const entry = this.workspaces.find((w) => w.id === id);
+    if (entry === undefined) throw new Error(`no workspace with id ${id}`);
+    entry.last_opened = this.stamp(id);
+    return this.choice();
+  }
+
+  addWorkspace(name: string, folder: string): WorkspaceChoice {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'workspace';
+    let id = slug;
+    for (let n = 2; this.workspaces.some((w) => w.id === id); n++) id = `${slug}-${n}`;
+    this.workspaces.push({ id, name, folder, last_opened: this.stamp(id) });
+    return this.choice();
+  }
+
+  removeWorkspace(id: string): WorkspaceChoice {
+    this.workspaces = this.workspaces.filter((w) => w.id !== id);
+    return this.choice();
+  }
 
   scan(folder: string): WorkspaceScan {
     if (folder === MOCK_SETUP_FOLDER) {
@@ -712,7 +754,7 @@ export class SdlcMock {
       folder,
       repos: MOCK_REPOS,
       master: { kind: 'one', repo: MOCK_MASTER, committed: true },
-      marker: { version: 1, systems: { [MOCK_SYSTEM]: { repos: MOCK_REPOS } } },
+      marker: { version: 1, systems: { [MOCK_SYSTEM]: { repos: MOCK_REPOS }, ...(this.demo === 'finished-many' ? { [MOCK_SECOND_SYSTEM]: { repos: ['commerce-core'] } } : {}) } },
       marker_error: null,
     };
   }
@@ -784,6 +826,66 @@ export class SdlcMock {
     if (!found) throw new Error(MOCK_NOT_LISTED);
     return changeViewOf(found, readiness, this.tasksOf(found), {}, this.copyOf(changeName));
   }
+  // ---- the home (open changes alone) ----
+
+  /** The system the engineer picked last, like the saved workspace's `last_system`. */
+  private rememberedSystem: string | null = null;
+  /** The open changes whose merge check has answered, like the backend's memory of the last check. */
+  private readonly checked = new Set<string>();
+
+  /** Like `shown_system`: the remembered system if the workspace still has it, else the first. */
+  private shownSystem(systems: string[]): string | null {
+    return this.rememberedSystem !== null && systems.includes(this.rememberedSystem) ? this.rememberedSystem : (systems[0] ?? null);
+  }
+  /** `?demo=finished-many`: sixty finished changes, merged and rejected alternately, newest first. */
+  private finishedChanges(system: string): FinishedChange[] {
+    if (this.demo !== 'finished-many' || system !== MOCK_SYSTEM) return [];
+    return Array.from({ length: 60 }, (_, i): FinishedChange => {
+      const n = String(60 - i).padStart(2, '0');
+      return { change: `2026-09-${n}-finished-change-${n}`, title: `Finished change ${n}`, finished: i % 2 === 0 ? 'merged' : 'rejected' };
+    });
+  }
+  /** Like the backend's `sdlc_home_list`: `legacy` on a plugin older than 1.3.0 (`?demo=old-plugin`), else the shown system's open and finished changes. */
+  homeList(systems: string[], readiness: Readiness): HomeList {
+    if (this.demo === 'old-plugin') return { kind: 'legacy' };
+    const system = this.shownSystem(systems);
+    const open = system === MOCK_SYSTEM ? this.stagePass().map((c) => ({ change: c.change, title: null })) : [];
+    const finished = system === null ? [] : this.finishedChanges(system);
+    const blocked = readiness.kind === 'blocked';
+    return { kind: 'listed', system, systems, open, finished, finishedCount: finished.length, canStartChange: !blocked, startChangeReason: blocked ? readiness.message : null };
+  }
+  /** The engineer picked a system: remembered, then listed. */
+  homePick(system: string, systems: string[], readiness: Readiness): HomeList {
+    if (!systems.includes(system)) throw new Error(`${system} is not a system of this workspace`);
+    this.rememberedSystem = system;
+    return this.homeList(systems, readiness);
+  }
+  /** Like `home_reading`: a declared change reads Done, relabelled once the merge check has answered. */
+  private homeReading(row: ChangeView): HomeReading {
+    const name = row.state.change;
+    const declared = name === MOCK_DONE_CHANGE && !this.demo?.startsWith('done-');
+    if (!declared) return { label: row.offer.label, action: 'workflow' };
+    if (this.checked.has(name) && this.copyRemoval(name).outcome === 'offer') return { label: { step: 'done', text: 'Done · merged, remove the copy', tone: 'warning' }, action: 'remove-copy' };
+    return { label: { step: 'done', text: 'Done · pull requests open', tone: 'success' }, action: 'open' };
+  }
+  private homeRows(system: string, readiness: Readiness): HomeRow[] {
+    if (system !== MOCK_SYSTEM) return [];
+    return this.systemView(system, readiness).changes.map((view) => ({ view, reading: this.homeReading(view) }));
+  }
+  /** Like `sdlc_home_open`: every open change as a row. The merge check is asked about the declared ones, except on a focus refresh; the light list is read again when the names on screen differ. */
+  homeOpen(system: string, shown: string[], trigger: Refresh, readiness: Readiness): HomeOpen {
+    if (this.demo === 'old-plugin') throw new Error('the installed ai-sdlc plugin cannot read open changes alone');
+    const rows = this.homeRows(system, readiness);
+    const names = new Set(rows.map((r) => r.view.state.change));
+    const check = trigger === 'focus' ? [] : rows.filter((r) => r.reading.action !== 'workflow').map((r) => r.view.state.change);
+    return { rows, check, relist: names.size !== new Set(shown).size || shown.some((n) => !names.has(n)), problems: [] };
+  }
+  /** Like `sdlc_home_pull_requests`: the named changes, checked, as the rows they now read. */
+  homePullRequests(system: string, changes: string[], readiness: Readiness): HomeChecked {
+    for (const c of changes) this.checked.add(c);
+    return { rows: this.homeRows(system, readiness).filter((r) => changes.includes(r.view.state.change)), problems: [] };
+  }
+
   // ---- the change's own copy ----
 
   /** The finished change still has its own copy, as a change the plugin started does until it is rejected or its copy is removed. */

@@ -4,6 +4,7 @@
 //! limit, and kills the whole process tree on a timeout. Every answer is read by [`answer_of`]: a step
 //! (an event, a commit, a change command) through [`Program::step`] as a typed [`StepOutcome`], and a
 //! read through [`Program::run`] as its JSON.
+pub mod list;
 pub mod show;
 pub mod state;
 pub mod status;
@@ -27,6 +28,7 @@ pub const NEEDS_NODE: &str = "ai-sdlc needs Node.js 22.18 or later";
 const PLACED: &[&str] = &[
     "resolve",
     "state",
+    "list",
     "stale",
     "instructions",
     "run",
@@ -335,6 +337,21 @@ impl Program {
         let workspace = place.workspace.display().to_string();
         let args = with_place(command, &master, &workspace);
         self.call(&args, &place.workspace)
+    }
+
+    /// Runs `command` in `workspace` with no master given, so the program finds the master in process as
+    /// `resolve` does: one Node start where [`Program::resolve`] then [`Program::run`] takes two. For a command
+    /// that takes `--workspace` (`list`, `state`); the answer is read as `run` reads it.
+    pub fn run_in(&self, command: &[&str], workspace: &Path) -> Result<Value, ProgramError> {
+        if !self.entry.is_file() {
+            return Err(ProgramError::TooOld {
+                found: format!("{} does not exist", self.entry.display()),
+            });
+        }
+        let ws = workspace.display().to_string();
+        let mut args = command.to_vec();
+        args.extend(["--workspace", &ws]);
+        self.call(&args, workspace)
     }
 
     /// Runs a step (`command`) in `place` and reads its answer through [`answer_of`].

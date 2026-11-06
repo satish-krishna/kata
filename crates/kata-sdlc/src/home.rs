@@ -57,14 +57,8 @@ pub fn resolve(
         }));
     }
     let place = program.resolve(workspace).map_err(unanswered)?;
-    let answer = program
-        .run(&["state", "--json", "--system", system], &place)
-        .map_err(unanswered)?;
-    let found = state::read_state(answer)
+    let found = state::one(program, &place, system, change)
         .map_err(unanswered)?
-        .changes
-        .into_iter()
-        .find(|c| c.change == change)
         .ok_or(HomeError::NotListed)?;
     let folder = PathBuf::from(&found.folder);
     if !folder.is_dir() {
@@ -210,6 +204,99 @@ status: accepted
             "{err:?}"
         );
         assert_eq!(err.to_string(), LISTED);
+    }
+
+    /// A program that logs its arguments, one JSON line each, and runs the vendored program.
+    fn recording_program(dir: &Path, log: &Path) -> Program {
+        let entry = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts");
+        let quoted =
+            |p: &Path| serde_json::to_string(&p.to_string_lossy().replace('\\', "/")).unwrap();
+        std::fs::create_dir_all(dir.join("tools")).unwrap();
+        let text = format!(
+            "import {{ appendFileSync }} from 'node:fs';\n\
+             import {{ spawnSync }} from 'node:child_process';\n\
+             appendFileSync({log}, JSON.stringify(process.argv.slice(2)) + '\\n');\n\
+             const r = spawnSync(process.execPath, [{entry}, ...process.argv.slice(2)], {{ encoding: 'utf8' }});\n\
+             process.stdout.write(r.stdout);\n\
+             process.stderr.write(r.stderr);\n\
+             process.exit(r.status ?? 2);\n",
+            log = quoted(log),
+            entry = quoted(&entry),
+        );
+        std::fs::write(dir.join("tools").join("ai-sdlc.ts"), text).unwrap();
+        Program::locate(dir)
+    }
+
+    #[test]
+    fn opening_a_change_asks_the_plugin_about_that_change_only() {
+        let fx = Fx::new();
+        let place = Place {
+            master: fx.master.clone(),
+            workspace: fx.ws.clone(),
+        };
+        for other in ["2026-11-02-one", "2026-11-02-two", "2026-11-02-three"] {
+            let started = program()
+                .run(
+                    &[
+                        "change", "start", "--json", "--system", SYSTEM, "--change", other,
+                        "--type", "feat", "--scope", "demo", "--title", "Other",
+                    ],
+                    &place,
+                )
+                .unwrap();
+            assert_eq!(started["outcome"], "passed", "{started}");
+        }
+        let tools = tempfile::tempdir().unwrap();
+        let log = tools.path().join("calls.jsonl");
+        let recording = recording_program(tools.path(), &log);
+        let home = resolve(&recording, &fx.ws, SYSTEM, CHANGE).unwrap();
+        assert_eq!(home.state.change, CHANGE);
+        let calls: Vec<Vec<String>> = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let states: Vec<&Vec<String>> = calls.iter().filter(|c| c[0] == "state").collect();
+        assert!(!states.is_empty(), "{calls:?}");
+        for call in states {
+            let at = call.iter().position(|a| a == "--change");
+            assert!(
+                at.is_some_and(|i| call.get(i + 1).is_some_and(|c| c == CHANGE)),
+                "{call:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_change_no_repository_holds_is_not_listed() {
+        let fx = Fx::new();
+        // The real program, so its actual exit-2 text is what the prefix match sees.
+        let err = resolve(&program(), &fx.ws, SYSTEM, "2026-11-02-nobody").unwrap_err();
+        assert_eq!(err, HomeError::NotListed);
+        assert_eq!(err.to_string(), LISTED);
+
+        // A program that passes everything through but answers `state` with another exit 2.
+        let tools = tempfile::tempdir().unwrap();
+        let entry = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts");
+        std::fs::create_dir_all(tools.path().join("tools")).unwrap();
+        std::fs::write(
+            tools.path().join("tools").join("ai-sdlc.ts"),
+            format!(
+                "import {{ spawnSync }} from 'node:child_process';\n\
+                 const a = process.argv.slice(2);\n\
+                 if (a[0] === 'state') {{ console.error('something else broke'); process.exit(2); }}\n\
+                 const r = spawnSync(process.execPath, [{}, ...a], {{ encoding: 'utf8' }});\n\
+                 process.stdout.write(r.stdout);\n\
+                 process.exit(r.status ?? 2);\n",
+                serde_json::to_string(&entry.to_string_lossy().replace('\\', "/")).unwrap()
+            ),
+        )
+        .unwrap();
+        let err = resolve(&Program::locate(tools.path()), &fx.ws, SYSTEM, CHANGE).unwrap_err();
+        assert!(
+            matches!(&err, HomeError::Unanswered(r) if r.contains("something else broke")),
+            "{err:?}"
+        );
     }
 
     #[test]

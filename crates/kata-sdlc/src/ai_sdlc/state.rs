@@ -1,6 +1,7 @@
 //! Where a change stands: `state --json`, typed field for field as the program's GRAMMAR.md ("Where a
 //! change stands") defines it. Kata reads the answer; the program decides every gate in it.
-use super::{Program, ProgramError};
+use super::list::Finished;
+use super::{Place, Program, ProgramError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -142,6 +143,10 @@ pub struct ChangeState {
     pub review: ReviewState,
     pub fix: Option<crate::format::FixState>,
     pub ready: Ready,
+    /// Null when the change is open; answers before ai-sdlc 1.3.0 have no such field.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub finished: Option<Finished>,
 }
 
 /// Where every change of a system stands.
@@ -177,6 +182,32 @@ pub fn state(
         command.extend(["--change", change]);
     }
     read_state(program.run(&command, &place)?)
+}
+
+/// Where one change stands, read for that change alone (`state --json --system <s> --change <c>`);
+/// `None` when no repository holds it.
+pub fn one(
+    program: &Program,
+    place: &Place,
+    system: &str,
+    change: &str,
+) -> Result<Option<ChangeState>, ProgramError> {
+    let answer = program.run(
+        &["state", "--json", "--system", system, "--change", change],
+        place,
+    );
+    match answer {
+        Err(ProgramError::CouldNotRun { message })
+            if message.starts_with(&format!("no change {change} in system {system} ")) =>
+        {
+            Ok(None)
+        }
+        Err(e) => Err(e),
+        Ok(value) => Ok(read_state(value)?
+            .changes
+            .into_iter()
+            .find(|c| c.change == change)),
+    }
 }
 
 #[cfg(test)]
@@ -370,5 +401,13 @@ mod tests {
 
         let all = state(&program(), ws, "demo", None).unwrap();
         assert_eq!(all.changes.len(), 1);
+    }
+
+    #[test]
+    fn state_without_finished_reads_as_open() {
+        assert!(!EXAMPLE.contains("\"finished\""));
+        let answer: Value = serde_json::from_str(EXAMPLE).unwrap();
+        let system = read_state(answer).unwrap();
+        assert_eq!(system.changes[0].finished, None);
     }
 }

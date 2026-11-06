@@ -1,11 +1,26 @@
 import { Component, computed, input, output } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
+import { HlmSkeletonImports } from '@spartan-ng/helm/skeleton';
 import { HlmTableImports } from '@spartan-ng/helm/table';
 import { formatWhen } from '../lib/sdlc-workspace';
 import type { ChangeOffer } from '@bindings/ChangeOffer';
+import type { HomeAction } from '@bindings/HomeAction';
+import type { StageLabel } from '@bindings/StageLabel';
 
 /** One line of the home page's change list: a change folder and what the plugin says it shows and offers. */
-export type ChangeRow = { system: string; change: string; title: string | null; offer: ChangeOffer };
+export type ChangeRow = {
+  system: string;
+  change: string;
+  title: string | null;
+  /** The plugin's whole answer for the change; null while a listed row's stage is being read. */
+  offer: ChangeOffer | null;
+  /** What the row reads; null while it is being read. */
+  label: StageLabel | null;
+  /** What the row offers first, as the backend decided; null on a legacy row and while being read. */
+  action: HomeAction | null;
+  /** The read of this row failed. */
+  failed: boolean;
+};
 
 type Group = { system: string; changes: ChangeRow[] };
 
@@ -16,7 +31,7 @@ export type OpenedChange = { system: string; change: string };
  * plugin's answer gave each, then a second group of change branches checked out elsewhere, shown by folder name and no stage. */
 @Component({
   selector: 'app-changes-table',
-  imports: [HlmButtonImports, HlmTableImports],
+  imports: [HlmButtonImports, HlmSkeletonImports, HlmTableImports],
   templateUrl: './changes-table.html',
 })
 export class ChangesTable {
@@ -30,6 +45,8 @@ export class ChangesTable {
 
   readonly open = output<OpenedChange>();
   readonly openOther = output<string>();
+  /** The engineer asked to remove a merged change's copy. */
+  readonly removeCopy = output<string>();
 
   protected readonly groups = computed<Group[]>(() => {
     const bySystem = new Map<string, ChangeRow[]>();
@@ -38,7 +55,7 @@ export class ChangesTable {
   });
 
   protected tone(c: ChangeRow): string {
-    const t = c.offer.label.tone;
+    const t = c.label?.tone ?? 'muted';
     return t === 'muted' ? 'idle' : t;
   }
 

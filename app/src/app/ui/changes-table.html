@@ -27,9 +27,18 @@
               >{{ c.change }}</button>
             </td>
             <td hlmTableCell>
-              <span class="k-status" [class]="'k-status k-status--' + tone(c)">
-                <span class="k-status__dot"></span>{{ c.offer.label.text }}
-              </span>
+              @if (c.label; as label) {
+                <span class="k-status" [class]="'k-status k-status--' + tone(c)">
+                  <span class="k-status__dot"></span>{{ label.text }}
+                </span>
+              } @else if (c.failed) {
+                <span class="k-empty-cell">Stage could not be read</span>
+              } @else {
+                <span hlmSkeleton class="k-stage-skeleton" role="status" aria-label="Reading the stage"></span>
+              }
+              @if (c.action === 'remove-copy') {
+                <button hlmBtn variant="secondary" size="sm" type="button" [disabled]="disabled()" [attr.aria-label]="'Remove the copy of ' + c.change" (click)="removeCopy.emit(c.change)">Remove the copy</button>
+              }
             </td>
             <td hlmTableCell class="k-mono">{{ lastRun(c) }}</td>
           </tr>
