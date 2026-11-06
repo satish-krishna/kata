@@ -38,20 +38,37 @@ pub enum Refresh {
 
 /// The system the home shows: the remembered one when the marker still has it, else the first.
 pub fn shown_system(remembered: Option<&str>, systems: &[String]) -> Option<String> {
-    let _ = (remembered, systems);
-    None
+    remembered
+        .and_then(|r| systems.iter().find(|s| s.as_str() == r))
+        .or_else(|| systems.first())
+        .cloned()
 }
 
 /// Open and finished changes, each in the order the plugin listed them. Only `finished` is read.
 pub fn split(list: ChangeList) -> (Vec<ListedChange>, Vec<FinishedChange>) {
-    let _ = list;
-    (Vec::new(), Vec::new())
+    let mut open = Vec::new();
+    let mut finished = Vec::new();
+    for c in list.changes {
+        match c.finished {
+            None => open.push(ListedChange {
+                change: c.change,
+                title: c.title,
+            }),
+            Some(mark) => finished.push(FinishedChange {
+                change: c.change,
+                title: c.title,
+                finished: mark,
+            }),
+        }
+    }
+    (open, finished)
 }
 
 /// True when the open change names the screen shows differ, as a set, from the ones just reported.
 pub fn relist(shown: &[String], open: &[ChangeState]) -> bool {
-    let _ = (shown, open);
-    false
+    let shown: BTreeSet<&str> = shown.iter().map(String::as_str).collect();
+    let open: BTreeSet<&str> = open.iter().map(|c| c.change.as_str()).collect();
+    shown != open
 }
 
 /// The open changes the merge check asks about, in order.
@@ -60,8 +77,14 @@ pub fn to_check(
     open: &[ChangeState],
     declared: &BTreeSet<String>,
 ) -> Vec<String> {
-    let _ = (trigger, open, declared);
-    Vec::new()
+    match trigger {
+        Refresh::Open | Refresh::ActionEnded => open
+            .iter()
+            .filter(|c| declared.contains(&c.change))
+            .map(|c| c.change.clone())
+            .collect(),
+        Refresh::Focus => Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -78,6 +101,7 @@ mod tests {
     #[test]
     fn shown_system_rows() {
         let both = names(&["bob", "kata"]);
+        #[allow(clippy::type_complexity)]
         let rows: Vec<(&str, Option<&str>, Vec<String>, Option<&str>)> = vec![
             ("empty, none", None, vec![], None),
             ("empty, remembered", Some("kata"), vec![], None),

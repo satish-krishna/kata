@@ -236,8 +236,15 @@ pub fn add_workspace(name: &str, folder: &str, now: u64) -> Result<WorkspaceChoi
 
 /// Remember the system the home showed for a workspace.
 pub fn remember_system(id: &str, system: &str) -> Result<(), StoreError> {
-    let _ = (id, system);
-    Ok(())
+    update_workspaces(|list| {
+        let entry = list
+            .iter_mut()
+            .find(|w| w.id == id)
+            .ok_or_else(|| StoreError::UnknownWorkspace(id.to_string()))?;
+        entry.last_system = Some(system.to_string());
+        Ok(())
+    })
+    .map(|_| ())
 }
 
 pub fn remove_workspace(id: &str) -> Result<WorkspaceChoice, StoreError> {
