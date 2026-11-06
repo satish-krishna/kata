@@ -20,6 +20,7 @@ pub mod home;
 pub mod naming;
 pub mod offer;
 pub mod old_checks;
+pub mod open_changes;
 pub mod permissions;
 pub mod plugin;
 mod process;

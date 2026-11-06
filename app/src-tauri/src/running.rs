@@ -738,6 +738,7 @@ mod tests {
             name: id.into(),
             folder: folder.into(),
             last_opened: 1,
+            last_system: None,
         }
     }
 

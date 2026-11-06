@@ -57,6 +57,9 @@ pub struct WorkspaceEntry {
     pub folder: String,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub last_opened: u64,
+    /// The system the home showed last; no screen reads it.
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub last_system: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -224,10 +227,17 @@ pub fn add_workspace(name: &str, folder: &str, now: u64) -> Result<WorkspaceChoi
             name: name.to_string(),
             folder: folder.to_string(),
             last_opened,
+            last_system: None,
         });
         Ok(())
     })
     .map(choice)
+}
+
+/// Remember the system the home showed for a workspace.
+pub fn remember_system(id: &str, system: &str) -> Result<(), StoreError> {
+    let _ = (id, system);
+    Ok(())
 }
 
 pub fn remove_workspace(id: &str) -> Result<WorkspaceChoice, StoreError> {
@@ -298,7 +308,41 @@ mod tests {
             name: id.into(),
             folder: format!("/{id}"),
             last_opened,
+            last_system: None,
         }
+    }
+
+    fn systems(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    #[serial]
+    fn a_picked_system_is_remembered_per_workspace() {
+        use crate::open_changes::shown_system;
+        let _home = with_home();
+        save_workspaces(&[entry("one", 1), entry("two", 2)]).unwrap();
+        let both = systems(&["bob", "kata"]);
+        let shown = |id: &str, list: &[String]| {
+            let w = load_workspaces();
+            let e = w.iter().find(|w| w.id == id).unwrap().clone();
+            shown_system(e.last_system.as_deref(), list)
+        };
+        assert_eq!(shown("one", &both).as_deref(), Some("bob"));
+        remember_system("one", "kata").unwrap();
+        assert_eq!(shown("one", &both).as_deref(), Some("kata"));
+        assert_eq!(shown("one", &systems(&["bob"])).as_deref(), Some("bob"));
+        assert_eq!(load_workspaces()[1], entry("two", 2));
+    }
+
+    #[test]
+    #[serial]
+    fn opening_keeps_the_remembered_system() {
+        let _home = with_home();
+        save_workspaces(&[entry("one", 1)]).unwrap();
+        remember_system("one", "kata").unwrap();
+        open_workspace("one", 50).unwrap();
+        assert_eq!(load_workspaces()[0].last_system.as_deref(), Some("kata"));
     }
 
     #[test]
