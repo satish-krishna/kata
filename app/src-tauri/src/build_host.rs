@@ -7,7 +7,7 @@
 use crate::runs::{self, Lane};
 use kata_core::spec::PermissionMode;
 use kata_core::RunSpec;
-use kata_sdlc::ai_sdlc::state::{read_state, ChangeState};
+use kata_sdlc::ai_sdlc::state::{self, read_state, ChangeState};
 use kata_sdlc::ai_sdlc::{
     answer_of, HookFailure, Place, Program, ProgramError, Reply, StepOutcome,
 };
@@ -247,8 +247,6 @@ pub trait Tools: Send + Sync {
     fn run(&self, command: &[&str], place: &Place) -> Result<Value, ProgramError>;
     /// One program step, as `Program::exec`: how it exited, for `ai_sdlc::answer_of` to read.
     fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String>;
-    /// Every change of `system`.
-    fn states(&self, place: &Place, system: &str) -> Result<Vec<ChangeState>, ProgramError>;
     /// Where `change` stands, read for that change alone; `None` when the plugin knows no such change.
     fn change_state(
         &self,
@@ -303,6 +301,14 @@ impl ProgramTools {
     pub fn new(program: Program, lists: bool) -> Self {
         ProgramTools { program, lists }
     }
+
+    /// Every change of `system`, from the whole-system `state` read an older plugin needs.
+    fn states(&self, place: &Place, system: &str) -> Result<Vec<ChangeState>, ProgramError> {
+        let answer = self
+            .program
+            .run(&["state", "--json", "--system", system], place)?;
+        Ok(read_state(answer)?.changes)
+    }
 }
 
 impl Tools for ProgramTools {
@@ -318,30 +324,36 @@ impl Tools for ProgramTools {
         self.program.exec(command, place)
     }
 
-    fn states(&self, place: &Place, system: &str) -> Result<Vec<ChangeState>, ProgramError> {
-        let answer = self
-            .program
-            .run(&["state", "--json", "--system", system], place)?;
-        Ok(read_state(answer)?.changes)
-    }
-
     fn change_state(
         &self,
-        _place: &Place,
-        _system: &str,
-        _change: &str,
+        place: &Place,
+        system: &str,
+        change: &str,
     ) -> Result<Option<ChangeState>, ProgramError> {
-        let _ = self.lists;
-        Ok(None)
+        state::one(&self.program, place, system, change)
     }
 
     fn other_copies(
         &self,
-        _place: &Place,
-        _system: &str,
-        _change: &str,
+        place: &Place,
+        system: &str,
+        change: &str,
     ) -> Result<Vec<PathBuf>, ProgramError> {
-        Ok(Vec::new())
+        if self.lists {
+            let list = self.program.list(place, system)?;
+            return Ok(list
+                .changes
+                .iter()
+                .filter(|c| c.in_copy && c.change != change)
+                .map(|c| PathBuf::from(&c.master))
+                .collect());
+        }
+        Ok(self
+            .states(place, system)?
+            .iter()
+            .filter(|s| s.in_copy && s.change != change)
+            .map(|s| PathBuf::from(&s.master))
+            .collect())
     }
 
     fn plan(&self, _place: &Place, state: &ChangeState) -> Result<ParsedPlan, String> {
@@ -675,18 +687,14 @@ impl BuildHost {
             .tools
             .resolve(Path::new(&change.workspace))
             .map_err(|e| error_text(&e))?;
-        let states = self
+        let others = self
             .tools
-            .states(&place, &change.system)
+            .other_copies(&place, &change.system, &change.change)
             .map_err(|e| error_text(&e))?;
-        let others: Vec<PathBuf> = states
-            .iter()
-            .filter(|s| s.in_copy && s.change != change.change)
-            .map(|s| PathBuf::from(&s.master))
-            .collect();
-        let state = states
-            .into_iter()
-            .find(|s| s.change == change.change)
+        let state = self
+            .tools
+            .change_state(&place, &change.system, &change.change)
+            .map_err(|e| error_text(&e))?
             .ok_or_else(|| format!("the plugin knows no change {}", change.change))?;
         let exec = Exec {
             place,
@@ -1078,10 +1086,7 @@ impl BuildHost {
         let Some(run_id) = end.history_id.as_ref().filter(|_| repo != REVIEW) else {
             return;
         };
-        let Ok(states) = self.tools.states(place, &key.system) else {
-            return;
-        };
-        let Some(state) = states.iter().find(|s| s.change == key.change) else {
+        let Ok(Some(state)) = self.tools.change_state(place, &key.system, &key.change) else {
             return;
         };
         let Some(workspace_id) = self.tools.workspace_id(&place.workspace) else {
@@ -1348,18 +1353,14 @@ impl BuildHost {
         system: &str,
         change: &str,
     ) -> Result<(Snapshot, ParsedPlan), String> {
-        let states = self
+        let others = self
             .tools
-            .states(place, system)
+            .other_copies(place, system, change)
             .map_err(|e| error_text(&e))?;
-        let others: Vec<PathBuf> = states
-            .iter()
-            .filter(|s| s.in_copy && s.change != change)
-            .map(|s| PathBuf::from(&s.master))
-            .collect();
-        let state = states
-            .into_iter()
-            .find(|s| s.change == change)
+        let state = self
+            .tools
+            .change_state(place, system, change)
+            .map_err(|e| error_text(&e))?
             .ok_or_else(|| format!("the plugin knows no change {change}"))?;
         let plan = self.tools.plan(place, &state)?;
         Ok((Snapshot { state, others }, plan))
@@ -2013,24 +2014,24 @@ mod tests {
                 None => Ok(Reply::json(0, &passed_start(&repos[0], &[]))),
             }
         }
-        fn states(&self, _place: &Place, _system: &str) -> Result<Vec<ChangeState>, ProgramError> {
+        fn change_state(
+            &self,
+            _place: &Place,
+            _system: &str,
+            change: &str,
+        ) -> Result<Option<ChangeState>, ProgramError> {
             let gate = self.gate.lock().unwrap().take();
             if let Some((entered, release)) = gate {
                 entered.send(()).unwrap();
                 release.recv().unwrap();
             }
-            Ok(self.states.lock().unwrap().clone())
-        }
-        fn change_state(
-            &self,
-            place: &Place,
-            system: &str,
-            change: &str,
-        ) -> Result<Option<ChangeState>, ProgramError> {
             Ok(self
-                .states(place, system)?
-                .into_iter()
-                .find(|s| s.change == change))
+                .states
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| s.change == change)
+                .cloned())
         }
         fn other_copies(
             &self,
@@ -3737,9 +3738,6 @@ mod tests {
         fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String> {
             self.real.exec(command, place)
         }
-        fn states(&self, place: &Place, system: &str) -> Result<Vec<ChangeState>, ProgramError> {
-            self.fake.states(place, system)
-        }
         fn change_state(
             &self,
             place: &Place,
@@ -3825,9 +3823,6 @@ mod tests {
         }
         fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String> {
             self.real.exec(command, place)
-        }
-        fn states(&self, place: &Place, system: &str) -> Result<Vec<ChangeState>, ProgramError> {
-            self.real.states(place, system)
         }
         fn change_state(
             &self,

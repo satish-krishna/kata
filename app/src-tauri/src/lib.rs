@@ -428,13 +428,6 @@ impl build_host::Tools for PluginTools {
             .map_err(|e| e.to_string())?
             .exec(command, place)
     }
-    fn states(
-        &self,
-        place: &sdlc::ai_sdlc::Place,
-        system: &str,
-    ) -> Result<Vec<sdlc::ai_sdlc::state::ChangeState>, sdlc::ai_sdlc::ProgramError> {
-        Self::program(&place.workspace)?.states(place, system)
-    }
     fn change_state(
         &self,
         place: &sdlc::ai_sdlc::Place,
