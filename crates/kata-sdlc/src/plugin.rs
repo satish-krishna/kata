@@ -158,8 +158,7 @@ pub fn readiness(env: &Machine) -> Readiness {
 /// Whether the installed plugin can list changes and read the open ones alone: a ready machine whose
 /// plugin is [`LIST_MIN_VERSION`] or later. Every path that needs 1.3.0 asks this.
 pub fn lists_changes(readiness: &Readiness) -> bool {
-    let _ = readiness;
-    false
+    matches!(readiness, Readiness::Ready { plugin, .. } if at_least(&plugin.version, LIST_MIN_VERSION))
 }
 
 impl Machine {

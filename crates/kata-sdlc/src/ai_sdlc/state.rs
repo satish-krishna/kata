@@ -191,8 +191,8 @@ pub fn open(
     workspace: &Path,
     system: &str,
 ) -> Result<SystemState, ProgramError> {
-    let _ = (program, workspace, system);
-    todo!("state::open")
+    let place = program.resolve(workspace)?;
+    read_state(program.run(&["state", "--json", "--system", system, "--open"], &place)?)
 }
 
 #[cfg(test)]

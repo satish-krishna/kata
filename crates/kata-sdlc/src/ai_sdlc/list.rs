@@ -40,15 +40,16 @@ pub struct ChangeList {
 
 /// Reads the program's `list --json` answer. Fields this version does not know are ignored.
 pub fn read_list(answer: Value) -> Result<ChangeList, ProgramError> {
-    let _ = answer;
-    todo!("read_list")
+    serde_json::from_value(answer).map_err(|e| ProgramError::CouldNotRun {
+        message: format!("the list answer is not what this version reads: {e}"),
+    })
 }
 
 impl Program {
-    /// The changes of `system` with the few facts a list row needs, open and finished.
+    /// The changes of `system` with the few facts a list row needs, open and finished. Needs ai-sdlc
+    /// 1.3.0 or later.
     pub fn list(&self, place: &Place, system: &str) -> Result<ChangeList, ProgramError> {
-        let _ = (place, system);
-        todo!("Program::list")
+        read_list(self.run(&["list", "--json", "--system", system], place)?)
     }
 }
 
