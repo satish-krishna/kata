@@ -1,11 +1,71 @@
 import { TestBed } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { Router, provideRouter } from '@angular/router';
 import { render } from '../../testing/render';
+import { App } from '../app';
+import { routes } from '../app.routes';
 import { Library } from './library';
 import { KataTransport } from '../core/transport/kata-transport';
 import { MockTransport } from '../core/transport/mock-transport';
 import { LaunchStore } from '../core/launch/launch.store';
+import { VersionsStore } from '../core/versions/versions.store';
 import { history, STEERED_RUN_ID } from '../lib/library';
+
+describe('the library footer and the version line', () => {
+  const footerLast = (c: HTMLElement) => c.querySelector('.wb-statusbar')?.lastElementChild?.textContent?.trim();
+
+  it('the footer ends with the version line', async () => {
+    const transport = new MockTransport();
+    const { fixture, container } = await render(Library, {}, [provideRouter([]), { provide: KataTransport, useValue: transport }]);
+    await TestBed.inject(VersionsStore).refresh();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(container.querySelectorAll('.wb-statusbar')).toHaveLength(1);
+      expect(footerLast(container)).toBe('Workbench 3.3.0 · ai-sdlc 1.3.0');
+    });
+  });
+
+  it('clicking the line copies the versions', async () => {
+    const transport = new MockTransport();
+    const copy = vi.spyOn(transport, 'copyText').mockResolvedValue(undefined);
+    const { fixture, container } = await render(Library, {}, [provideRouter([]), { provide: KataTransport, useValue: transport }]);
+    await TestBed.inject(VersionsStore).refresh();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(container.querySelector<HTMLElement>('.wb-statusbar__version')).not.toBeNull();
+    });
+    container.querySelector<HTMLElement>('.wb-statusbar__version')!.click();
+    expect(copy).toHaveBeenCalledWith('Kata Workbench 3.3.0, ai-sdlc 1.3.0');
+  });
+
+  it('with ai-sdlc not installed the footer reads not found and the library shows no AI-SDLC readiness message', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'appVersions').mockResolvedValue({
+      workbench: '3.3.0',
+      aiSdlc: { kind: 'notFound' },
+      line: 'Workbench 3.3.0 · ai-sdlc: not found',
+      copy: 'Kata Workbench 3.3.0, ai-sdlc: not found',
+    });
+    const { fixture, container } = await render(Library, {}, [provideRouter([]), { provide: KataTransport, useValue: transport }]);
+    await TestBed.inject(VersionsStore).refresh();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(footerLast(container)).toBe('Workbench 3.3.0 · ai-sdlc: not found');
+    });
+    expect(container.textContent).not.toMatch(/ai-sdlc plugin was not found|AI-SDLC mode needs/i);
+  });
+
+  it('the shell draws no line on the library route, so the page footer is the only one', async () => {
+    const transport = new MockTransport();
+    const { fixture, container } = await render(App, {}, [provideRouter(routes), { provide: KataTransport, useValue: transport }]);
+    await TestBed.inject(Router).navigateByUrl('/library');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(container.querySelector('.wb-statusbar')).not.toBeNull();
+      expect(footerLast(container)).toBe('Workbench 3.3.0 · ai-sdlc 1.3.0');
+    });
+    expect(container.querySelectorAll('.wb-statusbar')).toHaveLength(1);
+  });
+});
 
 it('crosses the template/view-model seam: lists katas and runs, selects a run, and Re-run hands off to compose', async () => {
   const { fixture, container } = await render(Library, {}, [

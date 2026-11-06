@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open, save } from '@tauri-apps/plugin-dialog';
+import type { Versions } from '@bindings/Versions';
 import type { RepoBoard } from '@bindings/RepoBoard';
 import type { ReviewStanding } from '@bindings/ReviewStanding';
 import type { Stop } from '@bindings/Stop';
@@ -103,6 +104,7 @@ export class TauriTransport extends KataTransport {
   sdlcSaveSettings(settings: Settings) { return this.ipc.invoke<void>('sdlc_save_settings', { settings }); }
   sdlcWorkspaces() { return this.ipc.invoke<WorkspaceEntry[]>('sdlc_workspaces'); }
   sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]) { return this.ipc.invoke<void>('sdlc_save_workspaces', { workspaces }); }
+  sdlcCurrentWorkspace() { return this.ipc.invoke<string | null>('sdlc_current_workspace'); }
   sdlcScan(folder: string) { return this.ipc.invoke<WorkspaceScan>('sdlc_scan', { folder }); }
   sdlcContextHealth(folder: string, master: string, system: string, repo: string) { return this.ipc.invoke<ContextState>('sdlc_context_health', { folder, master, system, repo }); }
   sdlcReadContext(master: string, system: string, repo: string) { return this.ipc.invoke<string | null>('sdlc_read_context', { master, system, repo }); }
@@ -173,6 +175,8 @@ export class TauriTransport extends KataTransport {
   saveBuildLayout(layout: Record<string, unknown>) { return this.ipc.invoke<void>('save_build_layout', { layout }); }
   openUrl(url: string) { return this.ipc.invoke<void>('open_url', { url }); }
   zoom(step: ZoomStep) { return this.ipc.invoke<number>('zoom', { step }); }
+  appVersions() { return this.ipc.invoke<Versions>('app_versions'); }
+  copyText(text: string) { return navigator.clipboard.writeText(text); }
   pickDirectory() { return this.ipc.open({ directory: true, multiple: false }) as Promise<string | null>; }
   pickOpenSpec() { return this.ipc.open({ multiple: false, filters: SPEC_FILTERS }) as Promise<string | null>; }
   pickSaveSpec() { return this.ipc.save({ filters: SPEC_FILTERS }) as Promise<string | null>; }

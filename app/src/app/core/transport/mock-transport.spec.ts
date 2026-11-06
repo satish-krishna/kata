@@ -9,6 +9,7 @@ import type { DoneStep } from '@bindings/DoneStep';
 import type { Resolved } from '@bindings/Resolved';
 import type { BuildEvent } from '@bindings/BuildEvent';
 import type { ChangeRef } from '@bindings/ChangeRef';
+import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
 import { MOCK_BUILD_CHANGE, MOCK_COPY_CHANGE, MOCK_BUILD_SECOND, MOCK_HELD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MOCK_MASTER, MOCK_STARTED_FIX, TRIAGE_LIGHT, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 
@@ -784,5 +785,70 @@ describe('MockTransport answers every call the backend gained on this branch (F2
     await Promise.resolve();
     expect(seen).toEqual([]);
     off();
+  });
+});
+
+describe('MockTransport current workspace', () => {
+  const ws = (id: string, last_opened: number): WorkspaceEntry => ({ id, name: id, folder: `/${id}`, last_opened });
+
+  it('answers the highest last_opened of the saved list', async () => {
+    const t = new MockTransport();
+    await t.sdlcSaveWorkspaces([ws('a', 5), ws('b', 50), ws('c', 7)]);
+    expect(await t.sdlcCurrentWorkspace()).toBe('b');
+  });
+
+  it('answers the earliest of the tied entries', async () => {
+    const t = new MockTransport();
+    await t.sdlcSaveWorkspaces([ws('a', 1), ws('b', 9), ws('c', 9), ws('d', 0)]);
+    expect(await t.sdlcCurrentWorkspace()).toBe('b');
+    await t.sdlcSaveWorkspaces([ws('x', 0), ws('y', 0)]);
+    expect(await t.sdlcCurrentWorkspace()).toBe('x');
+  });
+
+  it('answers null when no workspace is saved', async () => {
+    const t = new MockTransport();
+    await t.sdlcSaveWorkspaces([]);
+    expect(await t.sdlcCurrentWorkspace()).toBeNull();
+  });
+});
+
+describe('MockTransport versions', () => {
+  const withDemo = async (demo: string | null, body: (t: MockTransport) => Promise<void>) => {
+    window.history.replaceState({}, '', demo === null ? '/' : `/?demo=${demo}`);
+    try {
+      await body(new MockTransport());
+    } finally {
+      window.history.replaceState({}, '', '/');
+    }
+  };
+
+  it('answers the Workbench version and a found ai-sdlc by default', async () => {
+    await withDemo(null, async (t) => {
+      const v = await t.appVersions();
+      expect(v.workbench).toBe('3.3.0');
+      expect(v.aiSdlc).toEqual({ kind: 'found', version: '1.3.0' });
+      expect(v.line).toBe('Workbench 3.3.0 · ai-sdlc 1.3.0');
+      expect(v.copy).toBe('Kata Workbench 3.3.0, ai-sdlc 1.3.0');
+    });
+  });
+
+  it('answers ai-sdlc not found under ?demo=versions-missing', async () => {
+    await withDemo('versions-missing', async (t) => {
+      const v = await t.appVersions();
+      expect(v.aiSdlc).toEqual({ kind: 'notFound' });
+      expect(v.line).toBe('Workbench 3.3.0 · ai-sdlc: not found');
+      expect(v.copy).toBe('Kata Workbench 3.3.0, ai-sdlc: not found');
+    });
+  });
+
+  it('copyText writes the text to the clipboard', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    try {
+      await new MockTransport().copyText('Kata Workbench 3.3.0');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(writeText).toHaveBeenCalledWith('Kata Workbench 3.3.0');
   });
 });

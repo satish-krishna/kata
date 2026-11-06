@@ -13,6 +13,7 @@ import { RunPreviewViewModel } from '../core/given/run-preview.view-model';
 import { defaultSpec, draftFrom, normalize, specEquals } from '../lib/spec';
 import { isLockedOn, toGiven } from '../lib/given';
 import { GivenStore } from '../core/given/given.store';
+import { VersionsStore } from '../core/versions/versions.store';
 import { inTauri, seedSpec } from '../lib/mock';
 
 const CATALOG_DEBOUNCE_MS = 300;
@@ -31,6 +32,14 @@ export class WorkbenchViewModel {
   private readonly givens = inject(GivenStore);
   /** The preview every run goes through; the template mounts its dialog. */
   readonly preview = inject(RunPreviewViewModel);
+  private readonly versionsStore = inject(VersionsStore);
+  /** The versions the footer's line shows; null until the backend answers. */
+  readonly versions = this.versionsStore.versions;
+
+  /** Clicking the version line copies both versions as plain text. */
+  copyVersions(): Promise<void> {
+    return this.versionsStore.copy();
+  }
 
   // Real Tauri app opens a blank New spec; browser dev/review seeds the example.
   private readonly initial = inTauri() ? defaultSpec() : seedSpec();

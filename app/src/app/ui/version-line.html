@@ -1,0 +1,3 @@
+@if (versions(); as v) {
+  <button hlmBtn variant="bare" size="bare" type="button" class="wb-statusbar__item wb-statusbar__version" [attr.aria-label]="'Copy versions: ' + v.copy" (click)="copy.emit()">{{ v.line }}</button>
+}

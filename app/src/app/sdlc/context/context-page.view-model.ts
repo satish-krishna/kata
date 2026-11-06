@@ -9,6 +9,7 @@ import { LockStore } from '../../core/lock/lock.store';
 import { ModeStore } from '../../core/mode/mode.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
+import { VersionsStore } from '../../core/versions/versions.store';
 import { parseFrontMatter } from '../../lib/sdlc';
 import { contextAction, contextLabel, masterPath, masterRepo, readContextStates, repoRows } from '../../lib/sdlc-workspace';
 
@@ -28,6 +29,7 @@ export class ContextPageViewModel {
   private readonly lock = inject(LockStore);
   private readonly modes = inject(ModeStore);
   private readonly toasts = inject(ToastStore);
+  private readonly versions = inject(VersionsStore);
   private readonly router = inject(Router);
 
   private readonly params = toSignal(inject(ActivatedRoute).paramMap, { requireSync: true });
@@ -36,7 +38,9 @@ export class ContextPageViewModel {
 
   readonly state = signal<ContextPageState>('loading');
   readonly workspaces = signal<WorkspaceEntry[]>([]);
-  readonly current = computed(() => [...this.workspaces()].sort((a, b) => b.last_opened - a.last_opened)[0] ?? null);
+  /** Which workspace is current is the backend's answer (`sdlcCurrentWorkspace`); the list only supplies the entry. */
+  private readonly currentId = signal<string | null>(null);
+  readonly current = computed(() => this.workspaces().find((w) => w.id === this.currentId()) ?? null);
   private readonly scan = signal<WorkspaceScan | null>(null);
   private readonly branches = signal<BranchInfo | null>(null);
   private readonly contexts = signal<Record<string, ContextState>>({});
@@ -94,7 +98,9 @@ export class ContextPageViewModel {
     const next = this.workspaces().map((w) => (w.id === id ? { ...w, last_opened: nowSecs() } : w));
     this.workspaces.set(next);
     try {
-      await this.transport.sdlcSaveWorkspaces(next);
+await this.transport.sdlcSaveWorkspaces(next);
+      this.currentId.set(await this.transport.sdlcCurrentWorkspace());
+      await this.versions.refresh();
     } catch (e) {
       this.toasts.error(`Could not save the workspace list: ${message(e)}`);
     }
@@ -114,6 +120,7 @@ export class ContextPageViewModel {
   private async loadWorkspace(): Promise<string | null> {
     try {
       this.workspaces.set(await this.transport.sdlcWorkspaces());
+      this.currentId.set(await this.transport.sdlcCurrentWorkspace());
       const w = this.current();
       if (!w) return null;
       const scan = await this.transport.sdlcScan(w.folder);

@@ -47,7 +47,7 @@ import type { DoneStep } from '@bindings/DoneStep';
 import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
-import { seedCatalog, seedSpec, validateLocal, previewFixture, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, type ScriptStep } from '../../lib/mock';
+import { seedCatalog, seedSpec, validateLocal, previewFixture, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, mockVersions, type ScriptStep } from '../../lib/mock';
 import { history, runDetailFixture, katasFixture, presetsFixture } from '../../lib/library';
 import type { OpenRun } from '@bindings/OpenRun';
 import type { Opens } from '@bindings/Opens';
@@ -67,6 +67,7 @@ import type { ChangeRef } from '@bindings/ChangeRef';
 import type { CloseOutcome } from '@bindings/CloseOutcome';
 import type { HeldRepo } from '@bindings/HeldRepo';
 import type { RunForm } from '@bindings/RunForm';
+import type { Versions } from '@bindings/Versions';
 import type { RunningStrip } from '@bindings/RunningStrip';
 import type { BuildRunRef } from '@bindings/BuildRunRef';
 import type { BuildPreviewKind } from '@bindings/BuildPreviewKind';
@@ -293,6 +294,12 @@ export class MockTransport extends KataTransport {
   sdlcSaveSettings(settings: Settings): Promise<void> { this.sdlc.saveSettings(settings); return Promise.resolve(); }
   sdlcWorkspaces(): Promise<WorkspaceEntry[]> { return Promise.resolve(this.sdlc.getWorkspaces()); }
   sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]): Promise<void> { this.sdlc.saveWorkspaces(workspaces); return Promise.resolve(); }
+  /** Same rule as the backend's `current_workspace`: the highest last_opened, the earliest in the list on a tie. */
+  sdlcCurrentWorkspace(): Promise<string | null> {
+    let best: WorkspaceEntry | null = null;
+    for (const w of this.sdlc.getWorkspaces()) if (best === null || w.last_opened > best.last_opened) best = w;
+    return Promise.resolve(best?.id ?? null);
+  }
   sdlcScan(folder: string): Promise<WorkspaceScan> {
     // The first scan of the demo folder that needs setup is slow, so the "Checking workspace" steps are visible.
     if (folder === MOCK_SETUP_FOLDER && !this.setupScanned) {
@@ -425,6 +432,8 @@ export class MockTransport extends KataTransport {
   openUrl(url: string): Promise<void> { window.open(url, '_blank', 'noopener,noreferrer'); return Promise.resolve(); }
   /** A plain browser has no window to zoom. */
   zoom(_step: ZoomStep): Promise<number> { return Promise.resolve(1); }
+  appVersions(): Promise<Versions> { return Promise.resolve(mockVersions(demoParam())); }
+  copyText(text: string): Promise<void> { return navigator.clipboard.writeText(text); }
   pickDirectory(): Promise<string | null> { return Promise.resolve(null); }
   pickOpenSpec(): Promise<string | null> { return Promise.resolve(null); }
   pickSaveSpec(): Promise<string | null> { return Promise.resolve(null); }

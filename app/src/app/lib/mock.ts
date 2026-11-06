@@ -11,6 +11,7 @@ import type { EnvName } from "@bindings/EnvName";
 import type { ItemKind } from "@bindings/ItemKind";
 import type { LockReason } from "@bindings/LockReason";
 import type { Resolved } from "@bindings/Resolved";
+import type { Versions } from "@bindings/Versions";
 import type { ResolvedItem } from "@bindings/ResolvedItem";
 import type { RunSetting } from "@bindings/RunSetting";
 import type { RunSettings } from "@bindings/RunSettings";
@@ -301,4 +302,14 @@ export function previewFixture(spec: RunSpec): Resolved {
     { source: "personal", name: "ANTHROPIC_API_KEY", api_key: true },
   ];
   return { items, settings, env, missing: [...listed].filter((id) => !known.has(id)), problems: [], empty_room: emptyRoom };
+}
+
+/** What a plain browser shows on the version line: the Workbench's version and the plugin the fixtures say is installed. `?demo=versions-missing` answers that ai-sdlc is not installed. */
+export function mockVersions(demo: string | null): Versions {
+  const workbench = '3.3.0';
+  if (demo === 'versions-missing') {
+    return { workbench, aiSdlc: { kind: 'notFound' }, line: `Workbench ${workbench} · ai-sdlc: not found`, copy: `Kata Workbench ${workbench}, ai-sdlc: not found` };
+  }
+  const version = '1.3.0';
+  return { workbench, aiSdlc: { kind: 'found', version }, line: `Workbench ${workbench} · ai-sdlc ${version}`, copy: `Kata Workbench ${workbench}, ai-sdlc ${version}` };
 }

@@ -1,1 +1,7 @@
-<router-outlet /><hlm-toaster /><app-close-dialog [running]="vm.closeAsk()" (stopAll)="vm.answerClose(true)" (keepWorking)="vm.answerClose(false)" />
+<div class="k-shell">
+  <div class="k-shell__page"><router-outlet /></div>
+  @if (vm.shellLine()) {
+    <footer class="wb-statusbar"><div class="wb-statusbar__spacer"></div><app-version-line [versions]="vm.versions()" (copy)="vm.copyVersions()" /></footer>
+  }
+</div>
+<hlm-toaster /><app-close-dialog [running]="vm.closeAsk()" (stopAll)="vm.answerClose(true)" (keepWorking)="vm.answerClose(false)" />

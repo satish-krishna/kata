@@ -406,7 +406,21 @@ try {
       const texts = await editor.locator('.view-line').allInnerTexts();
       for (const t of texts) for (const m of t.matchAll(/FIELD_(\d+)/g)) seen.add(Number(m[1]));
       lastLine = texts.some((t) => t.includes('END_OF_SCHEMA'));
-      if (!lastLine) {
+      if (lastLine) {
+        // The line exists in the DOM; Monaco's scroll may still be settling. Keep scrolling until the line is fully
+        // inside the editor's box and two consecutive measurements agree, so a real clip still fails.
+        const endLine = editor.locator('.view-line', { hasText: 'END_OF_SCHEMA' }).first();
+        const inside = (b) => b !== null && b.y >= box.y - 0.5 && b.y + b.height <= box.y + box.height + 0.5;
+        let previous = null;
+        let settled = false;
+        for (let j = 0; j < 40 && !settled; j++) {
+          await page.waitForTimeout(60);
+          const b = await endLine.boundingBox();
+          settled = inside(b) && previous !== null && previous.y === b.y;
+          previous = b;
+          if (!settled) await page.mouse.wheel(0, 150);
+        }
+      } else {
         await page.mouse.wheel(0, 150);
         await page.waitForTimeout(60);
       }

@@ -65,6 +65,7 @@
     <span class="wb-statusbar__item"><ng-icon name="lucideHash" size="13" /> schema {{ vm.spec().schema }}</span>
     <span class="wb-statusbar__item"><ng-icon name="lucideFolder" size="13" /> {{ vm.spec().workdir || '—' }}</span>
     <span class="wb-statusbar__item"><ng-icon name="lucideTerminal" size="13" /> claude --bare -p</span>
+    <app-version-line [versions]="vm.versions()" (copy)="vm.copyVersions()" />
   </footer>
 
   <app-confirm-dialog

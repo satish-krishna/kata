@@ -1,11 +1,55 @@
 import { TestBed } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { Router, provideRouter } from '@angular/router';
 import { render } from '../../testing/render';
+import { App } from '../app';
+import { routes } from '../app.routes';
 import { Workbench } from './workbench';
 import { KataTransport } from '../core/transport/kata-transport';
 import { MockTransport } from '../core/transport/mock-transport';
 import { RunStore } from '../core/run/run.store';
 import { RunPreviewViewModel } from '../core/given/run-preview.view-model';
+import { VersionsStore } from '../core/versions/versions.store';
+
+describe('the Workbench footer and the version line', () => {
+  const footerLast = (c: HTMLElement) => c.querySelector('.wb-statusbar')?.lastElementChild?.textContent?.trim();
+
+  it('the footer ends with the version line', async () => {
+    const transport = new MockTransport();
+    const { fixture, container } = await render(Workbench, {}, [provideRouter([]), { provide: KataTransport, useValue: transport }]);
+    await TestBed.inject(VersionsStore).refresh();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(container.querySelectorAll('.wb-statusbar')).toHaveLength(1);
+      expect(footerLast(container)).toBe('Workbench 3.3.0 · ai-sdlc 1.3.0');
+    });
+  });
+
+  it('clicking the line copies the versions', async () => {
+    const transport = new MockTransport();
+    const copy = vi.spyOn(transport, 'copyText').mockResolvedValue(undefined);
+    const { fixture, container } = await render(Workbench, {}, [provideRouter([]), { provide: KataTransport, useValue: transport }]);
+    await TestBed.inject(VersionsStore).refresh();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(container.querySelector<HTMLElement>('.wb-statusbar__version')).not.toBeNull();
+    });
+    container.querySelector<HTMLElement>('.wb-statusbar__version')!.click();
+    expect(copy).toHaveBeenCalledWith('Kata Workbench 3.3.0, ai-sdlc 1.3.0');
+  });
+
+  it('the shell draws no line on the Workbench route, so the page footer is the only one', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcSettings').mockResolvedValue({ mode: 'workbench', remember: false, permission_mode: 'bypass' });
+    const { fixture, container } = await render(App, {}, [provideRouter(routes), { provide: KataTransport, useValue: transport }]);
+    await TestBed.inject(Router).navigateByUrl('/');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(container.querySelector('.wb-statusbar')).not.toBeNull();
+      expect(footerLast(container)).toBe('Workbench 3.3.0 · ai-sdlc 1.3.0');
+    });
+    expect(container.querySelectorAll('.wb-statusbar')).toHaveLength(1);
+  });
+});
 
 const runButton = (c: HTMLElement) =>
   Array.from(c.querySelectorAll('button')).find((b) => /^run/i.test(b.getAttribute('aria-label') ?? b.textContent?.trim() ?? ''))!;

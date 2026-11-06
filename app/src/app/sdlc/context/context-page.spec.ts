@@ -6,6 +6,7 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { ContextPage } from './context-page';
+import { ContextPageViewModel } from './context-page.view-model';
 
 const settle = async () => {
   for (let i = 0; i < 4; i++) {
@@ -92,6 +93,32 @@ describe('ContextPage', () => {
     expect(text(container)).toContain('billing-api has no context file yet.');
     expect(text(container)).not.toContain('Run context');
     expect(button(container, 'Run context for billing-api')).toBeUndefined();
+  });
+
+  it('the current workspace is the one the backend names, not the newest last_opened', async () => {
+    const transport = new MockTransport();
+    const first = (await transport.sdlcWorkspaces())[0];
+    vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([
+      { ...first, last_opened: 5 },
+      { ...first, id: 'newer', name: 'newer', last_opened: 50 },
+    ]);
+    vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue(first.id);
+    const { fixture } = await mount('commerce-core', transport);
+    const vm = fixture.debugElement.injector.get(ContextPageViewModel);
+    expect(vm.current()?.id).toBe(first.id);
+  });
+
+  it('switching workspace asks for the current one and the versions again, after the save', async () => {
+    const { fixture, transport } = await mount();
+    const vm = fixture.debugElement.injector.get(ContextPageViewModel);
+    const save = vi.spyOn(transport, 'sdlcSaveWorkspaces');
+    const ask = vi.spyOn(transport, 'sdlcCurrentWorkspace');
+    const versions = vi.spyOn(transport, 'appVersions');
+    await vm.selectWorkspace(vm.workspaces()[0].id);
+    const saved = save.mock.invocationCallOrder.at(-1)!;
+    expect(ask.mock.invocationCallOrder[0]).toBeGreaterThan(saved);
+    expect(versions).toHaveBeenCalledTimes(1);
+    expect(versions.mock.invocationCallOrder[0]).toBeGreaterThan(saved);
   });
 
   it('goes back to the workspace from the breadcrumb', async () => {

@@ -14,6 +14,7 @@ import { PROGRESS_STEPS } from '../../lib/progress-steps';
 import { LockStore } from '../../core/lock/lock.store';
 import { ChangeRunStore, changeRunKey } from '../../core/run/change-run.store';
 import { RunStore } from '../../core/run/run.store';
+import { VersionsStore } from '../../core/versions/versions.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
@@ -81,8 +82,40 @@ describe('SdlcHomeViewModel init', () => {
       { id: 'old', name: 'old', folder: '/old', last_opened: 5 },
       { id: 'new', name: 'new', folder: '/new', last_opened: 50 },
     ]);
+    vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('new');
     await vm.init();
     expect(vm.current()?.id).toBe('new');
+  });
+
+  it('opens the workspace the backend names as current, even on a tie a TS sort would break the other way', async () => {
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([
+      { id: 'first', name: 'first', folder: '/first', last_opened: 0 },
+      { id: 'last', name: 'last', folder: '/last', last_opened: 0 },
+    ]);
+    const ask = vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('last');
+    await vm.init();
+    expect(ask).toHaveBeenCalled();
+    expect(vm.current()?.id).toBe('last');
+  });
+
+  it('removing the current workspace moves to what the backend names after the save', async () => {
+    const { vm, transport, saveWorkspaces } = setup();
+    const list: WorkspaceEntry[] = [
+      { id: 'a', name: 'a', folder: '/a', last_opened: 0 },
+      { id: 'b', name: 'b', folder: '/b', last_opened: 0 },
+      { id: 'c', name: 'c', folder: '/c', last_opened: 0 },
+    ];
+    vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue(list);
+    const ask = vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('a');
+    await vm.init();
+    expect(vm.current()?.id).toBe('a');
+    ask.mockClear();
+    ask.mockResolvedValue('c');
+    await vm.removeWorkspace('a');
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(ask.mock.invocationCallOrder[0]).toBeGreaterThan(saveWorkspaces.mock.invocationCallOrder.at(-1)!);
+    expect(vm.current()?.id).toBe('c');
   });
 
   it('is blocked, with every workspace action withheld, when the catalog has no ai-sdlc plugin', async () => {
@@ -656,6 +689,41 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
     expect(saved.find((w) => w.id === 'second')!.last_opened).toBeGreaterThan(1);
   });
 
+  it('selectWorkspace asks for the versions again after the list is saved, and the line shows the new answer', async () => {
+    const { vm, transport, saveWorkspaces } = setup();
+    await vm.init();
+    const versions = TestBed.inject(VersionsStore);
+    const answer = await transport.appVersions();
+    const appVersions = vi.spyOn(transport, 'appVersions').mockResolvedValue({ ...answer, copy: 'second workspace' });
+    vm.workspaces.set([...vm.workspaces(), { id: 'second', name: 'second', folder: '/second', last_opened: 1 }]);
+    await vm.selectWorkspace('second');
+    expect(appVersions).toHaveBeenCalledTimes(1);
+    expect(appVersions.mock.invocationCallOrder[0]).toBeGreaterThan(saveWorkspaces.mock.invocationCallOrder.at(-1)!);
+    expect(versions.versions()?.copy).toBe('second workspace');
+  });
+
+  it('adding a workspace asks for the versions again after the list is saved', async () => {
+    const { vm, transport, saveWorkspaces } = setup();
+    vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
+    await vm.init();
+    const appVersions = vi.spyOn(transport, 'appVersions');
+    await vm.addWorkspace();
+    await vm.confirmAddWorkspace();
+    expect(appVersions).toHaveBeenCalledTimes(1);
+    expect(appVersions.mock.invocationCallOrder[0]).toBeGreaterThan(saveWorkspaces.mock.invocationCallOrder.at(-1)!);
+  });
+
+  it('removing the current workspace asks for the versions again; removing another does not', async () => {
+    const { vm, transport } = setup();
+    await vm.init();
+    vm.workspaces.set([...vm.workspaces(), { id: 'second', name: 'second', folder: '/second', last_opened: 1 }]);
+    const appVersions = vi.spyOn(transport, 'appVersions');
+    await vm.removeWorkspace('second');
+    expect(appVersions).not.toHaveBeenCalled();
+    await vm.removeWorkspace(vm.current()!.id);
+    expect(appVersions).toHaveBeenCalledTimes(1);
+  });
+
   it('removing asks first, forgets only the list entry, and moves to the next workspace', async () => {
     const { vm, saveWorkspaces } = setup();
     await vm.init();
@@ -921,6 +989,7 @@ describe('SdlcHomeViewModel changes list', () => {
       { id: 'c', name: 'c', folder: '/c', last_opened: 10 },
     ];
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue(three);
+    vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('a');
     const missing = vi.spyOn(transport, 'sdlcMissingFolders').mockResolvedValue(['/c']);
     const scan = vi.spyOn(transport, 'sdlcScan');
     const state = vi.spyOn(transport, 'sdlcState');
