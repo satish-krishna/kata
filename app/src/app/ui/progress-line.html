@@ -1,6 +1,11 @@
 <p class="k-state__body k-progress" [class.k-progress--compact]="compact()" role="status">
   @if (compact()) {
-    <span class="k-progress__label k-mono" data-testid="progress-label">{{ entry().long ? entry().line : entry().label }}</span>
+    @if (entry().long) {
+      <span class="k-progress__label k-mono" data-testid="progress-label" aria-hidden="true">longer than usual</span>
+      <span class="sr-only">{{ entry().line }}</span>
+    } @else {
+      <span class="k-progress__label k-mono" data-testid="progress-label">{{ entry().label }}</span>
+    }
   } @else {
     <span class="k-progress__line" data-testid="progress-line" [attr.aria-hidden]="entry().long ? null : 'true'">{{ entry().line }}</span>&ngsp;<span class="k-progress__label k-mono" data-testid="progress-label">{{ entry().label }}</span>
   }
