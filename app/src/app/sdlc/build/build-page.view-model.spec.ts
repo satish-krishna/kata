@@ -1252,3 +1252,158 @@ describe('the build page reads a change through its reference (R1.1, R2.2)', () 
     expect(s.vm.view().counts.files).toBeGreaterThan(0);
   });
 });
+
+describe('the shown session follows the decision table', () => {
+  const secs = (h: number, m = 0) => Math.floor(new Date(2026, 9, 19, h, m, 0).getTime() / 1000);
+  const link = (run_id: string, started_at: number): RunLink => ({ workspace_id: 'acme-commerce', system: 'commerce', change: MOCK_BUILD_CHANGE, stage: 'build:commerce-core', run_id, started_at });
+  const record = (id: string): RunRecord => ({ id, kata: 'build', started_at: 0, isolation: 'none', steered: false, ending: 'finished', exit: 0, turns: 7, cost_usd: 0.5 });
+  const REPO = 'commerce-core';
+
+  /** A repository with two earlier sessions (run-a, run-b) and one running session (live-1), driven by the host's announcements and the run events. */
+  async function repo() {
+    const s = setup();
+    const links = [link('run-a', secs(8)), link('run-b', secs(8, 30))];
+    const linksRead = vi.spyOn(s.transport, 'sdlcRunLinks').mockResolvedValue(links);
+    vi.spyOn(s.transport, 'sdlcTaskLinks').mockResolvedValue([]);
+    vi.spyOn(s.transport, 'listRuns').mockResolvedValue([record('run-a'), record('run-b')]);
+    let announce: (e: BuildEvent) => void = () => undefined;
+    vi.spyOn(s.transport, 'onBuildState').mockImplementation(async (cb) => {
+      announce = cb;
+      return () => undefined;
+    });
+    const listeners = new Set<(id: string, ev: never, seq?: number) => void>();
+    vi.spyOn(s.transport, 'onRunEvent').mockImplementation(async (cb) => {
+      listeners.add(cb as never);
+      return () => listeners.delete(cb as never);
+    });
+    const status = await s.transport.sdlcBuildStatus({ workspace: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE });
+    const [found] = (await readAllChanges(s.transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
+    await s.vm.load({ ctx: CTX, masterRepo: MOCK_MASTER, change: found, status, done: false, review: null });
+    await advance(50);
+    const live: string[] = [];
+    const tell = async () => {
+      announce({ change: keyOf(MOCK_BUILD_CHANGE), state: state(), reviewWaiting: [], runs: live.map((run) => ({ key: REPO, run })) });
+      await advance(50);
+    };
+    /** A session starts running, later than every session before it. */
+    const start = async (id: string) => {
+      await advance(2000);
+      live.push(id);
+      await tell();
+    };
+    const send = async (id: string, ev: unknown) => {
+      for (const l of [...listeners]) l(id, ev as never);
+      await advance(50);
+    };
+    s.vm.choose({ kind: 'repo', repo: REPO });
+    await start('live-1');
+    const shown = () => s.vm.shownSessions().filter((x) => x.shown).map((x) => x.id);
+    const session = (id: string) => s.vm.shownSessions().find((x) => x.id === id)!;
+    /** Whether the page keeps following the live session: a session that starts now shows when it does, and the picked one stays when it does not. */
+    const mode = async () => {
+      await start('probe');
+      return shown()[0] === 'probe' ? 'following' : 'picked ' + shown()[0];
+    };
+    return { ...s, start, send, tell, shown, session, mode, links, linksRead, live };
+  }
+  const asks = { type: 'ask.requested', id: 'q1', questions: [] };
+  const ends = { type: 'run.completed', exit_code: 0 };
+
+  it('starts on the running session, with the two earlier ones before it', async () => {
+    const r = await repo();
+    expect(r.vm.shownSessions().map((x) => x.id)).toEqual(['run-a', 'run-b', 'live-1']);
+    expect(r.shown()).toEqual(['live-1']);
+  });
+
+  it('following, the running session asks: the running session stays in view, its question in it', async () => {
+    const r = await repo();
+    await r.send('live-1', asks);
+    expect(r.shown()).toEqual(['live-1']);
+    expect(r.session('live-1').asks.some((a) => a.answers === null)).toBe(true);
+    expect(await r.mode()).toBe('following');
+  });
+
+  it('picked P, the running session asks: P stays in view and the running session says it is waiting', async () => {
+    const r = await repo();
+    r.vm.pickSession(REPO, 'run-a');
+    await r.send('live-1', asks);
+    expect(r.shown()).toEqual(['run-a']);
+    expect(r.session('live-1').waiting).toBe(true);
+    expect(r.session('run-a').waiting).toBe(false);
+    expect(await r.mode()).toBe('picked run-a');
+  });
+
+  it('following, a new session starts: the new session is in view', async () => {
+    const r = await repo();
+    await r.send('live-1', ends);
+    await r.start('live-2');
+    expect(r.shown()).toEqual(['live-2']);
+    expect(await r.mode()).toBe('following');
+  });
+
+  it('picked P, a new session starts: P stays in view', async () => {
+    const r = await repo();
+    r.vm.pickSession(REPO, 'run-a');
+    await r.send('live-1', ends);
+    await r.start('live-2');
+    expect(r.shown()).toEqual(['run-a']);
+    expect(await r.mode()).toBe('picked run-a');
+  });
+
+  it('following, the running session ends and none starts: the ended session, still the newest, is in view', async () => {
+    const r = await repo();
+    await r.send('live-1', ends);
+    expect(r.shown()).toEqual(['live-1']);
+    expect(await r.mode()).toBe('following');
+  });
+
+  it('picked P, the running session ends and none starts: P stays in view', async () => {
+    const r = await repo();
+    r.vm.pickSession(REPO, 'run-a');
+    await r.send('live-1', ends);
+    expect(r.shown()).toEqual(['run-a']);
+    expect(await r.mode()).toBe('picked run-a');
+  });
+
+  it('picked P, P drops out of the list: the newest session is in view and the page follows again', async () => {
+    const r = await repo();
+    r.vm.pickSession(REPO, 'run-a');
+    expect(r.shown()).toEqual(['run-a']);
+    r.linksRead.mockResolvedValue(r.links.filter((l) => l.run_id !== 'run-a'));
+    await r.tell();
+    expect(r.vm.shownSessions().map((x) => x.id)).toEqual(['run-b', 'live-1']);
+    expect(r.shown()).toEqual(['live-1']);
+    // Following: P coming back later does not pull the page to it.
+    r.linksRead.mockResolvedValue(r.links);
+    await r.tell();
+    expect(r.shown()).toEqual(['live-1']);
+    expect(await r.mode()).toBe('following');
+  });
+
+  it.each([
+    ['following', null],
+    ['picked run-a', 'run-a'],
+  ])('%s, the engineer picks the newest session: the newest session is in view and the page follows', async (_name, from) => {
+    const r = await repo();
+    if (from !== null) r.vm.pickSession(REPO, from);
+    r.vm.pickSession(REPO, 'live-1');
+    expect(r.shown()).toEqual(['live-1']);
+    expect(await r.mode()).toBe('following');
+  });
+
+  it.each([
+    ['following', null],
+    ['picked run-a', 'run-a'],
+  ])('%s, the engineer picks an earlier session Q: Q is in view and stays', async (_name, from) => {
+    const r = await repo();
+    if (from !== null) r.vm.pickSession(REPO, from);
+    r.vm.pickSession(REPO, 'run-b');
+    expect(r.shown()).toEqual(['run-b']);
+    expect(await r.mode()).toBe('picked run-b');
+  });
+
+  it('with no sessions nothing is in view', async () => {
+    const s = setup();
+    expect(s.vm.shownSessions()).toEqual([]);
+  });
+});

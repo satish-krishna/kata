@@ -94,6 +94,8 @@ export type ShownSession = ShownRun & {
   note: string | null;
   /** False for a live run kept mounted while another pick is on show; absent or true means on show. */
   shown?: boolean;
+  /** True when the session has an unanswered question or a pending permission. */
+  waiting?: boolean;
 };
 
 /** What the tasks area says about the review. */
@@ -1361,6 +1363,12 @@ export class BuildPageViewModel {
     if (next.has(id)) next.delete(id);
     else next.add(id);
     this.openedRuns.set(next);
+  }
+
+  /** The engineer picks the session of a repository to read. */
+  pickSession(repo: string, runId: string): void {
+    void repo;
+    void runId;
   }
 
   select(name: string): void {
