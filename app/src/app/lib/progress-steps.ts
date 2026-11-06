@@ -1,5 +1,7 @@
 /** The long steps that show progress. */
 export const PROGRESS_STEP_IDS = [
+  'listing-changes',
+  'reading-open-stages',
   'reading-stages',
   'reading-change',
   'reading-diff',
@@ -17,6 +19,24 @@ export type ProgressStepId = (typeof PROGRESS_STEP_IDS)[number];
  * with its counts sits next to the line and never rotates.
  */
 export const PROGRESS_STEPS: Record<ProgressStepId, { usualMs: number; lines: readonly string[] }> = {
+  'listing-changes': {
+    usualMs: 1_000,
+    lines: [
+      'Listing the changes on the shelf…',
+      'Listing every change by name…',
+      'Listing the changes, open and finished…',
+      'Listing what the system holds…',
+    ],
+  },
+  'reading-open-stages': {
+    usualMs: 3_000,
+    lines: [
+      'Reading how far each open change has come…',
+      'Reading the open changes, stage by stage…',
+      'Reading what each open change has so far…',
+      'Reading the open changes, one folder at a time…',
+    ],
+  },
   'reading-stages': {
     usualMs: 8_000,
     lines: [
@@ -87,6 +107,8 @@ export const PROGRESS_STEPS: Record<ProgressStepId, { usualMs: number; lines: re
 
 /** What a step is called in the notice for a step that runs long: "<name> is taking longer than usual (<n> s)". */
 export const PROGRESS_NAMES: Record<ProgressStepId, string> = {
+  'listing-changes': 'Listing the changes',
+  'reading-open-stages': 'Reading the changes',
   'reading-stages': 'Reading the changes',
   'reading-change': 'Reading the change',
   'reading-diff': 'Reading what changed',

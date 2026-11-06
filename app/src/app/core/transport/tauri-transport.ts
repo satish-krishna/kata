@@ -118,10 +118,10 @@ export class TauriTransport extends KataTransport {
   sdlcInstructions(folder: string, masterRepo: string) { return this.ipc.invoke<InstructionsState>('sdlc_instructions', { folder, masterRepo }); }
   sdlcState(folder: string, systems: string[]) { return this.ipc.invoke<WorkspaceView>('sdlc_state', { folder, systems }); }
   sdlcChangeState(folder: string, system: string, change: string) { return this.ipc.invoke<ChangeView>('sdlc_change_state', { folder, system, change }); }
-  sdlcHomeList(_workspaceId: string, _systems: string[]): Promise<HomeList> { return Promise.reject(new Error('not implemented')); }
-  sdlcHomePick(_workspaceId: string, _system: string, _systems: string[]): Promise<HomeList> { return Promise.reject(new Error('not implemented')); }
-  sdlcHomeOpen(_folder: string, _system: string, _shown: string[], _trigger: Refresh): Promise<HomeOpen> { return Promise.reject(new Error('not implemented')); }
-  sdlcHomePullRequests(_folder: string, _system: string, _changes: string[]): Promise<HomeChecked> { return Promise.reject(new Error('not implemented')); }
+  sdlcHomeList(workspaceId: string, systems: string[]) { return this.ipc.invoke<HomeList>('sdlc_home_list', { workspaceId, systems }); }
+  sdlcHomePick(workspaceId: string, system: string, systems: string[]) { return this.ipc.invoke<HomeList>('sdlc_home_pick', { workspaceId, system, systems }); }
+  sdlcHomeOpen(folder: string, system: string, shown: string[], trigger: Refresh) { return this.ipc.invoke<HomeOpen>('sdlc_home_open', { folder, system, shown, trigger }); }
+  sdlcHomePullRequests(folder: string, system: string, changes: string[]) { return this.ipc.invoke<HomeChecked>('sdlc_home_pull_requests', { folder, system, changes }); }
   sdlcMissingFolders(folders: string[]) { return this.ipc.invoke<string[]>('sdlc_missing_folders', { folders }); }
   sdlcBranches(master: string) { return this.ipc.invoke<BranchInfo>('sdlc_branches', { master }); }
   sdlcOpenChange(change: ChangeRef, doc: string) { return this.ipc.invoke<OpenedChange>('sdlc_open_change', { change, doc }); }

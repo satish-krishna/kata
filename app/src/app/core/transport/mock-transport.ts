@@ -328,10 +328,11 @@ export class MockTransport extends KataTransport {
   }
   /** A test or a demo changes what the workspace holds for a change; the next `sdlcChangeState` and `sdlcState` show it. */
   patchChange(change: string, patch: Partial<ChangeInfo>): void { this.sdlc.patch(change, patch); }
-  sdlcHomeList(_workspaceId: string, _systems: string[]): Promise<HomeList> { return Promise.reject(new Error('not implemented')); }
-  sdlcHomePick(_workspaceId: string, _system: string, _systems: string[]): Promise<HomeList> { return Promise.reject(new Error('not implemented')); }
-  sdlcHomeOpen(_folder: string, _system: string, _shown: string[], _trigger: Refresh): Promise<HomeOpen> { return Promise.reject(new Error('not implemented')); }
-  sdlcHomePullRequests(_folder: string, _system: string, _changes: string[]): Promise<HomeChecked> { return Promise.reject(new Error('not implemented')); }
+  /** Scripted from the home fixtures; `?demo=old-plugin` answers `legacy`, `?demo=finished-many` adds a second system and sixty finished changes. */
+  async sdlcHomeList(_workspaceId: string, systems: string[]): Promise<HomeList> { return this.sdlc.homeList(systems, await this.sdlcPluginReadiness(null)); }
+  async sdlcHomePick(_workspaceId: string, system: string, systems: string[]): Promise<HomeList> { return this.sdlc.homePick(system, systems, await this.sdlcPluginReadiness(null)); }
+  async sdlcHomeOpen(folder: string, system: string, shown: string[], trigger: Refresh): Promise<HomeOpen> { return this.sdlc.homeOpen(system, shown, trigger, await this.sdlcPluginReadiness(folder)); }
+  async sdlcHomePullRequests(folder: string, system: string, changes: string[]): Promise<HomeChecked> { return this.sdlc.homePullRequests(system, changes, await this.sdlcPluginReadiness(folder)); }
   /** Every demo folder is there. */
   sdlcMissingFolders(_folders: string[]): Promise<string[]> { return Promise.resolve([]); }
   sdlcBranches(_master: string): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches()); }
