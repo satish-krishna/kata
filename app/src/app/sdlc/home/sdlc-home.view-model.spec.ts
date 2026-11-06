@@ -1084,6 +1084,8 @@ describe('SdlcHomeViewModel changes list', () => {
       vi.advanceTimersByTime(200);
       expect(line()?.label).toBe('Reading changes');
       expect(PROGRESS_STEPS['reading-stages'].lines).toContain(line()!.line);
+      // The focus asks the list first, so the state read starts a moment later.
+      await vi.waitFor(() => expect(state).toHaveBeenCalledTimes(2));
       answer(oneSystem(systemViewOf(1)));
       await vi.waitFor(() => expect(line()).toBeNull());
     });

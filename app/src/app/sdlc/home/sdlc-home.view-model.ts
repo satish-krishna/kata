@@ -736,7 +736,30 @@ export class SdlcHomeViewModel {
   windowFocused(): void {
     if (!this.canWork() || this.locked()) return;
     if (this.listed()) void this.readOpen('focus');
-    else void this.refreshViews();
+    else void this.shown('reading-stages', 'Reading changes', () => this.refreshLegacy());
+  }
+
+  /** On a legacy home the plugin may have been updated while the Workbench was open: ask the list first; a listed answer switches to the listed flow, a legacy one refreshes as before. */
+  private async refreshLegacy(): Promise<void> {
+    const w = this.current();
+    const scan = this.scan();
+    if (!w || !scan) return;
+    const load = this.loadSeq;
+    let list: HomeList;
+    try {
+      list = await this.transport.sdlcHomeList(w.id, systemNames(scan));
+    } catch (e) {
+      if (load === this.loadSeq) this.toasts.error(`Could not read the changes: ${message(e)}`);
+      return;
+    }
+    if (load !== this.loadSeq) return;
+    if (list.kind === 'listed') {
+      this.workspace.set(null);
+      this.applyList(list);
+      await this.readOpen('open');
+      return;
+    }
+    await this.refreshViews();
   }
 
   /** The engineer picked a system: the backend remembers it, and the home reads it as on opening. */
