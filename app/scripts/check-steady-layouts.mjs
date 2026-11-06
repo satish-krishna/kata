@@ -13,11 +13,11 @@ const DIST = join(ROOT, 'dist', 'angular-jig', 'browser');
 const GAP = 8;
 
 /** Opens one route in a fresh window of the given size; the caller closes the context. */
-async function openPage(browser, origin, route, width, height = 900) {
+async function openPage(browser, origin, route, width, height = 900, waitUntil = 'networkidle') {
   const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });
   await installClipping(context);
   const page = await context.newPage();
-  await page.goto(`${origin}/${route}`, { waitUntil: 'networkidle' });
+  await page.goto(`${origin}/${route}`, { waitUntil });
   await page.evaluate(() => document.fonts && document.fonts.ready);
   return { context, page };
 }
@@ -127,10 +127,92 @@ async function finished(browser, origin) {
   return fails;
 }
 
+
+/** Runs in the page: every change row's box, and the progress line's box with the Changes heading's. */
+function measureRefresh() {
+  const box = (r) => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+  const rows = [...document.querySelectorAll('app-changes-table tbody tr')].map((r) => box(r.getBoundingClientRect()));
+  const progress = document.querySelector('[data-testid="reading-progress"]');
+  const head = document.querySelector('#changes-heading')?.closest('.wb-pane__head');
+  return {
+    rows,
+    progress: progress ? box(progress.getBoundingClientRect()) : null,
+    text: progress ? progress.textContent.replace(/s+/g, ' ').trim() : '',
+    head: head ? box(head.getBoundingClientRect()) : null,
+    wrapped: progress ? progress.getClientRects().length > 1 || progress.scrollWidth > progress.clientWidth : false,
+  };
+}
+
+const inside = (a, b) => a.left >= b.left - 0.5 && a.right <= b.right + 0.5 && a.top >= b.top - 0.5 && a.bottom <= b.bottom + 0.5;
+
+/** Compares the rows with the ones recorded before the refresh; returns failure lines. */
+/** With `filled`, the rows' own heights may change (skeletons give way to the stage labels), so only the rows down to the first such change are compared. */
+function sameRows(at, before, now, filled = false) {
+  if (now.rows.length !== before.length) return [`${at}: ${now.rows.length} rows, not ${before.length}`];
+  const fails = [];
+  let stop = false;
+  now.rows.forEach((r, i) => {
+    if (stop) return;
+    if (filled && Math.abs(r.bottom - r.top - (before[i].bottom - before[i].top)) > 0.5) stop = true;
+    for (const k of stop ? ['top', 'left'] : ['top', 'left', 'bottom', 'right']) {
+      if (Math.abs(r[k] - before[i][k]) > 0.5) fails.push(`${at}: row ${i + 1} moved (${k} ${before[i][k].toFixed(1)} to ${r[k].toFixed(1)})`);
+    }
+  });
+  return fails.slice(0, 3);
+}
+
+/** While the progress shows and after it hides, the rows stay where they were and the progress sits in the heading. */
+async function watchRefresh(page, before, at, wantLong, filled = false) {
+  const fails = [];
+  const progress = page.locator('[data-testid="reading-progress"]');
+  await progress.waitFor({ state: 'visible', timeout: 8000 });
+  if (wantLong) await page.waitForFunction(() => /longer than usual/.test(document.querySelector('[data-testid="reading-progress"]')?.textContent ?? ''), null, { timeout: 25000 });
+  const m = await page.evaluate(measureRefresh);
+  if (!m.progress || !m.head) return [`${at}: no progress or no Changes heading`];
+  if (!inside(m.progress, m.head)) fails.push(`${at}: the progress is not inside the Changes heading`);
+  if (m.rows.some((r) => overlaps(r, m.progress))) fails.push(`${at}: the progress overlaps a row`);
+  if (m.wrapped) fails.push(`${at}: the progress text wraps or is cut`);
+  if (wantLong && !/longer than usual/.test(m.text)) fails.push(`${at}: the long notice does not show`);
+  fails.push(...sameRows(`${at}, while it shows`, before, m));
+  await progress.waitFor({ state: 'hidden', timeout: 25000 });
+  await page.waitForTimeout(200);
+  fails.push(...sameRows(`${at}, after it hides`, before, await page.evaluate(measureRefresh), filled));
+  return fails;
+}
+
+async function refresh(browser, origin) {
+  const fails = [];
+  for (const long of [false, true]) {
+    const { context, page } = await openPage(browser, origin, `sdlc?demo=slow-read${long ? '&long=1' : ''}`, 1280, 900, 'domcontentloaded');
+    try {
+      await page.locator('app-changes-table tbody tr').first().waitFor({ timeout: 5000 });
+      await page.locator('app-changes-table tbody tr').first().hover();
+      const first = await page.evaluate(measureRefresh);
+      if (first.progress) {
+        fails.push('the progress already showed before the rows were recorded; the check cannot compare');
+        continue;
+      }
+      const at = long ? 'the long refresh on load' : 'the refresh on load';
+      fails.push(...(await watchRefresh(page, first.rows, at, long, true)));
+      if (long) continue;
+      const settled = await page.evaluate(measureRefresh);
+      await page.evaluate(() => {
+        window.dispatchEvent(new Event('blur'));
+        window.dispatchEvent(new Event('focus'));
+      });
+      fails.push(...(await watchRefresh(page, settled.rows, 'the refresh on focus', false)));
+    } finally {
+      await context.close();
+    }
+  }
+  return fails;
+}
+
 /** Part name to an async function (browser, origin) returning failure lines. */
 export const PARTS = {
   'done-row': doneRow,
   finished,
+  refresh,
 };
 
 /** Runs the named parts (all when `only` is empty or missing); returns the failures as readable lines. */

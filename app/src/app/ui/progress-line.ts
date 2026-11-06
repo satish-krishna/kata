@@ -8,4 +8,6 @@ import type { ProgressView } from '../core/progress/progress.store';
 })
 export class ProgressLine {
   readonly entry = input.required<ProgressView>();
+  /** Compact shows only the plain label, or the plain long notice in its place. */
+  readonly compact = input(false);
 }

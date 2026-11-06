@@ -331,7 +331,16 @@ export class MockTransport extends KataTransport {
   /** Scripted from the home fixtures; `?demo=old-plugin` answers `legacy`, `?demo=finished-many` adds a second system and sixty finished changes. */
   async sdlcHomeList(_workspaceId: string, systems: string[]): Promise<HomeList> { return this.sdlc.homeList(systems, await this.sdlcPluginReadiness(null)); }
   async sdlcHomePick(_workspaceId: string, system: string, systems: string[]): Promise<HomeList> { return this.sdlc.homePick(system, systems, await this.sdlcPluginReadiness(null)); }
-  async sdlcHomeOpen(folder: string, system: string, shown: string[], trigger: Refresh): Promise<HomeOpen> { return this.sdlc.homeOpen(system, shown, trigger, await this.sdlcPluginReadiness(folder)); }
+  async sdlcHomeOpen(folder: string, system: string, shown: string[], trigger: Refresh): Promise<HomeOpen> {
+    await this.slowRead();
+    return this.sdlc.homeOpen(system, shown, trigger, await this.sdlcPluginReadiness(folder));
+  }
+  /** `?demo=slow-read`: the stage read of the home takes 4 s; with `&long=1` it takes 11 s, past the 10 s the notice needs for a step with a 3 s usual time. */
+  private slowRead(): Promise<void> {
+    if (demoParam() !== 'slow-read') return Promise.resolve();
+    const long = typeof location !== 'undefined' && new URLSearchParams(location.search).get('long') === '1';
+    return new Promise((resolve) => setTimeout(resolve, long ? 11_000 : 4_000));
+  }
   async sdlcHomePullRequests(folder: string, system: string, changes: string[]): Promise<HomeChecked> { return this.sdlc.homePullRequests(system, changes, await this.sdlcPluginReadiness(folder)); }
   /** Every demo folder is there. */
   sdlcMissingFolders(_folders: string[]): Promise<string[]> { return Promise.resolve([]); }

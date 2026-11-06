@@ -24,4 +24,19 @@ describe('ProgressLine', () => {
     expect(container.querySelector('[data-testid="progress-line"]')!.getAttribute('aria-hidden')).toBeNull();
     expect(norm(container.textContent)).toContain('Reading the change is taking longer than usual (12 s)');
   });
+
+  it('shows only the plain label when compact', async () => {
+    const { container } = await render(ProgressLine, { entry: { line: 'Reading the change from disk…', label: 'Reading the change', long: false }, compact: true });
+    expect(container.querySelector('p[role="status"]')).not.toBeNull();
+    expect(norm(container.textContent)).toBe('Reading the change');
+    expect(container.querySelector('[data-testid="progress-line"]')).toBeNull();
+  });
+
+  it('shows only the plain long notice when compact and the step runs long', async () => {
+    const { container } = await render(ProgressLine, {
+      entry: { line: 'Reading the change is taking longer than usual (12 s)', label: 'Reading the change', long: true },
+      compact: true,
+    });
+    expect(norm(container.textContent)).toBe('Reading the change is taking longer than usual (12 s)');
+  });
 });
