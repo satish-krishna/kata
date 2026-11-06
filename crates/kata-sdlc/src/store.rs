@@ -150,27 +150,92 @@ pub struct WorkspaceChoice {
     pub current: Option<String>,
 }
 
-pub fn update_workspaces<F>(_f: F) -> Result<Vec<WorkspaceEntry>, StoreError>
+static WORKSPACES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Load the saved list, change it and save it under one process-wide lock; answers the saved list.
+/// Nothing is written before the save, so a failed save leaves the file as it was.
+pub fn update_workspaces<F>(f: F) -> Result<Vec<WorkspaceEntry>, StoreError>
 where
     F: FnOnce(&mut Vec<WorkspaceEntry>) -> Result<(), StoreError>,
 {
-    todo!()
+    let _guard = WORKSPACES.lock().unwrap_or_else(|e| e.into_inner());
+    let mut list = load_workspaces();
+    f(&mut list)?;
+    save_workspaces(&list)?;
+    Ok(list)
 }
 
-pub fn stamp(_list: &[WorkspaceEntry], _id: &str, _now: u64) -> u64 {
-    todo!()
+/// The `last_opened` for the workspace just picked: `now`, or one past every other entry when one is
+/// at or ahead of `now`, so the pick wins a same-second tie under `current_workspace`.
+pub fn stamp(list: &[WorkspaceEntry], id: &str, now: u64) -> u64 {
+    list.iter()
+        .filter(|w| w.id != id)
+        .map(|w| w.last_opened.saturating_add(1))
+        .fold(now, u64::max)
 }
 
-pub fn open_workspace(_id: &str, _now: u64) -> Result<WorkspaceChoice, StoreError> {
-    todo!()
+fn choice(workspaces: Vec<WorkspaceEntry>) -> WorkspaceChoice {
+    let current = current_workspace(&workspaces).map(|w| w.id.clone());
+    WorkspaceChoice {
+        workspaces,
+        current,
+    }
 }
 
-pub fn add_workspace(_name: &str, _folder: &str, _now: u64) -> Result<WorkspaceChoice, StoreError> {
-    todo!()
+pub fn open_workspace(id: &str, now: u64) -> Result<WorkspaceChoice, StoreError> {
+    update_workspaces(|list| {
+        let at = stamp(list, id, now);
+        let entry = list
+            .iter_mut()
+            .find(|w| w.id == id)
+            .ok_or_else(|| StoreError::UnknownWorkspace(id.to_string()))?;
+        entry.last_opened = at;
+        Ok(())
+    })
+    .map(choice)
 }
 
-pub fn remove_workspace(_id: &str) -> Result<WorkspaceChoice, StoreError> {
-    todo!()
+fn workspace_id(name: &str, list: &[WorkspaceEntry]) -> String {
+    let mut slug = String::new();
+    for c in name.to_lowercase().chars() {
+        if c.is_ascii_lowercase() || c.is_ascii_digit() {
+            slug.push(c);
+        } else if !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    let slug = slug.trim_matches('-');
+    let slug = if slug.is_empty() { "workspace" } else { slug };
+    let mut id = slug.to_string();
+    let mut n = 2;
+    while list.iter().any(|w| w.id == id) {
+        id = format!("{slug}-{n}");
+        n += 1;
+    }
+    id
+}
+
+pub fn add_workspace(name: &str, folder: &str, now: u64) -> Result<WorkspaceChoice, StoreError> {
+    update_workspaces(|list| {
+        let id = workspace_id(name, list);
+        let last_opened = stamp(list, &id, now);
+        list.push(WorkspaceEntry {
+            id,
+            name: name.to_string(),
+            folder: folder.to_string(),
+            last_opened,
+        });
+        Ok(())
+    })
+    .map(choice)
+}
+
+pub fn remove_workspace(id: &str) -> Result<WorkspaceChoice, StoreError> {
+    update_workspaces(|list| {
+        list.retain(|w| w.id != id);
+        Ok(())
+    })
+    .map(choice)
 }
 
 pub fn load_run_links() -> Vec<RunLink> {

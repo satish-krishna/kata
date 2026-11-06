@@ -722,6 +722,31 @@ fn sdlc_save_workspaces(workspaces: Vec<sdlc::store::WorkspaceEntry>) -> Result<
     sdlc::store::save_workspaces(&workspaces).map_err(|e| e.to_string())
 }
 
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+#[tauri::command]
+async fn sdlc_open_workspace(id: String) -> Result<sdlc::store::WorkspaceChoice, String> {
+    sdlc::store::open_workspace(&id, now_secs()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sdlc_add_workspace(
+    name: String,
+    folder: String,
+) -> Result<sdlc::store::WorkspaceChoice, String> {
+    sdlc::store::add_workspace(&name, &folder, now_secs()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sdlc_remove_workspace(id: String) -> Result<sdlc::store::WorkspaceChoice, String> {
+    sdlc::store::remove_workspace(&id).map_err(|e| e.to_string())
+}
+
 #[tauri::command(async)]
 fn sdlc_scan(folder: String) -> Result<sdlc::workspace::WorkspaceScan, String> {
     sdlc::workspace::scan(Path::new(&folder)).map_err(|e| e.to_string())
@@ -2207,6 +2232,9 @@ pub fn run() {
             save_build_layout,
             sdlc_workspaces,
             sdlc_save_workspaces,
+            sdlc_open_workspace,
+            sdlc_add_workspace,
+            sdlc_remove_workspace,
             sdlc_scan,
             sdlc_context_health,
             sdlc_read_context,
