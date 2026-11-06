@@ -76,7 +76,8 @@ const session = (id: string, over: Partial<ShownSession> = {}): ShownSession => 
   refusal: null,
   unseenFrom: null,
   latest: true,
-  expanded: false,
+  shown: true,
+  waiting: false,
   outcome: 'running',
   live: true,
   note: null,
@@ -158,7 +159,7 @@ const stopMessage = (exit: number, _error: null, _cancelled = false, _recorded =
       (answer)="answers.push($event)"
       (say)="says.push($event)"
       (goTo)="goTos.push($event)"
-      (toggleRun)="toggles.push($event)"
+      (pickSession)="toggles.push($event)"
       (setFilter)="onFilter($event)"
       (toggleFold)="onFold($event)"
       (reveal)="revealed.push($event)"
@@ -441,8 +442,8 @@ describe('the build page, questions and stops', () => {
       groups: [group('commerce-core', RUNNING, 'cancel', [task('T1', RUNNING)]), group('customer-portal', RUNNING, 'cancel', [task('T2', RUNNING)], true)],
       pick: { kind: 'repo', repo: 'customer-portal' },
       sessions: [
-        session('hidden', { state: 'awaiting', asks: [ask('h1', null)], shown: false }),
-        session('answered', { state: 'running', asks: [ask('a1', [['isolate']])], latest: false, expanded: true }),
+        session('hidden', { state: 'awaiting', asks: [ask('h1', null)], shown: false, offPick: true }),
+        session('answered', { state: 'running', asks: [ask('a1', [['isolate']])], latest: false }),
         session('open', { state: 'awaiting', asks: [ask('q1', null)] }),
       ],
       waiting: [{ repo: 'customer-portal', kind: 'answer', countdown: null, waited: '0:05' }],
@@ -567,7 +568,7 @@ describe('the build page, picking and folding', () => {
   it('folds an earlier session to one line, keeps its pane mounted, and opens it when picked', async () => {
     const v = base({
       pick: { kind: 'repo', repo: 'commerce-core' },
-      sessions: [session('r0', { latest: false, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
+      sessions: [session('r0', { latest: false, shown: false, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
     });
     const { area, host, el } = await mount(v);
     const panes = area('activity')!.querySelectorAll<HTMLElement>('[data-session]');
@@ -585,7 +586,7 @@ describe('the build page, picking and folding', () => {
   it('lets only a session with a showing pane grow', async () => {
     const v = base({
       pick: { kind: 'repo', repo: 'commerce-core' },
-      sessions: [session('r0', { latest: false, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
+      sessions: [session('r0', { latest: false, shown: false, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
     });
     const { el } = await mount(v);
     const grow = (id: string) => getComputedStyle(el.querySelector<HTMLElement>(`[data-session="${id}"]`)!).flexGrow;
@@ -596,7 +597,7 @@ describe('the build page, picking and folding', () => {
   it('lets an expanded finished session grow like the live one', async () => {
     const v = base({
       pick: { kind: 'repo', repo: 'commerce-core' },
-      sessions: [session('r0', { latest: false, expanded: true, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
+      sessions: [session('r0', { latest: false, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
     });
     const { el } = await mount(v);
     const grow = (id: string) => getComputedStyle(el.querySelector<HTMLElement>(`[data-session="${id}"]`)!).flexGrow;
@@ -607,7 +608,7 @@ describe('the build page, picking and folding', () => {
   it('a live pane stays mounted, hidden, when another repository is picked', async () => {
     const v = base({
       pick: { kind: 'repo', repo: 'customer-portal' },
-      sessions: [session('a', { shown: false }), session('b')],
+      sessions: [session('a', { shown: false, offPick: true }), session('b')],
     });
     const { el } = await mount(v);
     const a = el.querySelector<HTMLElement>('[data-session="a"]');
@@ -723,7 +724,7 @@ class ArrangedHost {
     this.view = {
       ...this.view,
       pick,
-      sessions: this.sessionOf === null ? this.view.sessions : this.view.sessions.map((x) => ({ ...x, shown: this.sessionOf![repo ?? ''] === x.id })),
+      sessions: this.sessionOf === null ? this.view.sessions : this.view.sessions.map((x) => ({ ...x, shown: this.sessionOf![repo ?? ''] === x.id, offPick: this.sessionOf![repo ?? ''] !== x.id })),
       groups: this.view.groups.map((g) => ({ ...g, picked: g.repo === repo, tasks: g.tasks.map((t) => ({ ...t, picked: pick.kind === 'task' && pick.task === t.id })) })),
     };
   }
@@ -1475,7 +1476,7 @@ describe('a waiting question on the arranged page', () => {
     page.host.sessionOf = { 'commerce-core': 'mine', 'customer-portal': 'asking' };
     page.host.view = {
       ...page.host.view,
-      sessions: [session('mine', { shown: true }), session('asking', { state: 'awaiting', asks: [asking], shown: false })],
+      sessions: [session('mine'), session('asking', { state: 'awaiting', asks: [asking], shown: false, offPick: true })],
       waiting: WAIT,
     };
     page.host.choose({ kind: 'repo', repo: 'commerce-core' });
@@ -1649,7 +1650,7 @@ describe('the message box on the build page', () => {
     const v = base({
       groups: [group('api', RUNNING, 'cancel', [task('T1', RUNNING)], true), group('web', RUNNING, 'cancel', [task('T2', RUNNING)])],
       pick: { kind: 'repo', repo: 'api' },
-      sessions: [session('api-run'), session('web-run', { shown: false })],
+      sessions: [session('api-run'), session('web-run', { shown: false, offPick: true })],
     });
     const { el, host } = await mount(v);
     sayIn(el, 'api-run', 'use the v2 route');

@@ -217,13 +217,13 @@
             <p class="k-state__body">{{ note }}</p>
           }
           @for (s of view().sessions; track s.id) {
-            <div class="k-bp__session" [class.k-bp__session--open]="s.latest || s.expanded" [attr.data-session]="s.id" [hidden]="s.shown === false">
-              @if (s.latest) {
+            <div class="k-bp__session" [class.k-bp__session--open]="s.shown" [attr.data-session]="s.id" [hidden]="s.offPick === true">
+              @if (s.shown) {
                 <div class="k-bp__run-start">Started <span class="k-mono">{{ s.startedAt }}</span></div>
               } @else {
                 <div class="k-bp__run-start">
-                  <button hlmBtn variant="ghost" size="sm" type="button" data-run-line [attr.aria-expanded]="s.expanded" (click)="toggleRun.emit(s.id)">
-                    <ng-icon [name]="s.expanded ? 'lucideChevronDown' : 'lucideChevronRight'" size="14" />
+                  <button hlmBtn variant="ghost" size="sm" type="button" data-run-line (click)="pickSession.emit(s.id)">
+                    <ng-icon name="lucideChevronRight" size="14" />
                     Started <span class="k-mono">{{ s.startedAt }}</span> · {{ s.outcome }}
                   </button>
                 </div>
@@ -232,7 +232,7 @@
                 <p class="k-state__body">{{ sessionNote }}</p>
               }
               <!-- An earlier session folds to its line, but its pane stays mounted: RunStore keeps folding its events. -->
-              <div class="k-bp__pane" data-pane [hidden]="!s.latest && !s.expanded">
+              <div class="k-bp__pane" data-pane [hidden]="!s.shown">
                 <app-observe-pane
                   [state]="s.state"
                   [events]="s.events"

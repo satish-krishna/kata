@@ -370,9 +370,9 @@ describe('the build page shows tasks and sessions from the build log, the run li
     expect(a.outcome).toContain('exit 124');
     expect(b.outcome).toContain('exit 1 ');
     expect([a.latest, b.latest, live.latest]).toEqual([false, false, true]);
-    expect([a.expanded, b.expanded, live.expanded]).toEqual([false, false, false]);
-    vm.toggleRun('run-a');
-    expect(vm.shownSessions()[0].expanded).toBe(true);
+    expect([a.shown, b.shown, live.shown]).toEqual([false, false, true]);
+    vm.pickSession('commerce-core', 'run-a');
+    expect(vm.shownSessions().map((x) => x.shown)).toEqual([true, false, false]);
   });
 
   it('a not-started change with uncommitted edits shows the files area', async () => {
@@ -409,11 +409,11 @@ describe('the build page shows tasks and sessions from the build log, the run li
     const [core, portal] = [idOf('commerce-core'), idOf('customer-portal')];
     const find = (id: string) => s.vm.view().sessions.find((x) => x.id === id);
     s.vm.choose({ kind: 'repo', repo: 'commerce-core' });
-    expect(find(core)?.shown).not.toBe(false);
-    expect(find(portal)?.shown).toBe(false);
+    expect(find(core)?.offPick).not.toBe(true);
+    expect(find(portal)?.offPick).toBe(true);
     s.vm.choose({ kind: 'repo', repo: 'customer-portal' });
-    expect(find(portal)?.shown).not.toBe(false);
-    expect(find(core)?.shown).toBe(false);
+    expect(find(portal)?.offPick).not.toBe(true);
+    expect(find(core)?.offPick).toBe(true);
   });
 
   it('a repository the backend names as waiting shows what it waits for, and its task is not running', async () => {
