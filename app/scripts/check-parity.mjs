@@ -3,6 +3,7 @@
 // Local gate only (baseline is Windows-rendered; CI's Linux Chrome differs).
 //   npm run check:parity                 all views
 //   npm run check:parity -- --only a,b   named views only
+//   npm run check:parity -- --update --only name,name   update the baseline for named views
 import { spawn, execSync } from 'node:child_process';
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { join, resolve, dirname } from 'node:path';
@@ -10,27 +11,18 @@ import { fileURLToPath } from 'node:url';
 import { PNG } from 'pngjs';
 import pixelmatch from 'pixelmatch';
 import { VIEWS, captureAll } from '../parity/capture.mjs';
+import { parseOptions } from '../parity/options.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const THRESHOLD = 0.001;
-const USAGE = 'usage: npm run check:parity [-- --only name,name]';
-const onlyArg = process.argv.indexOf('--only');
-const onlyValue = onlyArg >= 0 ? process.argv[onlyArg + 1] : undefined;
-if (onlyArg >= 0 && (!onlyValue || onlyValue.startsWith('--'))) {
-  console.error(`--only needs a comma-separated view list
-${USAGE}`);
+// `update` is parsed here; writing the baseline is not implemented yet.
+let only;
+let update;
+try {
+  ({ only, update } = parseOptions(process.argv.slice(2), VIEWS.map((v) => v.name)));
+} catch (e) {
+  console.error(e.message);
   process.exit(1);
-}
-const only = onlyArg >= 0 ? new Set(onlyValue.split(',').filter(Boolean)) : null;
-if (only) {
-  const valid = VIEWS.map((v) => v.name);
-  const unknown = [...only].filter((n) => !valid.includes(n));
-  if (unknown.length || only.size === 0) {
-    console.error(`unknown view(s): ${unknown.join(', ') || '(none given)'}
-valid views: ${valid.join(', ')}
-${USAGE}`);
-    process.exit(1);
-  }
 }
 
 async function serve() {
