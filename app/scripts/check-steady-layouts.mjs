@@ -84,9 +84,53 @@ async function doneRow(browser, origin) {
   return fails;
 }
 
+/** Runs in the page: the Finished list's box, the body's bottom inner edge and whether the list scrolls. */
+function measureFinished() {
+  const list = document.querySelector('.k-finished__list');
+  if (!list) return null;
+  const body = list.closest('.k-home__body');
+  const bodyBox = body.getBoundingClientRect();
+  const innerBottom = bodyBox.bottom - parseFloat(getComputedStyle(body).paddingBottom);
+  return {
+    listBottom: list.getBoundingClientRect().bottom,
+    innerBottom,
+    scrolls: list.scrollHeight > list.clientHeight,
+    rows: list.querySelectorAll('[data-testid="finished-row"]').length,
+  };
+}
+
+async function finished(browser, origin) {
+  const fails = [];
+  for (const [demo, many] of [['finished-many', true], ['finished-few', false]]) {
+    const { context, page } = await openPage(browser, origin, `sdlc?demo=${demo}`, 1280, 900);
+    try {
+      await page.locator('app-finished-changes button[aria-expanded]').waitFor({ timeout: 5000 });
+      await page.locator('app-finished-changes button[aria-expanded]').click();
+      await page.locator('[data-testid="finished-row"]').first().waitFor({ timeout: 5000 });
+      const m = await page.evaluate(measureFinished);
+      const at = `the Finished list on ${demo}`;
+      if (!m) {
+        fails.push(`${at}: no list after opening the fold`);
+        continue;
+      }
+      if (many) {
+        if (Math.abs(m.listBottom - m.innerBottom) > 1) fails.push(`${at}: the list ends at ${m.listBottom.toFixed(1)}, not at the body's bottom inner edge ${m.innerBottom.toFixed(1)}`);
+        if (!m.scrolls) fails.push(`${at}: the list does not scroll`);
+      } else {
+        if (m.rows !== 3) fails.push(`${at}: ${m.rows} rows show, not 3`);
+        if (m.scrolls) fails.push(`${at}: the list scrolls`);
+      }
+    } finally {
+      await context.close();
+    }
+  }
+  return fails;
+}
+
 /** Part name to an async function (browser, origin) returning failure lines. */
 export const PARTS = {
   'done-row': doneRow,
+  finished,
 };
 
 /** Runs the named parts (all when `only` is empty or missing); returns the failures as readable lines. */

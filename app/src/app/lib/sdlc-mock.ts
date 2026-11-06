@@ -837,11 +837,12 @@ export class SdlcMock {
   private shownSystem(systems: string[]): string | null {
     return this.rememberedSystem !== null && systems.includes(this.rememberedSystem) ? this.rememberedSystem : (systems[0] ?? null);
   }
-  /** `?demo=finished-many`: sixty finished changes, merged and rejected alternately, newest first. */
+  /** `?demo=finished-many`: sixty finished changes, merged and rejected alternately, newest first; `?demo=finished-few` has three. */
   private finishedChanges(system: string): FinishedChange[] {
-    if (this.demo !== 'finished-many' || system !== MOCK_SYSTEM) return [];
-    return Array.from({ length: 60 }, (_, i): FinishedChange => {
-      const n = String(60 - i).padStart(2, '0');
+    if ((this.demo !== 'finished-many' && this.demo !== 'finished-few') || system !== MOCK_SYSTEM) return [];
+    const count = this.demo === 'finished-few' ? 3 : 60;
+    return Array.from({ length: count }, (_, i): FinishedChange => {
+      const n = String(count - i).padStart(2, '0');
       return { change: `2026-09-${n}-finished-change-${n}`, title: `Finished change ${n}`, finished: i % 2 === 0 ? 'merged' : 'rejected' };
     });
   }
