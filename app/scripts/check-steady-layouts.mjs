@@ -217,7 +217,7 @@ function measureSessions() {
   return {
     panes: panes.map((p) => p.getBoundingClientRect().height),
     row: row ? box(row.getBoundingClientRect()) : null,
-    tabs: row ? [...row.querySelectorAll('[data-session-tab]')].map((t) => ({ text: t.textContent.replace(/s+/g, ' ').trim(), selected: t.getAttribute('aria-selected'), box: box(t.getBoundingClientRect()) })) : [],
+    tabs: row ? [...row.querySelectorAll('[data-session-tab]')].map((t) => ({ text: t.textContent.replace(/\s+/g, ' ').trim(), selected: t.getAttribute('aria-selected'), box: box(t.getBoundingClientRect()) })) : [],
   };
 }
 

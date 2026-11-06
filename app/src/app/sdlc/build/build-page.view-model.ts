@@ -35,7 +35,7 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { ChangeDraftStore } from '../../core/sdlc/change-draft.store';
 import { RunLandingStore } from '../../core/run/run-landing.store';
 import { pendingKind, type AskRecord, type MessageRecord, type MessageRefusal, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
-import { activityFor, linksOfFollowedRuns, outcomeOf, recordOutcome, repoSessions, sessionsFor, type Chosen, type LiveRun, type Pick, type SessionRef } from '../../lib/build-sessions';
+import { activityFor, linksOfFollowedRuns, outcomeOf, recordOutcome, repoSessions, sessionsFor, tabOf, type Chosen, type LiveRun, type Pick, type SessionRef, type SessionTab } from '../../lib/build-sessions';
 import { sameChange } from '../../lib/build-host';
 import { buildStage, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
 import { hms, ms, situationView, type Situation, type SituationView, type TaskState } from '../../lib/build-state';
@@ -94,6 +94,8 @@ export type ShownSession = ShownRun & {
   shown: boolean;
   /** True when the session has an unanswered question or a pending permission. */
   waiting: boolean;
+  /** What the session's tab says: running, a question waiting, or how it ended. */
+  tab: SessionTab;
   /** True for a live run kept mounted while another pick is on show; it is not on the page at all. */
   offPick?: boolean;
 };
@@ -234,6 +236,8 @@ export type BuildPageView = {
   review: ReviewEntryView;
   pick: Pick | null;
   sessions: ShownSession[];
+  /** The sessions of the pick as tabs, newest first; a live run kept mounted for another pick has none. */
+  sessionTabs: ShownSession[];
   sessionNote: string | null;
   /** Each repository that stopped and why, for the activity area. */
   stops: { repo: string; reason: string }[];
@@ -1003,11 +1007,18 @@ export class BuildPageViewModel {
       for (const ref of refs) {
         const run = live.get(ref.runId);
         if (run !== undefined) {
-          out.set(ref.runId, { ...run, live: true, note: null, shown: false, waiting: pendingKind(run.asks, run.permissions) !== 'none' });
+          const waiting = pendingKind(run.asks, run.permissions) !== 'none';
+          // The record of a followed run is filed under its transcript's id.
+          const transcript = transcriptRunId(run.events);
+          const record = records.find((r) => r.id === ref.runId || r.id === transcript);
+          out.set(ref.runId, { ...run, live: true, note: null, shown: false, waiting, tab: tabOf({ live: true, state: run.state, waiting, outcome: run.outcome }, record?.ending ?? null) });
           continue;
         }
         const detail = details[ref.runId];
         const snap = detail === undefined || detail === 'unreadable' ? IDLE : detail;
+        const record = records.find((r) => r.id === ref.runId) ?? null;
+        const outcome = recordOutcome(record);
+        const waiting = pendingKind(snap.asks, snap.permissions) !== 'none';
         out.set(ref.runId, {
           id: ref.runId,
           startedAt: timeOf(ref.startedAt * 1000),
@@ -1022,11 +1033,12 @@ export class BuildPageViewModel {
           refusal: snap.refusal,
           unseenFrom: null,
           latest: false,
-          outcome: recordOutcome(records.find((r) => r.id === ref.runId) ?? null),
+          outcome,
           live: false,
           note: detail === 'unreadable' ? 'Transcript not available' : null,
           shown: false,
-          waiting: pendingKind(snap.asks, snap.permissions) !== 'none',
+          waiting,
+          tab: tabOf({ live: false, state: snap.state, waiting, outcome }, record?.ending ?? null),
         });
       }
     }
@@ -1228,6 +1240,7 @@ export class BuildPageViewModel {
       review: { status: reviewStatus(entry), action: this.reviewAction(), picked: pick?.kind === 'review', ...this.reviewList(entry) },
       pick,
       sessions: this.mountedSessions(),
+      sessionTabs: this.shownSessions().slice().reverse(),
       sessionNote: this.sessionNote(),
       stops: areas.flatMap((g) => (g.heading.stopLine === null ? [] : [{ repo: g.repo, reason: g.heading.stopLine }])),
       findingsArea,
@@ -1370,7 +1383,7 @@ export class BuildPageViewModel {
   }
 
   /** The id of the session in view among a repository's sessions, oldest first: the one the engineer picked while it is still listed, else the newest; null with none. */
-  shownFor(repo: string, sessions: readonly { id: string }[]): string | null {
+  private shownFor(repo: string, sessions: readonly { id: string }[]): string | null {
     const picked = this.pickedSession()[repo];
     if (picked !== undefined && sessions.some((s) => s.id === picked)) return picked;
     return sessions.at(-1)?.id ?? null;

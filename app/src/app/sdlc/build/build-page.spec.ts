@@ -78,6 +78,7 @@ const session = (id: string, over: Partial<ShownSession> = {}): ShownSession => 
   latest: true,
   shown: true,
   waiting: false,
+  tab: { word: 'running', tone: 'running' },
   outcome: 'running',
   live: true,
   note: null,
@@ -85,6 +86,7 @@ const session = (id: string, over: Partial<ShownSession> = {}): ShownSession => 
 });
 
 const base = (over: Partial<BuildPageView> = {}): BuildPageView => ({
+  sessionTabs: (over.sessions ?? []).filter((s) => s.offPick !== true).reverse(),
   stage: 'running',
   stageMessage: null,
   facts: { tasks: '1/3 tasks', elapsed: null },
@@ -565,44 +567,62 @@ describe('the build page, picking and folding', () => {
     expect(area('tasks')!.querySelector('[data-departure]')!.querySelector('.k-status__dot')).not.toBeNull();
   });
 
-  it('folds an earlier session to one line, keeps its pane mounted, and opens it when picked', async () => {
+  const ended = (id: string, word: string): Partial<ShownSession> => ({ latest: false, shown: false, startedAt: '08:00:00', live: false, tab: { word, tone: 'warning' } });
+
+  it('tabs the sessions newest first, says how each went, keeps every pane mounted and picks on a click', async () => {
     const v = base({
       pick: { kind: 'repo', repo: 'commerce-core' },
-      sessions: [session('r0', { latest: false, shown: false, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
+      sessions: [session('r0', ended('r0', 'out of time')), session('r1')],
     });
     const { area, host, el } = await mount(v);
+    const tabs = [...area('activity')!.querySelectorAll<HTMLButtonElement>('[role="tablist"] [role="tab"]')];
+    expect(tabs).toHaveLength(2);
+    expect(norm(tabs[0].textContent)).toContain('running');
+    expect(tabs[0].getAttribute('aria-selected')).toBe('true');
+    expect(norm(tabs[1].textContent)).toContain('08:00:00');
+    expect(norm(tabs[1].textContent)).toContain('out of time');
+    expect(tabs[1].getAttribute('aria-selected')).toBe('false');
+    expect(tabs[1].querySelector('.k-status__dot')).not.toBeNull();
     const panes = area('activity')!.querySelectorAll<HTMLElement>('[data-session]');
     expect(panes).toHaveLength(2);
     expect(panes[0].querySelector<HTMLElement>('[data-pane]')!.hidden).toBe(true);
     expect(panes[0].querySelector('app-observe-pane')).not.toBeNull();
-    const line = panes[0].querySelector<HTMLButtonElement>('[data-run-line]')!;
-    expect(norm(line.textContent)).toContain('08:00:00');
-    expect(norm(line.textContent)).toContain('exit 124');
-    line.click();
+    expect(tabs[1].getAttribute('aria-controls')).toBe(panes[0].id);
+    tabs[1].click();
     expect(host.toggles).toEqual(['r0']);
     expect(el.querySelector('[data-session="r1"] [data-pane]')).not.toBeNull();
   });
 
-  it('lets only a session with a showing pane grow', async () => {
+  it('says a question is waiting in the warning tone', async () => {
     const v = base({
       pick: { kind: 'repo', repo: 'commerce-core' },
-      sessions: [session('r0', { latest: false, shown: false, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
+      sessions: [session('r1', { waiting: true, tab: { word: 'question waiting', tone: 'warning' } })],
+    });
+    const { area } = await mount(v);
+    const tab = area('activity')!.querySelector<HTMLElement>('[role="tab"]')!;
+    expect(norm(tab.textContent)).toContain('question waiting');
+    expect(tab.querySelector('.k-status--warning .k-status__dot')).not.toBeNull();
+  });
+
+  it('lets only the session in view grow', async () => {
+    const v = base({
+      pick: { kind: 'repo', repo: 'commerce-core' },
+      sessions: [session('r0', ended('r0', 'finished')), session('r1')],
     });
     const { el } = await mount(v);
     const grow = (id: string) => getComputedStyle(el.querySelector<HTMLElement>(`[data-session="${id}"]`)!).flexGrow;
-    expect(grow('r0')).toBe('0');
     expect(grow('r1')).toBe('1');
   });
 
-  it('lets an expanded finished session grow like the live one', async () => {
+  it('shows the picked earlier session, whose pane grows like the running one', async () => {
     const v = base({
       pick: { kind: 'repo', repo: 'commerce-core' },
-      sessions: [session('r0', { latest: false, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
+      sessions: [session('r0', { latest: false, tab: { word: 'finished', tone: 'success' }, startedAt: '08:00:00', live: false }), session('r1', { shown: false, tab: { word: 'running', tone: 'running' } })],
     });
     const { el } = await mount(v);
     const grow = (id: string) => getComputedStyle(el.querySelector<HTMLElement>(`[data-session="${id}"]`)!).flexGrow;
     expect(grow('r0')).toBe('1');
-    expect(grow('r1')).toBe('1');
+    expect(el.querySelector<HTMLElement>('[data-session="r1"]')!.hidden).toBe(true);
   });
 
   it('a live pane stays mounted, hidden, when another repository is picked', async () => {
@@ -1372,7 +1392,7 @@ describe('the arranged build page from the keyboard', () => {
     expect(Array.from(bringBack).sort()).toEqual(['Bring back Activity', 'Bring back Changed files', 'Bring back Findings', 'Bring back Tasks']);
     // A stack holds at most three areas, so the four names show in two stacks: the findings with the tasks and the activity, then the changed files in their place.
     await page.mode('review');
-    const tabNames = () => Array.from(page.area('findings').parentElement!.querySelectorAll<HTMLElement>('[role="tablist"]')).flatMap((l) => Array.from(l.querySelectorAll<HTMLElement>('[role="tab"]')).map((t) => page.text(t)));
+    const tabNames = () => Array.from(page.area('findings').parentElement!.querySelectorAll<HTMLElement>('[role="tablist"]:not([data-session-tabs])')).flatMap((l) => Array.from(l.querySelectorAll<HTMLElement>('[role="tab"]')).map((t) => page.text(t)));
     for (const a of ['tasks', 'activity'] as const) page.host.layout.arrange({ kind: 'bring-back', area: a });
     page.host.layout.arrange({ kind: 'place', area: 'tasks', to: 'left' });
     page.host.layout.arrange({ kind: 'place', area: 'activity', to: 'left' });

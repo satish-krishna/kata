@@ -4,7 +4,7 @@ import type { RunRecord } from '@bindings/RunRecord';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { TaskStatus } from '@bindings/TaskStatus';
 import type { BuildStage } from './build-stage';
-import { activityFor, linksOfFollowedRuns, newlyRecorded, recordOutcome, repoSessions, sessionsFor, type ActivityInput, type Pick, type SessionRef } from './build-sessions';
+import { activityFor, linksOfFollowedRuns, newlyRecorded, recordOutcome, repoSessions, sessionsFor, tabOf, type ActivityInput, type Pick, type SessionRef } from './build-sessions';
 
 const scope = { workspaceId: 'w1', system: 'shop', change: 'c1' };
 const link = (stage: string, runId: string, startedAt: number, over: Partial<RunLink> = {}): RunLink => ({
@@ -205,5 +205,21 @@ describe('linksOfFollowedRuns', () => {
     const followed = new Map([['sdlc-shop-c1-build-api-20261101T180000Z', '7']]);
     expect(linksOfFollowedRuns(links, followed)).toEqual([tl('T1', '7'), tl('T2', 'earlier-run')]);
     expect(linksOfFollowedRuns(links, new Map())).toEqual(links);
+  });
+});
+
+describe('tabOf', () => {
+  const run = { live: true, state: 'running' as const, waiting: false, outcome: 'Running' };
+  it('says running for a live run, and a waiting question in the warning tone', () => {
+    expect(tabOf(run, null)).toEqual({ word: 'running', tone: 'running' });
+    expect(tabOf({ ...run, state: 'awaiting', waiting: true }, null)).toEqual({ word: 'question waiting', tone: 'warning' });
+  });
+  it('names each ending in words, from the record', () => {
+    const ended = { live: false, state: 'idle' as const, waiting: false, outcome: 'Outcome not recorded' };
+    const words = (['finished', 'failed', 'cancelled', 'out-of-time', 'nobody-answered', 'turn-cap', 'budget'] as const).map((e) => tabOf(ended, e).word);
+    expect(words).toEqual(['finished', 'failed', 'cancelled', 'out of time', 'nobody answered', 'turn cap reached', 'budget reached']);
+  });
+  it('falls back to the outcome text until the record is read', () => {
+    expect(tabOf({ live: true, state: 'success', waiting: false, outcome: 'Completed · exit 0 · 3 turns' }, null)).toEqual({ word: 'Completed · exit 0 · 3 turns', tone: 'success' });
   });
 });

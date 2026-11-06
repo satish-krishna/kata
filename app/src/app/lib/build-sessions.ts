@@ -1,5 +1,6 @@
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { RunLink } from '@bindings/RunLink';
+import type { RunEnding } from '@bindings/RunEnding';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { TaskStatus } from '@bindings/TaskStatus';
@@ -15,6 +16,47 @@ export const outcomeOf = (state: RunState, summary: Summary | null): string => {
   if (summary === null) return STATUS_LABEL[state];
   const cost = summary.cost_usd == null ? '' : ` · $${summary.cost_usd.toFixed(2)}`;
   return `${STATUS_LABEL[state]} · exit ${summary.exit_code} · ${summary.num_turns} turns${cost}`;
+};
+
+/** How an ended run is said, in words; the backend decides the ending, this only names it. */
+export const ENDING_WORD: Record<RunEnding, string> = {
+  finished: 'finished',
+  failed: 'failed',
+  cancelled: 'cancelled',
+  'out-of-time': 'out of time',
+  'nobody-answered': 'nobody answered',
+  'turn-cap': 'turn cap reached',
+  budget: 'budget reached',
+};
+
+/** The status tone of a session's tab. */
+export type TabTone = 'running' | 'warning' | 'success' | 'error' | 'idle';
+
+/** What a session's tab says about how the session went, with its status tone; the dot always comes with the word. */
+export type SessionTab = { word: string; tone: TabTone };
+
+const ENDING_TONE: Record<RunEnding, TabTone> = {
+  finished: 'success',
+  failed: 'error',
+  cancelled: 'warning',
+  'out-of-time': 'warning',
+  'nobody-answered': 'warning',
+  'turn-cap': 'warning',
+  budget: 'warning',
+};
+
+const TONE_OF_STATE: Record<RunState, TabTone> = { idle: 'idle', running: 'running', awaiting: 'warning', success: 'success', error: 'error', warning: 'warning' };
+
+/**
+ * A session's tab: "running" while the run is live, "question waiting" (warning tone) when it waits on the engineer, else the ending
+ * from its record in words; until the record is read, the run's own outcome text.
+ */
+export const tabOf = (session: { live: boolean; state: RunState; waiting: boolean; outcome: string }, ending: RunEnding | null): SessionTab => {
+  if (session.live && (session.state === 'running' || session.state === 'awaiting')) {
+    return session.waiting ? { word: 'question waiting', tone: 'warning' } : { word: 'running', tone: 'running' };
+  }
+  if (ending !== null) return { word: ENDING_WORD[ending], tone: ENDING_TONE[ending] };
+  return { word: session.outcome, tone: TONE_OF_STATE[session.state] };
 };
 
 const REVIEW = 'review';
