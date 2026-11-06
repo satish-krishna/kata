@@ -339,6 +339,21 @@ impl Program {
         self.call(&args, &place.workspace)
     }
 
+    /// Runs `command` in `workspace` with no master given, so the program finds the master in process as
+    /// `resolve` does: one Node start where [`Program::resolve`] then [`Program::run`] takes two. For a command
+    /// that takes `--workspace` (`list`, `state`); the answer is read as `run` reads it.
+    pub fn run_in(&self, command: &[&str], workspace: &Path) -> Result<Value, ProgramError> {
+        if !self.entry.is_file() {
+            return Err(ProgramError::TooOld {
+                found: format!("{} does not exist", self.entry.display()),
+            });
+        }
+        let ws = workspace.display().to_string();
+        let mut args = command.to_vec();
+        args.extend(["--workspace", &ws]);
+        self.call(&args, workspace)
+    }
+
     /// Runs a step (`command`) in `place` and reads its answer through [`answer_of`].
     pub fn step(&self, command: &[&str], place: &Place) -> Answer {
         answer_of(self.exec(command, place))

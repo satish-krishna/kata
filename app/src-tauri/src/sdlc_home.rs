@@ -32,8 +32,9 @@ fn program_error(e: ProgramError) -> String {
     e.to_string()
 }
 
-/// The master of each workspace folder, found once per program and reused by every home read: it does not
-/// change while the app runs, and finding it costs a separate Node start. Memory only.
+/// The master of each workspace folder, found once per program and reused by the home reads whose program
+/// calls take a master (the declared read and the merge check): it does not change while the app runs, and
+/// finding it costs a separate Node start. Memory only.
 static PLACES: Mutex<BTreeMap<(PathBuf, PathBuf), Place>> = Mutex::new(BTreeMap::new());
 
 /// Runs `read` in the place of `folder`, resolving it only when no earlier call did. An error from the read
@@ -61,18 +62,19 @@ fn in_place<T>(
 }
 
 impl HomeSource for Program {
+    // The list and the open read name only the folder: the program finds the master in the same Node start, as
+    // cheaply as when it is given, so they need no `resolve` and no cache.
     fn list(&self, folder: &Path, system: &str) -> Result<ChangeList, String> {
-        in_place(self, folder, |place| {
-            Program::list(self, place, system).map_err(program_error)
-        })
+        let answer = self
+            .run_in(&["list", "--json", "--system", system], folder)
+            .map_err(program_error)?;
+        kata_sdlc::ai_sdlc::list::read_list(answer).map_err(program_error)
     }
     fn open_states(&self, folder: &Path, system: &str) -> Result<SystemState, String> {
-        in_place(self, folder, |place| {
-            let answer = self
-                .run(&["state", "--json", "--system", system, "--open"], place)
-                .map_err(program_error)?;
-            kata_sdlc::ai_sdlc::state::read_state(answer).map_err(program_error)
-        })
+        let answer = self
+            .run_in(&["state", "--json", "--system", system, "--open"], folder)
+            .map_err(program_error)?;
+        kata_sdlc::ai_sdlc::state::read_state(answer).map_err(program_error)
     }
     fn declared(&self, folder: &Path, system: &str, change: &str) -> Result<bool, String> {
         let workspace_id = crate::build_host::workspace_id_in_store(folder);
