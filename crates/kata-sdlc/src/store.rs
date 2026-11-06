@@ -185,6 +185,8 @@ fn choice(workspaces: Vec<WorkspaceEntry>) -> WorkspaceChoice {
     }
 }
 
+/// Make the saved workspace `id` the one the home opens on, stamped as opened at `now`. Answers the
+/// saved list and the workspace now opened on. Fails with `UnknownWorkspace` when no saved entry has `id`.
 pub fn open_workspace(id: &str, now: u64) -> Result<WorkspaceChoice, StoreError> {
     update_workspaces(|list| {
         let at = stamp(list, id, now);
@@ -218,6 +220,8 @@ fn workspace_id(name: &str, list: &[WorkspaceEntry]) -> String {
     id
 }
 
+/// Save a new workspace called `name` for `folder`, with an id made from the name and stamped as opened
+/// at `now`. Answers the saved list and the workspace now opened on.
 pub fn add_workspace(name: &str, folder: &str, now: u64) -> Result<WorkspaceChoice, StoreError> {
     update_workspaces(|list| {
         let id = workspace_id(name, list);
@@ -247,6 +251,8 @@ pub fn remember_system(id: &str, system: &str) -> Result<(), StoreError> {
     .map(|_| ())
 }
 
+/// Forget the saved workspace `id`; an id no entry has is not an error. Answers the saved list and the
+/// workspace now opened on.
 pub fn remove_workspace(id: &str) -> Result<WorkspaceChoice, StoreError> {
     update_workspaces(|list| {
         list.retain(|w| w.id != id);
