@@ -12,7 +12,7 @@ import type { FinishedChange } from '@bindings/FinishedChange';
   templateUrl: './finished-changes.html',
 })
 export class FinishedChanges {
-  /** The finished changes, newest first, as the backend listed them. */
+  /** The finished changes, newest first: the backend orders them by change name, descending. */
   readonly finished = input.required<FinishedChange[]>();
   /** How many changes the system has finished; nothing shows at 0. */
   readonly count = input.required<number>();

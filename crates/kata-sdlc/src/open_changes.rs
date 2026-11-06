@@ -100,7 +100,7 @@ pub fn shown_system(remembered: Option<&str>, systems: &[String]) -> Option<Stri
         .cloned()
 }
 
-/// Open and finished changes, each in the order the plugin listed them. Only `finished` is read.
+/// Open changes in the order the plugin listed them, finished changes newest first. A change name starts with its date, so newest first is name descending.
 pub fn split(list: ChangeList) -> (Vec<ListedChange>, Vec<FinishedChange>) {
     let mut open = Vec::new();
     let mut finished = Vec::new();
@@ -117,6 +117,7 @@ pub fn split(list: ChangeList) -> (Vec<ListedChange>, Vec<FinishedChange>) {
             }),
         }
     }
+    finished.sort_by(|a, b| b.change.cmp(&a.change));
     (open, finished)
 }
 
