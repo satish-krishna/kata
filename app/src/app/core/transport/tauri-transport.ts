@@ -61,6 +61,10 @@ import type { ChangeKey } from '@bindings/ChangeKey';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import type { CloseOutcome } from '@bindings/CloseOutcome';
 import type { BuildRunRef } from '@bindings/BuildRunRef';
+import type { HomeList } from '@bindings/HomeList';
+import type { HomeOpen } from '@bindings/HomeOpen';
+import type { HomeChecked } from '@bindings/HomeChecked';
+import type { Refresh } from '@bindings/Refresh';
 import type { BuildPreviewKind } from '@bindings/BuildPreviewKind';
 import type { BuildSection } from '@bindings/BuildSection';
 import type { ReviewView } from '@bindings/ReviewView';
@@ -114,6 +118,10 @@ export class TauriTransport extends KataTransport {
   sdlcInstructions(folder: string, masterRepo: string) { return this.ipc.invoke<InstructionsState>('sdlc_instructions', { folder, masterRepo }); }
   sdlcState(folder: string, systems: string[]) { return this.ipc.invoke<WorkspaceView>('sdlc_state', { folder, systems }); }
   sdlcChangeState(folder: string, system: string, change: string) { return this.ipc.invoke<ChangeView>('sdlc_change_state', { folder, system, change }); }
+  sdlcHomeList(_workspaceId: string, _systems: string[]): Promise<HomeList> { return Promise.reject(new Error('not implemented')); }
+  sdlcHomePick(_workspaceId: string, _system: string, _systems: string[]): Promise<HomeList> { return Promise.reject(new Error('not implemented')); }
+  sdlcHomeOpen(_folder: string, _system: string, _shown: string[], _trigger: Refresh): Promise<HomeOpen> { return Promise.reject(new Error('not implemented')); }
+  sdlcHomePullRequests(_folder: string, _system: string, _changes: string[]): Promise<HomeChecked> { return Promise.reject(new Error('not implemented')); }
   sdlcMissingFolders(folders: string[]) { return this.ipc.invoke<string[]>('sdlc_missing_folders', { folders }); }
   sdlcBranches(master: string) { return this.ipc.invoke<BranchInfo>('sdlc_branches', { master }); }
   sdlcOpenChange(change: ChangeRef, doc: string) { return this.ipc.invoke<OpenedChange>('sdlc_open_change', { change, doc }); }

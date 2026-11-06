@@ -226,6 +226,21 @@ describe('TauriTransport', () => {
     expect(seen).toEqual([payload]);
   });
 
+  it('each home command invokes its backend command with its arguments', async () => {
+    const ipc = fakeIpc();
+    const t = new TauriTransport(asIpc(ipc));
+    await t.sdlcHomeList('w1', ['s', 't']);
+    await t.sdlcHomePick('w1', 't', ['s', 't']);
+    await t.sdlcHomeOpen('/w', 's', ['c'], 'focus');
+    await t.sdlcHomePullRequests('/w', 's', ['c']);
+    expect(ipc.invoke.mock.calls).toEqual([
+      ['sdlc_home_list', { workspaceId: 'w1', systems: ['s', 't'] }],
+      ['sdlc_home_pick', { workspaceId: 'w1', system: 't', systems: ['s', 't'] }],
+      ['sdlc_home_open', { folder: '/w', system: 's', shown: ['c'], trigger: 'focus' }],
+      ['sdlc_home_pull_requests', { folder: '/w', system: 's', changes: ['c'] }],
+    ]);
+  });
+
   it('runSpec resolves to the run id the backend returned', async () => {
     const ipc = fakeIpc();
     ipc.invoke.mockResolvedValueOnce('12' as never);

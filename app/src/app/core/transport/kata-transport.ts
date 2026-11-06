@@ -62,6 +62,10 @@ import type { HeldRepo } from '@bindings/HeldRepo';
 import type { RunForm } from '@bindings/RunForm';
 import type { RunningStrip } from '@bindings/RunningStrip';
 import type { BuildRunRef } from '@bindings/BuildRunRef';
+import type { HomeList } from '@bindings/HomeList';
+import type { HomeOpen } from '@bindings/HomeOpen';
+import type { HomeChecked } from '@bindings/HomeChecked';
+import type { Refresh } from '@bindings/Refresh';
 import type { BuildPreviewKind } from '@bindings/BuildPreviewKind';
 import type { BuildSection } from '@bindings/BuildSection';
 import type { ReviewView } from '@bindings/ReviewView';
@@ -168,6 +172,14 @@ export abstract class KataTransport {
   /** One change as the plugin reports it, with what it shows and offers, from one read. Rejects with the reason when the change cannot be read. */
   abstract sdlcChangeState(folder: string, system: string, change: string): Promise<ChangeView>;
   /** Which of the folders no longer exist. A folder existence check only. */
+  /** The home's list: the shown system's open and finished changes, or `legacy` where the plugin cannot list changes. */
+  abstract sdlcHomeList(workspaceId: string, systems: string[]): Promise<HomeList>;
+  /** The engineer picked a system on the home: the backend remembers it and lists it. */
+  abstract sdlcHomePick(workspaceId: string, system: string, systems: string[]): Promise<HomeList>;
+  /** The open changes of `system`, read alone, as rows; `shown` is the change names on screen and `trigger` what made the home refresh. */
+  abstract sdlcHomeOpen(folder: string, system: string, shown: string[], trigger: Refresh): Promise<HomeOpen>;
+  /** The merge check for the named open changes, side by side. */
+  abstract sdlcHomePullRequests(folder: string, system: string, changes: string[]): Promise<HomeChecked>;
   abstract sdlcMissingFolders(folders: string[]): Promise<string[]>;
   abstract sdlcBranches(master: string): Promise<BranchInfo>;
   /** A change opened from one resolution of where it lives: its view, the document asked for, and the build and review when it has a plan. Rejects with the reason when the change cannot be placed. */

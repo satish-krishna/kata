@@ -71,6 +71,10 @@ import type { RunForm } from '@bindings/RunForm';
 import type { Versions } from '@bindings/Versions';
 import type { RunningStrip } from '@bindings/RunningStrip';
 import type { BuildRunRef } from '@bindings/BuildRunRef';
+import type { HomeList } from '@bindings/HomeList';
+import type { HomeOpen } from '@bindings/HomeOpen';
+import type { HomeChecked } from '@bindings/HomeChecked';
+import type { Refresh } from '@bindings/Refresh';
 import type { BuildPreviewKind } from '@bindings/BuildPreviewKind';
 import type { BuildSection } from '@bindings/BuildSection';
 import type { ReviewView } from '@bindings/ReviewView';
@@ -324,6 +328,10 @@ export class MockTransport extends KataTransport {
   }
   /** A test or a demo changes what the workspace holds for a change; the next `sdlcChangeState` and `sdlcState` show it. */
   patchChange(change: string, patch: Partial<ChangeInfo>): void { this.sdlc.patch(change, patch); }
+  sdlcHomeList(_workspaceId: string, _systems: string[]): Promise<HomeList> { return Promise.reject(new Error('not implemented')); }
+  sdlcHomePick(_workspaceId: string, _system: string, _systems: string[]): Promise<HomeList> { return Promise.reject(new Error('not implemented')); }
+  sdlcHomeOpen(_folder: string, _system: string, _shown: string[], _trigger: Refresh): Promise<HomeOpen> { return Promise.reject(new Error('not implemented')); }
+  sdlcHomePullRequests(_folder: string, _system: string, _changes: string[]): Promise<HomeChecked> { return Promise.reject(new Error('not implemented')); }
   /** Every demo folder is there. */
   sdlcMissingFolders(_folders: string[]): Promise<string[]> { return Promise.resolve([]); }
   sdlcBranches(_master: string): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches()); }

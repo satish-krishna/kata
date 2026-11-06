@@ -874,3 +874,48 @@ describe('MockTransport versions', () => {
     expect(writeText).toHaveBeenCalledWith('Kata Workbench 3.3.0');
   });
 });
+
+describe('MockTransport home listing', () => {
+  /** Run `body` with `?demo=<demo>` in the address, the way the browser checks reach a demo. */
+  const withDemo = async (demo: string | null, body: (t: MockTransport) => Promise<void>) => {
+    window.history.replaceState({}, '', demo === null ? '/' : `/?demo=${demo}`);
+    try {
+      await body(new MockTransport());
+    } finally {
+      window.history.replaceState({}, '', '/');
+    }
+  };
+
+  it('the mock lists open and finished changes as the backend splits them', async () => {
+    await withDemo(null, async (t) => {
+      const home = await t.sdlcHomeList('acme-commerce', ['commerce']);
+      if (home.kind !== 'listed') throw new Error('expected a listed home');
+      expect(home.system).toBe('commerce');
+      expect(home.systems).toEqual(['commerce']);
+      expect(home.open.map((c) => c.change)).toEqual((await readAllChanges(t)).map((c) => c.state.change));
+      expect(home.finished).toEqual([]);
+      expect(home.finishedCount).toBe(0);
+      const opened = await t.sdlcHomeOpen(MOCK_WORKSPACE_FOLDER, 'commerce', [], 'open');
+      expect(opened.rows.map((r) => r.view.state.change)).toEqual(home.open.map((c) => c.change));
+      expect(opened.check).toEqual([MOCK_DONE_CHANGE]);
+      expect((await t.sdlcHomeOpen(MOCK_WORKSPACE_FOLDER, 'commerce', home.open.map((c) => c.change), 'focus')).check).toEqual([]);
+    });
+    await withDemo('finished-many', async (t) => {
+      const home = await t.sdlcHomeList('acme-commerce', ['commerce', 'payments']);
+      if (home.kind !== 'listed') throw new Error('expected a listed home');
+      expect(home.systems).toEqual(['commerce', 'payments']);
+      expect(home.finished).toHaveLength(60);
+      expect(home.finishedCount).toBe(60);
+      expect(new Set(home.finished.map((f) => f.finished))).toEqual(new Set(['merged', 'rejected']));
+      const picked = await t.sdlcHomePick('acme-commerce', 'payments', ['commerce', 'payments']);
+      if (picked.kind !== 'listed') throw new Error('expected a listed home');
+      expect(picked.system).toBe('payments');
+      const again = await t.sdlcHomeList('acme-commerce', ['commerce', 'payments']);
+      if (again.kind !== 'listed') throw new Error('expected a listed home');
+      expect(again.system).toBe('payments');
+    });
+    await withDemo('old-plugin', async (t) => {
+      expect(await t.sdlcHomeList('acme-commerce', ['commerce'])).toEqual({ kind: 'legacy' });
+    });
+  });
+});
