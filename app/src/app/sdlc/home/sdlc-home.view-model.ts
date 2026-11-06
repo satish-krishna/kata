@@ -4,6 +4,9 @@ import type { BranchInfo } from '@bindings/BranchInfo';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { FinishedChange } from '@bindings/FinishedChange';
+import type { HomeList } from '@bindings/HomeList';
+import type { HomeRow } from '@bindings/HomeRow';
+import type { Refresh } from '@bindings/Refresh';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { Readiness } from '@bindings/Readiness';
@@ -24,6 +27,7 @@ import { KataTransport, type NamingState } from '../../core/transport/kata-trans
 import { VersionsStore } from '../../core/versions/versions.store';
 import { defaultWorkType, namingRefusal, orderedWorkTypes, type WorkType } from '../../lib/sdlc-naming';
 import { inTauri } from '../../lib/mock';
+import type { ProgressStepId } from '../../lib/progress-steps';
 import { shownChangeList } from '../../lib/doc-notice';
 import { hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
 import { DEMO_SETUP_FOLDER, DEMO_START_IDEA, DEMO_START_SYSTEM } from '../../lib/demo';
@@ -106,34 +110,69 @@ export class SdlcHomeViewModel {
   readonly readingProgress = this.progress.view(PROGRESS_OWNER);
   /** How many plugin reads are in flight; the line shows from the first start to the last end. */
   private reads = 0;
-  /** The list the page shows: every change of every system, each with the label the plugin's answer gave it. */
-  readonly rows = computed<ChangeRow[]>(() =>
-    this.views().flatMap((v) => v.changes.map((c) => ({ system: v.system, change: c.state.change, title: c.state.title, offer: c.offer, label: c.offer.label, action: null, failed: false }))),
-  );
+  /** The backend's last answer to listing the home; null until it is in. */
+  private readonly homeList = signal<HomeList | null>(null);
+  private readonly listed = computed(() => {
+    const l = this.homeList();
+    return l?.kind === 'listed' ? l : null;
+  });
+  /** The last row the backend gave each open change, by name, and whether its read failed. Replaced entry by entry, never emptied by a read. */
+  private readonly homeRows = signal<ReadonlyMap<string, { row: HomeRow | null; failed: boolean }>>(new Map());
+  /** What the last open read and merge check could not read. */
+  private readonly openProblems = signal<string[]>([]);
+  /** The list the page shows. A listed home shows the shown system's open changes in the workflow's order, each filling in as its row arrives; a legacy home shows every change of every system. */
+  readonly rows = computed<ChangeRow[]>(() => {
+    const l = this.listed();
+    if (l) {
+      const known = this.homeRows();
+      return l.open.map((o) => {
+        const e = known.get(o.change);
+        const row = e?.row ?? null;
+        return {
+          system: l.system ?? '',
+          change: o.change,
+          title: o.title ?? row?.view.state.title ?? null,
+          offer: row?.view.offer ?? null,
+          label: row?.reading.label ?? null,
+          action: row?.reading.action ?? null,
+          failed: e?.failed ?? false,
+        };
+      });
+    }
+    return this.views().flatMap((v) =>
+      v.changes.map((c) => ({ system: v.system, change: c.state.change, title: c.state.title, offer: c.offer, label: c.offer.label, action: null, failed: false })),
+    );
+  });
   /** The systems to choose between, when the home lists and there is more than one. */
-  readonly systemChoice = computed<string[]>(() => []);
+  readonly systemChoice = computed<string[]>(() => {
+    const l = this.listed();
+    return l && l.systems.length > 1 ? l.systems : [];
+  });
   /** The system the home shows, as the backend chose it; null on a legacy list. */
-  readonly shownSystem = computed<string | null>(() => null);
+  readonly shownSystem = computed<string | null>(() => this.listed()?.system ?? null);
   /** The finished changes of the shown system, as the backend listed them. */
-  readonly finished = computed<FinishedChange[]>(() => []);
+  readonly finished = computed<FinishedChange[]>(() => this.listed()?.finished ?? []);
   /** How many changes the shown system has finished. */
-  readonly finishedCount = computed(() => 0);
+  readonly finishedCount = computed(() => this.listed()?.finishedCount ?? 0);
   readonly contexts = signal<Record<string, ContextState>>({});
   readonly lastRuns = signal<Record<string, number>>({});
   private readonly readiness = signal<Readiness>({ kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' });
   /** Above the change list when a plan could not be read; null when every plan was. The plugin's own words come from the answer's problems. */
   readonly listNotice = computed(() => {
     const unreadable = this.rows().filter((r) => r.offer?.stage === 'plan-unreadable');
-    const problems = this.views().flatMap((v) => v.problems);
+    const problems = [...this.views().flatMap((v) => v.problems), ...this.openProblems()];
     return shownChangeList(
       this.readiness(),
       problems.length > 0 ? problems : unreadable.map(() => null),
     );
   });
   /** Whether a new change may be started across the workspace's systems, as the backend decided; false until the answer is in. */
-  readonly canStartChange = computed(() => this.workspace()?.canStartChange ?? false);
+  readonly canStartChange = computed(() => this.listed()?.canStartChange ?? this.workspace()?.canStartChange ?? false);
   /** Why a new change may not be started, as the backend gave it; null when it may. */
-  readonly startChangeReason = computed(() => this.workspace()?.startChangeReason ?? null);
+  readonly startChangeReason = computed(() => {
+    const l = this.listed();
+    return l ? l.startChangeReason : (this.workspace()?.startChangeReason ?? null);
+  });
   /** This machine's workspace instructions against the master's; null when the plugin cannot report it. */
   readonly instructions = signal<InstructionsState | null>(null);
   /** Old per-machine checks files the backend says the engineer has not been told about, shown until dismissed. */
@@ -581,7 +620,7 @@ export class SdlcHomeViewModel {
       this.toasts.error(`Could not start the change: ${message(e)}`);
     }
     if (!this.newChangeOpen()) this.clearNaming();
-    await this.loadCurrent();
+    await this.loadCurrent('action-ended');
   }
 
   /** The plugin refused the branch name or the scope: the dialog opens again on the same description, with what the engineer picked, and shows the plugin's reasons. */
@@ -655,7 +694,7 @@ export class SdlcHomeViewModel {
 
   async discardLeftovers(choices: DiscardChoice[]): Promise<void> {
     await this.runner.discardAll(choices);
-    await this.loadCurrent();
+    await this.loadCurrent('action-ended');
   }
 
   closeLeftovers(): void {
@@ -696,12 +735,25 @@ export class SdlcHomeViewModel {
   /** The window regained focus: documents may have changed outside the Workbench, so ask the plugin again. */
   windowFocused(): void {
     if (!this.canWork() || this.locked()) return;
-    void this.refreshViews();
+    if (this.listed()) void this.readOpen('focus');
+    else void this.refreshViews();
   }
 
   /** The engineer picked a system: the backend remembers it, and the home reads it as on opening. */
-  async showSystem(_system: string): Promise<void> {
-    // Not built yet.
+  async showSystem(system: string): Promise<void> {
+    const w = this.current();
+    const scan = this.scan();
+    if (!w || !scan) return;
+    try {
+      const list = await this.shown('listing-changes', 'Listing changes', () => this.transport.sdlcHomePick(w.id, system, systemNames(scan)));
+      this.homeRows.set(new Map());
+      this.openProblems.set([]);
+      this.applyList(list);
+    } catch (e) {
+      this.toasts.error(`Could not show ${system}: ${message(e)}`);
+      return;
+    }
+    await this.readOpen('open');
   }
 
   switchMode(): Promise<void> {
@@ -801,7 +853,7 @@ export class SdlcHomeViewModel {
       link: null,
       label,
     });
-    await this.loadCurrent();
+    await this.loadCurrent('action-ended');
   }
 
   /** Run first-time setup for a folder. Returns the rescanned workspace, or null when it did not end set up. */
@@ -911,13 +963,83 @@ export class SdlcHomeViewModel {
     return this.transport.sdlcState(folder, systemNames(scan));
   }
 
-  /** `readViews` with the progress line shown while it runs. */
-  private async readViewsShown(folder: string, scan: WorkspaceScan): Promise<WorkspaceView> {
-    if (this.reads++ === 0) this.progress.begin('reading-stages', 'Reading changes', PROGRESS_OWNER);
+  /** Run a plugin read with the progress line shown while it runs. */
+  private async shown<T>(step: ProgressStepId, plain: string, read: () => Promise<T>): Promise<T> {
+    if (this.reads++ === 0) this.progress.begin(step, plain, PROGRESS_OWNER);
     try {
-      return await this.readViews(folder, scan);
+      return await read();
     } finally {
       if (--this.reads === 0) this.progress.end(PROGRESS_OWNER);
+    }
+  }
+
+  /** `readViews` with the progress line shown while it runs. */
+  private readViewsShown(folder: string, scan: WorkspaceScan): Promise<WorkspaceView> {
+    return this.shown('reading-stages', 'Reading changes', () => this.readViews(folder, scan));
+  }
+
+  /** The home's list: the light list on opening (or when none is known yet); the whole workspace view when the plugin is too old to list. */
+  private async readHome(w: WorkspaceEntry, scan: WorkspaceScan, trigger: Refresh): Promise<{ list: HomeList; views: WorkspaceView | null }> {
+    const known = this.homeList();
+    const list = trigger === 'open' || known === null ? await this.shown('listing-changes', 'Listing changes', () => this.transport.sdlcHomeList(w.id, systemNames(scan))) : known;
+    if (list.kind === 'listed') return { list, views: null };
+    return { list, views: await this.readViewsShown(w.folder, scan) };
+  }
+
+  /** Take the backend's list as the home's: the rows already read stay for every name still listed. */
+  private applyList(list: HomeList): void {
+    this.homeList.set(list);
+    const names = new Set(list.kind === 'listed' ? list.open.map((o) => o.change) : []);
+    this.homeRows.update((m) => new Map([...m].filter(([name]) => names.has(name))));
+  }
+
+  /** Replace the rows the backend answered, one by one; every other row stays as it was. */
+  private applyRows(rows: HomeRow[]): void {
+    this.homeRows.update((m) => {
+      const next = new Map(m);
+      for (const r of rows) next.set(r.view.state.change, { row: r, failed: false });
+      return next;
+    });
+  }
+
+  /** Read the shown system's open changes alone and fill the rows in place; follow a relist and the merge check the answer asks for. A newer read supersedes this one. */
+  private async readOpen(trigger: Refresh): Promise<void> {
+    const seq = ++this.viewSeq;
+    const w = this.current();
+    const scan = this.scan();
+    const l = this.listed();
+    if (!w || !scan || !l || l.system === null) return;
+    const system = l.system;
+    try {
+      const answer = await this.shown('reading-open-stages', 'Reading changes', () =>
+        this.transport.sdlcHomeOpen(w.folder, system, l.open.map((o) => o.change), trigger),
+      );
+      if (seq !== this.viewSeq) return;
+      this.applyRows(answer.rows);
+      this.openProblems.set(answer.problems);
+      if (answer.relist) {
+        const list = await this.shown('listing-changes', 'Listing changes', () => this.transport.sdlcHomeList(w.id, systemNames(scan)));
+        if (seq !== this.viewSeq) return;
+        this.applyList(list);
+      }
+      if (answer.check.length > 0) {
+        const checked = await this.shown('reading-open-stages', 'Reading changes', () =>
+          this.transport.sdlcHomePullRequests(w.folder, this.listed()?.system ?? system, answer.check),
+        );
+        if (seq !== this.viewSeq) return;
+        this.applyRows(checked.rows);
+        this.openProblems.update((p) => [...p, ...checked.problems]);
+      }
+    } catch (e) {
+      if (seq !== this.viewSeq) return;
+      this.homeRows.update((m) => {
+        const next = new Map(m);
+        for (const o of this.listed()?.open ?? []) {
+          if (!next.get(o.change)?.row) next.set(o.change, { row: null, failed: true });
+        }
+        return next;
+      });
+      this.toasts.error(`Could not read the changes: ${message(e)}`);
     }
   }
 
@@ -972,13 +1094,16 @@ export class SdlcHomeViewModel {
     this.scan.set(null);
     this.branches.set(null);
     this.workspace.set(null);
+    this.homeList.set(null);
+    this.homeRows.set(new Map());
+    this.openProblems.set([]);
     this.contexts.set({});
     this.lastRuns.set({});
     this.instructions.set(null);
   }
 
   /** Read the current workspace from disk. A newer call supersedes an older one still in flight. */
-  private async loadCurrent(): Promise<void> {
+  private async loadCurrent(trigger: Refresh = 'open'): Promise<void> {
     const seq = ++this.loadSeq;
     ++this.viewSeq;
     const w = this.current();
@@ -1001,6 +1126,7 @@ export class SdlcHomeViewModel {
     }
     let branches: BranchInfo | null = null;
     let views: WorkspaceView | null = null;
+    let list: HomeList | null = null;
     let lastRuns: Record<string, number> = {};
     const repo = masterRepo(scan);
     let readiness: Readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
@@ -1012,11 +1138,13 @@ export class SdlcHomeViewModel {
     if (isSetUp(scan) && repo !== null) {
       try {
         const master = masterPath(w.folder, repo);
-        [branches, views, lastRuns] = await Promise.all([
+        let home: { list: HomeList; views: WorkspaceView | null };
+        [branches, home, lastRuns] = await Promise.all([
           this.transport.sdlcBranches(master),
-          this.readViewsShown(w.folder, scan),
+          this.readHome(w, scan, trigger),
           this.transport.sdlcRunLinks().then((links) => lastRunTimes(links, w.id)),
         ]);
+        ({ list, views } = home);
       } catch (e) {
         this.toasts.error(`Could not read the workspace: ${message(e)}`);
       }
@@ -1026,9 +1154,13 @@ export class SdlcHomeViewModel {
     this.scan.set(scan);
     this.branches.set(branches);
     this.workspace.set(views);
+    if (list) this.applyList(list);
+    else this.homeList.set(null);
     this.readiness.set(readiness);
     this.lastRuns.set(lastRuns);
     this.currentRead.set(true);
+    // The names are on screen; the open stages fill in alongside the slower reads below.
+    const opened = this.listed() ? this.readOpen(trigger) : Promise.resolve();
     // The change list is on screen with its labels; the slower reads below do not hold it up.
     let contexts: Record<string, ContextState> = {};
     let instructions: InstructionsState | null = null;
@@ -1049,6 +1181,7 @@ export class SdlcHomeViewModel {
     if (seq !== this.loadSeq) return;
     this.contexts.set(contexts);
     this.instructions.set(instructions);
+    await opened;
     if (isSetUp(scan)) await this.readOldChecks(w.folder, systemNames(scan));
   }
 }
