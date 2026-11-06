@@ -99,7 +99,7 @@ Angular 22 (the angular-jig template) + SpartanNG + TypeScript. The frontend sta
 Every commit message MUST follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```
-<type>(<optional scope>): <imperative, lower-case summary>
+<type>(<optional scope>): <imperative summary>
 
 <optional body explaining what and why, not how>
 
@@ -119,7 +119,7 @@ docs(roadmap): record post-v0.2.0 engine hardening
 
 Rules:
 
-- The summary is imperative mood, lower-case, no trailing period, ≤ ~72 chars.
+- The summary is imperative mood, no trailing period, ≤ ~72 chars. It may start with a capital letter, since pull request titles and squash commits carry the intent title as written.
 - A breaking contract change uses `!` (e.g. `feat(spec)!: ...`) and a `BREAKING CHANGE:` footer describing the migration.
 - Commit in small, logical, frequent units — ideally one red→green→refactor slice per commit. Don't bundle unrelated changes.
 - Co-authored or assisted commits keep their trailers, e.g. `Co-Authored-By: ...`.
