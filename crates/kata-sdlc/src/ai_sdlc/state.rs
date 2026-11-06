@@ -187,12 +187,27 @@ pub fn state(
 /// Where one change stands, read for that change alone (`state --json --system <s> --change <c>`);
 /// `None` when no repository holds it.
 pub fn one(
-    _program: &Program,
-    _place: &Place,
-    _system: &str,
-    _change: &str,
+    program: &Program,
+    place: &Place,
+    system: &str,
+    change: &str,
 ) -> Result<Option<ChangeState>, ProgramError> {
-    unimplemented!("T5")
+    let answer = program.run(
+        &["state", "--json", "--system", system, "--change", change],
+        place,
+    );
+    match answer {
+        Err(ProgramError::CouldNotRun { message })
+            if message.starts_with(&format!("no change {change} in system {system} ")) =>
+        {
+            Ok(None)
+        }
+        Err(e) => Err(e),
+        Ok(value) => Ok(read_state(value)?
+            .changes
+            .into_iter()
+            .find(|c| c.change == change)),
+    }
 }
 
 /// Where the open changes of `system` stand in `workspace`: `state --open`, which reads only the changes

@@ -57,14 +57,8 @@ pub fn resolve(
         }));
     }
     let place = program.resolve(workspace).map_err(unanswered)?;
-    let answer = program
-        .run(&["state", "--json", "--system", system], &place)
-        .map_err(unanswered)?;
-    let found = state::read_state(answer)
+    let found = state::one(program, &place, system, change)
         .map_err(unanswered)?
-        .changes
-        .into_iter()
-        .find(|c| c.change == change)
         .ok_or(HomeError::NotListed)?;
     let folder = PathBuf::from(&found.folder);
     if !folder.is_dir() {
