@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
+import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject } from 'rxjs';
 import { render } from '../../../testing/render';
 import { KataTransport } from '../../core/transport/kata-transport';
@@ -32,7 +33,10 @@ async function mount(repo = 'commerce-core', transport = new MockTransport()) {
   return { ...out, params, navigate, transport };
 }
 
-afterEach(() => TestBed.resetTestingModule());
+afterEach(() => {
+  toastState.reset();
+  TestBed.resetTestingModule();
+});
 
 describe('ContextPage', () => {
   it('shows the context file as a full screen document: outline, markdown, and the front matter in the rail', async () => {
@@ -108,17 +112,31 @@ describe('ContextPage', () => {
     expect(vm.current()?.id).toBe(first.id);
   });
 
-  it('switching workspace asks for the current one and the versions again, after the save', async () => {
+  it('selecting a workspace asks the backend', async () => {
     const { fixture, transport } = await mount();
     const vm = fixture.debugElement.injector.get(ContextPageViewModel);
-    const save = vi.spyOn(transport, 'sdlcSaveWorkspaces');
-    const ask = vi.spyOn(transport, 'sdlcCurrentWorkspace');
+    const first = vm.workspaces()[0];
+    const open = vi.spyOn(transport, 'sdlcOpenWorkspace').mockResolvedValue({ workspaces: [{ ...first, last_opened: 99 }], current: first.id });
     const versions = vi.spyOn(transport, 'appVersions');
-    await vm.selectWorkspace(vm.workspaces()[0].id);
-    const saved = save.mock.invocationCallOrder.at(-1)!;
-    expect(ask.mock.invocationCallOrder[0]).toBeGreaterThan(saved);
+    await vm.selectWorkspace(first.id);
+    expect(open).toHaveBeenCalledWith(first.id);
+    expect(vm.workspaces()[0].last_opened).toBe(99);
     expect(versions).toHaveBeenCalledTimes(1);
-    expect(versions.mock.invocationCallOrder[0]).toBeGreaterThan(saved);
+    expect(versions.mock.invocationCallOrder[0]).toBeGreaterThan(open.mock.invocationCallOrder.at(-1)!);
+  });
+
+  it('a failed open keeps the shown workspace', async () => {
+    const { fixture, transport } = await mount();
+    const vm = fixture.debugElement.injector.get(ContextPageViewModel);
+    const shown = vm.workspaces();
+    const current = vm.current()?.id;
+    vi.spyOn(transport, 'sdlcOpenWorkspace').mockRejectedValue(new Error('disk full'));
+    const versions = vi.spyOn(transport, 'appVersions');
+    await vm.selectWorkspace(shown[0].id);
+    expect(vm.workspaces()).toBe(shown);
+    expect(vm.current()?.id).toBe(current);
+    expect(toastState.toasts().map((t) => String(t.title)).join(' | ')).toContain('Could not save the workspace list: disk full');
+    expect(versions).not.toHaveBeenCalled();
   });
 
   it('goes back to the workspace from the breadcrumb', async () => {

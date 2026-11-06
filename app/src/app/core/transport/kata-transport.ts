@@ -8,6 +8,7 @@ import type { Readiness } from '@bindings/Readiness';
 import type { Preset } from '@bindings/Preset';
 import type { KataListing } from '@bindings/KataListing';
 import type { Settings } from '@bindings/Settings';
+import type { WorkspaceChoice } from '@bindings/WorkspaceChoice';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
@@ -153,6 +154,9 @@ export abstract class KataTransport {
   abstract sdlcSaveSettings(settings: Settings): Promise<void>;
   abstract sdlcWorkspaces(): Promise<WorkspaceEntry[]>;
   abstract sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]): Promise<void>;
+  abstract sdlcOpenWorkspace(id: string): Promise<WorkspaceChoice>;
+  abstract sdlcAddWorkspace(name: string, folder: string): Promise<WorkspaceChoice>;
+  abstract sdlcRemoveWorkspace(id: string): Promise<WorkspaceChoice>;
   /** The id of the workspace the home opens on, decided in the backend from the saved list; null when there is none. */
   abstract sdlcCurrentWorkspace(): Promise<string | null>;
   abstract sdlcScan(folder: string): Promise<WorkspaceScan>;

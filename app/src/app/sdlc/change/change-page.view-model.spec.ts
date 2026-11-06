@@ -466,7 +466,7 @@ describe('ChangePageViewModel', () => {
       const transport = new MockTransport();
       const { vm, runAgent, preview } = setup(PHOTOS_CHANGE, transport, 'real');
       await ready(vm);
-      const writes = [vi.spyOn(transport, 'saveSpec'), vi.spyOn(transport, 'saveKata'), vi.spyOn(transport, 'savePreset'), vi.spyOn(transport, 'sdlcSaveSettings'), vi.spyOn(transport, 'sdlcSaveWorkspaces')];
+      const writes = [vi.spyOn(transport, 'saveSpec'), vi.spyOn(transport, 'saveKata'), vi.spyOn(transport, 'savePreset'), vi.spyOn(transport, 'sdlcSaveSettings'), vi.spyOn(transport, 'sdlcOpenWorkspace'), vi.spyOn(transport, 'sdlcAddWorkspace'), vi.spyOn(transport, 'sdlcRemoveWorkspace')];
       const github = () => previewRows(preview).find((r) => r.item.id === 'personal:tool-server:github')!;
 
       const specRun = vm.act('start-spec');
@@ -491,7 +491,7 @@ describe('ChangePageViewModel', () => {
       const transport = new MockTransport();
       const { vm, runAgent, preview } = setup(PHOTOS_CHANGE, transport, 'real');
       await ready(vm);
-      const writes = [vi.spyOn(transport, 'saveSpec'), vi.spyOn(transport, 'saveKata'), vi.spyOn(transport, 'savePreset'), vi.spyOn(transport, 'sdlcSaveSettings'), vi.spyOn(transport, 'sdlcSaveWorkspaces')];
+      const writes = [vi.spyOn(transport, 'saveSpec'), vi.spyOn(transport, 'saveKata'), vi.spyOn(transport, 'savePreset'), vi.spyOn(transport, 'sdlcSaveSettings'), vi.spyOn(transport, 'sdlcOpenWorkspace'), vi.spyOn(transport, 'sdlcAddWorkspace'), vi.spyOn(transport, 'sdlcRemoveWorkspace')];
       const hook = () => previewRows(preview).find((r) => r.item.id === 'project:hook:PostToolUse:Write|Edit:8c1f77e2d3a40b95')!;
       const sdlcPlugin = () => previewRows(preview).find((r) => r.item.id === 'personal:plugin:ai-sdlc@ai-sdlc')!;
 
@@ -614,17 +614,15 @@ describe('ChangePageViewModel', () => {
     expect(vm.current()?.id).toBe('old');
   });
 
-  it('switching workspace asks for the current one and the versions again, after the save', async () => {
+  it('switching workspace asks the backend, then the versions again', async () => {
     const { vm, transport } = setup(PHOTOS_CHANGE);
     await ready(vm);
-    const save = vi.spyOn(transport, 'sdlcSaveWorkspaces');
-    const ask = vi.spyOn(transport, 'sdlcCurrentWorkspace');
+    const open = vi.spyOn(transport, 'sdlcOpenWorkspace');
     const versions = vi.spyOn(transport, 'appVersions');
     await vm.selectWorkspace('acme-commerce');
-    const saved = save.mock.invocationCallOrder.at(-1)!;
-    expect(ask.mock.invocationCallOrder[0]).toBeGreaterThan(saved);
+    expect(open).toHaveBeenCalledWith('acme-commerce');
     expect(versions).toHaveBeenCalledTimes(1);
-    expect(versions.mock.invocationCallOrder[0]).toBeGreaterThan(saved);
+    expect(versions.mock.invocationCallOrder[0]).toBeGreaterThan(open.mock.invocationCallOrder.at(-1)!);
   });
 
   it('goes to the workspace home from the workspace controls', async () => {

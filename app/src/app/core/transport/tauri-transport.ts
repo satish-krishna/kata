@@ -11,6 +11,7 @@ import type { Readiness } from '@bindings/Readiness';
 import type { Preset } from '@bindings/Preset';
 import type { KataListing } from '@bindings/KataListing';
 import type { Settings } from '@bindings/Settings';
+import type { WorkspaceChoice } from '@bindings/WorkspaceChoice';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
@@ -104,6 +105,9 @@ export class TauriTransport extends KataTransport {
   sdlcSaveSettings(settings: Settings) { return this.ipc.invoke<void>('sdlc_save_settings', { settings }); }
   sdlcWorkspaces() { return this.ipc.invoke<WorkspaceEntry[]>('sdlc_workspaces'); }
   sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]) { return this.ipc.invoke<void>('sdlc_save_workspaces', { workspaces }); }
+  sdlcOpenWorkspace(id: string) { return this.ipc.invoke<WorkspaceChoice>('sdlc_open_workspace', { id }); }
+  sdlcAddWorkspace(name: string, folder: string) { return this.ipc.invoke<WorkspaceChoice>('sdlc_add_workspace', { name, folder }); }
+  sdlcRemoveWorkspace(id: string) { return this.ipc.invoke<WorkspaceChoice>('sdlc_remove_workspace', { id }); }
   sdlcCurrentWorkspace() { return this.ipc.invoke<string | null>('sdlc_current_workspace'); }
   sdlcScan(folder: string) { return this.ipc.invoke<WorkspaceScan>('sdlc_scan', { folder }); }
   sdlcContextHealth(folder: string, master: string, system: string, repo: string) { return this.ipc.invoke<ContextState>('sdlc_context_health', { folder, master, system, repo }); }

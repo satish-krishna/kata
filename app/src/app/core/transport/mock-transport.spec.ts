@@ -789,25 +789,48 @@ describe('MockTransport answers every call the backend gained on this branch (F2
 });
 
 describe('MockTransport current workspace', () => {
-  const ws = (id: string, last_opened: number): WorkspaceEntry => ({ id, name: id, folder: `/${id}`, last_opened });
-
-  it('answers the highest last_opened of the saved list', async () => {
+  it('opening a workspace stamps it one past every other entry and answers it as current', async () => {
     const t = new MockTransport();
-    await t.sdlcSaveWorkspaces([ws('a', 5), ws('b', 50), ws('c', 7)]);
-    expect(await t.sdlcCurrentWorkspace()).toBe('b');
+    const added = await t.sdlcAddWorkspace('second', '/second');
+    const first = added.workspaces.find((w) => w.id !== 'second')!;
+    const choice = await t.sdlcOpenWorkspace(first.id);
+    const stamps = choice.workspaces.map((w) => w.last_opened);
+    expect(choice.current).toBe(first.id);
+    expect(await t.sdlcCurrentWorkspace()).toBe(first.id);
+    expect(choice.workspaces.find((w) => w.id === first.id)!.last_opened).toBe(Math.max(...stamps));
+    expect(await t.sdlcWorkspaces()).toEqual(choice.workspaces);
   });
 
-  it('answers the earliest of the tied entries', async () => {
+  it('opening an unknown id rejects and keeps the list', async () => {
     const t = new MockTransport();
-    await t.sdlcSaveWorkspaces([ws('a', 1), ws('b', 9), ws('c', 9), ws('d', 0)]);
-    expect(await t.sdlcCurrentWorkspace()).toBe('b');
-    await t.sdlcSaveWorkspaces([ws('x', 0), ws('y', 0)]);
-    expect(await t.sdlcCurrentWorkspace()).toBe('x');
+    const before = await t.sdlcWorkspaces();
+    await expect(t.sdlcOpenWorkspace('nope')).rejects.toThrow('nope');
+    expect(await t.sdlcWorkspaces()).toEqual(before);
+  });
+
+  it('adding makes a unique id from the name and the new entry is current', async () => {
+    const t = new MockTransport();
+    await t.sdlcAddWorkspace('My Repo', '/one');
+    const second = await t.sdlcAddWorkspace('My Repo', '/two');
+    expect(second.workspaces.map((w) => w.id).slice(-2)).toEqual(['my-repo', 'my-repo-2']);
+    expect(second.current).toBe('my-repo-2');
+    expect((await t.sdlcAddWorkspace('!!!', '/three')).workspaces.at(-1)!.id).toBe('workspace');
+  });
+
+  it('removing answers the next current, and an unknown id changes nothing', async () => {
+    const t = new MockTransport();
+    const added = await t.sdlcAddWorkspace('second', '/second');
+    expect(added.current).toBe('second');
+    const gone = await t.sdlcRemoveWorkspace('second');
+    expect(gone.current).toBe(added.workspaces[0].id);
+    expect((await t.sdlcRemoveWorkspace('zzz')).workspaces).toEqual(gone.workspaces);
   });
 
   it('answers null when no workspace is saved', async () => {
     const t = new MockTransport();
-    await t.sdlcSaveWorkspaces([]);
+    const [only] = await t.sdlcWorkspaces();
+    const choice = await t.sdlcRemoveWorkspace(only.id);
+    expect(choice).toEqual({ workspaces: [], current: null });
     expect(await t.sdlcCurrentWorkspace()).toBeNull();
   });
 });

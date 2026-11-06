@@ -42,11 +42,13 @@ function setup(over: { catalogHasPlugin?: boolean; preview?: 'confirm' | 'real' 
   const lock = TestBed.inject(LockStore);
   const runAgent = vi.spyOn(lock, 'runAgent').mockResolvedValue('success');
   const runSteps = vi.spyOn(lock, 'runSteps');
-  const saveWorkspaces = vi.spyOn(transport, 'sdlcSaveWorkspaces');
+  const openWorkspace = vi.spyOn(transport, 'sdlcOpenWorkspace');
+  const addWorkspace = vi.spyOn(transport, 'sdlcAddWorkspace');
+  const removeWorkspace = vi.spyOn(transport, 'sdlcRemoveWorkspace');
   const saveSettings = vi.spyOn(transport, 'sdlcSaveSettings');
   const preview = TestBed.inject(RunPreviewViewModel);
   if (over.preview !== 'real') vi.spyOn(preview, 'open').mockImplementation(async (req) => req.spec);
-  return { vm: TestBed.inject(SdlcHomeViewModel), preview, transport, lock, runAgent, runSteps, navigate, saveWorkspaces, saveSettings, runner: TestBed.inject(SdlcRunner) };
+  return { vm: TestBed.inject(SdlcHomeViewModel), preview, transport, lock, runAgent, runSteps, navigate, openWorkspace, addWorkspace, removeWorkspace, saveSettings, runner: TestBed.inject(SdlcRunner) };
 }
 
 const previewReady = (preview: RunPreviewViewModel) => vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
@@ -99,22 +101,21 @@ describe('SdlcHomeViewModel init', () => {
     expect(vm.current()?.id).toBe('last');
   });
 
-  it('removing the current workspace moves to what the backend names after the save', async () => {
-    const { vm, transport, saveWorkspaces } = setup();
+  it('removing the current workspace moves to what the backend answers', async () => {
+    const { vm, transport, removeWorkspace } = setup();
     const list: WorkspaceEntry[] = [
       { id: 'a', name: 'a', folder: '/a', last_opened: 0 },
       { id: 'b', name: 'b', folder: '/b', last_opened: 0 },
       { id: 'c', name: 'c', folder: '/c', last_opened: 0 },
     ];
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue(list);
-    const ask = vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('a');
+    vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('a');
     await vm.init();
     expect(vm.current()?.id).toBe('a');
-    ask.mockClear();
-    ask.mockResolvedValue('c');
+    removeWorkspace.mockResolvedValue({ workspaces: [list[1], list[2]], current: 'c' });
     await vm.removeWorkspace('a');
-    expect(ask).toHaveBeenCalledTimes(1);
-    expect(ask.mock.invocationCallOrder[0]).toBeGreaterThan(saveWorkspaces.mock.invocationCallOrder.at(-1)!);
+    expect(removeWorkspace).toHaveBeenCalledWith('a');
+    expect(vm.workspaces().map((w) => w.id)).toEqual(['b', 'c']);
     expect(vm.current()?.id).toBe('c');
   });
 
@@ -176,7 +177,7 @@ describe('SdlcHomeViewModel init', () => {
 
 describe('SdlcHomeViewModel add workspace', () => {
   it('on a set-up workspace runs the five checks, saves the entry on confirm with no base branch, and starts no run', async () => {
-    const { vm, transport, runSteps, runAgent, saveWorkspaces } = setup();
+    const { vm, transport, runSteps, runAgent, addWorkspace } = setup();
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
     await vm.init();
     await vm.addWorkspace();
@@ -186,12 +187,12 @@ describe('SdlcHomeViewModel add workspace', () => {
     ]);
     expect(runAgent).not.toHaveBeenCalled();
     expect(vm.candidate()?.folder).toBe(NEW_FOLDER);
-    expect(saveWorkspaces).not.toHaveBeenCalled();
+    expect(addWorkspace).not.toHaveBeenCalled();
 
     await vm.confirmAddWorkspace();
-    const saved = saveWorkspaces.mock.calls[0][0];
-    expect(saved.find((w) => w.folder === NEW_FOLDER)).toMatchObject({ name: 'new-ws' });
-    expect(saved.find((w) => w.folder === NEW_FOLDER)).not.toHaveProperty('base_branch');
+    expect(addWorkspace).toHaveBeenCalledWith('new-ws', NEW_FOLDER);
+    expect(vm.workspaces().find((w) => w.folder === NEW_FOLDER)).toMatchObject({ name: 'new-ws' });
+    expect(vm.workspaces().find((w) => w.folder === NEW_FOLDER)).not.toHaveProperty('base_branch');
     expect(vm.current()?.folder).toBe(NEW_FOLDER);
     expect(vm.candidate()).toBeNull();
     expect(runAgent).not.toHaveBeenCalled();
@@ -211,7 +212,7 @@ describe('SdlcHomeViewModel add workspace', () => {
   });
 
   it('opens the leftover dialog and adds nothing when setup is cancelled', async () => {
-    const { vm, transport, runAgent, saveWorkspaces } = setup();
+    const { vm, transport, runAgent, addWorkspace } = setup();
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
     vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({ new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] });
     runAgent.mockResolvedValue('warning');
@@ -222,7 +223,7 @@ describe('SdlcHomeViewModel add workspace', () => {
     await vm.addWorkspace();
     expect(vm.leftovers()?.[0].data.discardable).toEqual(['.ai-sdlc.json']);
     expect(vm.candidate()).toBeNull();
-    expect(saveWorkspaces).not.toHaveBeenCalled();
+    expect(addWorkspace).not.toHaveBeenCalled();
   });
 
   it('reports leftovers in the master a cancelled first setup created, against its pre-run snapshot', async () => {
@@ -248,14 +249,14 @@ describe('SdlcHomeViewModel add workspace', () => {
   });
 
   it('says so when the workspace check is cancelled, and adds nothing', async () => {
-    const { vm, transport, lock, saveWorkspaces } = setup();
+    const { vm, transport, lock, addWorkspace } = setup();
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
     await vm.init();
     vi.spyOn(lock, 'runSteps').mockResolvedValue('cancelled');
     await vm.addWorkspace();
     expect(toastText()).toContain('Workspace check cancelled. Nothing was added.');
     expect(vm.candidate()).toBeNull();
-    expect(saveWorkspaces).not.toHaveBeenCalled();
+    expect(addWorkspace).not.toHaveBeenCalled();
   });
 
   it('reports a failed context read after setup instead of rejecting', async () => {
@@ -675,48 +676,96 @@ describe('SdlcHomeViewModel navigation', () => {
 });
 
 describe('SdlcHomeViewModel workspaces and settings', () => {
-  it('selectWorkspace stamps last_opened and loads that workspace', async () => {
-    const { vm, transport, saveWorkspaces } = setup();
+  it('selecting a workspace asks the backend and never writes last_opened', async () => {
+    const { vm, transport, openWorkspace } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([]);
-    vm.workspaces.set([
-      ...vm.workspaces(),
-      { id: 'second', name: 'second', folder: '/second', last_opened: 1 },
-    ]);
+    const first = vm.workspaces()[0];
+    const second = { id: 'second', name: 'second', folder: '/second', last_opened: 1 };
+    vm.workspaces.set([first, second]);
+    const appVersions = vi.spyOn(transport, 'appVersions');
+    openWorkspace.mockResolvedValue({ workspaces: [first, { ...second, last_opened: 99 }], current: 'second' });
     await vm.selectWorkspace('second');
+    expect(openWorkspace).toHaveBeenCalledWith('second');
     expect(vm.current()?.id).toBe('second');
-    const saved = saveWorkspaces.mock.calls.at(-1)![0];
-    expect(saved.find((w) => w.id === 'second')!.last_opened).toBeGreaterThan(1);
+    expect(vm.workspaces().find((w) => w.id === 'second')!.last_opened).toBe(99);
+    expect(appVersions).toHaveBeenCalledTimes(1);
   });
 
-  it('selectWorkspace asks for the versions again after the list is saved, and the line shows the new answer', async () => {
-    const { vm, transport, saveWorkspaces } = setup();
+  it('a failed open keeps the shown workspace', async () => {
+    const { vm, transport, openWorkspace } = setup();
+    await vm.init();
+    const before = vm.workspaces();
+    vm.workspaces.set([...before, { id: 'second', name: 'second', folder: '/second', last_opened: 1 }]);
+    const shown = vm.workspaces();
+    const appVersions = vi.spyOn(transport, 'appVersions');
+    openWorkspace.mockRejectedValue(new Error('disk full'));
+    await vm.selectWorkspace('second');
+    expect(vm.current()?.id).toBe(before[0].id);
+    expect(vm.workspaces()).toBe(shown);
+    expect(toastText()).toContain('Could not save the workspace list: disk full');
+    expect(appVersions).not.toHaveBeenCalled();
+  });
+
+  it('a failed removal keeps the shown workspace', async () => {
+    const { vm, transport, removeWorkspace } = setup();
+    await vm.init();
+    const shown = vm.workspaces();
+    const current = vm.current()!.id;
+    const appVersions = vi.spyOn(transport, 'appVersions');
+    removeWorkspace.mockRejectedValue(new Error('disk full'));
+    await vm.removeWorkspace(current);
+    expect(vm.current()?.id).toBe(current);
+    expect(vm.workspaces()).toBe(shown);
+    expect(toastText()).toContain('Could not save the workspace list: disk full');
+    expect(appVersions).not.toHaveBeenCalled();
+  });
+
+  it("adding a workspace takes the backend's id and current", async () => {
+    const { vm, transport, addWorkspace } = setup();
+    vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
+    await vm.init();
+    const first = vm.workspaces()[0];
+    const added = { id: 'backend-chose-this', name: 'new-ws', folder: NEW_FOLDER, last_opened: 77 };
+    addWorkspace.mockResolvedValue({ workspaces: [first, added], current: added.id });
+    await vm.addWorkspace();
+    await vm.confirmAddWorkspace();
+    expect(addWorkspace).toHaveBeenCalledWith('new-ws', NEW_FOLDER);
+    expect(vm.workspaces()).toEqual([first, added]);
+    expect(vm.current()?.id).toBe('backend-chose-this');
+  });
+
+  it('selectWorkspace asks for the versions again after the backend opened it, and the line shows the new answer', async () => {
+    const { vm, transport, openWorkspace } = setup();
     await vm.init();
     const versions = TestBed.inject(VersionsStore);
     const answer = await transport.appVersions();
     const appVersions = vi.spyOn(transport, 'appVersions').mockResolvedValue({ ...answer, copy: 'second workspace' });
-    vm.workspaces.set([...vm.workspaces(), { id: 'second', name: 'second', folder: '/second', last_opened: 1 }]);
+    const second = { id: 'second', name: 'second', folder: '/second', last_opened: 1 };
+    vm.workspaces.set([...vm.workspaces(), second]);
+    openWorkspace.mockResolvedValue({ workspaces: [...vm.workspaces()], current: 'second' });
     await vm.selectWorkspace('second');
     expect(appVersions).toHaveBeenCalledTimes(1);
-    expect(appVersions.mock.invocationCallOrder[0]).toBeGreaterThan(saveWorkspaces.mock.invocationCallOrder.at(-1)!);
+    expect(appVersions.mock.invocationCallOrder[0]).toBeGreaterThan(openWorkspace.mock.invocationCallOrder.at(-1)!);
     expect(versions.versions()?.copy).toBe('second workspace');
   });
 
-  it('adding a workspace asks for the versions again after the list is saved', async () => {
-    const { vm, transport, saveWorkspaces } = setup();
+  it('adding a workspace asks for the versions again after the backend added it', async () => {
+    const { vm, transport, addWorkspace } = setup();
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
     await vm.init();
     const appVersions = vi.spyOn(transport, 'appVersions');
     await vm.addWorkspace();
     await vm.confirmAddWorkspace();
     expect(appVersions).toHaveBeenCalledTimes(1);
-    expect(appVersions.mock.invocationCallOrder[0]).toBeGreaterThan(saveWorkspaces.mock.invocationCallOrder.at(-1)!);
+    expect(appVersions.mock.invocationCallOrder[0]).toBeGreaterThan(addWorkspace.mock.invocationCallOrder.at(-1)!);
   });
 
   it('removing the current workspace asks for the versions again; removing another does not', async () => {
     const { vm, transport } = setup();
     await vm.init();
-    vm.workspaces.set([...vm.workspaces(), { id: 'second', name: 'second', folder: '/second', last_opened: 1 }]);
+    const second = (await transport.sdlcAddWorkspace('second', '/second')).workspaces.find((w) => w.id === 'second')!;
+    await transport.sdlcOpenWorkspace('acme-commerce');
+    vm.workspaces.set([...vm.workspaces(), second]);
     const appVersions = vi.spyOn(transport, 'appVersions');
     await vm.removeWorkspace('second');
     expect(appVersions).not.toHaveBeenCalled();
@@ -725,25 +774,25 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
   });
 
   it('removing asks first, forgets only the list entry, and moves to the next workspace', async () => {
-    const { vm, saveWorkspaces } = setup();
+    const { vm, removeWorkspace } = setup();
     await vm.init();
     vm.askRemove();
     expect(vm.removePrompt()).toContain('acme-commerce');
-    expect(saveWorkspaces).not.toHaveBeenCalled();
+    expect(removeWorkspace).not.toHaveBeenCalled();
     await vm.confirmRemove();
-    expect(saveWorkspaces).toHaveBeenCalledWith([]);
+    expect(removeWorkspace).toHaveBeenCalledWith('acme-commerce');
     expect(vm.workspaces()).toEqual([]);
     expect(vm.current()).toBeNull();
     expect(vm.removePrompt()).toBeNull();
   });
 
   it('declining the removal keeps the workspace', async () => {
-    const { vm, saveWorkspaces } = setup();
+    const { vm, removeWorkspace } = setup();
     await vm.init();
     vm.askRemove();
     vm.cancelRemove();
     expect(vm.removePrompt()).toBeNull();
-    expect(saveWorkspaces).not.toHaveBeenCalled();
+    expect(removeWorkspace).not.toHaveBeenCalled();
   });
 
   it('saving the settings dialog with prompt persists permission_mode prompt', async () => {
@@ -757,10 +806,10 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
   });
 
   it('never rewrites the workspaces when the settings are saved: the base branch is not stored', async () => {
-    const { vm, saveWorkspaces } = setup();
+    const { vm, openWorkspace, addWorkspace, removeWorkspace } = setup();
     await vm.init();
     await vm.saveSettings({ settings: vm.settings()! });
-    expect(saveWorkspaces).not.toHaveBeenCalled();
+    for (const write of [openWorkspace, addWorkspace, removeWorkspace]) expect(write).not.toHaveBeenCalled();
     expect(vm.current()).not.toHaveProperty('base_branch', 'develop');
   });
 });

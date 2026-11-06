@@ -7,6 +7,7 @@ import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { Preset } from '@bindings/Preset';
 import type { KataListing } from '@bindings/KataListing';
 import type { Settings } from '@bindings/Settings';
+import type { WorkspaceChoice } from '@bindings/WorkspaceChoice';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
@@ -294,6 +295,9 @@ export class MockTransport extends KataTransport {
   sdlcSaveSettings(settings: Settings): Promise<void> { this.sdlc.saveSettings(settings); return Promise.resolve(); }
   sdlcWorkspaces(): Promise<WorkspaceEntry[]> { return Promise.resolve(this.sdlc.getWorkspaces()); }
   sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]): Promise<void> { this.sdlc.saveWorkspaces(workspaces); return Promise.resolve(); }
+  sdlcOpenWorkspace(_id: string): Promise<WorkspaceChoice> { return Promise.reject(new Error('not implemented')); }
+  sdlcAddWorkspace(_name: string, _folder: string): Promise<WorkspaceChoice> { return Promise.reject(new Error('not implemented')); }
+  sdlcRemoveWorkspace(_id: string): Promise<WorkspaceChoice> { return Promise.reject(new Error('not implemented')); }
   /** Same rule as the backend's `current_workspace`: the highest last_opened, the earliest in the list on a tie. */
   sdlcCurrentWorkspace(): Promise<string | null> {
     let best: WorkspaceEntry | null = null;
