@@ -663,7 +663,28 @@ mod tests {
             }
         }
 
+        /// Puts `AI_SDLC_GH` back to what it was, whatever happens in the test.
+        struct GhEnv(Option<std::ffi::OsString>);
+
+        impl GhEnv {
+            fn set(value: String) -> GhEnv {
+                let guard = GhEnv(std::env::var_os("AI_SDLC_GH"));
+                std::env::set_var("AI_SDLC_GH", value);
+                guard
+            }
+        }
+
+        impl Drop for GhEnv {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(v) => std::env::set_var("AI_SDLC_GH", v),
+                    None => std::env::remove_var("AI_SDLC_GH"),
+                }
+            }
+        }
+
         #[test]
+        #[serial_test::serial]
         fn declared_is_read_from_change_yml_without_github() {
             let fx = fx();
             // A gh that records being started and fails.
@@ -677,10 +698,8 @@ mod tests {
                 ),
             )
             .unwrap();
-            std::env::set_var(
-                "AI_SDLC_GH",
-                serde_json::json!(["node", script.display().to_string()]).to_string(),
-            );
+            let _gh =
+                GhEnv::set(serde_json::json!(["node", script.display().to_string()]).to_string());
 
             // No record: not done.
             assert!(!fx.done());
