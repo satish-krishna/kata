@@ -1542,3 +1542,62 @@ describe('SdlcHomeViewModel open changes', () => {
     expect(vm.rows().every((r) => r.label?.text === 'Stage')).toBe(true);
   });
 });
+
+describe('SdlcHomeViewModel failed reads and an older plugin', () => {
+  const failures = [
+    'the ai-sdlc program could not run: ai-sdlc needs Node.js 22.18 or later',
+    'the ai-sdlc program could not run: it did not finish in 60 seconds',
+    'the ai-sdlc program refused: change not found',
+  ];
+  for (const failure of failures) {
+    it(`a failed refresh keeps the rows and shows today's message: ${failure}`, async () => {
+      const { vm, transport } = setup({ home: 'listed' });
+      vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+      const open = vi.spyOn(transport, 'sdlcHomeOpen').mockResolvedValueOnce(openOf(NAMES.map((n) => homeRowOf(n, 'Stage'))));
+      await vm.init();
+      const before = vm.rows();
+      expect(before.length).toBe(3);
+      open.mockRejectedValueOnce(new Error(failure));
+      vm.windowFocused();
+      await vi.waitFor(() => expect(toastText()).toContain(`Could not read the changes: ${failure}`));
+      expect(vm.rows()).toEqual(before);
+      expect(vm.rows().some((r) => r.failed)).toBe(false);
+    });
+  }
+
+  it('a failed first stage read marks each row unread', async () => {
+    const { vm, transport } = setup({ home: 'listed' });
+    vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+    vi.spyOn(transport, 'sdlcHomeOpen').mockRejectedValue(new Error('the ai-sdlc program refused: nope'));
+    await vm.init();
+    expect(vm.rows().map((r) => r.change)).toEqual(NAMES);
+    expect(vm.rows().every((r) => r.failed)).toBe(true);
+    expect(toastText()).toContain('Could not read the changes: the ai-sdlc program refused: nope');
+  });
+
+  it('an older plugin takes today\'s path', async () => {
+    const { vm, transport } = setup();
+    const state = vi.spyOn(transport, 'sdlcState');
+    await vm.init();
+    expect(state).toHaveBeenCalledTimes(1);
+    expect(state.mock.calls[0][1].length).toBeGreaterThan(0);
+    expect(vm.rows().length).toBe(7);
+    expect(vm.systemChoice()).toEqual([]);
+    expect(vm.finishedCount()).toBe(0);
+  });
+
+  it('an update to 1.3.0 is picked up on window focus', async () => {
+    const { vm, transport } = setup();
+    const list = vi.spyOn(transport, 'sdlcHomeList');
+    const state = vi.spyOn(transport, 'sdlcState');
+    await vm.init();
+    expect(state).toHaveBeenCalledTimes(1);
+    list.mockResolvedValue(listedOf('bob', ['bob', 'kata'], ['b1', 'b2']));
+    vi.spyOn(transport, 'sdlcHomeOpen').mockImplementation(async (_f, _s, shown) => openOf(shown.map((n) => homeRowOf(n, `Stage ${n}`))));
+    vm.windowFocused();
+    await vi.waitFor(() => expect(vm.rows().map((r) => `${r.system}/${r.change}`)).toEqual(['bob/b1', 'bob/b2']));
+    await vi.waitFor(() => expect(vm.rows().map((r) => r.label?.text)).toEqual(['Stage b1', 'Stage b2']));
+    expect(vm.shownSystem()).toBe('bob');
+    expect(state).toHaveBeenCalledTimes(1);
+  });
+});
