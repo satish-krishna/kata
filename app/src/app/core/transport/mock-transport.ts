@@ -54,7 +54,7 @@ import type { OpenRun } from '@bindings/OpenRun';
 import type { Opens } from '@bindings/Opens';
 import type { RunningEntry } from '@bindings/RunningEntry';
 import type { RunRef } from '@bindings/RunRef';
-import { BUILD_REPOS_OF, MOCK_BUILD_CHANGE, MOCK_LAYOUTS, MOCK_MASTER, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_LAYOUTS, MOCK_MASTER, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import type { BuildState } from '@bindings/BuildState';
 import type { RoundOffer } from '@bindings/RoundOffer';
@@ -155,6 +155,7 @@ export class MockTransport extends KataTransport {
       this.announceRunning();
     },
     now: () => Date.now(),
+    repos: (change) => this.sdlc.buildRepos(change.change),
   });
 
   private emit(runId: string, ev: KataEvent): void {
@@ -525,7 +526,7 @@ export class MockTransport extends KataTransport {
   }
   async sdlcPreviewBuild(change: ChangeRef, which: BuildPreviewKind, repo: string | null, form: StartForm): Promise<BuildSection[]> {
     const status = this.sdlc.buildStatus(change.change);
-    const planned = status.repos.length > 0 ? status.repos.map((r) => r.repo) : (BUILD_REPOS_OF[change.change] ?? []);
+    const planned = status.repos.length > 0 ? status.repos.map((r) => r.repo) : this.sdlc.buildRepos(change.change);
     const section = (title: string, folder: string | null): BuildSection => ({
       title,
       repo: folder,

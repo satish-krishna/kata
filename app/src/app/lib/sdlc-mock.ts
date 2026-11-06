@@ -656,7 +656,7 @@ export function earlierSessions(count: number): RunRecord[] {
 export class SdlcMock {
   /** What the demo builds. `?demo=build-long` (browser only) widens it so every area of the build page overflows; unit tests keep the short one. */
   private readonly plan: PlanTask[];
-  private repos: string[];
+  private readonly repos: string[];
   /** The records of the earlier sessions of `?demo=sessions`; none in any other demo. */
   private earlierRecords: RunRecord[] = [];
   private readonly planTasks: ParsedTask[];
@@ -675,8 +675,6 @@ export class SdlcMock {
     this.demo = demo;
     if (demo === 'sessions') {
       // `?demo=sessions&earlier=<n>` (browser only): the demo build runs in one repository, which has `earlier` sessions behind it.
-      BUILD_REPOS_OF[MOCK_BUILD_CHANGE] = ['commerce-core'];
-      this.repos = ['commerce-core'];
       this.links = earlierSessions(earlier).map((r) => ({
         workspace_id: 'acme-commerce', system: MOCK_SYSTEM, change: MOCK_BUILD_CHANGE, stage: 'build:commerce-core', run_id: r.id, started_at: r.started_at,
       }));
@@ -684,7 +682,7 @@ export class SdlcMock {
     }
     this.unreadable = long ? '2026-10-09-merchant-reassign' : null;
     this.plan = long ? [...BUILD_PLAN, ...LONG_PLAN] : BUILD_PLAN;
-    this.repos = long ? [...BUILD_REPOS, 'billing-api'] : BUILD_REPOS;
+    this.repos = demo === 'sessions' ? ['commerce-core'] : long ? [...BUILD_REPOS, 'billing-api'] : BUILD_REPOS;
     this.planTasks = long ? parsedTasks(this.plan) : BUILD_TASKS;
     this.departed = new Set(long ? LONG_DEPARTED_TASKS : DEPARTED_TASKS);
     this.diff = long ? [...DIFF_FILES, ...LONG_DIFF_FILES] : DIFF_FILES;
@@ -1098,8 +1096,8 @@ export class SdlcMock {
 
   // ---- the build ----
 
-  /** The repositories `change` builds in. */
-  buildRepos(change: string): string[] { return BUILD_REPOS_OF[change] ?? []; }
+  /** The repositories `change` builds in; `?demo=sessions` narrows the demo build to the one it has sessions in, on this mock only. */
+  buildRepos(change: string): string[] { return this.demo === 'sessions' && change === MOCK_BUILD_CHANGE ? [...this.repos] : (BUILD_REPOS_OF[change] ?? []); }
 
   buildStatus(changeName: string): BuildStatus {
     this.homeOf(changeName);
@@ -1560,6 +1558,8 @@ export interface MockBuildIo {
   status(change: ChangeRef): BuildStatus | null;
   announce(event: BuildEvent): void;
   now(): number;
+  /** The repositories a change builds in. */
+  repos(change: ChangeRef): string[];
 }
 
 const NO_FORM: StartForm = { timeoutSecs: 7200 };
@@ -1719,7 +1719,7 @@ export class MockBuildHost {
     const id = this.id(key);
     if (this.builds.get(id)?.going.size) return { kind: 'alreadyRunning' };
     const status = this.io.status(ref);
-    const repos = [...new Set([...(BUILD_REPOS_OF[ref.change] ?? []), ...(form.rounds ?? []).map((r) => r.repo)])];
+    const repos = [...new Set([...this.io.repos(ref), ...(form.rounds ?? []).map((r) => r.repo)])];
     const held = this.heldBy(key, repos);
     if (held.length > 0) {
       this.heldStarts.set(id, { key, held, at: this.io.now() });
@@ -1749,7 +1749,7 @@ export class MockBuildHost {
     if (build.going.has(repo)) return { kind: 'alreadyRunning' };
     build.stopped.delete(repo);
     build.cancelledAll = false;
-    for (const r of repoKeys(build)) this.holds.set(r, key);
+    for (const r of this.io.repos(build.ref)) this.holds.set(r, key);
     const status = this.io.status(ref);
     if (status === null) {
       this.launch(build, repo);
@@ -1794,7 +1794,7 @@ export class MockBuildHost {
   reviewStart(ref: ChangeRef): StartOutcome {
     const key = mockChangeKey(ref);
     const id = this.id(key);
-    const held = this.heldBy(key, BUILD_REPOS_OF[ref.change] ?? []);
+    const held = this.heldBy(key, this.io.repos(ref));
     if (held.length > 0) {
       this.reviewWaits.set(id, { key, held, at: this.io.now() });
       return { kind: 'held', held };
@@ -1834,7 +1834,6 @@ export class MockBuildHost {
   }
 }
 
-const repoKeys = (build: MockBuild): string[] => BUILD_REPOS_OF[build.ref.change] ?? [];
 
 // ---- the review and the round, as the backend answers them
 
