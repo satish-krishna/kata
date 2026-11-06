@@ -93,6 +93,7 @@
 .wb-pane--compose { flex: 1.05; border-right: 1px solid var(--border-default); }
 .wb-pane--observe { flex: 1; background: var(--surface-panel); }
 .wb-pane__head { flex: none; display: flex; align-items: center; gap: var(--space-3); height: 38px; padding: 0 var(--space-5); border-bottom: 1px solid var(--border-subtle); }
+.wb-pane__progress { margin-left: auto; flex: none; }
 .wb-pane__head .kata-eyebrow { color: var(--text-muted); }
 .wb-pane__body { flex: 1; overflow-y: auto; min-height: 0; }
 

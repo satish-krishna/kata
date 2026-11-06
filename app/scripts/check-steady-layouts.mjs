@@ -137,7 +137,7 @@ function measureRefresh() {
   return {
     rows,
     progress: progress ? box(progress.getBoundingClientRect()) : null,
-    text: progress ? progress.textContent.replace(/s+/g, ' ').trim() : '',
+    text: progress ? progress.textContent.replace(/\s+/g, ' ').trim() : '',
     head: head ? box(head.getBoundingClientRect()) : null,
     wrapped: progress ? progress.getClientRects().length > 1 || progress.scrollWidth > progress.clientWidth : false,
   };
