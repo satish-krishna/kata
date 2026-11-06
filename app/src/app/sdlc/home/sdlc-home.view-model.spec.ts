@@ -1524,6 +1524,22 @@ describe('SdlcHomeViewModel open changes', () => {
     expect(vm.rows()[1].action).toBe('remove-copy');
   });
 
+  it('a failed merge check shows nothing and the row keeps its last reading (T13)', async () => {
+    const { vm, transport } = setup({ home: 'listed' });
+    vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+    const open = vi.spyOn(transport, 'sdlcHomeOpen').mockResolvedValueOnce(openOf(NAMES.map((n) => homeRowOf(n, 'Stage'))));
+    const checked = vi.spyOn(transport, 'sdlcHomePullRequests').mockResolvedValue({ rows: [], problems: ['gh could not be asked about the merge'] });
+    await vm.init();
+    expect(vm.listNotice()).toBeNull();
+    open.mockResolvedValueOnce(openOf(NAMES.map((n) => homeRowOf(n, 'Stage')), { check: [NAMES[1]] }));
+    vm.windowFocused();
+    await vi.waitFor(() => expect(checked).toHaveBeenCalledTimes(1));
+    await flush();
+    expect(vm.listNotice()).toBeNull();
+    expect(vm.rows().map((r) => r.label?.text)).toEqual(['Stage', 'Stage', 'Stage']);
+    expect(vm.rows().some((r) => r.failed)).toBe(false);
+  });
+
   it('a change that finishes leaves the open changes and is counted', async () => {
     const { vm, transport } = setup({ home: 'listed' });
     const versions = '2026-11-03-versions';
