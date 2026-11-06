@@ -1,5 +1,6 @@
 import { Component, computed, input, output } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
+import { HlmSkeletonImports } from '@spartan-ng/helm/skeleton';
 import { HlmTableImports } from '@spartan-ng/helm/table';
 import { formatWhen } from '../lib/sdlc-workspace';
 import type { ChangeOffer } from '@bindings/ChangeOffer';
@@ -30,7 +31,7 @@ export type OpenedChange = { system: string; change: string };
  * plugin's answer gave each, then a second group of change branches checked out elsewhere, shown by folder name and no stage. */
 @Component({
   selector: 'app-changes-table',
-  imports: [HlmButtonImports, HlmTableImports],
+  imports: [HlmButtonImports, HlmSkeletonImports, HlmTableImports],
   templateUrl: './changes-table.html',
 })
 export class ChangesTable {

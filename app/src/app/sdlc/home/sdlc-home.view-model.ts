@@ -148,6 +148,8 @@ export class SdlcHomeViewModel {
     const l = this.listed();
     return l && l.systems.length > 1 ? l.systems : [];
   });
+  /** The picker's options, one per system. */
+  readonly systemOptions = computed(() => this.systemChoice().map((s) => ({ value: s, label: s })));
   /** The system the home shows, as the backend chose it; null on a legacy list. */
   readonly shownSystem = computed<string | null>(() => this.listed()?.system ?? null);
   /** The finished changes of the shown system, as the backend listed them. */

@@ -24,7 +24,7 @@ describe('FinishedChanges', () => {
     fold(container).click();
     fixture.detectChanges();
     expect(fold(container).getAttribute('aria-expanded')).toBe('true');
-    const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-testid="finished-row"]')).map(text);
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-testid="finished-row"]')).map((r) => Array.from(r.children).map((e) => text(e as HTMLElement)).join(' '));
     expect(rows).toEqual(['2026-10-12-photo-upload Photo upload merged', '2026-10-20-dark-banner Dark banner rejected']);
   });
 

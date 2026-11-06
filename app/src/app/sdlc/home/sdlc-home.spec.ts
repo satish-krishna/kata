@@ -226,7 +226,7 @@ describe('SdlcHome finished changes and system choice', () => {
     fold.click();
     fixture.detectChanges();
     expect(container.querySelectorAll('[data-testid="finished-row"]')).toHaveLength(60);
-    expect(text()).toContain('2026-09-60-finished-change-60 Finished change 60 merged');
+    expect(text()).toContain('2026-09-60-finished-change-60Finished change 60merged');
     expect(text()).toContain('rejected');
     for (const s of spies) expect(s).not.toHaveBeenCalled();
     const radios = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="radiogroup"] [role="radio"]')).map((b) => b.textContent!.trim());

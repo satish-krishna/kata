@@ -1,0 +1,19 @@
+@if (count() > 0) {
+  <section class="k-finished" aria-label="Finished changes">
+    <button hlmBtn variant="bare" size="bare" type="button" class="k-finished__fold" [attr.aria-expanded]="expanded()" (click)="expanded.set(!expanded())">
+      <ng-icon [name]="expanded() ? 'lucideChevronDown' : 'lucideChevronRight'" size="14" />
+      <span>Finished ({{ count() }})</span>
+    </button>
+    @if (expanded()) {
+      <ul class="k-finished__list">
+        @for (f of finished(); track f.change) {
+          <li class="k-finished__row" data-testid="finished-row">
+            <button hlmBtn variant="bare" size="bare" class="k-rowlink" type="button" [attr.aria-label]="'Open change ' + f.change" (click)="open.emit(f.change)">{{ f.change }}</button>
+            <span class="k-finished__title">{{ f.title }}</span>
+            <span class="k-finished__mark">{{ f.finished }}</span>
+          </li>
+        }
+      </ul>
+    }
+  </section>
+}

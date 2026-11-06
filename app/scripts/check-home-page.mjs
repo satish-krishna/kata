@@ -5,6 +5,8 @@
 import { installClipping } from './clipping.mjs';
 
 export const HOME_ROUTE = 'sdlc';
+/** The home with sixty finished changes and two systems, measured with the finished fold opened. */
+export const FINISHED_ROUTE = 'sdlc?demo=finished-many';
 
 /** Runs in the page: returns plain data about what is cut off. */
 function measure() {
@@ -38,17 +40,27 @@ function measure() {
 
 /** Opens the home page at one width; returns the failures as readable lines. */
 export async function checkHomePage(browser, origin, width) {
+  return [...(await checkRoute(browser, origin, width, HOME_ROUTE, false)), ...(await checkRoute(browser, origin, width, FINISHED_ROUTE, true))];
+}
+
+async function checkRoute(browser, origin, width, route, openFold) {
   const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1 });
   await installClipping(context);
   const page = await context.newPage();
   const fails = [];
   try {
-    await page.goto(`${origin}/${HOME_ROUTE}`, { waitUntil: 'networkidle' });
+    await page.goto(`${origin}/${route}`, { waitUntil: 'networkidle' });
     await page.evaluate(() => document.fonts && document.fonts.ready);
     await page.locator('app-changes-table, app-repos-table').first().waitFor({ timeout: 5000 });
+    if (openFold) {
+      const fold = page.locator('app-finished-changes button[aria-expanded]');
+      await fold.waitFor({ timeout: 5000 });
+      await fold.click();
+      await page.locator('[data-testid="finished-row"]').first().waitFor({ timeout: 5000 });
+    }
     await page.waitForTimeout(200);
     const m = await page.evaluate(measure);
-    const at = `the workspace home page at ${width}`;
+    const at = `the workspace home page${openFold ? ' with the finished fold open' : ''} at ${width}`;
     if (m === null) return [`${at}: no home page rendered`];
     if (m.pageScroll > 1) fails.push(`${at}: the page scrolls sideways by ${m.pageScroll}px`);
     for (const c of m.cut) fails.push(`${at}: cut off: ${c}`);

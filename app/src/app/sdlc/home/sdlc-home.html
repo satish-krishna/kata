@@ -140,7 +140,11 @@
         <main class="k-home__panes">
           <h1 class="sr-only">{{ vm.current()?.name }}</h1>
           <section class="k-home__pane" aria-labelledby="changes-heading">
-            <div class="wb-pane__head"><h2 id="changes-heading" class="kata-eyebrow">Changes</h2></div>
+            <div class="wb-pane__head"><h2 id="changes-heading" class="kata-eyebrow">Changes</h2>
+              @if (vm.systemChoice().length > 1) {
+                <app-segmented [options]="vm.systemOptions()" [value]="vm.shownSystem() ?? ''" (valueChange)="vm.showSystem($event)" ariaLabel="System" />
+              }
+            </div>
             @if (vm.listNotice(); as notice) {
               <div class="wb-banner wb-banner--warn" data-testid="list-notice" role="status">
                 <span class="k-status k-status--warning"><span class="k-status__dot"></span>{{ notice.text }}</span>
@@ -177,7 +181,9 @@
                 [disabled]="vm.locked()"
                 (open)="vm.openChange($event.system, $event.change)"
                 (openOther)="vm.openOtherBranch($event)"
+                (removeCopy)="vm.askRemoveCopy($event)"
               />
+              <app-finished-changes [finished]="vm.finished()" [count]="vm.finishedCount()" (open)="vm.openChange(vm.shownSystem() ?? '', $event)" />
             </div>
           </section>
           <section class="k-home__pane" aria-labelledby="repos-heading">
@@ -267,6 +273,14 @@
     confirmLabel="Remove"
     (confirm)="vm.confirmRemove()"
     (cancel)="vm.cancelRemove()"
+  />
+  <app-confirm-dialog
+    [open]="vm.removeAsked() !== null"
+    message="Remove this change's copy? The change branch and its commits stay in the master repository."
+    [details]="vm.removeAsked() ? [vm.removeAsked()!] : []"
+    confirmLabel="Remove copy"
+    (confirm)="vm.confirmRemoveCopy()"
+    (cancel)="vm.declineRemoveCopy()"
   />
   <app-run-preview-dialog
     [open]="vm.preview.isOpen()"
