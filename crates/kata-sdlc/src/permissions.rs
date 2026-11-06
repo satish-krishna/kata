@@ -216,6 +216,7 @@ pub(crate) mod fixtures {
     pub fn change_state(change: &str, master: &str, in_copy: bool) -> ChangeState {
         ChangeState {
             change: change.into(),
+            finished: None,
             master: master.into(),
             folder: format!("{master}/intent/commerce/{change}"),
             in_copy,

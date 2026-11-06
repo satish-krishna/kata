@@ -4,6 +4,7 @@
 //! limit, and kills the whole process tree on a timeout. Every answer is read by [`answer_of`]: a step
 //! (an event, a commit, a change command) through [`Program::step`] as a typed [`StepOutcome`], and a
 //! read through [`Program::run`] as its JSON.
+pub mod list;
 pub mod show;
 pub mod state;
 pub mod status;
@@ -27,6 +28,7 @@ pub const NEEDS_NODE: &str = "ai-sdlc needs Node.js 22.18 or later";
 const PLACED: &[&str] = &[
     "resolve",
     "state",
+    "list",
     "stale",
     "instructions",
     "run",
