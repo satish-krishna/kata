@@ -4,7 +4,10 @@ import { render } from '../../testing/render';
 import { ChangesTable, type ChangeRow } from './changes-table';
 
 const offerOf = (text: string, tone: LabelTone = 'muted'): ChangeOffer => ({ stage: 'plan-ready', label: { step: 'plan', text, tone }, actions: [] });
-const row = (name: string, over: Partial<ChangeRow> = {}): ChangeRow => ({ system: 'commerce', change: name, title: null, offer: offerOf('Plan · ready to start'), ...over });
+const row = (name: string, over: Partial<ChangeRow> = {}): ChangeRow => {
+  const offer = over.offer ?? offerOf('Plan · ready to start');
+  return { system: 'commerce', change: name, title: null, offer, label: offer.label, action: null, failed: false, ...over };
+};
 const LABELS: Record<string, string> = { 'spec-awaiting': 'Spec · awaiting acceptance', 'plan-awaiting': 'Plan · awaiting acceptance', 'plan-ready': 'Plan · ready to start' };
 const staged = (name: string, stage: string): ChangeRow => row(name, { offer: offerOf(LABELS[stage], 'warning') });
 

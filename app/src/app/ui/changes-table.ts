@@ -3,9 +3,23 @@ import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmTableImports } from '@spartan-ng/helm/table';
 import { formatWhen } from '../lib/sdlc-workspace';
 import type { ChangeOffer } from '@bindings/ChangeOffer';
+import type { HomeAction } from '@bindings/HomeAction';
+import type { StageLabel } from '@bindings/StageLabel';
 
 /** One line of the home page's change list: a change folder and what the plugin says it shows and offers. */
-export type ChangeRow = { system: string; change: string; title: string | null; offer: ChangeOffer };
+export type ChangeRow = {
+  system: string;
+  change: string;
+  title: string | null;
+  /** The plugin's whole answer for the change; null while a listed row's stage is being read. */
+  offer: ChangeOffer | null;
+  /** What the row reads; null while it is being read. */
+  label: StageLabel | null;
+  /** What the row offers first, as the backend decided; null on a legacy row and while being read. */
+  action: HomeAction | null;
+  /** The read of this row failed. */
+  failed: boolean;
+};
 
 type Group = { system: string; changes: ChangeRow[] };
 
@@ -38,7 +52,7 @@ export class ChangesTable {
   });
 
   protected tone(c: ChangeRow): string {
-    const t = c.offer.label.tone;
+    const t = c.label?.tone ?? 'muted';
     return t === 'muted' ? 'idle' : t;
   }
 

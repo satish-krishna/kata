@@ -5,6 +5,11 @@ import type { ChangeView } from '@bindings/ChangeView';
 import type { SystemView } from '@bindings/SystemView';
 import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { Readiness } from '@bindings/Readiness';
+import type { HomeList } from '@bindings/HomeList';
+import type { HomeOpen } from '@bindings/HomeOpen';
+import type { HomeRow } from '@bindings/HomeRow';
+import type { HomeChecked } from '@bindings/HomeChecked';
+import type { HomeAction } from '@bindings/HomeAction';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
@@ -32,8 +37,10 @@ const flush = async () => {
 };
 
 /** `preview: 'confirm'` (the default) lets the preview confirm every run at once, so a test about something else never meets it; `'real'` leaves it to the test. */
-function setup(over: { catalogHasPlugin?: boolean; preview?: 'confirm' | 'real' } = {}) {
+function setup(over: { catalogHasPlugin?: boolean; preview?: 'confirm' | 'real'; home?: 'legacy' | 'listed' } = {}) {
   const transport = new MockTransport();
+  // The tests that spy on `sdlcState` are about the legacy list; the open-changes home has its own describe.
+  if (over.home !== 'listed') vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue({ kind: 'legacy' });
   if (over.catalogHasPlugin === false) vi.spyOn(transport, 'catalog').mockResolvedValue(seedCatalog);
   TestBed.configureTestingModule({
     providers: [SdlcHomeViewModel, RunPreviewViewModel, { provide: KataTransport, useValue: transport }, provideRouter([])],
@@ -1089,7 +1096,7 @@ describe('SdlcHomeViewModel changes list', () => {
       answer.changes = [viewOf(C, text, READY)];
       return oneSystem(answer);
     };
-    const labelOf = (vm: SdlcHomeViewModel) => vm.rows().find((r) => r.change === C)?.offer.label.text;
+    const labelOf = (vm: SdlcHomeViewModel) => vm.rows().find((r) => r.change === C)?.label?.text;
 
     it('the window regaining focus asks the plugin again and the row follows its new answer', async () => {
       const { vm, transport } = setup();
@@ -1411,4 +1418,127 @@ describe("SdlcHomeViewModel: Close waits on the settling of the run on show, tra
       expect(vm.closeBlocked()).toBe(c.blocked);
     });
   }
+});
+
+const listedOf = (system: string, systems: string[], names: string[], finished: { change: string; finished: 'merged' | 'rejected' }[] = [], finishedCount = finished.length): HomeList => ({
+  kind: 'listed',
+  system,
+  systems,
+  open: names.map((change) => ({ change, title: `Title of ${change}` })),
+  finished: finished.map((f) => ({ ...f, title: null })),
+  finishedCount,
+  canStartChange: true,
+  startChangeReason: null,
+});
+const homeRowOf = (change: string, text: string, action: HomeAction = 'workflow'): HomeRow => ({
+  view: viewOf(change, text, READY),
+  reading: { label: { step: 'spec', text, tone: 'muted' }, action },
+});
+const openOf = (rows: HomeRow[], over: Partial<HomeOpen> = {}): HomeOpen => ({ rows, check: [], relist: false, problems: [], ...over });
+const NAMES = ['2026-11-01-a', '2026-11-03-c', '2026-11-02-b'];
+
+describe('SdlcHomeViewModel open changes', () => {
+  it("home opens on the system the backend chose and shows that system's changes only", async () => {
+    const { vm, transport } = setup({ home: 'listed' });
+    vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('bob', ['bob', 'kata'], ['b1', 'b2']));
+    const pick = vi.spyOn(transport, 'sdlcHomePick').mockResolvedValue(listedOf('kata', ['bob', 'kata'], ['k1']));
+    vi.spyOn(transport, 'sdlcHomeOpen').mockImplementation(async (_f, system, shown) => openOf(shown.map((n) => homeRowOf(n, `${system} ${n}`))));
+    await vm.init();
+    expect(vm.shownSystem()).toBe('bob');
+    expect(vm.systemChoice()).toEqual(['bob', 'kata']);
+    expect(vm.rows().map((r) => `${r.system}/${r.change}`)).toEqual(['bob/b1', 'bob/b2']);
+    await vm.showSystem('kata');
+    expect(pick.mock.calls[0][0]).toBe(vm.current()!.id);
+    expect(pick.mock.calls[0][1]).toBe('kata');
+    expect(vm.shownSystem()).toBe('kata');
+    expect(vm.rows().map((r) => `${r.system}/${r.change}`)).toEqual(['kata/k1']);
+    expect(vm.rows()[0].label?.text).toBe('kata k1');
+  });
+
+  it('lists open changes by name and title before their stages arrive', async () => {
+    const { vm, transport } = setup({ home: 'listed' });
+    vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+    let release!: (a: HomeOpen) => void;
+    vi.spyOn(transport, 'sdlcHomeOpen').mockReturnValue(new Promise<HomeOpen>((r) => (release = r)));
+    void vm.init();
+    await vi.waitFor(() => expect(vm.rows().length).toBe(3));
+    expect(vm.rows().map((r) => [r.change, r.title, r.label])).toEqual(NAMES.map((n) => [n, `Title of ${n}`, null]));
+    release(openOf([homeRowOf(NAMES[0], 'Spec A', 'open'), homeRowOf(NAMES[1], 'Spec C'), homeRowOf(NAMES[2], 'Spec B', 'remove-copy')]));
+    await vi.waitFor(() => expect(vm.rows().map((r) => r.label?.text)).toEqual(['Spec A', 'Spec C', 'Spec B']));
+    expect(vm.rows().map((r) => r.action)).toEqual(['open', 'workflow', 'remove-copy']);
+  });
+
+  it("keeps the workflow's order of open changes", async () => {
+    const { vm, transport } = setup({ home: 'listed' });
+    vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+    vi.spyOn(transport, 'sdlcHomeOpen').mockResolvedValue(openOf([homeRowOf(NAMES[2], 'B'), homeRowOf(NAMES[0], 'A'), homeRowOf(NAMES[1], 'C')]));
+    await vm.init();
+    expect(vm.rows().map((r) => r.change)).toEqual(NAMES);
+    expect(vm.rows().map((r) => r.label?.text)).toEqual(['A', 'C', 'B']);
+  });
+
+  it('a refresh asks for the open changes only and keeps the rows', async () => {
+    const { vm, transport } = setup({ home: 'listed' });
+    const list = vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+    const all = (text: string) => NAMES.map((n) => homeRowOf(n, text));
+    const open = vi.spyOn(transport, 'sdlcHomeOpen').mockResolvedValue(openOf(all('First')));
+    const checked = vi.spyOn(transport, 'sdlcHomePullRequests').mockResolvedValue({ rows: [], problems: [] });
+    const state = vi.spyOn(transport, 'sdlcState');
+    await vm.init();
+    list.mockClear();
+    open.mockClear();
+    state.mockClear();
+    checked.mockClear();
+    // The window comes back: only the open read, with `focus`.
+    let release!: (a: HomeOpen) => void;
+    open.mockReturnValueOnce(new Promise<HomeOpen>((r) => (release = r)));
+    vm.windowFocused();
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    expect(open.mock.calls[0][3]).toBe('focus');
+    expect(vm.rows().length).toBe(3);
+    release(openOf(all('Second')));
+    await vi.waitFor(() => expect(vm.rows().map((r) => r.label?.text)).toEqual(['Second', 'Second', 'Second']));
+    expect(list).not.toHaveBeenCalled();
+    expect(state).not.toHaveBeenCalled();
+    expect(checked).not.toHaveBeenCalled();
+    // An action ended: the scan again, then the open read with `action-ended` and the check it names.
+    open.mockClear();
+    let releaseOpen!: (a: HomeOpen) => void;
+    open.mockReturnValueOnce(new Promise<HomeOpen>((r) => (releaseOpen = r)));
+    let releaseChecked!: (a: HomeChecked) => void;
+    checked.mockReturnValueOnce(new Promise<HomeChecked>((r) => (releaseChecked = r)));
+    void vm.discardLeftovers([]);
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    expect(open.mock.calls[0][3]).toBe('action-ended');
+    expect(list).not.toHaveBeenCalled();
+    expect(vm.rows().length).toBe(3);
+    releaseOpen(openOf(all('Third'), { check: [NAMES[1]] }));
+    await vi.waitFor(() => expect(checked).toHaveBeenCalledTimes(1));
+    expect(checked.mock.calls[0][2]).toEqual([NAMES[1]]);
+    expect(vm.rows().length).toBe(3);
+    releaseChecked({ rows: [homeRowOf(NAMES[1], 'Merged', 'remove-copy')], problems: [] });
+    await vi.waitFor(() => expect(vm.rows().map((r) => r.label?.text)).toEqual(['Third', 'Merged', 'Third']));
+    expect(vm.rows()[1].action).toBe('remove-copy');
+  });
+
+  it('a change that finishes leaves the open changes and is counted', async () => {
+    const { vm, transport } = setup({ home: 'listed' });
+    const versions = '2026-11-03-versions';
+    const names = ['2026-11-01-a', versions, '2026-11-02-b'];
+    const list = vi
+      .spyOn(transport, 'sdlcHomeList')
+      .mockResolvedValueOnce(listedOf('commerce', ['commerce'], names, [], 0))
+      .mockResolvedValueOnce(listedOf('commerce', ['commerce'], [names[0], names[2]], [{ change: versions, finished: 'merged' }], 1));
+    const open = vi.spyOn(transport, 'sdlcHomeOpen').mockResolvedValueOnce(openOf(names.map((n) => homeRowOf(n, 'Stage'))));
+    await vm.init();
+    expect(vm.rows().length).toBe(3);
+    expect(vm.finishedCount()).toBe(0);
+    open.mockResolvedValueOnce(openOf([homeRowOf(names[0], 'Stage'), homeRowOf(names[2], 'Stage')], { relist: true }));
+    vm.windowFocused();
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(vm.rows().map((r) => r.change)).toEqual([names[0], names[2]]));
+    expect(vm.finishedCount()).toBe(1);
+    expect(vm.finished()).toEqual([{ change: versions, title: null, finished: 'merged' }]);
+    expect(vm.rows().every((r) => r.label?.text === 'Stage')).toBe(true);
+  });
 });

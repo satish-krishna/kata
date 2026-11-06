@@ -28,7 +28,7 @@
             </td>
             <td hlmTableCell>
               <span class="k-status" [class]="'k-status k-status--' + tone(c)">
-                <span class="k-status__dot"></span>{{ c.offer.label.text }}
+                <span class="k-status__dot"></span>{{ c.label?.text ?? 'Reading the stage…' }}
               </span>
             </td>
             <td hlmTableCell class="k-mono">{{ lastRun(c) }}</td>

@@ -3,6 +3,7 @@ import { Router } from '@angular/router';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { WorkspaceView } from '@bindings/WorkspaceView';
+import type { FinishedChange } from '@bindings/FinishedChange';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { Readiness } from '@bindings/Readiness';
@@ -107,14 +108,22 @@ export class SdlcHomeViewModel {
   private reads = 0;
   /** The list the page shows: every change of every system, each with the label the plugin's answer gave it. */
   readonly rows = computed<ChangeRow[]>(() =>
-    this.views().flatMap((v) => v.changes.map((c) => ({ system: v.system, change: c.state.change, title: c.state.title, offer: c.offer }))),
+    this.views().flatMap((v) => v.changes.map((c) => ({ system: v.system, change: c.state.change, title: c.state.title, offer: c.offer, label: c.offer.label, action: null, failed: false }))),
   );
+  /** The systems to choose between, when the home lists and there is more than one. */
+  readonly systemChoice = computed<string[]>(() => []);
+  /** The system the home shows, as the backend chose it; null on a legacy list. */
+  readonly shownSystem = computed<string | null>(() => null);
+  /** The finished changes of the shown system, as the backend listed them. */
+  readonly finished = computed<FinishedChange[]>(() => []);
+  /** How many changes the shown system has finished. */
+  readonly finishedCount = computed(() => 0);
   readonly contexts = signal<Record<string, ContextState>>({});
   readonly lastRuns = signal<Record<string, number>>({});
   private readonly readiness = signal<Readiness>({ kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' });
   /** Above the change list when a plan could not be read; null when every plan was. The plugin's own words come from the answer's problems. */
   readonly listNotice = computed(() => {
-    const unreadable = this.rows().filter((r) => r.offer.stage === 'plan-unreadable');
+    const unreadable = this.rows().filter((r) => r.offer?.stage === 'plan-unreadable');
     const problems = this.views().flatMap((v) => v.problems);
     return shownChangeList(
       this.readiness(),
@@ -688,6 +697,11 @@ export class SdlcHomeViewModel {
   windowFocused(): void {
     if (!this.canWork() || this.locked()) return;
     void this.refreshViews();
+  }
+
+  /** The engineer picked a system: the backend remembers it, and the home reads it as on opening. */
+  async showSystem(_system: string): Promise<void> {
+    // Not built yet.
   }
 
   switchMode(): Promise<void> {
