@@ -2,6 +2,7 @@
 //! from the plugin's answer (`ChangeState`) and the few facts only the Workbench has (`LiveFacts`).
 //! The frontend arranges this answer; it decides nothing.
 use crate::ai_sdlc::state::{ChangeState, ChangeTrack, SourcePin, StateDocument};
+use crate::copy_removal::CopyRemoval;
 use serde::{Deserialize, Serialize};
 
 /// What only the Workbench knows about a change right now. Per change: another change's run never counts.
@@ -152,6 +153,42 @@ pub struct ChangeOffer {
     pub stage: OfferStage,
     pub label: StageLabel,
     pub actions: Vec<OfferedAction>,
+}
+
+/// What a change's row on the home offers first.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum HomeAction {
+    /// The change's offer as the workflow reports it; the row opens the change page, which lists it.
+    Workflow,
+    /// The row offers nothing but opening the change.
+    Open,
+    /// The row offers "Remove the copy".
+    RemoveCopy,
+}
+
+/// What an open change's row on the home reads and offers.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct HomeReading {
+    pub label: StageLabel,
+    pub action: HomeAction,
+}
+
+/// The home row of an open change. `declared` is the local read of whether it was declared done; `check` is
+/// the last merge check's answer, if one has answered.
+pub fn home_reading(
+    offer: &ChangeOffer,
+    _declared: bool,
+    _check: Option<&CopyRemoval>,
+) -> HomeReading {
+    HomeReading {
+        label: offer.label.clone(),
+        action: HomeAction::Workflow,
+    }
 }
 
 fn accepted(doc: &StateDocument) -> bool {
@@ -1031,6 +1068,103 @@ mod tests {
             view(None, true),
         ] {
             assert_eq!(after_pull_requests(offer.clone(), &v), offer);
+        }
+    }
+
+    fn building_offer() -> ChangeOffer {
+        ChangeOffer {
+            stage: OfferStage::BuildReady,
+            label: label_of(OfferStage::BuildReady, false),
+            actions: vec![],
+        }
+    }
+
+    fn reading(
+        offer: &ChangeOffer,
+        declared: bool,
+        check: Option<CopyRemoval>,
+    ) -> (String, LabelStep, LabelTone, HomeAction) {
+        let r = home_reading(offer, declared, check.as_ref());
+        (r.label.text, r.label.step, r.label.tone, r.action)
+    }
+
+    #[test]
+    fn home_reading_rows() {
+        use HomeAction as A;
+        let offer = building_offer();
+        let workflow = (
+            offer.label.text.clone(),
+            offer.label.step,
+            offer.label.tone,
+            A::Workflow,
+        );
+        let keep = || CopyRemoval::Keep {
+            uncommitted: vec!["a.txt".into()],
+        };
+        let open = (
+            "Done · pull requests open".to_string(),
+            LabelStep::Done,
+            LabelTone::Success,
+            A::Open,
+        );
+        // Row 1: not declared decides alone, whatever the check says, a stale Offer included.
+        assert_eq!(reading(&offer, false, None), workflow);
+        assert_eq!(
+            reading(&offer, false, Some(CopyRemoval::NotOffered)),
+            workflow
+        );
+        assert_eq!(reading(&offer, false, Some(CopyRemoval::Offer)), workflow);
+        // Row 2: declared, no answer yet.
+        assert_eq!(reading(&offer, true, None), open);
+        // Row 3: declared, not offered.
+        assert_eq!(reading(&offer, true, Some(CopyRemoval::NotOffered)), open);
+        // Row 4: all merged, the copy in place and clean.
+        assert_eq!(
+            reading(&offer, true, Some(CopyRemoval::Offer)),
+            (
+                "Done · merged, remove the copy".to_string(),
+                LabelStep::Done,
+                LabelTone::Warning,
+                A::RemoveCopy
+            )
+        );
+        // Row 5: all merged, the copy holds uncommitted files.
+        assert_eq!(
+            reading(&offer, true, Some(keep())),
+            (
+                "Done · merged, copy has changes".to_string(),
+                LabelStep::Done,
+                LabelTone::Warning,
+                A::Open
+            )
+        );
+
+        // R6.1's five example rows: (declared, last check) -> (label, action).
+        let examples: [(bool, Option<CopyRemoval>, &str, A); 5] = [
+            (false, None, "Build · ready to start", A::Workflow),
+            (
+                true,
+                Some(CopyRemoval::NotOffered),
+                "Done · pull requests open",
+                A::Open,
+            ),
+            (
+                true,
+                Some(CopyRemoval::Offer),
+                "Done · merged, remove the copy",
+                A::RemoveCopy,
+            ),
+            (
+                true,
+                Some(keep()),
+                "Done · merged, copy has changes",
+                A::Open,
+            ),
+            (true, None, "Done · pull requests open", A::Open),
+        ];
+        for (declared, check, text, action) in examples {
+            let got = home_reading(&offer, declared, check.as_ref());
+            assert_eq!((got.label.text.as_str(), got.action), (text, action));
         }
     }
 }
