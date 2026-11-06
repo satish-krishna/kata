@@ -1584,6 +1584,23 @@ describe('SdlcHomeViewModel failed reads and an older plugin', () => {
     });
   }
 
+  for (const failing of ['sdlcBranches', 'sdlcRunLinks'] as const) {
+    it(`an action-ended refresh whose ${failing} fails keeps the list and the rows on screen (F5)`, async () => {
+      const { vm, transport } = setup({ home: 'listed' });
+      vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+      vi.spyOn(transport, 'sdlcHomeOpen').mockResolvedValue(openOf(NAMES.map((n) => homeRowOf(n, 'Stage'))));
+      await vm.init();
+      const before = vm.rows().map((r) => [r.change, r.title]);
+      expect(before.length).toBe(3);
+      vi.spyOn(transport, failing).mockRejectedValue(new Error('the read failed'));
+      await vm.discardLeftovers([]);
+      await flush();
+      expect(toastText()).toContain('Could not read the workspace: the read failed');
+      expect(vm.rows().map((r) => [r.change, r.title])).toEqual(before);
+      expect(vm.shownSystem()).toBe('commerce');
+    });
+  }
+
   it('a failed first stage read marks each row unread', async () => {
     const { vm, transport } = setup({ home: 'listed' });
     vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
