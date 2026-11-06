@@ -278,19 +278,34 @@
 
 .k-bp__tasks {
   display: grid;
-  gap: var(--space-2);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+.k-bp__tasks li {
+  padding: var(--space-3) 0;
+}
+
+.k-bp__tasks li + li {
+  border-top: 1px solid var(--border-subtle);
+}
+
 .k-bp__task {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  display: grid;
+  grid-template-columns: calc(var(--space-8) + var(--space-2)) minmax(0, 1fr) auto;
+  align-items: baseline;
   gap: var(--space-1) var(--space-3);
   width: 100%;
   text-align: left;
+}
+
+.k-bp__task-meta {
+  display: flex;
+  grid-column: 2 / -1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
 }
 
 .k-bp__task-name {
@@ -299,7 +314,6 @@
 
 .k-bp__commits {
   display: flex;
-  flex-basis: 100%;
   flex-wrap: wrap;
   gap: var(--space-1) var(--space-3);
   color: var(--text-muted);
