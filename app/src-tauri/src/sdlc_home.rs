@@ -14,7 +14,7 @@ use kata_sdlc::plugin::Readiness;
 use kata_sdlc::view::ChangeView;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// Where the home's answers come from; the plugin's program in the app, a fake in tests.
 pub trait HomeSource: Sync {
@@ -35,28 +35,35 @@ fn program_error(e: ProgramError) -> String {
 /// The master of each workspace folder, found once per program and reused by the home reads whose program
 /// calls take a master (the declared read and the merge check): it does not change while the app runs, and
 /// finding it costs a separate Node start. Memory only.
-static PLACES: Mutex<BTreeMap<(PathBuf, PathBuf), Place>> = Mutex::new(BTreeMap::new());
+static PLACES: Mutex<BTreeMap<(PathBuf, PathBuf), Slot>> = Mutex::new(BTreeMap::new());
 
-/// Runs `read` in the place of `folder`, resolving it only when no earlier call did. An error from the read
-/// drops the folder's entry, so the next call resolves again.
+/// One folder's master, empty until the first read resolves it.
+type Slot = Arc<Mutex<Option<Place>>>;
+
+/// Runs `read` in the place of `folder`, resolving it only when no earlier call did. Each folder has one slot
+/// that stays locked while it is being filled, so reads that start together wait for one resolve instead of
+/// each making their own. An error from the read empties the folder's slot, so the next call resolves again.
 fn in_place<T>(
     program: &Program,
     folder: &Path,
     read: impl FnOnce(&Place) -> Result<T, String>,
 ) -> Result<T, String> {
     let at = (program.entry.clone(), folder.to_path_buf());
-    let cached = PLACES.lock().unwrap().get(&at).cloned();
-    let place = match cached {
-        Some(place) => place,
-        None => {
-            let place = program.resolve(folder).map_err(program_error)?;
-            PLACES.lock().unwrap().insert(at.clone(), place.clone());
-            place
+    let slot = PLACES.lock().unwrap().entry(at).or_default().clone();
+    let place = {
+        let mut held = slot.lock().unwrap();
+        match held.as_ref() {
+            Some(place) => place.clone(),
+            None => {
+                let place = program.resolve(folder).map_err(program_error)?;
+                *held = Some(place.clone());
+                place
+            }
         }
     };
     let answer = read(&place);
     if answer.is_err() {
-        PLACES.lock().unwrap().remove(&at);
+        *slot.lock().unwrap() = None;
     }
     answer
 }
