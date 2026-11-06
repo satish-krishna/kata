@@ -1098,6 +1098,9 @@ export class SdlcMock {
 
   // ---- the build ----
 
+  /** The repositories `change` builds in. */
+  buildRepos(change: string): string[] { return BUILD_REPOS_OF[change] ?? []; }
+
   buildStatus(changeName: string): BuildStatus {
     this.homeOf(changeName);
     if (changeName !== MOCK_BUILD_CHANGE && changeName !== MOCK_DONE_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] };
