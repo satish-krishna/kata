@@ -5,6 +5,7 @@ export const PROGRESS_STEP_IDS = [
   'reading-stages',
   'reading-change',
   'reading-diff',
+  'checking-base',
   'preparing-build',
   'running-checks',
   'pushing',
@@ -66,6 +67,16 @@ export const PROGRESS_STEPS: Record<ProgressStepId, { usualMs: number; lines: re
       'Reading the changes, repository by repository…',
     ],
   },
+  'checking-base': {
+    usualMs: 510_000,
+    lines: [
+      'Checking which checks already fail on the base…',
+      'Checking the base before anything is built on it…',
+      'Checking the base branch, check by check…',
+      'Checking what the base already gets wrong…',
+      'Checking the base so the build can be told apart from it…',
+    ],
+  },
   'preparing-build': {
     usualMs: 5_000,
     lines: [
@@ -112,6 +123,7 @@ export const PROGRESS_NAMES: Record<ProgressStepId, string> = {
   'reading-stages': 'Reading the changes',
   'reading-change': 'Reading the change',
   'reading-diff': 'Reading what changed',
+  'checking-base': 'Checking the base',
   'preparing-build': 'Preparing the build',
   'running-checks': 'Running the checks',
   'pushing': 'Pushing the change branch',
@@ -124,6 +136,7 @@ export const progressLabels = {
   readingDoc: (stem: string): string => `Reading ${stem}.md`,
   findingRepos: (): string => 'Finding the repositories with changes',
   readingDiff: (repo: string): string => `Reading the changes in ${repo}`,
+  checkingBase: (): string => 'Checking the base before building',
   preparingBuild: (): string => 'Checking the repositories before building',
   preparingReview: (): string => 'Checking the repositories before the review',
 };
