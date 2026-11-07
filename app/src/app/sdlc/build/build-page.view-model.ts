@@ -40,7 +40,7 @@ import { sameChange } from '../../lib/build-host';
 import { buildStage, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
 import { hms, ms, situationView, type Situation, type SituationView, type TaskState } from '../../lib/build-state';
 import { layoutStage as layoutStageOf, type LayoutStage } from '../../lib/build-layout-stage';
-import { progressLabels } from '../../lib/progress-steps';
+import { progressLabels, type ProgressStepId } from '../../lib/progress-steps';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { REVIEW_MISSING_TEXT } from '../../lib/sdlc-done';
@@ -1439,7 +1439,7 @@ export class BuildPageViewModel {
     const ref = this.ref();
     if (ref === null) return 'couldNotRun';
     this.lastForm = form;
-    return this.begin(progressLabels.preparingBuild(), () => this.transport.sdlcBuildStart(ref, this.withOff(form, this.buildOff())));
+    return this.begin('checking-base', progressLabels.checkingBase(), () => this.transport.sdlcBuildStart(ref, this.withOff(form, this.buildOff())));
   }
 
   /** Start the held build again, as a fresh start of the same form. */
@@ -1450,15 +1450,15 @@ export class BuildPageViewModel {
   /** Start the review that waited for other changes again. */
   async startReviewAgain(): Promise<void> {
     const ref = this.ref();
-    if (ref !== null) await this.begin(progressLabels.preparingReview(), () => this.transport.sdlcReviewStart(ref, this.buildOff()));
+    if (ref !== null) await this.begin('preparing-build', progressLabels.preparingReview(), () => this.transport.sdlcReviewStart(ref, this.buildOff()));
   }
 
   /**
    * Run one of the host's slow starts under the page's progress line and tell what it came to: the plugin checks every repository
    * (and prepares each) before anything starts, which takes seconds.
    */
-  private async begin(label: string, call: () => Promise<StartOutcome>): Promise<StartKind> {
-    this.progress.begin('preparing-build', label, 'build');
+  private async begin(step: ProgressStepId, label: string, call: () => Promise<StartOutcome>): Promise<StartKind> {
+    this.progress.begin(step, label, 'build');
     const ctx = this.ctx;
     let outcome: StartOutcome;
     try {
@@ -1575,7 +1575,7 @@ export class BuildPageViewModel {
     this.dialogMode.set(null);
     if (result === null) return false;
     if (which !== 'review') this.givens.setBuild(this.buildKey(), { off: result.off });
-    if (which === 'review') return (await this.begin(progressLabels.preparingReview(), () => this.transport.sdlcReviewStart(ref, [...result.off]))) === 'started';
+    if (which === 'review') return (await this.begin('preparing-build', progressLabels.preparingReview(), () => this.transport.sdlcReviewStart(ref, [...result.off]))) === 'started';
     return (await this.startBuild({ ...form, timeoutSecs: result.request?.timeoutSecs ?? limit })) === 'started';
   }
 
@@ -1674,7 +1674,7 @@ export class BuildPageViewModel {
     if (result === null) return;
     const choices: BuildChoices = { off: result.off };
     this.givens.setBuild(this.buildKey(), choices);
-    await this.begin(key === REVIEW ? progressLabels.preparingReview() : progressLabels.preparingBuild(), () =>
+    await this.begin('preparing-build', key === REVIEW ? progressLabels.preparingReview() : progressLabels.preparingBuild(), () =>
       key === REVIEW ? this.transport.sdlcReviewStart(ref, [...choices.off]) : this.transport.sdlcBuildContinue(ref, key, [...choices.off]),
     );
   }
