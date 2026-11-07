@@ -138,10 +138,22 @@ describe('the build page follows the build the backend hosts', () => {
     const progress = TestBed.inject(ProgressStore);
     const starting = s.vm.startBuild({ timeoutSecs: 60 });
     await advance(600);
-    expect(progress.view('build')()?.label).toBe('Checking the repositories before building');
+    expect(progress.view('build')()?.label).toBe('Checking the base before building');
     release();
     await starting;
     expect(progress.view('build')()).toBeNull();
+  });
+
+  it('R1.1: a build starting for a minute says it is checking the base, not that it is late', async () => {
+    const s = await opened(setup());
+    await s.load();
+    vi.spyOn(s.transport, 'sdlcBuildStart').mockImplementation(() => new Promise(() => {}));
+    const progress = TestBed.inject(ProgressStore);
+    void s.vm.startBuild({ timeoutSecs: 60 });
+    await advance(60_000);
+    const entry = progress.view('build')();
+    expect(entry?.label).toBe('Checking the base before building');
+    expect(entry?.long).toBe(false);
   });
 
   it('Cancel on one repository stops only its run, and the host says the repository stopped (R6.1)', async () => {
@@ -178,10 +190,20 @@ describe('the build page follows the build the backend hosts', () => {
     s.vm.select('commerce-core');
     s.vm.cancelRun();
     await advance(500);
-    const resume = vi.spyOn(s.transport, 'sdlcBuildContinue');
+    const real = s.transport.sdlcBuildContinue.bind(s.transport);
+    let release!: () => void;
+    const slow = new Promise<void>((resolve) => (release = resolve));
+    const resume = vi.spyOn(s.transport, 'sdlcBuildContinue').mockImplementation(async (...args) => {
+      await slow;
+      return real(...args);
+    });
     vi.spyOn(s.preview, 'openBuild').mockImplementation(async (req) => ({ off: new Set(req.from.build ?? []), request: null, picks: null, plan: null }));
     s.vm.select('commerce-core');
-    await s.vm.continueRun();
+    const continuing = s.vm.continueRun();
+    await advance(600);
+    expect(TestBed.inject(ProgressStore).view('build')()?.label).toBe('Checking the repositories before building');
+    release();
+    await continuing;
     expect(resume).toHaveBeenCalledWith(REF, 'commerce-core', []);
     await advance(500);
     expect(group(s.vm, 'commerce-core').action).toBe('cancel');

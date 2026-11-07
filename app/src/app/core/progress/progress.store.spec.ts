@@ -9,6 +9,7 @@ const VERB: Record<ProgressStepId, string> = {
   'reading-stages': 'reading',
   'reading-change': 'reading',
   'reading-diff': 'reading',
+  'checking-base': 'checking',
   'preparing-build': 'checking',
   'running-checks': 'running',
   'pushing': 'pushing',
