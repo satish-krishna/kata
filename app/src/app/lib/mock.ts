@@ -5,6 +5,7 @@
  * or screenshots) those commands are unreachable, so we stand in with the same
  * fixtures the design prototype used. Under the real Tauri runtime this module
  * is never consulted: `provideKataTransport` picks the Tauri transport. */
+import { version as appVersion } from "../../../package.json";
 import type { RunSpec } from "@bindings/RunSpec";
 import type { CatalogEntry } from "@bindings/CatalogEntry";
 import type { EnvName } from "@bindings/EnvName";
@@ -304,9 +305,8 @@ export function previewFixture(spec: RunSpec): Resolved {
   return { items, settings, env, missing: [...listed].filter((id) => !known.has(id)), problems: [], empty_room: emptyRoom };
 }
 
-/** What a plain browser shows on the version line: the Workbench's version and the plugin the fixtures say is installed. `?demo=versions-missing` answers that ai-sdlc is not installed. */
-export function mockVersions(demo: string | null, _workbenchVersion?: string): Versions {
-  const workbench = '3.3.0';
+/** What a plain browser shows on the version line: the Workbench's version (the app's own unless one is given) and the plugin the fixtures say is installed. `?demo=versions-missing` answers that ai-sdlc is not installed. */
+export function mockVersions(demo: string | null, workbench: string = appVersion): Versions {
   if (demo === 'versions-missing') {
     return { workbench, aiSdlc: { kind: 'notFound' }, line: `Workbench ${workbench} · ai-sdlc: not found`, copy: `Kata Workbench ${workbench}, ai-sdlc: not found` };
   }
