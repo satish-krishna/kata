@@ -1,4 +1,5 @@
-import { validateLocal } from "./mock";
+import { validateLocal, mockVersions } from "./mock";
+import { version as appVersion } from "../../../package.json";
 import { defaultSpec } from "./spec";
 
 /** A spec that passes every non-permission check, so only permission errors surface. */
@@ -93,5 +94,15 @@ describe("validateLocal — permission coherence", () => {
     s.permissions.mode = "auto";
     s.permissions.ask = ["Bash(git push *)"];
     expect(validateLocal(s).some((e) => e.includes("permissions.ask"))).toBe(true);
+  });
+});
+
+describe("mockVersions", () => {
+  it("shows the version it is given", () => {
+    const v = mockVersions(null, "9.9.9");
+    expect(v.workbench).toBe("9.9.9");
+    expect(v.line).toBe("Workbench 9.9.9 · ai-sdlc 1.3.0");
+    expect(v.copy).toBe("Kata Workbench 9.9.9, ai-sdlc 1.3.0");
+    expect(mockVersions(null).workbench).toBe(appVersion);
   });
 });
