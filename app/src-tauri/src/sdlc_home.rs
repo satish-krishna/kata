@@ -854,7 +854,9 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
 
     /// Measures one speed target. A target that misses is measured once more, on the same workspace, and is a
     /// miss only when the second measurement misses too: a load spike on a busy machine misses once, a slow path
-    /// misses both times. The limits stay the spec's (R11.1).
+    /// misses both times. The limits are R11.1's (2026-11-05-open-changes-home) and the second measurement is the
+    /// product owner's decision of 2026-11-09, recorded as D3 of 2026-11-07-mock-follows-app-version. Each target's
+    /// first try reads a workspace nothing has read yet.
     fn within(
         label: &str,
         limit_secs: u64,
@@ -912,63 +914,67 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
         let readiness = ready("1.3.1");
         let systems = names(&["kata"]);
         let mut misses = Vec::new();
-        for finished in [19, 97] {
-            let (_dir, ws) = speed_workspace(&program, 3, finished);
-            let mut shown = Vec::new();
-            if finished == 19 {
-                within(
-                    "3 open, 19 finished: every open change's name",
-                    1,
-                    &mut misses,
-                    || {
-                        let started = std::time::Instant::now();
-                        shown = list_shown(&program, &readiness, &ws, &systems, finished);
-                        started.elapsed()
-                    },
-                );
-            } else {
-                shown = list_shown(&program, &readiness, &ws, &systems, finished);
-            }
-            within(
-                &format!("3 open, {finished} finished: every open change's stage"),
-                3,
-                &mut misses,
-                || {
-                    let started = std::time::Instant::now();
-                    let names = list_shown(&program, &readiness, &ws, &systems, finished);
-                    let opened = home_open(
-                        &program,
-                        &readiness,
-                        &no_live,
-                        &ws,
-                        "kata",
-                        &names,
-                        Refresh::Open,
-                        &HomeMemory::default(),
-                    )
-                    .unwrap();
-                    let both = started.elapsed();
-                    assert_eq!(opened.rows.len(), 3);
-                    both
-                },
-            );
-            if finished == 19 {
-                within(
-                    "3 open, 19 finished: the change page's stage and actions",
-                    2,
-                    &mut misses,
-                    || {
-                        let started = std::time::Instant::now();
-                        let home =
-                            kata_sdlc::home::resolve(&program, &ws, "kata", &shown[0]).unwrap();
-                        let view = view_of(home.state, &readiness, LiveFacts::default());
-                        let took = started.elapsed();
-                        assert_eq!(view.state.change, shown[0]);
-                        took
-                    },
-                );
-            }
-        }
+        // The list call and the open call from one start, on the workspace it is given.
+        let stage = |ws: &Path, finished: usize| {
+            let started = std::time::Instant::now();
+            let names = list_shown(&program, &readiness, ws, &systems, finished);
+            let opened = home_open(
+                &program,
+                &readiness,
+                &no_live,
+                ws,
+                "kata",
+                &names,
+                Refresh::Open,
+                &HomeMemory::default(),
+            )
+            .unwrap();
+            let both = started.elapsed();
+            assert_eq!(opened.rows.len(), 3);
+            both
+        };
+
+        let (_names_dir, names_ws) = speed_workspace(&program, 3, 19);
+        let mut shown = Vec::new();
+        within(
+            "3 open, 19 finished: every open change's name",
+            1,
+            &mut misses,
+            || {
+                let started = std::time::Instant::now();
+                shown = list_shown(&program, &readiness, &names_ws, &systems, 19);
+                started.elapsed()
+            },
+        );
+        let (_stage_dir, stage_ws) = speed_workspace(&program, 3, 19);
+        within(
+            "3 open, 19 finished: every open change's stage",
+            3,
+            &mut misses,
+            || stage(&stage_ws, 19),
+        );
+        within(
+            "3 open, 19 finished: the change page's stage and actions",
+            2,
+            &mut misses,
+            || {
+                let started = std::time::Instant::now();
+                let home =
+                    kata_sdlc::home::resolve(&program, &names_ws, "kata", &shown[0]).unwrap();
+                let view = view_of(home.state, &readiness, LiveFacts::default());
+                let took = started.elapsed();
+                assert_eq!(view.state.change, shown[0]);
+                took
+            },
+        );
+
+        let (_big_dir, big_ws) = speed_workspace(&program, 3, 97);
+        within(
+            "3 open, 97 finished: every open change's stage",
+            3,
+            &mut misses,
+            || stage(&big_ws, 97),
+        );
         assert!(misses.is_empty(), "speed targets missed: {misses:?}");
     }
 }
