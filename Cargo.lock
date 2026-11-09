@@ -2025,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "kata-cli"
-version = "3.3.0"
+version = "3.4.0"
 dependencies = [
  "clap",
  "ctrlc",
@@ -2038,7 +2038,7 @@ dependencies = [
 
 [[package]]
 name = "kata-core"
-version = "3.3.0"
+version = "3.4.0"
 dependencies = [
  "git2",
  "kata-sdlc",
@@ -2058,7 +2058,7 @@ dependencies = [
 
 [[package]]
 name = "kata-sdlc"
-version = "3.3.0"
+version = "3.4.0"
 dependencies = [
  "git2",
  "kata-core",
