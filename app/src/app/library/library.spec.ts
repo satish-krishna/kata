@@ -1,3 +1,4 @@
+import { version as appVersion } from '../../../package.json';
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
 import { render } from '../../testing/render';
@@ -20,7 +21,7 @@ describe('the library footer and the version line', () => {
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(container.querySelectorAll('.wb-statusbar')).toHaveLength(1);
-      expect(footerLast(container)).toBe('Workbench 3.3.0 · ai-sdlc 1.3.0');
+      expect(footerLast(container)).toBe(`Workbench ${appVersion} · ai-sdlc 1.3.0`);
     });
   });
 
@@ -34,7 +35,7 @@ describe('the library footer and the version line', () => {
       expect(container.querySelector<HTMLElement>('.wb-statusbar__version')).not.toBeNull();
     });
     container.querySelector<HTMLElement>('.wb-statusbar__version')!.click();
-    expect(copy).toHaveBeenCalledWith('Kata Workbench 3.3.0, ai-sdlc 1.3.0');
+    expect(copy).toHaveBeenCalledWith(`Kata Workbench ${appVersion}, ai-sdlc 1.3.0`);
   });
 
   it('with ai-sdlc not installed the footer reads not found and the library shows no AI-SDLC readiness message', async () => {
@@ -61,7 +62,7 @@ describe('the library footer and the version line', () => {
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(container.querySelector('.wb-statusbar')).not.toBeNull();
-      expect(footerLast(container)).toBe('Workbench 3.3.0 · ai-sdlc 1.3.0');
+      expect(footerLast(container)).toBe(`Workbench ${appVersion} · ai-sdlc 1.3.0`);
     });
     expect(container.querySelectorAll('.wb-statusbar')).toHaveLength(1);
   });
