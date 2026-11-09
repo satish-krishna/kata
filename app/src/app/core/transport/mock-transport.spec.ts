@@ -1,3 +1,4 @@
+import { version as appVersion } from '../../../../package.json';
 import { MockTransport } from './mock-transport';
 import { readAllChanges } from '../../../testing/read-all';
 import { NO_BACKEND } from './kata-transport';
@@ -847,10 +848,10 @@ describe('MockTransport versions', () => {
   it('answers the Workbench version and a found ai-sdlc by default', async () => {
     await withDemo(null, async (t) => {
       const v = await t.appVersions();
-      expect(v.workbench).toBe('3.3.0');
+      expect(v.workbench).toBe(appVersion);
       expect(v.aiSdlc).toEqual({ kind: 'found', version: '1.3.0' });
-      expect(v.line).toBe('Workbench 3.3.0 · ai-sdlc 1.3.0');
-      expect(v.copy).toBe('Kata Workbench 3.3.0, ai-sdlc 1.3.0');
+      expect(v.line).toBe(`Workbench ${appVersion} · ai-sdlc 1.3.0`);
+      expect(v.copy).toBe(`Kata Workbench ${appVersion}, ai-sdlc 1.3.0`);
     });
   });
 
@@ -858,8 +859,8 @@ describe('MockTransport versions', () => {
     await withDemo('versions-missing', async (t) => {
       const v = await t.appVersions();
       expect(v.aiSdlc).toEqual({ kind: 'notFound' });
-      expect(v.line).toBe('Workbench 3.3.0 · ai-sdlc: not found');
-      expect(v.copy).toBe('Kata Workbench 3.3.0, ai-sdlc: not found');
+      expect(v.line).toBe(`Workbench ${appVersion} · ai-sdlc: not found`);
+      expect(v.copy).toBe(`Kata Workbench ${appVersion}, ai-sdlc: not found`);
     });
   });
 
