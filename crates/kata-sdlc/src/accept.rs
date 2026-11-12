@@ -83,7 +83,7 @@ pub fn apply(
     system: &str,
     change: &ChangeState,
     doc: ChangeDocument,
-    _token: &CancelToken,
+    token: &CancelToken,
 ) -> AcceptOutcome {
     let file = doc.file();
     let mut edits = match Edit::start(&Path::new(&change.folder).join(file), "accepted") {
@@ -92,8 +92,11 @@ pub fn apply(
     };
     let at = copy_place(place, change);
     let kind = format!("accept-{}", doc.name());
-    match commit(program, &at, system, &change.change, &kind, &edits) {
+    match commit(program, &at, system, &change.change, &kind, &edits, token) {
         Committed::Yes => {}
+        // The commit may or may not have landed; the edit stays, and accepting again commits it or finds it
+        // committed.
+        Committed::Stopped => return AcceptOutcome::Stopped { accepted: false },
         Committed::No(problems) => {
             revert(&mut edits);
             return AcceptOutcome::NotCommitted { problems };
@@ -114,7 +117,7 @@ pub fn apply(
         "--document",
         file,
     ];
-    event_outcome(&program.step_long(&command, &at, &CancelToken::new(), None))
+    event_outcome(&program.step_long(&command, &at, token, None))
 }
 
 /// Rejects `change` the way the plugin's own `intent --reject` and `fix --reject` do (section 13 of its
@@ -126,7 +129,7 @@ pub fn reject(
     place: &Place,
     system: &str,
     change: &ChangeState,
-    _token: &CancelToken,
+    token: &CancelToken,
 ) -> RejectOutcome {
     if let Some(message) = &change.ready.reject.stop {
         return RejectOutcome::Refused {
@@ -162,8 +165,10 @@ pub fn reject(
         ChangeTrack::Fix => "reject-fix",
         ChangeTrack::Full => "reject-intent",
     };
-    match commit(program, &at, system, &change.change, kind, &edits) {
+    match commit(program, &at, system, &change.change, kind, &edits, token) {
         Committed::Yes => {}
+        // As when accepting: the edits stay, and rejecting again commits them or finds them committed.
+        Committed::Stopped => return RejectOutcome::Stopped { rejected: false },
         Committed::No(problems) => {
             revert(&mut edits);
             return RejectOutcome::NotCommitted { problems };
@@ -182,10 +187,7 @@ pub fn reject(
         &change.change,
         "--abandon",
     ];
-    match program
-        .step_long(&command, place, &CancelToken::new(), None)
-        .outcome
-    {
+    match program.step_long(&command, place, token, None).outcome {
         StepOutcome::Passed { .. } => RejectOutcome::Rejected {
             record_branch: branch,
         },
@@ -195,10 +197,7 @@ pub fn reject(
         StepOutcome::CouldNotRun { reason, .. } => RejectOutcome::RejectedNotRemoved {
             problems: vec![reason],
         },
-        // T6 gives this its own outcome.
-        StepOutcome::Stopped => RejectOutcome::RejectedNotRemoved {
-            problems: vec!["it was stopped".to_string()],
-        },
+        StepOutcome::Stopped => RejectOutcome::Stopped { rejected: true },
     }
 }
 
@@ -270,6 +269,8 @@ enum Committed {
     /// The check failed or git refused; the plugin's problems.
     No(Vec<String>),
     CouldNotRun(String),
+    /// The engineer stopped it.
+    Stopped,
 }
 
 /// Asks the plugin to commit the edited documents as `kind`.
@@ -280,6 +281,7 @@ fn commit(
     change: &str,
     kind: &str,
     edits: &[Edit],
+    token: &CancelToken,
 ) -> Committed {
     let paths: Vec<String> = edits.iter().map(|e| e.path.display().to_string()).collect();
     let mut command = vec![
@@ -287,10 +289,7 @@ fn commit(
     ];
     command.extend(paths.iter().map(String::as_str));
     // Exit 0 is committed, or nothing differed from `HEAD`.
-    match program
-        .step_long(&command, at, &CancelToken::new(), None)
-        .outcome
-    {
+    match program.step_long(&command, at, token, None).outcome {
         StepOutcome::Passed { .. } => Committed::Yes,
         StepOutcome::Refused { problems } | StepOutcome::Failed { problems, .. } => {
             Committed::No(if problems.is_empty() {
@@ -300,8 +299,7 @@ fn commit(
             })
         }
         StepOutcome::CouldNotRun { reason, .. } => Committed::CouldNotRun(reason),
-        // T6 gives this its own outcome.
-        StepOutcome::Stopped => Committed::CouldNotRun("it was stopped".to_string()),
+        StepOutcome::Stopped => Committed::Stopped,
     }
 }
 
@@ -333,10 +331,8 @@ fn event_outcome(answer: &Answer) -> AcceptOutcome {
 ",
                 ),
         },
-        // T6 gives this its own outcome.
-        StepOutcome::Stopped => AcceptOutcome::AcceptedHookCouldNotRun {
-            output: "it was stopped".to_string(),
-        },
+        // The acceptance is committed; running it again reruns the checks.
+        StepOutcome::Stopped => AcceptOutcome::Stopped { accepted: true },
     }
 }
 

@@ -118,10 +118,10 @@ pub fn remove(
     program: &Program,
     place: &Place,
     change: &ChangeState,
-    _token: &CancelToken,
+    token: &CancelToken,
 ) -> RemoveOutcome {
     let command = ["change", "remove", "--json", "--change", &change.change];
-    let answer = program.step_long(&command, place, &CancelToken::new(), None);
+    let answer = program.step_long(&command, place, token, None);
     let problems = match answer.outcome {
         StepOutcome::Passed { .. } => {
             return RemoveOutcome::Removed {
@@ -132,10 +132,9 @@ pub fn remove(
         StepOutcome::CouldNotRun { reason, .. } => {
             return RemoveOutcome::CouldNotRun { message: reason }
         }
-        // T6 gives this its own outcome.
         StepOutcome::Stopped => {
-            return RemoveOutcome::CouldNotRun {
-                message: "it was stopped".to_string(),
+            return RemoveOutcome::Stopped {
+                kept: strings(&answer.json["kept"]),
             }
         }
     };
