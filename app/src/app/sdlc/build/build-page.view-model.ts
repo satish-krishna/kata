@@ -297,6 +297,11 @@ function refusalOf(outcome: StartOutcome): StartRefusal | null {
   }
 }
 
+/** How a stopped preparation is worded: which repositories were prepared when it stopped, if any. */
+function stoppedMessage(prepared: string[]): string {
+  return prepared.length === 0 ? 'Preparation stopped' : `Preparation stopped. Prepared: ${prepared.join(', ')}`;
+}
+
 const REVIEW = 'review';
 const NOT_STARTED: TaskState = { kind: 'not-started' };
 const RUNNING: readonly RunState[] = ['running', 'awaiting'];
@@ -466,7 +471,13 @@ export class BuildPageViewModel {
 
   /** Stop the running preparation of this change. */
   async stopPreparing(): Promise<void> {
-    // not implemented
+    const ref = this.ref();
+    if (ref === null) return;
+    try {
+      await this.transport.stopStep(ref);
+    } catch (e) {
+      this.toasts.error(`Could not stop the preparation: ${message(e)}`);
+    }
   }
 
   /** The build dialog on show beside the preview: which one, what a round may fix and how the findings group. */
@@ -1468,7 +1479,10 @@ export class BuildPageViewModel {
    */
   private async begin(step: ProgressStepId, label: string, call: () => Promise<StartOutcome>): Promise<StartKind> {
     this.progress.begin(step, label, 'build');
+    this.preparing.set(true);
+    this.stoppedNote.set(null);
     const ctx = this.ctx;
+    const unlisten = await this.listenToSteps(ctx);
     let outcome: StartOutcome;
     try {
       outcome = await call();
@@ -1476,15 +1490,31 @@ export class BuildPageViewModel {
       this.progress.fail('build');
       this.refuse(ctx, { reason: message(e), problems: [] });
       return 'couldNotRun';
+    } finally {
+      unlisten();
+      this.preparing.set(false);
     }
-    if (outcome.kind === 'refused' || outcome.kind === 'failed' || outcome.kind === 'couldNotRun') this.progress.fail('build');
+    if (outcome.kind === 'refused' || outcome.kind === 'failed' || outcome.kind === 'couldNotRun' || outcome.kind === 'stopped') this.progress.fail('build');
     else this.progress.end('build');
     if (this.shows(ctx)) return this.settle(outcome);
     // The page moved to another change while the start ran: what it came to is not shown on that change, it is said once.
     const held = outcome.kind === 'held' ? { reason: 'The build waits for other changes', problems: outcome.held.map((h) => `${h.repo}: ${h.holder.change}`) } : null;
     const refusal = held ?? refusalOf(outcome);
     if (refusal !== null) this.refuse(ctx, refusal);
+    if (outcome.kind === 'stopped') this.toasts.info(`${ctx?.change ?? 'The build'}: ${stoppedMessage(outcome.prepared)}`);
     return outcome.kind;
+  }
+
+  /** Feed the progress line the label of each step the backend reports for this change's preparation; the returned function stops listening. */
+  private async listenToSteps(ctx: BuildContext | null): Promise<() => void> {
+    if (ctx === null) return () => undefined;
+    try {
+      return await this.transport.onStep((event) => {
+        if (event.change.change === ctx.change && (event.kind === 'preparingBuild' || event.kind === 'preparingReview')) this.progress.update(event.progress.label, 'build');
+      });
+    } catch {
+      return () => undefined;
+    }
   }
 
   /** Show why a start did not go on, on the change it was for; a start of a change the page moved away from says it in a toast. */
@@ -1514,6 +1544,9 @@ export class BuildPageViewModel {
       case 'failed':
       case 'couldNotRun':
         this.refusal.set(refusalOf(outcome));
+        break;
+      case 'stopped':
+        this.stoppedNote.set(stoppedMessage(outcome.prepared));
         break;
     }
     return outcome.kind;

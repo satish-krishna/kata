@@ -2,7 +2,7 @@ import { NgTemplateOutlet } from '@angular/common';
 import { Component, inject } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideChevronDown, lucideTriangleAlert } from '@ng-icons/lucide';
+import { lucideChevronDown, lucideSquare, lucideTriangleAlert } from '@ng-icons/lucide';
 import { HlmAlertImports } from '@spartan-ng/helm/alert';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmPopoverImports } from '@spartan-ng/helm/popover';
@@ -35,7 +35,7 @@ import { ChangePageViewModel } from './change-page.view-model';
 
 @Component({
   selector: 'app-change-page',
-  providers: [ChangePageViewModel, BuildPageViewModel, BuildLayoutViewModel,RunPreviewViewModel, provideIcons({ lucideChevronDown, lucideTriangleAlert })],
+  providers: [ChangePageViewModel, BuildPageViewModel, BuildLayoutViewModel,RunPreviewViewModel, provideIcons({ lucideChevronDown, lucideSquare, lucideTriangleAlert })],
   imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, HlmTabsImports, SdlcToolbar, RunningChanges, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, BranchNameDialog, ConfirmDialog, NewChangeDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildPage, RunPreviewDialog, ProgressLine],
   templateUrl: './change-page.html',
 })
