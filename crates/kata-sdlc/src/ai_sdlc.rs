@@ -609,8 +609,60 @@ pub struct StepProgress {
 }
 
 /// The progress line a `--stream` line stands for, if it stands for a step.
-pub fn progress_of(_line: &str) -> Option<StepProgress> {
-    None
+///
+/// | line `type` | kind | label |
+/// |---|---|---|
+/// | `hook-start` | `Hook` | "Running <id>", " in <repo>" when the line names one |
+/// | `hook-end` | `Hook` | "<id> <outcome>", " in <repo>" when the line names one |
+/// | `push` | `Push` | "Pushing <repo>" |
+/// | `pull-request` | `PullRequest` | "Opening a pull request in <repo>" |
+///
+/// Any other line (the closing outcome, a type not known yet, text that is not JSON) is not progress.
+/// `Repository` and `Verifying` are never read from a line: the program prints no line for either.
+pub fn progress_of(line: &str) -> Option<StepProgress> {
+    let line: Value = serde_json::from_str(line).ok()?;
+    let text = |key: &str| line[key].as_str().map(str::to_string);
+    let in_repo = |label: String, repo: &Option<String>| match repo {
+        Some(repo) => format!("{label} in {repo}"),
+        None => label,
+    };
+    let repo = text("repo");
+    let (kind, label, check) = match line["type"].as_str()? {
+        "hook-start" => {
+            let id = text("id")?;
+            (
+                StepProgressKind::Hook,
+                in_repo(format!("Running {id}"), &repo),
+                Some(id),
+            )
+        }
+        "hook-end" => {
+            let id = text("id")?;
+            let outcome = text("outcome")?;
+            (
+                StepProgressKind::Hook,
+                in_repo(format!("{id} {outcome}"), &repo),
+                Some(id),
+            )
+        }
+        "push" => (
+            StepProgressKind::Push,
+            format!("Pushing {}", repo.as_deref()?),
+            None,
+        ),
+        "pull-request" => (
+            StepProgressKind::PullRequest,
+            format!("Opening a pull request in {}", repo.as_deref()?),
+            None,
+        ),
+        _ => return None,
+    };
+    Some(StepProgress {
+        kind,
+        label,
+        repo,
+        check,
+    })
 }
 
 #[cfg(test)]

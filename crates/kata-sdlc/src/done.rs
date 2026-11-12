@@ -9,7 +9,7 @@ use crate::pull_requests::{PullRequestSource, RecordedPullRequest};
 use kata_core::proc::{CancelToken, LineSink};
 use serde::Serialize;
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Where each progress line goes.
 pub type StepSink = Arc<dyn Fn(StepProgress) + Send + Sync>;
@@ -163,9 +163,14 @@ pub fn declare(
         repo: None,
         check: None,
     });
+    let opened: Arc<Mutex<Vec<RecordedPullRequest>>> = Arc::default();
     let relay: LineSink = {
         let on_step = Arc::clone(&on_step);
+        let opened = Arc::clone(&opened);
         Arc::new(move |line: &str| {
+            if let Some(pr) = opened_pull_request(line) {
+                opened.lock().unwrap().push(pr);
+            }
             if let Some(step) = progress_of(line) {
                 on_step(step);
             }
@@ -181,7 +186,27 @@ pub fn declare(
         "--change",
         change,
     ];
-    outcome(&program.step_long(&command, place, cancel, Some(relay)))
+    let answer = program.step_long(&command, place, cancel, Some(relay));
+    if answer.outcome == StepOutcome::Stopped {
+        let pull_requests = opened.lock().unwrap().clone();
+        return DeclareView::Stopped { pull_requests };
+    }
+    outcome(&answer)
+}
+
+/// The pull request a `pull-request` stream line reports as opened: only a line that carries the pull
+/// request's `url` and `number` does, since those are what the page links to.
+fn opened_pull_request(line: &str) -> Option<RecordedPullRequest> {
+    let line: Value = serde_json::from_str(line).ok()?;
+    if line["type"].as_str()? != "pull-request" {
+        return None;
+    }
+    Some(RecordedPullRequest {
+        repo: line["repo"].as_str()?.to_string(),
+        url: line["url"].as_str()?.to_string(),
+        number: line["number"].as_u64()?,
+        source: PullRequestSource::Plugin,
+    })
 }
 
 #[cfg(test)]
@@ -468,8 +493,7 @@ say({ type: 'outcome', outcome: 'passed', problems: [], hooks: [], failed: null,
     fn stopped_outcomes() {
         let dir = tempfile::tempdir().unwrap();
         let body = r#"const fs = require('fs');
-const say = (o) => fs.writeSync(1, JSON.stringify(o) + '
-');
+const say = (o) => fs.writeSync(1, JSON.stringify(o) + '\n');
 say({ type: 'push', repo: 'app' });
 say({ type: 'pull-request', repo: 'app', url: 'https://github.com/example/app/pull/1', number: 1 });
 say({ type: 'push', repo: 'master' });

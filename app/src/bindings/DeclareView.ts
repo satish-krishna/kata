@@ -8,4 +8,4 @@ export type DeclareView = { "kind": "done", pullRequests: Array<RecordedPullRequ
 /**
  * The plugin's warnings, such as an after hook that failed (nothing was undone).
  */
-warnings: Array<string>, } | { "kind": "notReady", problems: Array<string>, } | { "kind": "partial", pushed: Array<string>, opened: Array<RecordedPullRequest>, failed: Array<string>, } | { "kind": "couldNotRun", message: string, };
+warnings: Array<string>, } | { "kind": "notReady", problems: Array<string>, } | { "kind": "partial", pushed: Array<string>, opened: Array<RecordedPullRequest>, failed: Array<string>, } | { "kind": "couldNotRun", message: string, } | { "kind": "stopped", pullRequests: Array<RecordedPullRequest>, };

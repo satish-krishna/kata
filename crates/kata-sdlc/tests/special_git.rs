@@ -448,6 +448,7 @@ fn goes_through_every_step(need: Need) {
         SYSTEM,
         CHANGE,
         Arc::new(|_| {}),
+        &kata_core::proc::CancelToken::new(),
     );
     match &view {
         DeclareView::Done { pull_requests, .. } => {
