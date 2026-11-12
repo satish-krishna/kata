@@ -138,6 +138,24 @@ describe('ProgressStore', () => {
     expect(shown()?.line).toBe('Reading what changed is taking longer than usual (40 s)');
   });
 
+  it('preparing a build is longer than usual only past its usual time', () => {
+    // A build start's base check: usual 8.5 minutes, so longer than usual at 25.5 minutes.
+    store.begin('checking-base', 'Checking the base before building', 'build');
+    vi.advanceTimersByTime(2 * 60_000);
+    expect(store.view('build')()?.long).toBe(false);
+    vi.advanceTimersByTime(28 * 60_000);
+    expect(store.view('build')()?.long).toBe(true);
+    store.end('build');
+
+    // Continuing a stopped repository: usual 5 s, so longer than usual from 15 s.
+    store.begin('preparing-build', 'Checking the repositories before building', 'build');
+    vi.advanceTimersByTime(3_000);
+    expect(store.view('build')()?.long).toBe(false);
+    vi.advanceTimersByTime(17_000);
+    expect(store.view('build')()?.long).toBe(true);
+    store.end('build');
+  });
+
   it('keeps one entry per owner', () => {
     store.begin('reading-change', 'Reading the change', 'page');
     store.begin('running-checks', 'Running the checks in kata', 'lock');

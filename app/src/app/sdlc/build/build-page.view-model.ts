@@ -459,6 +459,15 @@ export class BuildPageViewModel {
 
   /** Why a start did not go on, with what the plugin found; the refusal dialog is open exactly while this is set. */
   readonly refusal = signal<StartRefusal | null>(null);
+  /** How a stopped preparation is worded on the page; null while there is none. */
+  readonly stoppedNote = signal<string | null>(null);
+  /** Whether this change's preparation is running now. */
+  readonly preparing = signal(false);
+
+  /** Stop the running preparation of this change. */
+  async stopPreparing(): Promise<void> {
+    // not implemented
+  }
 
   /** The build dialog on show beside the preview: which one, what a round may fix and how the findings group. */
   readonly dialogMode = signal<BuildDialogMode | null>(null);

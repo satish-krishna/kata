@@ -15,6 +15,8 @@ import type { RoundPlan } from '@bindings/RoundPlan';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { StartForm } from '@bindings/StartForm';
+import type { StartOutcome } from '@bindings/StartOutcome';
+import type { StepEvent } from '@bindings/StepEvent';
 import type { TaskLink } from '@bindings/TaskLink';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
@@ -1134,6 +1136,55 @@ describe('the build page reads the backend\'s build and starts it through the ho
     vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'couldNotRun', output: 'hook prep could not run', repo: 'commerce-core' });
     expect(await vm.startBuild({ timeoutSecs: 60 })).toBe('couldNotRun');
     expect(vm.refusal()).toEqual({ reason: "This machine could not run the plugin's step in commerce-core", problems: ['hook prep could not run'] });
+  });
+
+  describe('the preparation message, by outcome and step', () => {
+    const cases: { name: string; outcome: StartOutcome; stopped: string | null; refusal: object | null }[] = [
+      { name: 'started', outcome: { kind: 'started', uncommitted: {} }, stopped: null, refusal: null },
+      { name: 'refused', outcome: { kind: 'refused', problems: ['kata: the plan is not accepted'] }, stopped: null, refusal: { reason: 'The plugin refused to start the build', problems: ['kata: the plan is not accepted'] } },
+      { name: 'failed', outcome: { kind: 'failed', problems: ['hook deps failed'], hook: { id: 'deps', onFailure: 'stop', output: 'boom' } }, stopped: null, refusal: { reason: "The team's hook deps failed", problems: ['hook deps failed', 'boom'] } },
+      { name: 'could not run', outcome: { kind: 'couldNotRun', output: 'no node', repo: null }, stopped: null, refusal: { reason: "This machine could not run the plugin's step", problems: ['no node'] } },
+      { name: 'stopped during the check of every repository', outcome: { kind: 'stopped', prepared: [] }, stopped: 'Preparation stopped', refusal: null },
+      { name: 'stopped during one repository', outcome: { kind: 'stopped', prepared: ['kata', 'bob'] }, stopped: 'Preparation stopped. Prepared: kata, bob', refusal: null },
+    ];
+    for (const c of cases) {
+      it(c.name, async () => {
+        const { vm, transport, load } = await opened();
+        await load();
+        vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue(c.outcome);
+        expect(await vm.startBuild({ timeoutSecs: 60 })).toBe(c.outcome.kind);
+        expect(vm.stoppedNote()).toBe(c.stopped);
+        expect(vm.refusal()).toEqual(c.refusal);
+        expect(vm.preparing()).toBe(false);
+      });
+    }
+  });
+
+  it('Stop calls stopStep, and the step label feeds the progress line for this change only', async () => {
+    const { vm, transport, load } = await opened();
+    await load();
+    let push: (e: StepEvent) => void = () => undefined;
+    vi.spyOn(transport, 'onStep').mockImplementation(async (cb) => {
+      push = cb;
+      return () => undefined;
+    });
+    const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
+    let release!: (o: StartOutcome) => void;
+    vi.spyOn(transport, 'sdlcBuildStart').mockReturnValue(new Promise<StartOutcome>((resolve) => (release = resolve)));
+    const update = vi.spyOn(TestBed.inject(ProgressStore), 'update');
+    const starting = vm.startBuild({ timeoutSecs: 60 });
+    await advance(100);
+    expect(vm.preparing()).toBe(true);
+    const progress = { kind: 'repository' as const, label: 'Preparing kata: running base-tests', repo: 'kata', check: 'base-tests' };
+    push({ change: keyOf('2026-01-01-other'), kind: 'preparingBuild', progress });
+    expect(update).not.toHaveBeenCalled();
+    push({ change: keyOf(MOCK_BUILD_CHANGE), kind: 'preparingBuild', progress });
+    expect(update).toHaveBeenCalledWith('Preparing kata: running base-tests', 'build');
+    await vm.stopPreparing();
+    expect(stop).toHaveBeenCalledWith(REF);
+    release({ kind: 'stopped', prepared: [] });
+    await starting;
+    expect(vm.preparing()).toBe(false);
   });
 
   it('the round dialog shows the backend\'s plan for the picks', async () => {
