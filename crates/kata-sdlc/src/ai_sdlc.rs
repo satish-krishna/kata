@@ -577,6 +577,42 @@ fn with_place<'a>(command: &[&'a str], master: &'a str, workspace: &'a str) -> V
     args
 }
 
+/// What a progress line is about.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum StepProgressKind {
+    /// The plugin is verifying the change.
+    Verifying,
+    /// A team check is running or has ended.
+    Hook,
+    /// A repository is being pushed.
+    Push,
+    /// A pull request is being opened.
+    PullRequest,
+    /// A repository is being prepared.
+    Repository,
+}
+
+/// A progress line: what the plugin is doing, named for the engineer, with the repository and the team
+/// check it names when the line names them.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct StepProgress {
+    pub kind: StepProgressKind,
+    pub label: String,
+    pub repo: Option<String>,
+    pub check: Option<String>,
+}
+
+/// The progress line a `--stream` line stands for, if it stands for a step.
+pub fn progress_of(_line: &str) -> Option<StepProgress> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1003,6 +1039,75 @@ mod tests {
         stopper.join().unwrap();
         assert_eq!(answer.outcome, StepOutcome::Stopped);
         assert!(started.elapsed() < Duration::from_secs(30));
+    }
+
+    fn p(
+        kind: StepProgressKind,
+        label: &str,
+        repo: Option<&str>,
+        check: Option<&str>,
+    ) -> Option<StepProgress> {
+        Some(StepProgress {
+            kind,
+            label: label.to_string(),
+            repo: repo.map(str::to_string),
+            check: check.map(str::to_string),
+        })
+    }
+
+    /// R15.1: every line type the program's `--stream` prints (hook-start, hook-end, outcome) and the
+    /// push and pull-request lines declaring done relays, each against what it reads as.
+    #[test]
+    fn progress_of_table() {
+        use StepProgressKind::*;
+        let rows: Vec<(&str, Option<StepProgress>)> = vec![
+            (
+                r#"{"type":"hook-start","id":"base-tests","when":"build.finish"}"#,
+                p(Hook, "Running base-tests", None, Some("base-tests")),
+            ),
+            (
+                r#"{"type":"hook-start","id":"base-tests","when":"build.finish","repo":"kata"}"#,
+                p(
+                    Hook,
+                    "Running base-tests in kata",
+                    Some("kata"),
+                    Some("base-tests"),
+                ),
+            ),
+            (
+                r#"{"type":"hook-end","id":"pr-lint","when":"change.done","outcome":"passed"}"#,
+                p(Hook, "pr-lint passed", None, Some("pr-lint")),
+            ),
+            (
+                r#"{"type":"hook-end","id":"pr-lint","when":"change.done","outcome":"failed","repo":"kata"}"#,
+                p(
+                    Hook,
+                    "pr-lint failed in kata",
+                    Some("kata"),
+                    Some("pr-lint"),
+                ),
+            ),
+            (
+                r#"{"type":"push","repo":"kata"}"#,
+                p(Push, "Pushing kata", Some("kata"), None),
+            ),
+            (
+                r#"{"type":"pull-request","repo":"kata"}"#,
+                p(
+                    PullRequest,
+                    "Opening a pull request in kata",
+                    Some("kata"),
+                    None,
+                ),
+            ),
+            (r#"{"type":"outcome","outcome":"passed"}"#, None),
+            (r#"{"type":"something-new"}"#, None),
+            (r#"{"id":"no-type"}"#, None),
+            ("not json", None),
+        ];
+        for (line, expected) in rows {
+            assert_eq!(progress_of(line), expected, "{line}");
+        }
     }
 
     #[test]

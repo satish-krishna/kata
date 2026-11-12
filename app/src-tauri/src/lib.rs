@@ -26,7 +26,7 @@ use tauri_plugin_shell::ShellExt;
 
 /// Channel the engine's normalized KataEvents are relayed on to the webview.
 const RUN_EVENT: &str = "kata://event";
-/// The step the plugin is on while a change is declared done, one `DoneStep` per event.
+/// The step the plugin is on while a change is declared done, one `StepProgress` per event.
 const DONE_STEP_EVENT: &str = "sdlc://done-step";
 
 /// Shared run control: every live run plus a monotonic id source. A stale
@@ -1862,6 +1862,7 @@ fn sdlc_declare_done(app: AppHandle, change: build_host::ChangeRef) -> sdlc::don
         Arc::new(move |step| {
             let _ = app.emit(DONE_STEP_EVENT, step);
         }),
+        &kata_core::proc::CancelToken::new(),
     )
 }
 
