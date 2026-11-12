@@ -45,6 +45,7 @@ import { RunLandingStore } from '../../core/run/run-landing.store';
 import { BuildLayoutViewModel } from '../build/build-layout.view-model';
 import { ChangeDraftStore } from '../../core/sdlc/change-draft.store';
 import { RunStore } from '../../core/run/run.store';
+import type { RunSnapshot } from '../../core/run/reduce';
 import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
 import { ProgressStore } from '../../core/progress/progress.store';
@@ -903,14 +904,29 @@ export class ChangePageViewModel {
     const key = this.runKey();
     return this.ownRun() !== null && key !== null ? this.changeRuns.deadlineSecs(key) : this.lock.deadlineSecs();
   };
-  readonly runState = computed(() => this.ownSnap()?.state ?? this.runs.state());
-  readonly events = computed(() => this.ownSnap()?.events ?? this.runs.events());
-  readonly summary = computed(() => this.ownSnap()?.summary ?? this.runs.summary());
-  readonly asks = computed(() => this.ownSnap()?.asks ?? this.runs.asks());
-  readonly messages = computed(() => this.ownSnap()?.messages ?? this.runs.messages());
-  readonly messageRefusal = computed(() => this.ownSnap()?.refusal ?? this.runs.refusal());
-  readonly permissions = computed(() => this.ownSnap()?.permissions ?? this.runs.permissions());
-  readonly given = computed(() => this.ownSnap() === null ? this.runs.given() : this.ownSnap()!.given);
+  /**
+   * The one run the pane shows. This change's own session when it has one, whole: a field it has nothing in yet (no summary before the
+   * run ends, nothing at all before the backend answers with its id) stays empty and never reads the run that took the screen before.
+   * Without a session of its own, the run that took the screen.
+   */
+  private readonly paneSource = computed<RunSnapshot>(() => this.ownSnap() ?? {
+    state: this.runs.state(),
+    events: this.runs.events(),
+    summary: this.runs.summary(),
+    asks: this.runs.asks(),
+    permissions: this.runs.permissions(),
+    given: this.runs.given(),
+    messages: this.runs.messages(),
+    refusal: this.runs.refusal(),
+  });
+  readonly runState = computed(() => this.paneSource().state);
+  readonly events = computed(() => this.paneSource().events);
+  readonly summary = computed(() => this.paneSource().summary);
+  readonly asks = computed(() => this.paneSource().asks);
+  readonly messages = computed(() => this.paneSource().messages);
+  readonly messageRefusal = computed(() => this.paneSource().refusal);
+  readonly permissions = computed(() => this.paneSource().permissions);
+  readonly given = computed(() => this.paneSource().given);
   /**
    * What a stopped run of this change left behind. A run of no change offers its leftovers on the home, where it was started, and
    * another change's on that change; neither shows here, even while this page has no workspace and so no change key.
