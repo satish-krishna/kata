@@ -117,6 +117,10 @@ pub fn outcome(answer: &Answer) -> DeclareView {
                 _ => reason.clone(),
             },
         },
+        // T6 gives this its own view.
+        StepOutcome::Stopped => DeclareView::CouldNotRun {
+            message: "it was stopped".to_string(),
+        },
     }
 }
 

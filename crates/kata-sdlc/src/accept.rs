@@ -182,6 +182,10 @@ pub fn reject(
         StepOutcome::CouldNotRun { reason, .. } => RejectOutcome::RejectedNotRemoved {
             problems: vec![reason],
         },
+        // T6 gives this its own outcome.
+        StepOutcome::Stopped => RejectOutcome::RejectedNotRemoved {
+            problems: vec!["it was stopped".to_string()],
+        },
     }
 }
 
@@ -280,6 +284,8 @@ fn commit(
             })
         }
         StepOutcome::CouldNotRun { reason, .. } => Committed::CouldNotRun(reason),
+        // T6 gives this its own outcome.
+        StepOutcome::Stopped => Committed::CouldNotRun("it was stopped".to_string()),
     }
 }
 
@@ -310,6 +316,10 @@ fn event_outcome(answer: &Answer) -> AcceptOutcome {
                     "
 ",
                 ),
+        },
+        // T6 gives this its own outcome.
+        StepOutcome::Stopped => AcceptOutcome::AcceptedHookCouldNotRun {
+            output: "it was stopped".to_string(),
         },
     }
 }

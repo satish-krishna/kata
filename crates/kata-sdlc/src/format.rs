@@ -9,6 +9,7 @@
 //! The types below mirror `schema/read-result.schema.json` field for field, so they keep the
 //! program's snake_case names.
 use crate::ai_sdlc::Failure;
+use kata_core::proc::Bound;
 use crate::process;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -754,7 +755,14 @@ fn start(
     timeout: Duration,
 ) -> Result<process::CapturedExit, FormatError> {
     RUNS.fetch_add(1, Ordering::SeqCst);
-    match crate::ai_sdlc::execute(Path::new("node"), program, cwd, args, timeout, None) {
+    match crate::ai_sdlc::execute(
+        Path::new("node"),
+        program,
+        cwd,
+        args,
+        Bound::Within(timeout),
+        None,
+    ) {
         Ok(out) if matches!(out.code, Some(0 | 1)) => Ok(out),
         Ok(out) => Err(FormatError::CouldNotRun(match out.stderr.trim() {
             "" => format!(

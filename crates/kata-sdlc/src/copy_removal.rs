@@ -124,6 +124,12 @@ pub fn remove(program: &Program, place: &Place, change: &ChangeState) -> RemoveO
         StepOutcome::CouldNotRun { reason, .. } => {
             return RemoveOutcome::CouldNotRun { message: reason }
         }
+        // T6 gives this its own outcome.
+        StepOutcome::Stopped => {
+            return RemoveOutcome::CouldNotRun {
+                message: "it was stopped".to_string(),
+            }
+        }
     };
     // The copy is still there when the plugin refused: its files are the reason, or it says another.
     match copy_status(&change.master) {
