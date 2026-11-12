@@ -19,5 +19,9 @@ export class LockOverlay {
   /** What the running step reports, or null while nothing should show. */
   readonly stepProgress = input<ProgressView | null>(null);
 
+  /** What Stop says it stops while a long step of the plugin runs, or null while there is nothing to stop. */
+  readonly stopLabel = input<string | null>(null);
+
   readonly cancel = output<void>();
+  readonly stop = output<void>();
 }

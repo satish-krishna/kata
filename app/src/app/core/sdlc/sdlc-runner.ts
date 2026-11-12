@@ -15,6 +15,7 @@ import { documentForm, type DocumentKind } from '../../lib/build-host';
 import { IDLE, type RunSnapshot } from '../run/reduce';
 import { ChangeRunStore, changeRunKey } from '../run/change-run.store';
 import { restrictedFor, specFor, transcriptRunId, type StartTrack } from '../../lib/sdlc';
+import { renameStopped, startStopped } from '../../lib/sdlc-steps';
 import { masterPath, masterRepo } from '../../lib/sdlc-workspace';
 import { LockStore } from '../lock/lock.store';
 import { RunStore } from '../run/run.store';
@@ -254,8 +255,8 @@ export class SdlcRunner {
         return;
       }
       if (done.outcome === 'stopped') {
-        // Stopped by the engineer: the wording of what was left belongs to the stop step's own task.
-        this.request.update((r) => (r === null ? r : { ...r, error: 'The rename was stopped.', busy: false }));
+        // Stopped by the engineer: the confirmation stays open and says how far the rename got.
+        this.request.update((r) => (r === null ? r : { ...r, error: renameStopped(done.answer), busy: false }));
         return;
       }
       this.finishName({ branch: done.to, change: ask.change, from: done.from, oldPullRequests: done.oldPullRequests });
@@ -545,7 +546,7 @@ export class SdlcRunner {
       return { kind: 'stopped' };
     }
     if (started.outcome === 'stopped') {
-      this.toasts.error('Starting the change was stopped.');
+      this.toasts.info(startStopped(started.answer));
       return { kind: 'stopped' };
     }
     if (started.outcome === 'failed') {

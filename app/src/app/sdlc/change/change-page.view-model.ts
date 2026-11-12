@@ -72,7 +72,8 @@ import { shownBuild, shownDocument, type DocNotice, type ReadError, type Shown }
 import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy } from '../../lib/doc-rail';
 import { prNumber } from '../../lib/pull-request';
 import { DONE_PROGRESS_LINE, type DoneReport } from '../../lib/sdlc-done';
-import type { StepView } from '../../lib/sdlc-steps';
+import { acceptStopped, doneStopped, isStep, rejectStopped, removalStopped, type StepView, type StepWant } from '../../lib/sdlc-steps';
+import type { StepEvent } from '@bindings/StepEvent';
 import { section } from '../../lib/doc';
 import { fullPipelineIdea } from '../../lib/sdlc-fix';
 import { inTauri } from '../../lib/mock';
@@ -312,7 +313,7 @@ export class ChangePageViewModel {
     if (ref === null) return;
     let out: RemoveOutcome;
     try {
-      out = await this.transport.sdlcRemoveCopy(ref);
+      out = await this.inStep('removingCopy', 'Removing the copy', 'Stop removing the copy', () => this.transport.sdlcRemoveCopy(ref));
     } catch (e) {
       this.setCopyNote({ tone: 'warning', text: `The copy was not removed: ${message(e)}`, lines: [] });
       return;
@@ -330,6 +331,10 @@ export class ChangePageViewModel {
         return;
       case 'refused':
         this.setCopyNote({ tone: 'warning', text: 'The plugin did not remove the copy.', lines: out.problems });
+        return;
+      case 'stopped':
+        this.setCopyNote({ tone: 'warning', text: removalStopped([]), lines: out.kept });
+        await this.load();
         return;
       case 'couldNotRun':
         this.setCopyNote({ tone: 'warning', text: `The copy was not removed: the plugin could not run: ${out.message}`, lines: [] });
@@ -738,7 +743,39 @@ export class ChangePageViewModel {
 
   /** Stop the running step of this change. */
   async stopStep(): Promise<void> {
-    // not implemented
+    const ref = this.changeRef();
+    if (ref === null) return;
+    try {
+      await this.transport.stopStep(ref);
+    } catch (e) {
+      this.toasts.error(`Could not stop the step: ${message(e)}`);
+    }
+  }
+
+  /**
+   * Run a long step of this change, showing the label the backend reports for it and Stop while it runs. `first` is the label until the
+   * backend reports one; `onReport` sees each report of this change's step.
+   */
+  private async inStep<T>(want: StepWant, first: string, stop: string, call: () => Promise<T>, onReport?: (event: StepEvent) => void): Promise<T> {
+    const change = this.changeName();
+    this.stepStopped.set(null);
+    let unlisten = (): void => undefined;
+    try {
+      unlisten = await this.transport.onStep((event) => {
+        if (event.change.change !== change || !isStep(event.kind, want)) return;
+        this.step.set({ label: event.progress.label, stop });
+        onReport?.(event);
+      });
+    } catch {
+      // The step still runs and Stop still works; only its label does not follow.
+    }
+    this.step.set({ label: first, stop });
+    try {
+      return await call();
+    } finally {
+      unlisten();
+      this.step.set(null);
+    }
   }
 
   // --- declaring done: the confirmation, then the plugin's step
@@ -773,31 +810,37 @@ export class ChangePageViewModel {
     if (!w) return;
     const ref = { workspace: w.folder, system: this.system(), change: this.changeName() };
     let view: DeclareView | null = null;
-    const unlisten = await this.transport.onStep((event) => {
-      if (event.change.change === ref.change && event.kind === 'declaringDone') this.progress.begin(DONE_PROGRESS_LINE[event.progress.kind], event.progress.label, 'lock');
-    });
+    const progressOf = (event: StepEvent): void => this.progress.begin(DONE_PROGRESS_LINE[event.progress.kind], event.progress.label, 'lock');
     let out: Awaited<ReturnType<LockStore['runSteps']>>;
     try {
-      out = await this.lock.runSteps('Opening pull requests', [
-        {
-          label: 'Declare done',
-          run: async () => {
-            try {
-              view = await this.transport.sdlcDeclareDone(ref);
-            } catch (e) {
-              this.progress.fail('lock');
-              throw e;
-            }
-            this.progress.end('lock');
-            return null;
-          },
-        },
-      ]);
+      out = await this.inStep(
+        'declaringDone',
+        'Declaring the change done',
+        'Stop declaring the change done',
+        () =>
+          this.lock.runSteps('Opening pull requests', [
+            {
+              label: 'Declare done',
+              run: async () => {
+                try {
+                  view = await this.transport.sdlcDeclareDone(ref);
+                } catch (e) {
+                  this.progress.fail('lock');
+                  throw e;
+                }
+                this.progress.end('lock');
+                return null;
+              },
+            },
+          ]),
+        progressOf,
+      );
     } finally {
-      unlisten();
       this.progress.end('lock');
     }
-    if (out === 'done') this.declareView.set(view);
+    const answer = view as DeclareView | null;
+    if (out === 'done' && answer?.kind === 'stopped') this.stepStopped.set(doneStopped(answer.pullRequests));
+    else if (out === 'done') this.declareView.set(answer);
     await this.load();
   }
 
@@ -943,7 +986,7 @@ export class ChangePageViewModel {
   // --- renaming
 
   acceptName(name: string): void {
-    void this.runner.confirmName(name);
+    void this.inStep('renaming', 'Renaming the branch', 'Stop renaming the branch', () => this.runner.confirmName(name));
   }
 
   closeName(): void {
@@ -1100,6 +1143,9 @@ export class ChangePageViewModel {
     switch (out.outcome) {
       case 'rejected':
         this.toasts.success(rejectedSaid(out.recordBranch));
+        break;
+      case 'stopped':
+        this.toasts.info(`${rejectStopped('intent', out.rejected)} (the fix ${fix.change})`);
         break;
       case 'rejectedNotRemoved':
         this.toasts.error(`The new change started and the fix ${fix.change} is rejected, but its copy was not removed: ${out.problems.join('\n')}`);
@@ -1336,12 +1382,15 @@ export class ChangePageViewModel {
     if (ref === null) return;
     let out: AcceptOutcome;
     try {
-      out = await this.transport.sdlcAccept(ref, doc);
+      out = await this.inStep('accepting', `Accepting the ${doc}`, `Stop accepting the ${doc}`, () => this.transport.sdlcAccept(ref, doc));
     } catch (e) {
       this.toasts.error(`Could not accept the ${doc}: ${message(e)}`);
       return;
     }
     switch (out.outcome) {
+      case 'stopped':
+        this.stepStopped.set(acceptStopped(doc, out.accepted));
+        break;
       case 'accepted':
         if (out.warnings.length === 0) this.toasts.success(`Accepted ${doc} · committed`);
         else this.toasts.info([`Accepted ${doc} · committed, with warnings from the plugin.`, ...out.warnings].join('\n'));
@@ -1368,12 +1417,15 @@ export class ChangePageViewModel {
     if (ref === null) return;
     let out: RejectOutcome;
     try {
-      out = await this.transport.sdlcReject(ref);
+      out = await this.inStep('rejecting', 'Rejecting the intent', 'Stop rejecting the intent', () => this.transport.sdlcReject(ref));
     } catch (e) {
       this.toasts.error(`Could not reject the change: ${message(e)}`);
       return;
     }
     switch (out.outcome) {
+      case 'stopped':
+        this.stepStopped.set(rejectStopped('intent', out.rejected));
+        break;
       case 'rejected':
         this.toasts.success(rejectedSaid(out.recordBranch));
         await this.toHome();

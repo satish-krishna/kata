@@ -1,7 +1,7 @@
 import { Component, inject } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideFolderPlus, lucidePlus } from '@ng-icons/lucide';
+import { lucideFolderPlus, lucidePlus, lucideSquare } from '@ng-icons/lucide';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { AddWorkspaceDialog } from '../../ui/add-workspace-dialog';
 import { ChangesTable } from '../../ui/changes-table';
@@ -24,7 +24,7 @@ import { SdlcHomeViewModel } from './sdlc-home.view-model';
 
 @Component({
   selector: 'app-sdlc-home',
-  providers: [SdlcHomeViewModel, RunPreviewViewModel, provideIcons({ lucideFolderPlus, lucidePlus })],
+  providers: [SdlcHomeViewModel, RunPreviewViewModel, provideIcons({ lucideFolderPlus, lucidePlus, lucideSquare })],
   imports: [
     NgIcon,
     HlmButtonImports,

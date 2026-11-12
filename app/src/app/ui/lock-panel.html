@@ -24,6 +24,11 @@
   <p class="k-left__note">Everything else is locked while this runs.</p>
 
   <div class="k-lock__foot">
+    @if (stopLabel(); as label) {
+      <button hlmBtn variant="secondary" size="sm" type="button" [attr.aria-label]="label" data-testid="stop-step" (click)="stop.emit()">
+        <ng-icon name="lucideSquare" />Stop
+      </button>
+    }
     <button hlmBtn variant="secondary" size="sm" type="button" (click)="onCancel()">Cancel</button>
   </div>
 </div>

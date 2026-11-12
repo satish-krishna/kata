@@ -28,7 +28,8 @@ import { VersionsStore } from '../../core/versions/versions.store';
 import { defaultWorkType, namingRefusal, orderedWorkTypes, type WorkType } from '../../lib/sdlc-naming';
 import { inTauri } from '../../lib/mock';
 import type { ProgressStepId } from '../../lib/progress-steps';
-import type { StepView } from '../../lib/sdlc-steps';
+import { isStep, removalStopped, type StepView, type StepWant } from '../../lib/sdlc-steps';
+import type { ChangeRef } from '@bindings/ChangeRef';
 import { shownChangeList } from '../../lib/doc-notice';
 import { hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
 import { DEMO_SETUP_FOLDER, DEMO_START_IDEA, DEMO_START_SYSTEM } from '../../lib/demo';
@@ -616,7 +617,9 @@ export class SdlcHomeViewModel {
       const target = { workspace, master };
       const confirm = (spec: RunSpec) => this.confirm(spec);
       const more: [PickedNaming?, string?] = branch ? [picked ?? undefined, branch] : picked ? [picked] : [];
-      const outcome = await this.runner.newChange(target, system, idea, track, confirm, ...more);
+      const run = () => this.runner.newChange(target, system, idea, track, confirm, ...more);
+      // The start is a step of the change the form names; the triage of the light track makes its change later, in a run.
+      const outcome = track === 'full' ? await this.inStep(this.transport.sdlcChangeName(idea).then((change) => ({ workspace: workspace.folder, system, change })), 'starting', null, 'Stop starting the change', run) : await run();
       if (outcome.kind === 'none' && track === 'decide') this.triageNotice.set({ idea: outcome.idea, runId: outcome.runId });
       if (outcome.kind === 'retry') this.askAgain(system, idea, track, outcome);
     } catch (e) {
@@ -708,9 +711,44 @@ export class SdlcHomeViewModel {
   /** The long step of a change that runs from this page now (a start, a removal); null while none does. */
   readonly step = signal<StepView | null>(null);
 
+  /** The change the running step belongs to; what Stop is asked to stop. */
+  private stepRef: ChangeRef | null = null;
+
   /** Stop the running step. */
   async stopStep(): Promise<void> {
-    // not implemented
+    const ref = this.stepRef;
+    if (ref === null) return;
+    try {
+      await this.transport.stopStep(ref);
+    } catch (e) {
+      this.toasts.error(`Could not stop the step: ${message(e)}`);
+    }
+  }
+
+  /**
+   * Run a long step of the change `ref` names, showing the label the backend reports for it and Stop while it runs. `first` is the label
+   * until one is reported; null shows nothing until the backend reports the step. `ref` may still be on its way (the name of a change
+   * about to start comes from the backend): `call` starts at once, and the step is matched once the name is known.
+   */
+  private async inStep<T>(ref: ChangeRef | Promise<ChangeRef>, want: StepWant, first: string | null, stop: string, call: () => Promise<T>): Promise<T> {
+    this.stepRef = null;
+    void Promise.resolve(ref).then(
+      (named) => (this.stepRef = named),
+      () => undefined,
+    );
+    const listening = this.transport
+      .onStep((event) => {
+        if (this.stepRef !== null && event.change.change === this.stepRef.change && isStep(event.kind, want)) this.step.set({ label: event.progress.label, stop });
+      })
+      .catch(() => (): void => undefined);
+    if (first !== null) this.step.set({ label: first, stop });
+    try {
+      return await call();
+    } finally {
+      (await listening)();
+      this.stepRef = null;
+      this.step.set(null);
+    }
   }
 
   // --- removing a merged change's copy
@@ -732,8 +770,12 @@ export class SdlcHomeViewModel {
     const system = this.rows().find((r) => r.change === change)?.system;
     if (change === null || !workspace || !system) return;
     try {
-      const out = await this.transport.sdlcRemoveCopy({ workspace, system, change });
+      const ref = { workspace, system, change };
+      const out = await this.inStep(ref, 'removingCopy', 'Removing the copy', 'Stop removing the copy', () => this.transport.sdlcRemoveCopy(ref));
       switch (out.outcome) {
+        case 'stopped':
+          this.toasts.info(removalStopped(out.kept));
+          break;
         case 'removed':
           this.toasts.info('The copy is removed. The change branch and its commits stay in the master repository.');
           break;
