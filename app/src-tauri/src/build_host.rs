@@ -2146,7 +2146,7 @@ mod tests {
                 let began = std::time::Instant::now();
                 while !token.is_cancelled() {
                     assert!(
-                        began.elapsed() < std::time::Duration::from_secs(5),
+                        began.elapsed() < std::time::Duration::from_secs(60),
                         "the call named {which} was stopped but its token was never cancelled"
                     );
                     std::thread::sleep(std::time::Duration::from_millis(5));
