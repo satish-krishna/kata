@@ -45,6 +45,8 @@ pub enum RemoveOutcome {
     Keep { uncommitted: Vec<String> },
     /// The plugin refused for another reason; its words.
     Refused { problems: Vec<String> },
+    /// The engineer stopped it; `kept` is what the workflow had already reported as kept, when it said.
+    Stopped { kept: Vec<String> },
     /// The plugin could not run.
     CouldNotRun { message: String },
 }
@@ -112,7 +114,12 @@ pub fn branch(program: &Program, place: &Place, change: &str) -> Result<String, 
 /// unless git sees it merged). `place` is the workspace's own master, so the command works once the copy
 /// is gone. The plugin refuses a copy with uncommitted files as it removes it, so a file written after the
 /// offer keeps the copy; the refusal is answered as `Keep` naming the files.
-pub fn remove(program: &Program, place: &Place, change: &ChangeState) -> RemoveOutcome {
+pub fn remove(
+    program: &Program,
+    place: &Place,
+    change: &ChangeState,
+    _token: &CancelToken,
+) -> RemoveOutcome {
     let command = ["change", "remove", "--json", "--change", &change.change];
     let answer = program.step_long(&command, place, &CancelToken::new(), None);
     let problems = match answer.outcome {
@@ -175,6 +182,52 @@ mod tests {
             node: "node".into(),
             entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts"),
         }
+    }
+
+    /// A stand-in for the program that passes every call to the real one except the call named by
+    /// \`trigger\` (a JS condition on \`args\`): that call writes a marker and waits to be stopped. A call
+    /// nobody stops ends itself after 5 s, so a red test fails instead of hanging.
+    fn stopping_program(dir: &Path, trigger: &str) -> (Program, PathBuf) {
+        let marker = dir.join("stopping.marker");
+        let real = program().entry;
+        let script = format!(
+            "import {{ spawnSync }} from 'node:child_process';
+import {{ writeFileSync }} from 'node:fs';
+const args = process.argv.slice(2);
+if ({trigger}) {{
+  writeFileSync({marker:?}, 'x');
+  setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3); }}, 5000);
+}} else {{
+  const r = spawnSync(process.execPath, [{real:?}, ...args], {{ stdio: 'inherit' }});
+  process.exit(r.status ?? 2);
+}}
+",
+            marker = marker.display().to_string(),
+            real = real.display().to_string(),
+        );
+        let entry = dir.join("fake-ai-sdlc.mjs");
+        std::fs::write(&entry, script).unwrap();
+        (
+            Program {
+                node: "node".into(),
+                entry,
+            },
+            marker,
+        )
+    }
+
+    /// Cancels \`token\` once the fake has reached the call it stops, giving up after 5 s.
+    fn stop_when_reached(marker: PathBuf, token: &CancelToken) -> std::thread::JoinHandle<()> {
+        let token = token.clone();
+        std::thread::spawn(move || {
+            for _ in 0..100 {
+                if marker.exists() {
+                    token.cancel();
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        })
     }
 
     /// A workspace with a master, a product repository and a change the plugin started, with its copy.
@@ -342,7 +395,7 @@ mod tests {
         // R15.3, nothing uncommitted, the engineer confirms: the copy is gone, the branch stays.
         let fx = Fx::new();
         assert_eq!(fx.offered(true), CopyRemoval::Offer);
-        let outcome = remove(&program(), &fx.place(), &fx.state());
+        let outcome = remove(&program(), &fx.place(), &fx.state(), &CancelToken::new());
         // The plugin names the branch it kept, and why: git does not see it merged into main.
         let RemoveOutcome::Removed { kept } = outcome else {
             panic!("the copy is removed: {outcome:?}");
@@ -383,7 +436,7 @@ mod tests {
         let fx = Fx::new();
         assert_eq!(fx.offered(true), CopyRemoval::Offer);
         fx.write("late.txt");
-        let outcome = remove(&program(), &fx.place(), &fx.state());
+        let outcome = remove(&program(), &fx.place(), &fx.state(), &CancelToken::new());
         assert_eq!(
             outcome,
             RemoveOutcome::Keep {
@@ -392,5 +445,19 @@ mod tests {
         );
         assert!(fx.copy.exists(), "the copy is still there");
         assert!(fx.copy.join("late.txt").exists());
+    }
+    #[test]
+    fn stopped_outcomes() {
+        // R17.1: stopping the removal answers Stopped, and the copy is still there to carry on from.
+        let fx = Fx::new();
+        let (fake, marker) = stopping_program(
+            fx._dir.path(),
+            "args[0] === 'change' && args[1] === 'remove'",
+        );
+        let token = CancelToken::new();
+        let watcher = stop_when_reached(marker, &token);
+        let outcome = remove(&fake, &fx.place(), &fx.state(), &token);
+        watcher.join().unwrap();
+        assert_eq!(outcome, RemoveOutcome::Stopped { kept: vec![] });
     }
 }

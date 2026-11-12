@@ -316,7 +316,14 @@ fn goes_through_every_step(need: Need) {
             .into_iter()
             .next()
             .expect("the change is listed");
-        let outcome = accept::apply(&program(), &place, SYSTEM, &change, doc);
+        let outcome = accept::apply(
+            &program(),
+            &place,
+            SYSTEM,
+            &change,
+            doc,
+            &kata_core::proc::CancelToken::new(),
+        );
         assert_eq!(
             outcome,
             AcceptOutcome::Accepted { warnings: vec![] },

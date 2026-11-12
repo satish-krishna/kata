@@ -1112,6 +1112,7 @@ fn sdlc_accept(
         &change.system,
         &home.state,
         doc,
+        &kata_core::proc::CancelToken::new(),
     ))
 }
 
@@ -1125,8 +1126,15 @@ fn sdlc_reject(
     let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
     let key = build_host::key_of(&change);
     control.state.lock().unwrap().begin_rejecting(&key)?;
-    let outcome = change_home(&program, &change)
-        .map(|home| sdlc::accept::reject(&program, &home.place, &change.system, &home.state));
+    let outcome = change_home(&program, &change).map(|home| {
+        sdlc::accept::reject(
+            &program,
+            &home.place,
+            &change.system,
+            &home.state,
+            &kata_core::proc::CancelToken::new(),
+        )
+    });
     control.state.lock().unwrap().end_rejecting(&key);
     outcome
 }
@@ -1162,8 +1170,14 @@ fn sdlc_remove_copy(
     let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
     let key = build_host::key_of(&change);
     control.state.lock().unwrap().begin_rejecting(&key)?;
-    let outcome = change_home(&program, &change)
-        .map(|home| sdlc::copy_removal::remove(&program, &home.place, &home.state));
+    let outcome = change_home(&program, &change).map(|home| {
+        sdlc::copy_removal::remove(
+            &program,
+            &home.place,
+            &home.state,
+            &kata_core::proc::CancelToken::new(),
+        )
+    });
     control.state.lock().unwrap().end_rejecting(&key);
     outcome
 }
