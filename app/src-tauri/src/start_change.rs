@@ -1,10 +1,14 @@
 //! Starting a change: the plugin makes the change's branch and its own copy of the master repository,
 //! and Kata only asks. Kata never creates a branch or a copy itself; a refusal is the plugin's own reason,
 //! sorted by what the engineer can do about it.
-use kata_core::proc::CancelToken;
-use kata_sdlc::ai_sdlc::{HookFailure, Place, Program, StepOutcome};
+use crate::steps::{StepKind, StepTable};
+use kata_core::proc::{CancelToken, LineSink};
+use kata_sdlc::ai_sdlc::{progress_of, HookFailure, Place, Program, StepOutcome};
+use kata_sdlc::holds::{ChangeKey, RepoKey};
 use kata_sdlc::naming;
 use serde::Serialize;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 /// Why the plugin refused to start a change, by what the engineer can change.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +61,9 @@ pub enum ChangeStart {
         reason: String,
         hook: Option<HookFailure>,
     },
+    /// The engineer stopped it. `answer` is what the workflow printed before the stop; the start did not
+    /// finish, and starting again shows the workflow's own answer, a refusal included.
+    Stopped { answer: Vec<String> },
 }
 
 /// What the engineer chose for the new change.
@@ -121,6 +128,8 @@ pub fn start_change(
     place: &Place,
     date: &str,
     request: &StartRequest,
+    steps: &StepTable,
+    workspace: &Path,
 ) -> Result<ChangeStart, String> {
     let title = request
         .title
@@ -312,6 +321,10 @@ mod tests {
     const NAMED: &str = r#"{"version":1,"systems":{"demo":{"repos":["app"],"naming":{"branch":"{type}/{scope}-{slug}","pullRequestTitle":"{type}({scope}): {title}"}}}}"#;
     const BROKEN: &str = r#"{"version":1,"systems":{"demo":{"repos":["app"],"naming":{"branch":"{type}/{scope}-{slug}"}}}}"#;
 
+    fn no_steps() -> StepTable {
+        StepTable::new(Arc::new(|_| {}))
+    }
+
     fn request<'a>(scope: &'a str, branch: Option<&'a str>) -> StartRequest<'a> {
         StartRequest {
             system: "demo",
@@ -323,7 +336,15 @@ mod tests {
     }
 
     fn start(place: &Place, scope: &str, branch: Option<&str>) -> ChangeStart {
-        start_change(&program(), place, DATE, &request(scope, branch)).unwrap()
+        start_change(
+            &program(),
+            place,
+            DATE,
+            &request(scope, branch),
+            &no_steps(),
+            &place.workspace,
+        )
+        .unwrap()
     }
 
     fn started(outcome: ChangeStart) -> (String, String, PathBuf) {
@@ -542,6 +563,8 @@ mod tests {
                 &place,
                 "2026-11-02",
                 &request("X-1", Some(branch)),
+                &no_steps(),
+                &place.workspace,
             )
             .unwrap()
         };
@@ -555,5 +578,112 @@ mod tests {
         let (change, branch, _) = started(other("feat/other"));
         assert_eq!(change, "2026-11-02-password-reset");
         assert_eq!(branch, "feat/other");
+    }
+
+    /// A stand-in for the program: the call prints one progress line, writes a marker and waits to be
+    /// stopped. A call nobody stops ends itself after 5 s, so a red test fails instead of hanging.
+    fn waiting_program(dir: &Path) -> (Program, PathBuf) {
+        let marker = dir.join("waiting.marker");
+        let script = format!(
+            "import {{ writeFileSync, writeSync }} from 'node:fs';
+writeSync(1, JSON.stringify({{ type: 'push', repo: 'app' }}) + '\\n');
+writeFileSync({marker:?}, 'x');
+setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3); }}, 5000);
+",
+            marker = marker.display().to_string()
+        );
+        let entry = dir.join("waiting.mjs");
+        std::fs::write(&entry, script).unwrap();
+        (
+            Program {
+                node: "node".into(),
+                entry,
+            },
+            marker,
+        )
+    }
+
+    fn capturing_steps() -> (StepTable, Arc<Mutex<Vec<crate::steps::StepEvent>>>) {
+        let seen: Arc<Mutex<Vec<crate::steps::StepEvent>>> = Arc::default();
+        let sink = seen.clone();
+        (
+            StepTable::new(Arc::new(move |e| sink.lock().unwrap().push(e))),
+            seen,
+        )
+    }
+
+    fn key_of(place: &Place) -> ChangeKey {
+        ChangeKey {
+            workspace: RepoKey::of(&place.workspace),
+            system: "demo".into(),
+            change: CHANGE.into(),
+        }
+    }
+
+    /// R17.1, R16.1: the engineer stops a start that has printed a line; it answers Stopped with that line,
+    /// the change's step is gone, and the stop reached the change's own token.
+    #[test]
+    fn stopped_outcomes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (program, _marker) = waiting_program(dir.path());
+        let (_ws, place) = workspace(PLAIN);
+        let (steps, seen) = capturing_steps();
+        let key = key_of(&place);
+        let watcher = {
+            let (steps, seen, key) = (steps.clone(), seen.clone(), key.clone());
+            std::thread::spawn(move || {
+                for _ in 0..100 {
+                    if !seen.lock().unwrap().is_empty() {
+                        return steps.stop(&key);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                false
+            })
+        };
+        let outcome = start_change(
+            &program,
+            &place,
+            DATE,
+            &request("", None),
+            &steps,
+            &place.workspace,
+        )
+        .unwrap();
+        assert!(watcher.join().unwrap(), "the step was not in the table");
+        assert_eq!(
+            outcome,
+            ChangeStart::Stopped {
+                answer: vec![r#"{"type":"push","repo":"app"}"#.to_string()]
+            }
+        );
+        assert!(steps.running().is_empty());
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0].kind, StepKind::Starting);
+        assert_eq!(seen[0].progress.label, "Pushing app");
+    }
+
+    /// A change that already has a long step running is not started again, and the program is not asked.
+    #[test]
+    fn a_busy_change_is_not_started_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        let (program, marker) = waiting_program(dir.path());
+        let (_ws, place) = workspace(PLAIN);
+        let (steps, _) = capturing_steps();
+        let _running = steps.begin(key_of(&place), StepKind::Renaming).unwrap();
+        let outcome = start_change(
+            &program,
+            &place,
+            DATE,
+            &request("", None),
+            &steps,
+            &place.workspace,
+        )
+        .unwrap();
+        assert!(
+            matches!(outcome, ChangeStart::CouldNotRun { .. }),
+            "{outcome:?}"
+        );
+        assert!(!marker.exists(), "the program was asked");
     }
 }
