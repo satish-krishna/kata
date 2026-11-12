@@ -76,7 +76,7 @@ type Owner = Option<(String, String)>;
 
 /// One line per change, in the order its first run appears, the runs in the table before the launching
 /// ones; a run with no change gets its own line, and a change names the same doing once.
-fn lines(live: &[LiveSummary], launching: &[Launching]) -> Vec<RunningLine> {
+fn lines(live: &[LiveSummary], launching: &[Launching], steps: &[RunningStep]) -> Vec<RunningLine> {
     let in_table = live.iter().map(|run| {
         let owner = match &run.lane {
             Lane::Change { key, .. } => Some((key.system.clone(), key.change.clone())),
@@ -104,6 +104,15 @@ fn lines(live: &[LiveSummary], launching: &[Launching]) -> Vec<RunningLine> {
             None => out.push((owner, vec![text])),
         }
     }
+    // A change in a long step cannot have started its runs yet, so the step says what it does.
+    for step in steps {
+        let owner = Some((step.change.system.clone(), step.change.change.clone()));
+        let doing = vec![step.kind.doing()];
+        match out.iter_mut().find(|(k, _)| *k == owner) {
+            Some((_, parts)) => *parts = doing,
+            None => out.push((owner, doing)),
+        }
+    }
     out.into_iter()
         .map(|(owner, parts)| RunningLine {
             change: owner.map(|(_, change)| change),
@@ -113,7 +122,7 @@ fn lines(live: &[LiveSummary], launching: &[Launching]) -> Vec<RunningLine> {
 }
 
 /// Decide what closing the window does. The question is asked only while runs are live, a build being
-/// started or launched (`launching`) counting as live; a confirm that arrives after they ended closes at
+/// started or launched (`launching`) or a long step of a change (`steps`) counting as live; a confirm that arrives after they ended closes at
 /// once, as a confirm with nothing to cancel.
 pub fn on_close(
     live: &[LiveSummary],
@@ -121,17 +130,16 @@ pub fn on_close(
     steps: &[RunningStep],
     answer: CloseAnswer,
 ) -> CloseOutcome {
-    let _ = steps;
-    let none = live.is_empty() && launching.is_empty();
+    let none = live.is_empty() && launching.is_empty() && steps.is_empty();
     match answer {
         CloseAnswer::NotAsked if none => CloseOutcome::Close,
         CloseAnswer::NotAsked => CloseOutcome::Ask {
-            running: lines(live, launching),
+            running: lines(live, launching, steps),
         },
         CloseAnswer::Confirm if none => CloseOutcome::Close,
         CloseAnswer::Confirm => CloseOutcome::CancelThenClose {
             ids: live.iter().map(|r| r.id).collect(),
-            steps: vec![],
+            steps: steps.iter().map(|s| s.change.clone()).collect(),
         },
         CloseAnswer::Decline => CloseOutcome::Stay,
     }
@@ -399,13 +407,13 @@ mod tests {
     // necessary on their own; with all three empty there is nothing to ask.
     #[test]
     fn each_column_alone_makes_the_question_necessary() {
-        let live = vec![run(1, "A", RunKind::Build, Some("kata"))];
-        let launching = vec![Launching {
+        let live = [run(1, "A", RunKind::Build, Some("kata"))];
+        let launching = [Launching {
             change: key("B"),
             kind: RunKind::Build,
             repo: None,
         }];
-        let steps = vec![step("C", StepKind::Starting)];
+        let steps = [step("C", StepKind::Starting)];
         for (l, la, s) in [
             (&live[..], &[][..], &[][..]),
             (&[][..], &launching[..], &[][..]),

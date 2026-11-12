@@ -1,9 +1,6 @@
 //! The long steps of a change that are not a run: one entry per change, its latest progress label and the
 //! token that stops it.
 
-// The callers arrive with the commands that run a long step (T5, T7, T8); until then only the tests build steps.
-#![allow(dead_code)]
-
 use crate::build_host::ChangeRef;
 use kata_core::proc::CancelToken;
 use kata_sdlc::accept::ChangeDocument;

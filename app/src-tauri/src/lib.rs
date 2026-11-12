@@ -2011,9 +2011,9 @@ fn cancel_by_id(control: &RunControl, id: u64) {
 }
 
 /// The close guard's wrapper: apply `on_close` to the live runs and the builds being started or
-/// launched. A confirm first stops the build host, so no change launches anything more, then cancels every
+/// launched. A confirm first stops the build host, so no change launches anything more, then stops every long step and cancels every
 /// run the table holds, as `cancel_run` does, including one a launch under way adds later; it waits up to
-/// ten seconds in total for the table to empty and the launches to settle, then destroys the window (a
+/// ten seconds in total for the table to empty, the launches to settle and the step table to empty, then destroys the window (a
 /// plain `close` would ask again). No lock is held across the wait.
 fn close_window(app: &AppHandle, answer: close_guard::CloseAnswer) {
     let host = app
@@ -2021,17 +2021,22 @@ fn close_window(app: &AppHandle, answer: close_guard::CloseAnswer) {
         .map(|h| h.inner().clone());
     let launching = host.as_ref().map(|h| h.launching()).unwrap_or_default();
     let live = app.state::<RunControl>().state.lock().unwrap().live();
-    match close_guard::on_close(&live, &launching, &[], answer) {
+    let step_table = app.state::<steps::StepTable>().inner().clone();
+    let running_steps = step_table.running();
+    match close_guard::on_close(&live, &launching, &running_steps, answer) {
         close_guard::CloseOutcome::Close => destroy_main(app),
         ask @ close_guard::CloseOutcome::Ask { .. } => {
             let _ = app.emit(close_guard::CLOSE_ASKED_EVENT, ask);
         }
         close_guard::CloseOutcome::Stay => {}
-        close_guard::CloseOutcome::CancelThenClose { .. } => {
+        close_guard::CloseOutcome::CancelThenClose { steps: to_stop, .. } => {
             let app = app.clone();
             std::thread::spawn(move || {
                 if let Some(host) = &host {
                     host.stop_all();
+                }
+                for change in &to_stop {
+                    step_table.stop(change);
                 }
                 let control = app.state::<RunControl>();
                 let deadline = std::time::Instant::now()
@@ -2040,7 +2045,7 @@ fn close_window(app: &AppHandle, answer: close_guard::CloseAnswer) {
                 loop {
                     let live = control.state.lock().unwrap().live();
                     let launching = host.as_ref().map(|h| h.launching()).unwrap_or_default();
-                    if live.is_empty() && launching.is_empty() {
+                    if live.is_empty() && launching.is_empty() && step_table.running().is_empty() {
                         break;
                     }
                     for run in &live {
