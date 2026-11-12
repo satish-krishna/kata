@@ -1,7 +1,7 @@
 //! Where a repository's hooks live and how one hook is run, and whether an operation needs a
 //! program the Workbench cannot start.
 
-use crate::proc::{run_limited, Limited, Outcome};
+use crate::proc::{run_limited, Bound, Limited, Outcome};
 use git2::{AttrCheckFlags, AttrValue, Repository};
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
@@ -144,13 +144,16 @@ fn execute(
         cwd: root,
         env: &vars,
         stdin,
-        limit,
+        bound: Bound::Within(limit),
         keep_stdout: false,
     });
     match outcome {
         Outcome::NotStarted(e) => Err(not_started(name, &e)),
         Outcome::WaitFailed(e) => Err(failure(format!(
             "This repository's {name} check could not be waited on: {e}"
+        ))),
+        Outcome::Cancelled { .. } => Err(failure(format!(
+            "This repository's {name} check was stopped before it finished."
         ))),
         Outcome::TimedOut { .. } => Err(failure(format!(
             "This repository's {name} check did not finish in {}.",

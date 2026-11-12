@@ -10,7 +10,9 @@ pub mod state;
 pub mod status;
 
 use crate::process::CapturedExit;
-use kata_core::proc::{run_limited, run_limited_streaming, Limited, LineSink, Outcome, StartError};
+use kata_core::proc::{
+    run_limited, run_limited_streaming, Bound, Limited, LineSink, Outcome, StartError,
+};
 use serde::Serialize;
 use serde_json::Value;
 use std::ffi::OsString;
@@ -69,6 +71,8 @@ pub(crate) enum Failure {
     Other(String),
     /// It ran past its limit and its tree was killed.
     TimedOut { secs: u64 },
+    /// The engineer stopped it and its tree was killed.
+    Stopped,
 }
 
 /// Runs `node <entry> <args>` in `cwd`, hidden, within `limit`, and returns how it exited.
@@ -88,7 +92,7 @@ pub(crate) fn execute(
         cwd,
         env: &[],
         stdin: None,
-        limit,
+        bound: Bound::Within(limit),
         keep_stdout: true,
     };
     let outcome = match on_line {
@@ -104,6 +108,7 @@ pub(crate) fn execute(
         Outcome::TimedOut { .. } => Err(Failure::TimedOut {
             secs: limit.as_secs(),
         }),
+        Outcome::Cancelled { .. } => Err(Failure::Stopped),
         Outcome::NotStarted(StartError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
             Err(Failure::NodeMissing)
         }
@@ -469,6 +474,7 @@ impl Failure {
             Failure::NodeMissing => NEEDS_NODE.to_string(),
             Failure::Other(message) => message,
             Failure::TimedOut { secs } => format!("it did not finish in {secs} seconds"),
+            Failure::Stopped => "it was stopped".to_string(),
         }
     }
 }

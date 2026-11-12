@@ -6,6 +6,7 @@ use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -98,6 +99,55 @@ pub enum StartError {
     Io(#[from] std::io::Error),
 }
 
+/// A flag one thread raises to stop a call another thread is waiting on. Clones share the flag.
+#[derive(Clone, Debug, Default)]
+pub struct CancelToken(Arc<AtomicBool>);
+
+impl CancelToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Raises the flag; the call it was given to ends its wait and kills the child's tree.
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// What ends a [`Limited`] call before the child exits on its own. There is no variant with neither a
+/// time limit nor a token, so no call can be both unbounded and unstoppable.
+#[derive(Clone, Debug)]
+pub enum Bound {
+    /// A time limit.
+    Within(Duration),
+    /// A token only: the call waits as long as the child runs, until the token is cancelled.
+    UntilCancelled(CancelToken),
+    /// Whichever comes first, the time limit or the token.
+    WithinOrCancelled(Duration, CancelToken),
+}
+
+impl Bound {
+    /// The time limit, when the bound has one.
+    pub fn limit(&self) -> Option<Duration> {
+        match self {
+            Bound::Within(limit) | Bound::WithinOrCancelled(limit, _) => Some(*limit),
+            Bound::UntilCancelled(_) => None,
+        }
+    }
+
+    /// The token, when the bound has one.
+    pub fn token(&self) -> Option<&CancelToken> {
+        match self {
+            Bound::UntilCancelled(token) | Bound::WithinOrCancelled(_, token) => Some(token),
+            Bound::Within(_) => None,
+        }
+    }
+}
+
 /// One command to run to completion within a time limit; see [`run_limited`].
 pub struct Limited<'a> {
     pub program: &'a Path,
@@ -106,7 +156,7 @@ pub struct Limited<'a> {
     pub env: &'a [(&'a str, &'a std::ffi::OsStr)],
     /// Bytes to write to the child's stdin; `None` gives it a null stdin.
     pub stdin: Option<&'a [u8]>,
-    pub limit: Duration,
+    pub bound: Bound,
     /// Keep all of stdout apart (in `Outcome::Exited::stdout`) and let the tail hold stderr only.
     pub keep_stdout: bool,
 }
@@ -122,6 +172,8 @@ pub enum Outcome {
     },
     /// It ran past the limit and its whole process tree was killed.
     TimedOut { tail: String },
+    /// Its [`CancelToken`] was cancelled and its whole process tree was killed.
+    Cancelled { tail: String },
     /// It could not be started.
     NotStarted(StartError),
     /// It was started but waiting for it failed; its tree was killed.
@@ -179,11 +231,12 @@ fn run_inner(spec: &Limited, on_line: Option<LineSink>) -> Outcome {
         readers.push(spawn_reader(stderr, Arc::clone(&tail)));
     }
 
-    let deadline = Instant::now() + spec.limit;
+    // Red-step stub: only the time limit is honored; the token is not read yet.
+    let deadline = spec.bound.limit().map(|limit| Instant::now() + limit);
     let status = loop {
         match tree.try_wait() {
             Ok(Some(status)) => break Some(status),
-            Ok(None) if Instant::now() >= deadline => break None,
+            Ok(None) if deadline.is_some_and(|deadline| Instant::now() >= deadline) => break None,
             Ok(None) => thread::sleep(POLL),
             Err(e) => {
                 tree.kill();
@@ -649,7 +702,7 @@ mod tests {
                 cwd,
                 env: &[],
                 stdin: None,
-                limit: Duration::from_secs(limit_secs),
+                bound: Bound::Within(Duration::from_secs(limit_secs)),
                 keep_stdout: false,
             }
         }
@@ -751,6 +804,76 @@ mod tests {
                 !dir.path().join("late.txt").exists(),
                 "a child survived the timeout"
             );
+        }
+
+        /// A script that writes `late.txt` about three seconds after it starts, if it is still alive.
+        fn late_writer() -> (&'static str, Vec<OsString>) {
+            script(
+                "ping -n 4 127.0.0.1 >NUL& echo late> late.txt",
+                "sleep 3; touch late.txt",
+            )
+        }
+
+        fn cancel_after(token: &CancelToken, millis: u64) {
+            let token = token.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(millis));
+                token.cancel();
+            });
+        }
+
+        #[test]
+        fn cancelling_kills_the_tree() {
+            let dir = tempfile::tempdir().unwrap();
+            let token = CancelToken::new();
+            let (program, args) = late_writer();
+            let mut run = spec(program, args, dir.path(), 0);
+            run.bound = Bound::UntilCancelled(token.clone());
+            cancel_after(&token, 200);
+            let started = Instant::now();
+            let outcome = run_limited(&run);
+            assert!(
+                matches!(outcome, Outcome::Cancelled { .. }),
+                "expected Cancelled, got {outcome:?}"
+            );
+            assert!(started.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_secs(5));
+            assert!(
+                !dir.path().join("late.txt").exists(),
+                "a child survived the cancel"
+            );
+        }
+
+        #[test]
+        fn a_cancelled_and_limited_call_ends_on_whichever_comes_first() {
+            let dir = tempfile::tempdir().unwrap();
+            let (program, args) = script("ping -n 31 127.0.0.1 >NUL", "sleep 30");
+
+            // The token comes first.
+            let token = CancelToken::new();
+            let mut run = spec(program, args.clone(), dir.path(), 0);
+            run.bound = Bound::WithinOrCancelled(Duration::from_secs(20), token.clone());
+            cancel_after(&token, 200);
+            let started = Instant::now();
+            let outcome = run_limited(&run);
+            assert!(
+                matches!(outcome, Outcome::Cancelled { .. }),
+                "expected Cancelled, got {outcome:?}"
+            );
+            assert!(started.elapsed() < Duration::from_secs(5));
+
+            // The limit comes first.
+            let token = CancelToken::new();
+            let mut run = spec(program, args, dir.path(), 0);
+            run.bound = Bound::WithinOrCancelled(Duration::from_secs(1), token.clone());
+            cancel_after(&token, 20_000);
+            let started = Instant::now();
+            let outcome = run_limited(&run);
+            assert!(
+                matches!(outcome, Outcome::TimedOut { .. }),
+                "expected TimedOut, got {outcome:?}"
+            );
+            assert!(started.elapsed() < Duration::from_secs(10));
         }
 
         #[test]

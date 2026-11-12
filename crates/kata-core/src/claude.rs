@@ -4,7 +4,7 @@ use std::fmt;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::proc::{run_limited, Limited, Outcome};
+use crate::proc::{run_limited, Bound, Limited, Outcome};
 
 /// The oldest Claude Code Kata will run a job on (pinned from the 2026-10-27 trial).
 pub const MIN_VERSION: &str = "2.1.311";
@@ -111,7 +111,7 @@ fn check_with_limit(program: &str, limit: Duration) -> Result<ClaudeVersion, Ver
         cwd: &cwd,
         env: &[],
         stdin: None,
-        limit,
+        bound: Bound::Within(limit),
         keep_stdout: true,
     });
     let unreadable = |detail: String| Err(VersionRefusal::Unreadable { detail });
@@ -119,6 +119,7 @@ fn check_with_limit(program: &str, limit: Duration) -> Result<ClaudeVersion, Ver
         Outcome::NotStarted(e) => unreadable(e.to_string()),
         Outcome::WaitFailed(e) => unreadable(e.to_string()),
         Outcome::TimedOut { .. } => unreadable("timed out".to_string()),
+        Outcome::Cancelled { .. } => unreadable("stopped".to_string()),
         Outcome::Exited { code, stdout, .. } => match code {
             Some(0) => judge(&String::from_utf8_lossy(&stdout)),
             Some(code) => unreadable(format!("exit code {code}")),

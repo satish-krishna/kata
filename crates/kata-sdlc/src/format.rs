@@ -768,6 +768,7 @@ fn start(
         Err(Failure::TimedOut { secs }) => Err(FormatError::CouldNotRun(format!(
             "it did not finish in {secs} seconds"
         ))),
+        Err(Failure::Stopped) => Err(FormatError::CouldNotRun("it was stopped".to_string())),
     }
 }
 
