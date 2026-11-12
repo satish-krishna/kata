@@ -8,6 +8,7 @@ mod runs;
 mod sdlc_home;
 mod sdlc_state;
 mod start_change;
+mod steps;
 mod versions;
 mod zoom;
 
@@ -2259,6 +2260,10 @@ pub fn run() {
         .manage(Arc::new(history::RunHistory::default()))
         .manage(Arc::new(running::OpenedMarks::default()))
         .setup(|app| {
+            let handle = app.handle().clone();
+            app.manage(steps::StepTable::new(Arc::new(move |event| {
+                let _ = handle.emit(steps::STEP_EVENT, event);
+            })));
             app.manage(build_host::BuildHost::new(
                 Arc::new(PluginTools),
                 Arc::new(AppLauncher {
@@ -2279,6 +2284,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            steps::sdlc_stop_step,
+            steps::sdlc_steps,
             catalog,
             app_versions,
             sdlc_current_workspace,
