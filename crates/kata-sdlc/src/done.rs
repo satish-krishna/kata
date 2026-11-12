@@ -494,6 +494,7 @@ say({ type: 'outcome', outcome: 'passed', problems: [], hooks: [], failed: null,
         let dir = tempfile::tempdir().unwrap();
         let body = r#"const fs = require('fs');
 const say = (o) => fs.writeSync(1, JSON.stringify(o) + '\n');
+if (process.argv[2] === 'change') process.exit(2);
 say({ type: 'push', repo: 'app' });
 say({ type: 'pull-request', repo: 'app', url: 'https://github.com/example/app/pull/1', number: 1 });
 say({ type: 'push', repo: 'master' });
@@ -526,6 +527,50 @@ setTimeout(() => {}, 60000);
             }
         );
         assert!(started.elapsed() < std::time::Duration::from_secs(30));
+    }
+
+    /// R17.1: the stream of the real plugin prints no pull request lines, so a stop after a pull request was
+    /// opened names it from the plugin's own record in `change.yml`, not from the stream.
+    #[test]
+    fn a_stop_names_the_pull_request_the_record_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = r#"const fs = require('fs');
+const say = (o) => fs.writeSync(1, JSON.stringify(o) + '\n');
+const a = process.argv.slice(2);
+if (a[0] === 'change' && a[1] === 'show') {
+  say({ change: 'c', system: 'demo', branch: 'change/c', repos: {},
+    record: { branch: 'change/c', type: 'feat', scope: 'demo', base: 'main',
+      pullRequests: [{ repo: 'app', url: 'https://github.com/example/app/pull/1', number: 1, pushed: 'abc' }] } });
+} else {
+  say({ type: 'push', repo: 'master' });
+  setTimeout(() => { console.error('the fake was never stopped'); process.exit(3); }, 5000);
+}
+"#;
+        let program = scripted(dir.path(), body);
+        let token = CancelToken::new();
+        let sink = {
+            let token = token.clone();
+            Arc::new(move |step: StepProgress| {
+                if step.label == "Pushing master" {
+                    token.cancel();
+                }
+            })
+        };
+        let view = declare(
+            &program,
+            &here(),
+            &ready(GhPresence::Present),
+            "demo",
+            CHANGE,
+            sink,
+            &token,
+        );
+        assert_eq!(
+            view,
+            DeclareView::Stopped {
+                pull_requests: vec![pr("app", 1)]
+            }
+        );
     }
 
     /// The fake `gh`: a copy of Node.js named `gh`, which a preloaded script turns into a GitHub that keeps its
