@@ -45,7 +45,7 @@ import type { ParsedTask } from '@bindings/ParsedTask';
 import type { Part } from '@bindings/Part';
 import type { ChangeInfo, DocState, PlanTask, Stage, Track } from './sdlc-mock-types';
 import type { DeclareView } from '@bindings/DeclareView';
-import type { DoneStep } from '@bindings/DoneStep';
+import type { StepProgress } from '@bindings/StepProgress';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { NamingState } from '../core/transport/kata-transport';
 import type { PullRequestLink } from '@bindings/PullRequestLink';
@@ -1275,11 +1275,11 @@ export class SdlcMock {
    * The plugin's answer to declaring `changeName` done, with the steps it reports on the way. It opens a pull request in each product
    * repository and the master last; the demos give a refusal, a part-way stop (once), a machine that cannot run it and a missing gh.
    */
-  declareDone(_changeName: string): { view: DeclareView; steps: DoneStep[] } {
-    const verifying: DoneStep = { kind: 'verifying', label: 'Declaring done: the plugin is verifying the change' };
-    const stepsFor = (repos: string[]): DoneStep[] => [
+  declareDone(_changeName: string): { view: DeclareView; steps: StepProgress[] } {
+    const verifying: StepProgress = { kind: 'verifying', label: 'Declaring done: the plugin is verifying the change', repo: null, check: null };
+    const stepsFor = (repos: string[]): StepProgress[] => [
       verifying,
-      ...repos.flatMap((repo): DoneStep[] => [{ kind: 'push', label: `Pushing ${repo}` }, { kind: 'pullRequest', label: `Opening a pull request in ${repo}` }]),
+      ...repos.flatMap((repo): StepProgress[] => [{ kind: 'push', label: `Pushing ${repo}`, repo, check: null }, { kind: 'pullRequest', label: `Opening a pull request in ${repo}`, repo, check: null }]),
     ];
     const link = (repo: string, number: number) => ({ repo, url: prUrl(repo), number, source: 'plugin' as const });
     switch (this.demo) {

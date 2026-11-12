@@ -253,6 +253,11 @@ export class SdlcRunner {
         this.request.update((r) => (r === null ? r : { ...r, error: reasons, busy: false }));
         return;
       }
+      if (done.outcome === 'stopped') {
+        // Stopped by the engineer: the wording of what was left belongs to the stop step's own task.
+        this.request.update((r) => (r === null ? r : { ...r, error: 'The rename was stopped.', busy: false }));
+        return;
+      }
       this.finishName({ branch: done.to, change: ask.change, from: done.from, oldPullRequests: done.oldPullRequests });
       this.namedCount.update((n) => n + 1);
     } catch (e) {
@@ -537,6 +542,10 @@ export class SdlcRunner {
       if (started.kind === 'branchTaken' || started.kind === 'branchInvalid') return { kind: 'retry', ask: 'branch', problems: started.problems };
       if (started.kind === 'scope') return { kind: 'retry', ask: 'scope', problems: started.problems };
       this.toasts.error(started.problems.join('\n'));
+      return { kind: 'stopped' };
+    }
+    if (started.outcome === 'stopped') {
+      this.toasts.error('Starting the change was stopped.');
       return { kind: 'stopped' };
     }
     if (started.outcome === 'failed') {

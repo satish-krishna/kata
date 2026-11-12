@@ -44,7 +44,8 @@ import type { BaseInfo } from '@bindings/BaseInfo';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { DeclareView } from '@bindings/DeclareView';
-import type { DoneStep } from '@bindings/DoneStep';
+import type { RunningStep } from '@bindings/RunningStep';
+import type { StepEvent } from '@bindings/StepEvent';
 import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
@@ -191,8 +192,10 @@ export class TauriTransport extends KataTransport {
   pickDirectory() { return this.ipc.open({ directory: true, multiple: false }) as Promise<string | null>; }
   pickOpenSpec() { return this.ipc.open({ multiple: false, filters: SPEC_FILTERS }) as Promise<string | null>; }
   pickSaveSpec() { return this.ipc.save({ filters: SPEC_FILTERS }) as Promise<string | null>; }
-  onDoneStep(cb: (step: DoneStep) => void) {
-    return this.ipc.listen<DoneStep>('sdlc://done-step', (e) => cb(e.payload));
+  stopStep(change: ChangeRef) { return this.ipc.invoke<boolean>('sdlc_stop_step', { change }); }
+  steps() { return this.ipc.invoke<RunningStep[]>('sdlc_steps'); }
+  onStep(cb: (event: StepEvent) => void) {
+    return this.ipc.listen<StepEvent>('sdlc://step', (e) => cb(e.payload));
   }
   onBuildState(cb: (event: BuildEvent) => void) {
     return this.ipc.listen<BuildEvent>('sdlc://build', (e) => cb(e.payload));

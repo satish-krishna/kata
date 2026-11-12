@@ -71,7 +71,7 @@ import {
 import { shownBuild, shownDocument, type DocNotice, type ReadError, type Shown } from '../../lib/doc-notice';
 import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy } from '../../lib/doc-rail';
 import { prNumber } from '../../lib/pull-request';
-import { DONE_STEP_LINE, type DoneReport } from '../../lib/sdlc-done';
+import { DONE_PROGRESS_LINE, type DoneReport } from '../../lib/sdlc-done';
 import { section } from '../../lib/doc';
 import { fullPipelineIdea } from '../../lib/sdlc-fix';
 import { inTauri } from '../../lib/mock';
@@ -761,7 +761,9 @@ export class ChangePageViewModel {
     if (!w) return;
     const ref = { workspace: w.folder, system: this.system(), change: this.changeName() };
     let view: DeclareView | null = null;
-    const unlisten = await this.transport.onDoneStep((step) => this.progress.begin(DONE_STEP_LINE[step.kind], step.label, 'lock'));
+    const unlisten = await this.transport.onStep((event) => {
+      if (event.change.change === ref.change && event.kind === 'declaringDone') this.progress.begin(DONE_PROGRESS_LINE[event.progress.kind], event.progress.label, 'lock');
+    });
     let out: Awaited<ReturnType<LockStore['runSteps']>>;
     try {
       out = await this.lock.runSteps('Opening pull requests', [

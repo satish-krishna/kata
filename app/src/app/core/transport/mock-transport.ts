@@ -44,7 +44,8 @@ import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { DeclareView } from '@bindings/DeclareView';
-import type { DoneStep } from '@bindings/DoneStep';
+import type { RunningStep } from '@bindings/RunningStep';
+import type { StepEvent } from '@bindings/StepEvent';
 import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
@@ -127,7 +128,7 @@ export class MockTransport extends KataTransport {
   /** Every run store listening for events: a build starts several runs, each with its own listener. */
   private readonly listeners = new Set<(runId: string, ev: KataEvent, seq?: number) => void>();
   /** Everything listening for what publishing is doing. */
-  private readonly doneListeners = new Set<(step: DoneStep) => void>();
+  private readonly stepListeners = new Set<(event: StepEvent) => void>();
   private readonly runs = new Map<string, ScriptedRun>();
   /** The change of each document run started through `sdlcRunChange`, by run id; a run that has ended no longer holds the checkout. */
   private readonly changeRunsLive = new Map<string, string>();
@@ -443,7 +444,8 @@ export class MockTransport extends KataTransport {
   /** The plugin's answer to declaring the change done, with the steps it reports on the way; `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` give each of the other answers. */
   async sdlcDeclareDone(change: ChangeRef): Promise<DeclareView> {
     const { view, steps } = this.sdlc.declareDone(change.change);
-    for (const step of steps) for (const listen of [...this.doneListeners]) listen(step);
+    const key = mockChangeKey(change);
+    for (const progress of steps) for (const listen of [...this.stepListeners]) listen({ change: key, kind: 'declaringDone', progress });
     return view;
   }
   /** `?demo=pr-fail` makes the read fail, so the browser checks can see the "Could not check pull requests" note; `?demo=one-pr` keeps only the
@@ -466,9 +468,12 @@ export class MockTransport extends KataTransport {
   pickOpenSpec(): Promise<string | null> { return Promise.resolve(null); }
   pickSaveSpec(): Promise<string | null> { return Promise.resolve(null); }
 
-  async onDoneStep(cb: (step: DoneStep) => void): Promise<() => void> {
-    this.doneListeners.add(cb);
-    return () => { this.doneListeners.delete(cb); };
+  /** Nothing to stop yet. */
+  async stopStep(_change: ChangeRef): Promise<boolean> { return false; }
+  async steps(): Promise<RunningStep[]> { return []; }
+  async onStep(cb: (event: StepEvent) => void): Promise<() => void> {
+    this.stepListeners.add(cb);
+    return () => { this.stepListeners.delete(cb); };
   }
 
   async onRunEvent(cb: (runId: string, ev: KataEvent, seq?: number) => void): Promise<() => void> {

@@ -1,6 +1,6 @@
 import { TauriTransport, type TauriIpc } from './tauri-transport';
 import { seedSpec } from '../../lib/mock';
-import type { DoneStep } from '@bindings/DoneStep';
+import type { StepEvent } from '@bindings/StepEvent';
 import type { KataEvent } from '../../lib/events';
 import type { Settings } from '@bindings/Settings';
 import type { Snapshot } from '@bindings/Snapshot';
@@ -200,15 +200,16 @@ describe('TauriTransport', () => {
     expect(seen).toEqual([['7', event, 12]]);
   });
 
-  it('hands the payload of sdlc://done-step over as the step', async () => {
+  it('hands the payload of sdlc://step over as the step event', async () => {
     const ipc = fakeIpc();
     const t = new TauriTransport(asIpc(ipc));
-    const seen: DoneStep[] = [];
-    await t.onDoneStep((step) => seen.push(step));
-    const [event, handler] = ipc.listen.mock.calls[0] as unknown as [string, (e: { payload: DoneStep }) => void];
-    expect(event).toBe('sdlc://done-step');
-    handler({ payload: { kind: 'push', label: 'Pushing commerce-core' } });
-    expect(seen).toEqual([{ kind: 'push', label: 'Pushing commerce-core' }]);
+    const seen: StepEvent[] = [];
+    await t.onStep((step) => seen.push(step));
+    const [event, handler] = ipc.listen.mock.calls[0] as unknown as [string, (e: { payload: StepEvent }) => void];
+    expect(event).toBe('sdlc://step');
+    const payload: StepEvent = { change: { workspace: { key: 'w', name: 'w' }, system: 's', change: 'c' }, kind: 'declaringDone', progress: { kind: 'push', label: 'Pushing commerce-core', repo: 'commerce-core', check: null } };
+    handler({ payload });
+    expect(seen).toEqual([payload]);
   });
 
   it.each([
