@@ -4,6 +4,7 @@
 use crate::ai_sdlc::state::{ChangeState, ChangeTrack};
 use crate::ai_sdlc::{Answer, Place, Program, StepOutcome};
 use crate::frontmatter;
+use kata_core::proc::CancelToken;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -105,7 +106,7 @@ pub fn apply(
         "--document",
         file,
     ];
-    event_outcome(&program.step(&command, &at))
+    event_outcome(&program.step_long(&command, &at, &CancelToken::new(), None))
 }
 
 /// Rejects `change` the way the plugin's own `intent --reject` and `fix --reject` do (section 13 of its
@@ -172,7 +173,10 @@ pub fn reject(
         &change.change,
         "--abandon",
     ];
-    match program.step(&command, place).outcome {
+    match program
+        .step_long(&command, place, &CancelToken::new(), None)
+        .outcome
+    {
         StepOutcome::Passed { .. } => RejectOutcome::Rejected {
             record_branch: branch,
         },
@@ -274,7 +278,10 @@ fn commit(
     ];
     command.extend(paths.iter().map(String::as_str));
     // Exit 0 is committed, or nothing differed from `HEAD`.
-    match program.step(&command, at).outcome {
+    match program
+        .step_long(&command, at, &CancelToken::new(), None)
+        .outcome
+    {
         StepOutcome::Passed { .. } => Committed::Yes,
         StepOutcome::Refused { problems } | StepOutcome::Failed { problems, .. } => {
             Committed::No(if problems.is_empty() {
@@ -389,14 +396,16 @@ mod tests {
                 workspace: ws.clone(),
             };
             let started = program()
-                .run(
+                .step_long(
                     &[
                         "change", "start", "--json", "--system", SYSTEM, "--change", CHANGE,
                         "--type", "feat", "--scope", "demo", "--title", "Greeting",
                     ],
                     &place,
+                    &kata_core::proc::CancelToken::new(),
+                    None,
                 )
-                .unwrap();
+                .json;
             assert_eq!(started["outcome"], "passed", "{started}");
             Fx {
                 copy: ws.join(".ai-sdlc").join("copies").join(CHANGE),

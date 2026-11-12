@@ -4,7 +4,7 @@
 use crate::ai_sdlc::{Answer, Place, Program, StepOutcome};
 use crate::plugin::{GhPresence, Readiness};
 use crate::pull_requests::{PullRequestSource, RecordedPullRequest};
-use kata_core::proc::LineSink;
+use kata_core::proc::{CancelToken, LineSink};
 use serde::Serialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -226,7 +226,7 @@ pub fn declare(
         "--change",
         change,
     ];
-    outcome(&program.step_streaming(&command, place, relay))
+    outcome(&program.step_long(&command, place, &CancelToken::new(), Some(relay)))
 }
 
 #[cfg(test)]

@@ -595,14 +595,16 @@ mod tests {
                 workspace: ws.clone(),
             };
             let started = program()
-                .run(
+                .step_long(
                     &[
                         "change", "start", "--json", "--system", SYSTEM, "--change", CHANGE,
                         "--type", "feat", "--scope", "demo", "--title", "Greeting",
                     ],
                     &place,
+                    &kata_core::proc::CancelToken::new(),
+                    None,
                 )
-                .unwrap();
+                .json;
             assert_eq!(started["outcome"], "passed", "{started}");
             let copy = ws.join(".ai-sdlc").join("copies").join(CHANGE);
             Fx { dir, place, copy }

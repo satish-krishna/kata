@@ -420,14 +420,19 @@ impl build_host::Tools for PluginTools {
     ) -> Result<Value, sdlc::ai_sdlc::ProgramError> {
         Self::program(&place.workspace)?.run(command, place)
     }
-    fn exec(
+    fn step_long(
         &self,
         command: &[&str],
         place: &sdlc::ai_sdlc::Place,
-    ) -> Result<sdlc::ai_sdlc::Reply, String> {
-        Self::program(&place.workspace)
-            .map_err(|e| e.to_string())?
-            .exec(command, place)
+        token: &kata_core::proc::CancelToken,
+        on_line: Option<kata_core::proc::LineSink>,
+    ) -> sdlc::ai_sdlc::Answer {
+        match Self::program(&place.workspace) {
+            Ok(tools) => tools.step_long(command, place, token, on_line),
+            Err(e) => {
+                sdlc::ai_sdlc::answer_of(Err(sdlc::ai_sdlc::ExecError::Machine(e.to_string())))
+            }
+        }
     }
     fn change_state(
         &self,

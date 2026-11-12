@@ -1,9 +1,11 @@
 //! The one door to the ai-sdlc program: `node <plugin>/tools/ai-sdlc.ts <command>`.
 //!
-//! Every call Kata makes to the program goes through [`execute`]: it starts Node.js hidden, with a time
-//! limit, and kills the whole process tree on a timeout. Every answer is read by [`answer_of`]: a step
-//! (an event, a commit, a change command) through [`Program::step`] as a typed [`StepOutcome`], and a
-//! read through [`Program::run`] as its JSON.
+//! Every call Kata makes to the program goes through [`execute`]: it starts Node.js hidden and kills the
+//! whole process tree when it ends early. A quick read has a time limit ([`TIMEOUT`]); a long step
+//! ([`call_kind`]) has none and ends when the plugin answers or its [`CancelToken`] is cancelled. Every
+//! answer is read by [`answer_of`]: a step (an event, a commit, a change command) through
+//! [`Program::step`] or [`Program::step_long`] as a typed [`StepOutcome`], and a read through
+//! [`Program::run`] as its JSON.
 pub mod list;
 pub mod show;
 pub mod state;
@@ -20,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// How long a quick read may run before its process tree is killed.
-pub const TIMEOUT: Duration = Duration::from_secs(60);
+pub const TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Whether a command is a quick read, which has a time limit, or a long step, which has none and can be
 /// stopped.
@@ -30,9 +32,18 @@ pub enum CallKind {
     Long,
 }
 
-/// The kind of `command`.
-pub fn call_kind(_command: &[&str]) -> CallKind {
-    CallKind::Quick
+/// What a refused long command is told.
+const LONG_REFUSED: &str = "a long step must be run through step_long";
+
+/// The kind of `command`: the commands that change things and run the team's hooks or git are long;
+/// every read is quick.
+pub fn call_kind(command: &[&str]) -> CallKind {
+    match command {
+        ["change", "start" | "rename" | "remove", ..] | ["commit", ..] | ["run", ..] => {
+            CallKind::Long
+        }
+        _ => CallKind::Quick,
+    }
 }
 
 /// Why a step has no exit to read.
@@ -232,7 +243,12 @@ pub fn answer_of(reply: Result<Reply, ExecError>) -> Answer {
     let reply = match reply {
         Ok(reply) => reply,
         Err(ExecError::Machine(reason)) => return machine(reason, Value::Null),
-        Err(ExecError::Stopped) => return machine("stub".to_string(), Value::Null),
+        Err(ExecError::Stopped) => {
+            return Answer {
+                outcome: StepOutcome::Stopped,
+                json: Value::Null,
+            }
+        }
     };
     let json = reply
         .stdout
@@ -391,21 +407,25 @@ impl Program {
     /// `--stream` to an event when `on_line` is given.
     pub fn step_long(
         &self,
-        _command: &[&str],
-        _place: &Place,
-        _token: &CancelToken,
-        _on_line: Option<LineSink>,
+        command: &[&str],
+        place: &Place,
+        token: &CancelToken,
+        on_line: Option<LineSink>,
     ) -> Answer {
-        unimplemented!("step_long")
+        let mut args = command.to_vec();
+        if on_line.is_some() && args.first() == Some(&"run") && !args.contains(&"--stream") {
+            let at = args.iter().position(|a| *a == "--").unwrap_or(args.len());
+            args.insert(at, "--stream");
+        }
+        answer_of(self.exec_bound(&args, place, Bound::UntilCancelled(token.clone()), on_line))
     }
 
-    /// [`Program::step`] that hands each whole stdout line to `on_line` while it runs (`--stream`).
-    pub fn step_streaming(&self, command: &[&str], place: &Place, on_line: LineSink) -> Answer {
-        answer_of(self.exec_bound(command, place, Bound::Within(TIMEOUT), Some(on_line)))
-    }
-
-    /// Runs `command` in `place` and returns how it exited, within [`TIMEOUT`].
+    /// Runs `command`, a quick read, in `place` and returns how it exited, within [`TIMEOUT`]. A long
+    /// command is refused: it runs through [`Program::step_long`], which can be stopped.
     pub fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, ExecError> {
+        if call_kind(command) == CallKind::Long {
+            return Err(ExecError::Machine(LONG_REFUSED.to_string()));
+        }
         self.exec_within(command, place, TIMEOUT)
     }
 
@@ -485,6 +505,9 @@ impl Program {
     /// Runs the program with `args` as given, in `cwd`, within [`TIMEOUT`], and reads the answer as
     /// `run` does.
     fn call(&self, args: &[&str], cwd: &Path) -> Result<Value, ProgramError> {
+        if call_kind(args) == CallKind::Long {
+            return Err(could_not_run(LONG_REFUSED));
+        }
         let bound = Bound::Within(TIMEOUT);
         let reply = match execute(&self.node, &self.entry, cwd, args, bound, None) {
             Ok(exit) => Ok(Reply {
@@ -683,7 +706,12 @@ mod tests {
             "problems": ["hook prep could not run"], "hooks": [],
             "failed": {"id": "prep", "onFailure": "stop", "output": "spawn prep ENOENT"}});
         let (program, place) = answering(dir.path(), 2, &event);
-        let answer = program.step(&["run", "build.start", "--json"], &place);
+        let answer = program.step_long(
+            &["run", "build.start", "--json"],
+            &place,
+            &CancelToken::new(),
+            None,
+        );
         assert_eq!(
             answer.outcome,
             StepOutcome::CouldNotRun {
@@ -707,7 +735,12 @@ mod tests {
         let (program, place) = answering(dir.path(), 2, &check);
         assert_eq!(
             program
-                .step(&["run", "build.start", "--json"], &place)
+                .step_long(
+                    &["run", "build.start", "--json"],
+                    &place,
+                    &CancelToken::new(),
+                    None
+                )
                 .outcome,
             StepOutcome::CouldNotRun {
                 reason: "the hook configuration on the base branch: bad".into(),
@@ -727,7 +760,12 @@ mod tests {
         let (program, place) = answering(dir.path(), 1, &event);
         assert_eq!(
             program
-                .step(&["run", "build.start", "--json"], &place)
+                .step_long(
+                    &["run", "build.start", "--json"],
+                    &place,
+                    &CancelToken::new(),
+                    None
+                )
                 .outcome,
             StepOutcome::Failed {
                 problems: vec!["hook lint failed with exit code 1".into()],
@@ -749,7 +787,12 @@ mod tests {
         let (program, place) = answering(dir.path(), 0, &event);
         assert_eq!(
             program
-                .step(&["run", "doc.accept", "--json"], &place)
+                .step_long(
+                    &["run", "doc.accept", "--json"],
+                    &place,
+                    &CancelToken::new(),
+                    None
+                )
                 .outcome,
             StepOutcome::Passed {
                 problems: vec![
@@ -888,7 +931,7 @@ mod tests {
         testutil::commit_file(&master, ".ai-sdlc.json", &marker.to_string(), "marker");
         let (program, mut place) = scripted(
             dir.path(),
-            "setTimeout(() => { process.stdout.write(JSON.stringify({outcome: 'passed', problems: []}) + '\n'); }, 3000);",
+            "setTimeout(() => { process.stdout.write(JSON.stringify({outcome: 'passed', problems: []}) + '\\n'); }, 3000);",
         );
         place.master = master;
         let answer = program.step_long(

@@ -6,6 +6,7 @@ use crate::ai_sdlc::show::ChangeShow;
 use crate::ai_sdlc::state::ChangeState;
 use crate::ai_sdlc::{Place, Program, StepOutcome};
 use crate::git::{Repo, StatusEntry};
+use kata_core::proc::CancelToken;
 use serde::Serialize;
 use serde_json::Value;
 use std::path::Path;
@@ -113,7 +114,7 @@ pub fn branch(program: &Program, place: &Place, change: &str) -> Result<String, 
 /// offer keeps the copy; the refusal is answered as `Keep` naming the files.
 pub fn remove(program: &Program, place: &Place, change: &ChangeState) -> RemoveOutcome {
     let command = ["change", "remove", "--json", "--change", &change.change];
-    let answer = program.step(&command, place);
+    let answer = program.step_long(&command, place, &CancelToken::new(), None);
     let problems = match answer.outcome {
         StepOutcome::Passed { .. } => {
             return RemoveOutcome::Removed {
@@ -196,14 +197,16 @@ mod tests {
                 workspace: ws.clone(),
             };
             let started = program()
-                .run(
+                .step_long(
                     &[
                         "change", "start", "--json", "--system", SYSTEM, "--change", CHANGE,
                         "--type", "feat", "--scope", "demo", "--title", "Greeting",
                     ],
                     &place,
+                    &kata_core::proc::CancelToken::new(),
+                    None,
                 )
-                .unwrap();
+                .json;
             assert_eq!(started["outcome"], "passed", "{started}");
             let copy = ws.join(".ai-sdlc").join("copies").join(CHANGE);
             // A commit on the change branch, so git does not see the branch as merged into main and the

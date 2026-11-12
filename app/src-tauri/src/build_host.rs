@@ -1,16 +1,15 @@
-//! The backend's host for each change's build: one `Coordinator` per change, the holds on product
+//! Th backend's host for each change's build: one `Coordinator` per change, the holds on product
 //! repositories, and the plugin's `build.start` that prepares every repository before any run starts.
 //! The host executes the coordinator's commands; it decides nothing the coordinator or the plugin decides.
 //! Everything outside the process (the ai-sdlc program, the run table and sidecar, the event channel)
 //! sits behind [`Tools`] and [`Launcher`], so the tests need no Tauri app.
 
 use crate::runs::{self, Lane};
+use kata_core::proc::{CancelToken, LineSink};
 use kata_core::spec::PermissionMode;
 use kata_core::RunSpec;
 use kata_sdlc::ai_sdlc::state::{self, read_state, ChangeState};
-use kata_sdlc::ai_sdlc::{
-    answer_of, HookFailure, Place, Program, ProgramError, Reply, StepOutcome,
-};
+use kata_sdlc::ai_sdlc::{Answer, HookFailure, Place, Program, ProgramError, StepOutcome};
 use kata_sdlc::coordinator::{
     self, BuildChoices, BuildFacts, BuildPhase, BuildState, Command, Coordinator, Input,
 };
@@ -245,8 +244,15 @@ pub trait Tools: Send + Sync {
     fn resolve(&self, workspace: &Path) -> Result<Place, ProgramError>;
     /// One program command that reads, as `Program::run`.
     fn run(&self, command: &[&str], place: &Place) -> Result<Value, ProgramError>;
-    /// One program step, as `Program::exec`: how it exited, for `ai_sdlc::answer_of` to read.
-    fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String>;
+    /// One long program step, as `Program::step_long`: no time limit, ended when the plugin answers or
+    /// `token` is cancelled.
+    fn step_long(
+        &self,
+        command: &[&str],
+        place: &Place,
+        token: &CancelToken,
+        on_line: Option<LineSink>,
+    ) -> Answer;
     /// Where `change` stands, read for that change alone; `None` when the plugin knows no such change.
     fn change_state(
         &self,
@@ -320,8 +326,14 @@ impl Tools for ProgramTools {
         self.program.run(command, place)
     }
 
-    fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String> {
-        self.program.exec(command, place)
+    fn step_long(
+        &self,
+        command: &[&str],
+        place: &Place,
+        token: &CancelToken,
+        on_line: Option<LineSink>,
+    ) -> Answer {
+        self.program.step_long(command, place, token, on_line)
     }
 
     fn change_state(
@@ -563,6 +575,11 @@ fn failure(outcome: StepOutcome) -> Option<StartOutcome> {
                 _ => reason,
             },
             repo,
+        }),
+        // The plan gives a stopped build start its own outcome (T5).
+        StepOutcome::Stopped => Some(StartOutcome::CouldNotRun {
+            output: "it was stopped".to_string(),
+            repo: None,
         }),
     }
 }
@@ -1404,14 +1421,18 @@ impl BuildHost {
         for repo in repos {
             check.extend(["--repo", repo]);
         }
-        let answer = answer_of(self.tools.exec(&check, place));
+        let answer = self
+            .tools
+            .step_long(&check, place, &CancelToken::new(), None);
         if let Some(outcome) = failure(answer.outcome) {
             return Err(outcome);
         }
         for repo in repos {
             let mut command: Vec<&str> = base.to_vec();
             command.extend(["--repo", repo]);
-            let answer = answer_of(self.tools.exec(&command, place));
+            let answer = self
+                .tools
+                .step_long(&command, place, &CancelToken::new(), None);
             if let Some(outcome) = failure(answer.outcome) {
                 return Err(outcome);
             }
@@ -1745,6 +1766,7 @@ struct Before {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kata_sdlc::ai_sdlc::{answer_of, ExecError, Reply};
     use kata_sdlc::coordinator::BuildPhase;
     use kata_sdlc::format::{ParsedReviewSection, ParsedTask};
     use kata_sdlc::holds::{Purpose, RepoKey};
@@ -1977,22 +1999,7 @@ mod tests {
         }
     }
 
-    impl Tools for FakeTools {
-        fn resolve(&self, _workspace: &Path) -> Result<Place, ProgramError> {
-            Ok(self.place.clone())
-        }
-        fn run(&self, command: &[&str], _place: &Place) -> Result<Value, ProgramError> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(command.iter().map(|s| s.to_string()).collect());
-            if command.starts_with(&["change", "show"]) {
-                let repos: BTreeMap<&String, Value> =
-                    self.system_repos.iter().map(|r| (r, json!({}))).collect();
-                return Ok(json!({"repos": repos}));
-            }
-            panic!("a step goes through exec: {command:?}")
-        }
+    impl FakeTools {
         fn exec(&self, command: &[&str], _place: &Place) -> Result<Reply, String> {
             self.calls
                 .lock()
@@ -2013,6 +2020,36 @@ mod tests {
                 Some(answer) => answer,
                 None => Ok(Reply::json(0, &passed_start(&repos[0], &[]))),
             }
+        }
+    }
+
+    impl Tools for FakeTools {
+        fn step_long(
+            &self,
+            command: &[&str],
+            place: &Place,
+            token: &CancelToken,
+            _on_line: Option<LineSink>,
+        ) -> Answer {
+            if token.is_cancelled() {
+                return answer_of(Err(ExecError::Stopped));
+            }
+            answer_of(self.exec(command, place).map_err(ExecError::Machine))
+        }
+        fn resolve(&self, _workspace: &Path) -> Result<Place, ProgramError> {
+            Ok(self.place.clone())
+        }
+        fn run(&self, command: &[&str], _place: &Place) -> Result<Value, ProgramError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(command.iter().map(|s| s.to_string()).collect());
+            if command.starts_with(&["change", "show"]) {
+                let repos: BTreeMap<&String, Value> =
+                    self.system_repos.iter().map(|r| (r, json!({}))).collect();
+                return Ok(json!({"repos": repos}));
+            }
+            panic!("a step goes through exec: {command:?}")
         }
         fn change_state(
             &self,
@@ -3677,7 +3714,7 @@ mod tests {
         let mut copies = HashMap::new();
         for change in changes {
             let started = program
-                .run(
+                .step_long(
                     &[
                         "change",
                         "start",
@@ -3696,8 +3733,10 @@ mod tests {
                         &place.workspace.display().to_string(),
                     ],
                     &place,
+                    &kata_core::proc::CancelToken::new(),
+                    None,
                 )
-                .unwrap();
+                .json;
             assert_eq!(started["outcome"], "passed", "{started}");
             let copy = started["details"]["copy"].as_str().unwrap().to_string();
             std::fs::create_dir_all(Path::new(&copy).join(format!("intent/{SYSTEM}/{change}")))
@@ -3729,14 +3768,20 @@ mod tests {
     }
 
     impl Tools for RealRun {
+        fn step_long(
+            &self,
+            command: &[&str],
+            place: &Place,
+            token: &CancelToken,
+            on_line: Option<LineSink>,
+        ) -> Answer {
+            self.real.step_long(command, place, token, on_line)
+        }
         fn resolve(&self, workspace: &Path) -> Result<Place, ProgramError> {
             self.real.resolve(workspace)
         }
         fn run(&self, command: &[&str], place: &Place) -> Result<Value, ProgramError> {
             self.real.run(command, place)
-        }
-        fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String> {
-            self.real.exec(command, place)
         }
         fn change_state(
             &self,
@@ -3815,14 +3860,20 @@ mod tests {
     }
 
     impl Tools for ReadsReal {
+        fn step_long(
+            &self,
+            command: &[&str],
+            place: &Place,
+            token: &CancelToken,
+            on_line: Option<LineSink>,
+        ) -> Answer {
+            self.real.step_long(command, place, token, on_line)
+        }
         fn resolve(&self, workspace: &Path) -> Result<Place, ProgramError> {
             self.real.resolve(workspace)
         }
         fn run(&self, command: &[&str], place: &Place) -> Result<Value, ProgramError> {
             self.real.run(command, place)
-        }
-        fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String> {
-            self.real.exec(command, place)
         }
         fn change_state(
             &self,

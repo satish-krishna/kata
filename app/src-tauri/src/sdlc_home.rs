@@ -833,14 +833,16 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
         for n in 0..open {
             let name = format!("2026-11-0{}-open-{n}", n + 1);
             let started = program
-                .run(
+                .step_long(
                     &[
                         "change", "start", "--json", "--system", "kata", "--change", &name,
                         "--type", "feat", "--scope", "X-1", "--title", "Speed",
                     ],
                     &place,
+                    &kata_core::proc::CancelToken::new(),
+                    None,
                 )
-                .unwrap();
+                .json;
             assert_eq!(started["outcome"], "passed", "{started}");
             let copy = ws.join(".ai-sdlc").join("copies").join(&name);
             let folder = copy.join(format!("intent/kata/{name}"));

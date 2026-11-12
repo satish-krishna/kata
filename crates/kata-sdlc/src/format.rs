@@ -4,13 +4,13 @@
 //! out; Kata never parses those documents itself. `read` asks it for the parsed document
 //! (`ai-sdlc.ts read --json`) and `check_change` asks it to check a change's documents against each
 //! other (`ai-sdlc.ts check`). The program is spawned with an argv array (never a shell), a null
-//! stdin and a 30-second timeout that kills its whole process tree.
+//! stdin and a five-minute timeout that kills its whole process tree.
 //!
 //! The types below mirror `schema/read-result.schema.json` field for field, so they keep the
 //! program's snake_case names.
 use crate::ai_sdlc::Failure;
-use kata_core::proc::Bound;
 use crate::process;
+use kata_core::proc::Bound;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -18,9 +18,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
-
-/// How long the program may run before its process tree is killed.
-const TIMEOUT: Duration = Duration::from_secs(30);
 
 /// One thing wrong with a document: where it is and what it is.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -726,7 +723,7 @@ fn marker_hash(file: &Path) -> u64 {
 /// Runs `node <program> <args>` in `cwd`. Exit 0 and 1 are answers (the document passes, or has
 /// problems); anything else is not.
 fn run(program: &Path, cwd: &Path, args: &[&str]) -> Result<process::CapturedExit, FormatError> {
-    run_within(program, cwd, args, TIMEOUT)
+    run_within(program, cwd, args, crate::ai_sdlc::TIMEOUT)
 }
 
 impl FormatError {

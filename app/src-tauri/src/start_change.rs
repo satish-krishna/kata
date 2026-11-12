@@ -1,6 +1,7 @@
 //! Starting a change: the plugin makes the change's branch and its own copy of the master repository,
 //! and Kata only asks. Kata never creates a branch or a copy itself; a refusal is the plugin's own reason,
 //! sorted by what the engineer can do about it.
+use kata_core::proc::CancelToken;
 use kata_sdlc::ai_sdlc::{HookFailure, Place, Program, StepOutcome};
 use kata_sdlc::naming;
 use serde::Serialize;
@@ -150,7 +151,7 @@ pub fn start_change(
     if let Some(branch) = request.branch {
         command.extend(["--branch", branch]);
     }
-    let answer = program.step(&command, place);
+    let answer = program.step_long(&command, place, &CancelToken::new(), None);
     let text = |key: &str| answer.json["details"][key].as_str().map(str::to_string);
     match answer.outcome {
         StepOutcome::Passed { .. } => match (text("branch"), text("copy")) {
@@ -175,6 +176,11 @@ pub fn start_change(
         StepOutcome::CouldNotRun { reason, hook, .. } => {
             Ok(ChangeStart::CouldNotRun { reason, hook })
         }
+        // The plan gives a stopped start its own outcome (T5).
+        StepOutcome::Stopped => Ok(ChangeStart::CouldNotRun {
+            reason: "it was stopped".to_string(),
+            hook: None,
+        }),
     }
 }
 

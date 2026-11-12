@@ -60,7 +60,14 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 fn plugin(place: &Place, args: &[&str]) -> Value {
-    program().run(args, place).unwrap()
+    match kata_sdlc::ai_sdlc::call_kind(args) {
+        kata_sdlc::ai_sdlc::CallKind::Long => {
+            program()
+                .step_long(args, place, &kata_core::proc::CancelToken::new(), None)
+                .json
+        }
+        kata_sdlc::ai_sdlc::CallKind::Quick => program().run(args, place).unwrap(),
+    }
 }
 
 /// A fake `gh` first on `PATH`, a fake `gpg` for git, and everything put back afterwards.

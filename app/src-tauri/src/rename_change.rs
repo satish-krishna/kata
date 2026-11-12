@@ -1,6 +1,7 @@
 //! Renaming a change's branch: the plugin renames it in the master, the change's copy and every product
 //! repository that has it, all or nothing. Kata renames no branch itself; a refusal is the plugin's own
 //! reasons, as it printed them.
+use kata_core::proc::CancelToken;
 use kata_sdlc::ai_sdlc::{Place, Program, StepOutcome};
 use kata_sdlc::prs::PrEntry;
 use kata_sdlc::pull_requests::{recorded, RecordedPullRequest};
@@ -46,13 +47,15 @@ pub fn rename_change(
     let command = [
         "change", "rename", "--json", "--system", system, "--change", change, "--to", to,
     ];
-    let answer = program.step(&command, place);
+    let answer = program.step_long(&command, place, &CancelToken::new(), None);
     match answer.outcome {
         StepOutcome::Passed { .. } => {}
         StepOutcome::Refused { problems } | StepOutcome::Failed { problems, .. } => {
             return Ok(RenameOutcome::Refused { problems })
         }
         StepOutcome::CouldNotRun { reason, .. } => return Err(reason),
+        // The plan gives a stopped rename its own outcome (T6).
+        StepOutcome::Stopped => return Err("it was stopped".to_string()),
     }
     let answer = answer.json;
     let text = |key: &str| answer[key].as_str().map(str::to_string);

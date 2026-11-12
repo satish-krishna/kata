@@ -9,4 +9,4 @@ export type StepOutcome = { "outcome": "passed", problems: Array<string>, } | { 
 /**
  * The repository the plugin names, when it names one.
  */
-repo: string | null, hook: HookFailure | null, };
+repo: string | null, hook: HookFailure | null, } | { "outcome": "stopped" };
