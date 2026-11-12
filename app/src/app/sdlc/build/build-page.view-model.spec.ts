@@ -1414,6 +1414,22 @@ describe('the shown session follows the decision table', () => {
     expect(await r.mode()).toBe('following');
   });
 
+  it('the review started by itself opens a clean pane', async () => {
+    const r = await repo();
+    await r.send('live-1', { type: 'assistant.text', text: 'last build task said this' });
+    await r.send('live-1', { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.03, duration_ms: 1, result: 'last build task done' });
+    expect(r.session('live-1').summary?.result).toBe('last build task done');
+    await r.start('live-2');
+    const fresh = r.session('live-2');
+    expect(r.shown()).toEqual(['live-2']);
+    expect(fresh.summary).toBeNull();
+    expect(JSON.stringify(fresh.events)).not.toContain('last build task said this');
+    expect(fresh.asks).toEqual([]);
+    expect(fresh.messages).toEqual([]);
+    // The earlier run stays a session of its own, with its summary.
+    expect(r.session('live-1').summary?.result).toBe('last build task done');
+  });
+
   it('picked P, a new session starts: P stays in view', async () => {
     const r = await repo();
     r.vm.pickSession(REPO, 'run-a');

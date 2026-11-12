@@ -1773,3 +1773,33 @@ describe('New change and copy removal can be stopped', () => {
     expect(toastText()).toBe(message);
   });
 });
+
+describe('SdlcHomeViewModel: a new triage clears the pane (R10.1)', () => {
+  const EARLIER_SAYS = 'Earlier triage said this';
+
+  it.each<[string, string]>([
+    ['triage', 'sdlc-commerce-intent'],
+    ['triage', 'sdlc-triage'],
+  ])('the pane shows nothing of the earlier %s run once the next run (%s) begins', async (_earlier, next) => {
+    const { vm, transport, runAgent, runner } = setup();
+    runAgent.mockRestore();
+    await vm.init();
+    const solo = TestBed.inject(RunStore);
+    const emit = (id: string, ev: unknown) => (transport as unknown as { emit(id: string, ev: unknown): void }).emit(id, ev);
+    const id = await solo.startRun({ ...seedSpec(), name: 'sdlc-triage' }, undefined, async () => 'earlier-triage');
+    emit(id!, { type: 'assistant.text', text: EARLIER_SAYS });
+    emit(id!, { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.03, duration_ms: 21000, result: EARLIER_SAYS });
+    expect(vm.summary()?.result).toBe(EARLIER_SAYS);
+    // The earlier run's lock view is closed, as the engineer does before starting the next.
+    TestBed.inject(LockStore).close();
+    void runner.run('Next run', { ...seedSpec(), name: next }, { workspaceId: 'w', target: null, link: null });
+    await vi.waitFor(() => expect(vm.session()).not.toBeNull());
+    expect(vm.summary()).toBeNull();
+    expect(JSON.stringify(vm.events())).not.toContain(EARLIER_SAYS);
+    expect(vm.asks()).toEqual([]);
+    expect(vm.messages()).toEqual([]);
+    expect(vm.permissions()).toEqual([]);
+    expect(vm.given()).toBeNull();
+    TestBed.inject(LockStore).cancel();
+  });
+});
