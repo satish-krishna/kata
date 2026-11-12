@@ -1,6 +1,9 @@
 //! The long steps of a change that are not a run: one entry per change, its latest progress label and the
 //! token that stops it.
 
+// The callers arrive with the commands that run a long step (T5, T7, T8); until then only the tests build steps.
+#![allow(dead_code)]
+
 use crate::build_host::ChangeRef;
 use kata_core::proc::CancelToken;
 use kata_sdlc::accept::ChangeDocument;
@@ -32,7 +35,21 @@ pub enum StepKind {
 impl StepKind {
     /// The close question's words for what the change is doing.
     pub fn doing(&self) -> String {
-        todo!()
+        let doc = |d: &ChangeDocument| match d {
+            ChangeDocument::Intent => "intent",
+            ChangeDocument::Spec => "spec",
+            ChangeDocument::Plan => "plan",
+        };
+        match self {
+            StepKind::PreparingBuild => "preparing".into(),
+            StepKind::PreparingReview => "preparing the review".into(),
+            StepKind::Starting => "starting".into(),
+            StepKind::Renaming => "being renamed".into(),
+            StepKind::RemovingCopy => "having its copy removed".into(),
+            StepKind::Accepting(d) => format!("accepting its {}", doc(d)),
+            StepKind::Rejecting(d) => format!("rejecting its {}", doc(d)),
+            StepKind::DeclaringDone => "being declared done".into(),
+        }
     }
 }
 
@@ -98,7 +115,11 @@ impl StepGuard {
 }
 
 impl Drop for StepGuard {
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        if let Ok(mut entries) = self.entries.lock() {
+            entries.remove(&self.key);
+        }
+    }
 }
 
 impl StepTable {
@@ -109,20 +130,69 @@ impl StepTable {
         }
     }
 
-    pub fn begin(&self, _change: ChangeKey, _kind: StepKind) -> Result<StepGuard, Busy> {
-        todo!()
+    /// Register a step of `change`, or `Busy` when it already has one.
+    pub fn begin(&self, change: ChangeKey, kind: StepKind) -> Result<StepGuard, Busy> {
+        let mut entries = self.entries.lock().unwrap();
+        if entries.contains_key(&change) {
+            return Err(Busy);
+        }
+        let token = CancelToken::new();
+        entries.insert(
+            change.clone(),
+            Entry {
+                kind,
+                token: token.clone(),
+                progress: None,
+            },
+        );
+        Ok(StepGuard {
+            entries: self.entries.clone(),
+            key: change,
+            token,
+        })
     }
 
-    pub fn label(&self, _change: &ChangeKey, _progress: StepProgress) {
-        todo!()
+    /// Record the latest progress of the change's step and send it to the page.
+    pub fn label(&self, change: &ChangeKey, progress: StepProgress) {
+        let kind = {
+            let mut entries = self.entries.lock().unwrap();
+            let Some(entry) = entries.get_mut(change) else {
+                return;
+            };
+            entry.progress = Some(progress.clone());
+            entry.kind
+        };
+        (self.emit)(StepEvent {
+            change: change.clone(),
+            kind,
+            progress,
+        });
     }
 
-    pub fn stop(&self, _change: &ChangeKey) -> bool {
-        todo!()
+    /// Cancel the change's step; whether there was one.
+    pub fn stop(&self, change: &ChangeKey) -> bool {
+        match self.entries.lock().unwrap().get(change) {
+            Some(entry) => {
+                entry.token.cancel();
+                true
+            }
+            None => false,
+        }
     }
 
+    /// Every step that is running.
     pub fn running(&self) -> Vec<RunningStep> {
-        todo!()
+        self.entries
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(change, entry)| RunningStep {
+                change: change.clone(),
+                kind: entry.kind,
+                doing: entry.kind.doing(),
+                progress: entry.progress.clone(),
+            })
+            .collect()
     }
 }
 
