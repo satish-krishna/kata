@@ -231,11 +231,15 @@ fn run_inner(spec: &Limited, on_line: Option<LineSink>) -> Outcome {
         readers.push(spawn_reader(stderr, Arc::clone(&tail)));
     }
 
-    // Red-step stub: only the time limit is honored; the token is not read yet.
     let deadline = spec.bound.limit().map(|limit| Instant::now() + limit);
+    let mut cancelled = false;
     let status = loop {
         match tree.try_wait() {
             Ok(Some(status)) => break Some(status),
+            Ok(None) if spec.bound.token().is_some_and(CancelToken::is_cancelled) => {
+                cancelled = true;
+                break None;
+            }
             Ok(None) if deadline.is_some_and(|deadline| Instant::now() >= deadline) => break None,
             Ok(None) => thread::sleep(POLL),
             Err(e) => {
@@ -256,6 +260,7 @@ fn run_inner(spec: &Limited, on_line: Option<LineSink>) -> Outcome {
             tail,
             stdout: std::mem::take(&mut *kept.lock().unwrap_or_else(|e| e.into_inner())),
         },
+        None if cancelled => Outcome::Cancelled { tail },
         None => Outcome::TimedOut { tail },
     }
 }
