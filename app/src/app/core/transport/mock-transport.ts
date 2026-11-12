@@ -46,6 +46,8 @@ import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { RunningStep } from '@bindings/RunningStep';
 import type { StepEvent } from '@bindings/StepEvent';
+import type { StepKind } from '@bindings/StepKind';
+import type { StepProgress } from '@bindings/StepProgress';
 import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
@@ -129,6 +131,8 @@ export class MockTransport extends KataTransport {
   private readonly listeners = new Set<(runId: string, ev: KataEvent, seq?: number) => void>();
   /** Everything listening for what publishing is doing. */
   private readonly stepListeners = new Set<(event: StepEvent) => void>();
+  /** The long steps held by `?demo=steps-hold`, by change name, each with what stops it. */
+  private readonly heldSteps = new Map<string, { step: RunningStep; stop: () => void }>();
   private readonly runs = new Map<string, ScriptedRun>();
   /** The change of each document run started through `sdlcRunChange`, by run id; a run that has ended no longer holds the checkout. */
   private readonly changeRunsLive = new Map<string, string>();
@@ -395,10 +399,15 @@ export class MockTransport extends KataTransport {
   sdlcTriageChange(transcript: string, system: string): Promise<string | null> {
     return Promise.resolve(this.triageStarted.get(`${system}/${transcript}`) ?? null);
   }
-  sdlcStartChange(_folder: string, _system: string, title: string, _workType: string, _scope: string, branch?: string): Promise<ChangeStart> { return Promise.resolve(this.sdlc.startChange(title, branch)); }
+  sdlcStartChange(folder: string, system: string, title: string, _workType: string, _scope: string, branch?: string): Promise<ChangeStart> {
+    const name = this.sdlc.changeName(title);
+    return this.longStep({ workspace: folder, system, change: name }, 'starting', 'Starting the change', () => this.sdlc.startChange(title, branch), { outcome: 'stopped', answer: [] });
+  }
   sdlcNaming(_folder: string, _masterRepo: string, _system: string): Promise<NamingState> { return Promise.resolve(this.sdlc.naming()); }
   sdlcCheckScope(_folder: string, scope: string): Promise<string[]> { return Promise.resolve(scope.includes(' ') ? ['a scope cannot contain a space'] : []); }
-  sdlcRenameBranch(_folder: string, _workspaceId: string, _system: string, change: string, to: string): Promise<RenameOutcome> { return Promise.resolve(this.sdlc.renameBranch(change, to)); }
+  sdlcRenameBranch(folder: string, _workspaceId: string, system: string, change: string, to: string): Promise<RenameOutcome> {
+    return this.longStep({ workspace: folder, system, change }, 'renaming', 'Renaming the change', () => this.sdlc.renameBranch(change, to), { outcome: 'stopped', answer: [] });
+  }
   /** Refused, as the backend refuses it, while a change's document run is live. */
   sdlcCheckout(master: string, branch: string): Promise<void> {
     const busy = [...this.changeRunsLive].find(([id]) => this.runs.get(id)?.ended !== true);
@@ -406,10 +415,14 @@ export class MockTransport extends KataTransport {
     this.sdlc.checkout(branch);
     return Promise.resolve();
   }
-  sdlcAccept(change: ChangeRef, doc: ChangeDocument): Promise<AcceptOutcome> { return Promise.resolve(this.sdlc.accept(change.change, doc)); }
+  sdlcAccept(change: ChangeRef, doc: ChangeDocument): Promise<AcceptOutcome> {
+    return this.longStep(change, { accepting: doc }, 'Accepting the document', () => this.sdlc.accept(change.change, doc), { outcome: 'stopped', accepted: false });
+  }
   sdlcCopyRemoval(change: ChangeRef): Promise<CopyRemoval> { return Promise.resolve(this.sdlc.copyRemoval(change.change)); }
   sdlcCopyBranch(change: ChangeRef): Promise<string> { return Promise.resolve(this.sdlc.copyBranch(change.change)); }
-  sdlcRemoveCopy(change: ChangeRef): Promise<RemoveOutcome> { return Promise.resolve(this.sdlc.removeCopy(change.change)); }
+  sdlcRemoveCopy(change: ChangeRef): Promise<RemoveOutcome> {
+    return this.longStep(change, 'removingCopy', "Removing the change's copy", () => this.sdlc.removeCopy(change.change), { outcome: 'stopped', kept: [] });
+  }
   sdlcOpenCopyFolder(change: ChangeRef): Promise<void> {
     try {
       this.sdlc.openCopyFolder(change.change);
@@ -418,7 +431,9 @@ export class MockTransport extends KataTransport {
       return Promise.reject(e);
     }
   }
-  sdlcReject(change: ChangeRef): Promise<RejectOutcome> { return Promise.resolve(this.sdlc.reject(change.change)); }
+  sdlcReject(change: ChangeRef): Promise<RejectOutcome> {
+    return this.longStep(change, { rejecting: 'intent' }, 'Rejecting the change', () => this.sdlc.reject(change.change), { outcome: 'stopped', rejected: false });
+  }
   sdlcRunLinks(): Promise<RunLink[]> { return Promise.resolve(this.sdlc.runLinks()); }
   sdlcLinkRun(link: RunLink): Promise<void> { this.sdlc.linkRun(link); return Promise.resolve(); }
   sdlcTaskLinks(): Promise<TaskLink[]> { return Promise.resolve(this.sdlc.taskLinks()); }
@@ -443,10 +458,31 @@ export class MockTransport extends KataTransport {
   sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]> { return Promise.resolve(this.sdlc.checksView(change.change)); }
   /** The plugin's answer to declaring the change done, with the steps it reports on the way; `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` give each of the other answers. */
   async sdlcDeclareDone(change: ChangeRef): Promise<DeclareView> {
+    if (demoParam() === 'steps-hold') {
+      return this.longStep(change, 'declaringDone', 'Declaring the change done', () => this.sdlc.declareDone(change.change).view, { kind: 'stopped', pullRequests: [] });
+    }
     const { view, steps } = this.sdlc.declareDone(change.change);
-    const key = mockChangeKey(change);
-    for (const progress of steps) for (const listen of [...this.stepListeners]) listen({ change: key, kind: 'declaringDone', progress });
+    for (const progress of steps) this.announceStep(change, 'declaringDone', progress);
     return view;
+  }
+
+  private announceStep(change: ChangeRef, kind: StepKind, progress: StepProgress): void {
+    const key = mockChangeKey(change);
+    for (const listen of [...this.stepListeners]) listen({ change: key, kind, progress });
+  }
+
+  /**
+   * Report a long step and answer its call. Under `?demo=steps-hold` (browser only) the call stays pending until `stopStep` answers it with
+   * `stopped`, so a spec or a browser check can press Stop; otherwise it answers at once.
+   */
+  private longStep<T>(change: ChangeRef, kind: StepKind, doing: string, run: () => T, stopped: T): Promise<T> {
+    const progress: StepProgress = { kind: 'repository', label: doing, repo: null, check: null };
+    this.announceStep(change, kind, progress);
+    if (demoParam() !== 'steps-hold') return settled(run);
+    return new Promise<T>((resolve) => {
+      const step: RunningStep = { change: mockChangeKey(change), kind, doing, progress };
+      this.heldSteps.set(change.change, { step, stop: () => resolve(stopped) });
+    });
   }
   /** `?demo=pr-fail` makes the read fail, so the browser checks can see the "Could not check pull requests" note; `?demo=one-pr` keeps only the
    *  first pull request, so they can see the single inline link; `?demo=pr-states` gives each state GitHub can answer with and one it cannot;
@@ -468,9 +504,14 @@ export class MockTransport extends KataTransport {
   pickOpenSpec(): Promise<string | null> { return Promise.resolve(null); }
   pickSaveSpec(): Promise<string | null> { return Promise.resolve(null); }
 
-  /** Nothing to stop yet. */
-  async stopStep(_change: ChangeRef): Promise<boolean> { return false; }
-  async steps(): Promise<RunningStep[]> { return []; }
+  async stopStep(change: ChangeRef): Promise<boolean> {
+    const held = this.heldSteps.get(change.change);
+    if (held === undefined) return false;
+    this.heldSteps.delete(change.change);
+    held.stop();
+    return true;
+  }
+  async steps(): Promise<RunningStep[]> { return [...this.heldSteps.values()].map((h) => h.step); }
   async onStep(cb: (event: StepEvent) => void): Promise<() => void> {
     this.stepListeners.add(cb);
     return () => { this.stepListeners.delete(cb); };
@@ -508,9 +549,13 @@ export class MockTransport extends KataTransport {
     this.changeRunsLive.set(id, change.change);
     return id;
   }
-  async sdlcBuildStart(change: ChangeRef, form: StartForm): Promise<StartOutcome> { return this.host.start(change, form); }
+  async sdlcBuildStart(change: ChangeRef, form: StartForm): Promise<StartOutcome> {
+    return this.longStep(change, 'preparingBuild', 'Preparing the build', () => this.host.start(change, form), { kind: 'stopped', prepared: [] });
+  }
   // The scripted host runs no agent, so the choices a continue or review carries change nothing it shows.
-  async sdlcBuildContinue(change: ChangeRef, repo: string, _off?: string[]): Promise<StartOutcome> { return this.host.continueRepo(change, repo); }
+  async sdlcBuildContinue(change: ChangeRef, repo: string, _off?: string[]): Promise<StartOutcome> {
+    return this.longStep(change, 'preparingBuild', 'Preparing the build in ' + repo, () => this.host.continueRepo(change, repo), { kind: 'stopped', prepared: [] });
+  }
   async sdlcBuildState(change: ChangeRef): Promise<BuildState | null> { return this.host.state(change); }
   async sdlcChangeKey(change: ChangeRef): Promise<ChangeKey> { return mockChangeKey(change); }
   async sdlcBuildCancel(change: ChangeRef, repo: string | null): Promise<void> { this.host.cancel(change, repo); }
@@ -553,7 +598,9 @@ export class MockTransport extends KataTransport {
   async sdlcReviewView(change: ChangeRef): Promise<ReviewView> {
     return mockReviewView(this.sdlc.reviewRecord(), this.reviewRepos(change));
   }
-  async sdlcReviewStart(change: ChangeRef, _off?: string[]): Promise<StartOutcome> { return this.host.reviewStart(change); }
+  async sdlcReviewStart(change: ChangeRef, _off?: string[]): Promise<StartOutcome> {
+    return this.longStep(change, 'preparingReview', 'Preparing the review', () => this.host.reviewStart(change), { kind: 'stopped', prepared: [] });
+  }
   async sdlcReviewWaiting(change: ChangeRef): Promise<HeldRepo[]> { return this.host.reviewWaiting(change); }
   /** The repositories a round may go to: the change's own, then the master. */
   private reviewRepos(change: ChangeRef): string[] {
