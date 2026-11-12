@@ -20,6 +20,7 @@ import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
 import { ChangeRunStore, changeRunKey } from '../../core/run/change-run.store';
+import { RunStore } from '../../core/run/run.store';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
@@ -2020,3 +2021,107 @@ describe('each long step shows Stop and says it was stopped', () => {
   });
 });
 
+
+describe('ChangePageViewModel: the run pane shows only the run in front of it (R10, R11)', () => {
+  const KEY = changeRunKey({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: PHOTOS_CHANGE });
+  const EARLIER_SAYS = 'Earlier run said this';
+  const emitter = (transport: MockTransport) => transport as unknown as { emit(id: string, ev: unknown): void };
+
+  /** A run of no change that ended with a completed summary and left it in the solo view, as the run that took the screen before. */
+  async function earlierRun(transport: MockTransport, name: string): Promise<string> {
+    const id = await TestBed.inject(RunStore).startRun({ ...seedSpec(), name }, undefined, async () => `earlier-${name}`);
+    if (id === null) throw new Error('the earlier run did not start');
+    emitter(transport).emit(id, { type: 'assistant.text', text: EARLIER_SAYS });
+    emitter(transport).emit(id, { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.03, duration_ms: 21000, result: EARLIER_SAYS });
+    return id;
+  }
+  const noEarlier = (vm: ChangePageViewModel) => {
+    expect(vm.summary()).toBeNull();
+    expect(JSON.stringify(vm.events())).not.toContain(EARLIER_SAYS);
+    expect(vm.asks()).toEqual([]);
+    expect(vm.messages()).toEqual([]);
+    expect(vm.permissions()).toEqual([]);
+    expect(vm.given()).toBeNull();
+  };
+
+  it.each<[string, string, string]>([
+    ['intent', 'spec', 'start-spec'],
+    ['spec', 'plan', 'start-plan'],
+    ['plan', 'fix', 'finish-fix-draft'],
+    ['fix', 'fix', 'change-fix'],
+  ])("a new run's pane shows nothing of the run before: %s then %s", async (earlier, _next, action) => {
+    const transport = new MockTransport();
+    const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+    runAgent.mockRestore();
+    await ready(vm);
+    await earlierRun(transport, `sdlc-commerce-${PHOTOS_CHANGE}-${earlier}`);
+    expect(TestBed.inject(RunStore).summary()?.result).toBe(EARLIER_SAYS);
+    void vm.act(action as StageAction);
+    await vi.waitFor(() => expect(vm.session()).not.toBeNull());
+    expect(vm.session()!.finished).toBeNull();
+    noEarlier(vm);
+    await vi.waitFor(() => expect(TestBed.inject(ChangeRunStore).session(KEY)?.runId).toBeTruthy());
+    noEarlier(vm);
+    TestBed.inject(ChangeRunStore).cancel(KEY);
+  });
+
+  it('the pane is clean before the new run reports', async () => {
+    const transport = new MockTransport();
+    const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+    runAgent.mockRestore();
+    // The backend has not answered with an id yet.
+    vi.spyOn(transport, 'sdlcRunChange').mockReturnValue(new Promise<string>(() => undefined));
+    await ready(vm);
+    await earlierRun(transport, 'sdlc-commerce-intent');
+    void vm.act('start-spec');
+    await vi.waitFor(() => expect(vm.session()).not.toBeNull());
+    expect(TestBed.inject(ChangeRunStore).session(KEY)?.runId).toBeNull();
+    expect(['running', 'awaiting']).toContain(vm.runState());
+    expect(vm.events()).toEqual([]);
+    noEarlier(vm);
+    expect(vm.messageRefusal()).toBeNull();
+  });
+
+  it('the earlier run stays in past runs', async () => {
+    const transport = new MockTransport();
+    const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+    runAgent.mockRestore();
+    await ready(vm);
+    const id = await earlierRun(transport, 'sdlc-commerce-intent');
+    void vm.act('start-spec');
+    await vi.waitFor(() => expect(vm.session()).not.toBeNull());
+    const past = await transport.sdlcRunHistory(id);
+    expect(past.map((h) => h.event.type)).toEqual(['assistant.text', 'run.completed']);
+    // Opening it where finished runs are reopened shows its completed summary.
+    const runs = TestBed.inject(RunStore);
+    await runs.open(id);
+    expect(runs.snapshot(id)().summary?.result).toBe(EARLIER_SAYS);
+    noEarlier(vm);
+  });
+
+  it.each<[string, string, 'other-change' | 'home']>([
+    ['spec', 'start-spec', 'other-change'],
+    ['plan', 'start-plan', 'home'],
+    ['fix', 'change-fix', 'other-change'],
+  ])('a run opened late shows its whole session: a %s run while the engineer was on %s', async (_stage, action, elsewhere) => {
+    const transport = new MockTransport();
+    const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+    runAgent.mockRestore();
+    await ready(vm);
+    void vm.act(action as StageAction);
+    await vi.waitFor(() => expect(TestBed.inject(ChangeRunStore).session(KEY)?.runId).toBeTruthy());
+    // Elsewhere, another run takes the screen and ends.
+    if (elsewhere === 'home') await earlierRun(transport, 'sdlc-triage');
+    else void TestBed.inject(SdlcRunner).run('Starting spec of A', { ...seedSpec(), name: 'sdlc-commerce-a-spec' }, { workspaceId: 'w', target: null, link: null }, { ref: { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE }, kind: 'spec' });
+    await vi.waitFor(() => expect(vm.events().length).toBeGreaterThan(0));
+    // The page opened again shows the run from its first event, and nothing of the other run.
+    const again = Injector.create({ parent: TestBed.inject(Injector), providers: [ChangePageViewModel, BuildPageViewModel, RunPreviewViewModel] }).get(ChangePageViewModel);
+    await ready(again);
+    const id = TestBed.inject(ChangeRunStore).session(KEY)!.runId!;
+    const whole = (await transport.sdlcRunHistory(id)).map((h) => h.event);
+    await vi.waitFor(() => expect(again.events().length).toBeGreaterThanOrEqual(1));
+    expect(JSON.stringify(again.events())).not.toContain(EARLIER_SAYS);
+    expect(again.events().slice(0, whole.length)).toEqual(whole.slice(0, again.events().length));
+    TestBed.inject(ChangeRunStore).cancel(KEY);
+  });
+});
