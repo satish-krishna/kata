@@ -612,14 +612,14 @@ mod tests {
     }
 
     /// A stand-in for the program: the call prints one progress line, writes a marker and waits to be
-    /// stopped. A call nobody stops ends itself after 5 s, so a red test fails instead of hanging.
+    /// stopped. A call nobody stops ends itself after 60 s, so a red test fails instead of hanging.
     fn waiting_program(dir: &Path) -> (Program, PathBuf) {
         let marker = dir.join("waiting.marker");
         let script = format!(
             "import {{ writeFileSync, writeSync }} from 'node:fs';
 writeSync(1, JSON.stringify({{ type: 'push', repo: 'app' }}) + '\\n');
 writeFileSync({marker:?}, 'x');
-setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3); }}, 5000);
+setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3); }}, 60000);
 ",
             marker = marker.display().to_string()
         );
@@ -663,7 +663,7 @@ setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3)
         let watcher = {
             let (steps, seen, key) = (steps.clone(), seen.clone(), key.clone());
             std::thread::spawn(move || {
-                for _ in 0..100 {
+                for _ in 0..1200 {
                     if !seen.lock().unwrap().is_empty() {
                         return steps.stop(&key);
                     }

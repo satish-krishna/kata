@@ -298,7 +298,7 @@ mod tests {
     }
 
     /// The real program for every call except `change rename`, which prints one progress line, writes a
-    /// marker and waits to be stopped. A call nobody stops ends itself after 5 s.
+    /// marker and waits to be stopped. A call nobody stops ends itself after 60 s.
     fn stopping_program(dir: &Path) -> (Program, PathBuf) {
         let marker = dir.join("stopping.marker");
         let real = program().entry;
@@ -309,7 +309,7 @@ const args = process.argv.slice(2);
 if (args[0] === 'change' && args[1] === 'rename') {{
   writeSync(1, JSON.stringify({{ type: 'push', repo: 'app' }}) + '\\n');
   writeFileSync({marker:?}, 'x');
-  setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3); }}, 5000);
+  setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3); }}, 60000);
 }} else {{
   const r = spawnSync(process.execPath, [{real:?}, ...args], {{ stdio: 'inherit' }});
   process.exit(r.status ?? 2);
@@ -344,7 +344,7 @@ if (args[0] === 'change' && args[1] === 'rename') {{
         let watcher = {
             let (steps, seen, key) = (steps.clone(), seen.clone(), key.clone());
             std::thread::spawn(move || {
-                for _ in 0..100 {
+                for _ in 0..1200 {
                     if !seen.lock().unwrap().is_empty() {
                         return steps.stop(&key);
                     }

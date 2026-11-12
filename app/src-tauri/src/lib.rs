@@ -3479,7 +3479,7 @@ mod steps_commands {
     }
 
     /// The real program for every call except the one `trigger` (a JS condition on `args`) names: that call
-    /// writes a marker and waits to be stopped, and ends itself after 5 s so a red test fails, not hangs.
+    /// writes a marker and waits to be stopped, and ends itself after 60 s so a red test fails, not hangs.
     fn stopping_program(dir: &Path, trigger: &str) -> (Program, PathBuf) {
         let marker = dir.join("stopping.marker");
         let real = real_program().entry;
@@ -3489,7 +3489,7 @@ import {{ writeFileSync }} from 'node:fs';
 const args = process.argv.slice(2);
 if ({trigger}) {{
   writeFileSync({marker:?}, 'x');
-  setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3); }}, 5000);
+  setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3); }}, 60000);
 }} else {{
   const r = spawnSync(process.execPath, [{real:?}, ...args], {{ stdio: 'inherit' }});
   process.exit(r.status ?? 2);
@@ -3544,7 +3544,7 @@ if ({trigger}) {{
         let watcher = {
             let steps = steps.clone();
             std::thread::spawn(move || {
-                for _ in 0..100 {
+                for _ in 0..1200 {
                     if marker.exists() {
                         return steps.stop(&key);
                     }

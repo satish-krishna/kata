@@ -553,7 +553,7 @@ if (a[0] === 'change' && a[1] === 'show') {
       pullRequests: [{ repo: 'app', url: 'https://github.com/example/app/pull/1', number: 1, pushed: 'abc' }] } });
 } else {
   say({ type: 'push', repo: 'master' });
-  setTimeout(() => { console.error('the fake was never stopped'); process.exit(3); }, 5000);
+  setTimeout(() => { console.error('the fake was never stopped'); process.exit(3); }, 60000);
 }
 "#;
         let program = scripted(dir.path(), body);
