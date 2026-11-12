@@ -72,6 +72,7 @@ import { shownBuild, shownDocument, type DocNotice, type ReadError, type Shown }
 import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy } from '../../lib/doc-rail';
 import { prNumber } from '../../lib/pull-request';
 import { DONE_PROGRESS_LINE, type DoneReport } from '../../lib/sdlc-done';
+import type { StepView } from '../../lib/sdlc-steps';
 import { section } from '../../lib/doc';
 import { fullPipelineIdea } from '../../lib/sdlc-fix';
 import { inTauri } from '../../lib/mock';
@@ -727,6 +728,17 @@ export class ChangePageViewModel {
       this.prLeftBehind.set(named.oldPullRequests.map((p) => ({ repo: p.repo, url: p.url, branch: named.from })));
     }
     return named.branch;
+  }
+
+  // --- long steps: the label the backend reports, Stop, and how a stopped step is worded
+  /** The long step of this change that runs on this page now; null while none does. */
+  readonly step = signal<StepView | null>(null);
+  /** How the last stopped step is worded; null while there is none. */
+  readonly stepStopped = signal<string | null>(null);
+
+  /** Stop the running step of this change. */
+  async stopStep(): Promise<void> {
+    // not implemented
   }
 
   // --- declaring done: the confirmation, then the plugin's step

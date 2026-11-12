@@ -2,7 +2,16 @@ import { Injector, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import type { ChangeInfo } from '../../lib/sdlc-mock-types';
+import type { AcceptOutcome } from '@bindings/AcceptOutcome';
+import type { ChangeKey } from '@bindings/ChangeKey';
 import type { CopyRemoval } from '@bindings/CopyRemoval';
+import type { DeclareView } from '@bindings/DeclareView';
+import type { RecordedPullRequest } from '@bindings/RecordedPullRequest';
+import type { RejectOutcome } from '@bindings/RejectOutcome';
+import type { RenameOutcome } from '@bindings/RenameOutcome';
+import type { StepEvent } from '@bindings/StepEvent';
+import type { StepKind } from '@bindings/StepKind';
+import type { StepProgress } from '@bindings/StepProgress';
 import type { PullRequestLink } from '@bindings/PullRequestLink';
 import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { RemoveOutcome } from '@bindings/RemoveOutcome';
@@ -1893,3 +1902,121 @@ describe('ChangePageViewModel: where the change lives', () => {
     expect(vm.doc()).toContain('The copy holds this intent.');
   });
 });
+
+describe('each long step shows Stop and says it was stopped', () => {
+  const REF = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: PHOTOS_CHANGE };
+  const keyOf = (change: string): ChangeKey => ({ workspace: { key: MOCK_WORKSPACE_FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system: 'commerce', change });
+  const pr = (repo: string): RecordedPullRequest => ({ repo, url: `https://github.com/acme/${repo}/pull/1`, number: 1, source: 'plugin' });
+  const progress = (label: string): StepProgress => ({ kind: 'repository', label, repo: null, check: null });
+
+  /** A call the test releases when it likes, and the backend's step reports the test pushes by hand. */
+  function hold<T>(transport: MockTransport) {
+    const listeners = new Set<(e: StepEvent) => void>();
+    vi.spyOn(transport, 'onStep').mockImplementation(async (cb) => {
+      listeners.add(cb);
+      return () => void listeners.delete(cb);
+    });
+    const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
+    let release!: (outcome: T) => void;
+    const call = new Promise<T>((resolve) => (release = resolve));
+    const push = (change: string, kind: StepKind, label: string) => listeners.forEach((cb) => cb({ change: keyOf(change), kind, progress: progress(label) }));
+    return { stop, call, release, push };
+  }
+
+  /** Run `start`, check the step shows its label and Stop for this change only, stop it and answer the call with `outcome`. */
+  async function stopped<T>(vm: ChangePageViewModel, h: ReturnType<typeof hold<T>>, start: () => Promise<unknown>, kind: StepKind, stopName: string, outcome: T) {
+    const running = start();
+    await vi.waitFor(() => expect(vm.step()?.stop).toBe(stopName));
+    h.push(PHOTOS_CHANGE, kind, 'Committing the document');
+    expect(vm.step()?.label).toBe('Committing the document');
+    h.push('2026-01-01-other', kind, 'Not this change');
+    expect(vm.step()?.label).toBe('Committing the document');
+    await vm.stopStep();
+    expect(h.stop).toHaveBeenCalledWith(REF);
+    h.release(outcome);
+    await running;
+    expect(vm.step()).toBeNull();
+  }
+
+  it.each<[string, boolean, string]>([
+    ['accepted', true, 'Stopped. The spec is accepted; its checks did not finish'],
+    ['not accepted', false, 'Stopped. The spec was not accepted'],
+  ])('accepting a document, stopped when it was %s', async (_name, accepted, message) => {
+    const { vm, transport } = setup(PHOTOS_CHANGE);
+    const h = hold<AcceptOutcome>(transport);
+    vi.spyOn(transport, 'sdlcAccept').mockReturnValue(h.call);
+    await ready(vm);
+    await stopped(vm, h, () => vm.act('accept-spec'), { accepting: 'spec' }, 'Stop accepting the spec', { outcome: 'stopped', accepted });
+    expect(vm.stepStopped()).toBe(message);
+  });
+
+  it.each<[string, boolean, string]>([
+    ['rejected', true, 'Stopped. The intent is rejected; its copy was not removed'],
+    ['not rejected', false, 'Stopped. The intent was not rejected'],
+  ])('rejecting a document, stopped when it was %s', async (_name, rejected, message) => {
+    const { vm, transport } = setup(FRAUD);
+    const h = hold<RejectOutcome>(transport);
+    vi.spyOn(transport, 'sdlcReject').mockReturnValue(h.call);
+    await ready(vm);
+    const running = vm.act('reject-intent');
+    await vi.waitFor(() => expect(vm.step()?.stop).toBe('Stop rejecting the intent'));
+    h.push(FRAUD, { rejecting: 'intent' }, 'Removing the copy');
+    expect(vm.step()?.label).toBe('Removing the copy');
+    await vm.stopStep();
+    expect(h.stop).toHaveBeenCalledWith({ ...REF, change: FRAUD });
+    h.release({ outcome: 'stopped', rejected });
+    await running;
+    expect(vm.step()).toBeNull();
+    expect(vm.stepStopped()).toBe(message);
+  });
+
+  it.each<[string, string[], string]>([
+    ['with the workflow\'s answer', ['the branch was half renamed in kata'], 'Stopped. The rename did not finish: the branch was half renamed in kata'],
+    ['without an answer', [], 'Stopped. The rename did not finish'],
+  ])('renaming a change, stopped %s', async (_name, answer, message) => {
+    const { vm, transport } = setup(PHOTOS_CHANGE);
+    const h = hold<RenameOutcome>(transport);
+    vi.spyOn(transport, 'sdlcRenameBranch').mockReturnValue(h.call);
+    await ready(vm);
+    const runner = TestBed.inject(SdlcRunner);
+    void vm.renameBranch('feat/old');
+    await vi.waitFor(() => expect(runner.nameRequest()).not.toBeNull());
+    vm.acceptName('feat/new');
+    await vi.waitFor(() => expect(vm.step()?.stop).toBe('Stop renaming the branch'));
+    h.push(PHOTOS_CHANGE, 'renaming', 'Renaming the branch in kata');
+    expect(vm.step()?.label).toBe('Renaming the branch in kata');
+    await vm.stopStep();
+    expect(h.stop).toHaveBeenCalledWith(REF);
+    h.release({ outcome: 'stopped', answer });
+    await vi.waitFor(() => expect(vm.step()).toBeNull());
+    expect(vm.nameRequest()?.error).toBe(message);
+    expect(vm.nameRequest()?.busy).toBe(false);
+    vm.closeName();
+  });
+
+  it.each<[string, RecordedPullRequest[], string]>([
+    ['after a pull request opened', [pr('kata')], 'Stopped. Pull request opened for kata'],
+    ['after two opened', [pr('kata'), pr('bob')], 'Stopped. Pull request opened for kata, bob'],
+    ['before any opened', [], 'Stopped. Nothing was pushed or opened'],
+  ])('declaring the change done, stopped %s', async (_name, pullRequests, message) => {
+    const transport = new MockTransport();
+    withStage(transport, MOCK_BUILD_CHANGE, 'build-finished');
+    vi.spyOn(transport, 'sdlcDiffFiles').mockResolvedValue({ files: [], loc: [] });
+    const { vm } = setup(MOCK_BUILD_CHANGE, transport);
+    const h = hold<DeclareView>(transport);
+    vi.spyOn(transport, 'sdlcDeclareDone').mockReturnValue(h.call);
+    await ready(vm);
+    vm.doneReport.set({ branch: null, repos: [], departures: [] });
+    const running = vm.confirmDone();
+    await vi.waitFor(() => expect(vm.step()?.stop).toBe('Stop declaring the change done'));
+    h.push(MOCK_BUILD_CHANGE, 'declaringDone', 'Pushing kata');
+    expect(vm.step()?.label).toBe('Pushing kata');
+    await vm.stopStep();
+    expect(h.stop).toHaveBeenCalledWith({ ...REF, change: MOCK_BUILD_CHANGE });
+    h.release({ kind: 'stopped', pullRequests });
+    await running;
+    expect(vm.step()).toBeNull();
+    expect(vm.stepStopped()).toBe(message);
+  });
+});
+

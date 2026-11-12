@@ -10,7 +10,12 @@ import type { HomeOpen } from '@bindings/HomeOpen';
 import type { HomeRow } from '@bindings/HomeRow';
 import type { HomeChecked } from '@bindings/HomeChecked';
 import type { HomeAction } from '@bindings/HomeAction';
+import type { ChangeKey } from '@bindings/ChangeKey';
+import type { ChangeStart } from '@bindings/ChangeStart';
 import type { RemoveOutcome } from '@bindings/RemoveOutcome';
+import type { StepEvent } from '@bindings/StepEvent';
+import type { StepKind } from '@bindings/StepKind';
+import type { StepProgress } from '@bindings/StepProgress';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
@@ -1700,4 +1705,71 @@ describe('SdlcHomeViewModel removing a merged change\'s copy', () => {
       expect(open.mock.calls[0][3]).toBe('action-ended');
     });
   }
+});
+
+describe('New change and copy removal can be stopped', () => {
+  const keyOf = (change: string): ChangeKey => ({ workspace: { key: MOCK_WORKSPACE_FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system: 'commerce', change });
+  const progress = (label: string): StepProgress => ({ kind: 'repository', label, repo: null, check: null });
+
+  /** The backend's step reports, pushed by hand, and Stop as a spy. */
+  function steps(transport: MockTransport) {
+    const listeners = new Set<(e: StepEvent) => void>();
+    vi.spyOn(transport, 'onStep').mockImplementation(async (cb) => {
+      listeners.add(cb);
+      return () => void listeners.delete(cb);
+    });
+    const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
+    const push = (change: string, kind: StepKind, label: string) => listeners.forEach((cb) => cb({ change: keyOf(change), kind, progress: progress(label) }));
+    return { stop, push };
+  }
+
+  it.each<[string, string[], string]>([
+    ['with the workflow\'s answer', ['the plugin ran out of room'], 'Stopped. The start did not finish: the plugin ran out of room'],
+    ['without an answer', [], 'Stopped. The start did not finish'],
+  ])('starting a new change, stopped %s', async (_name, answer, message) => {
+    const { vm, transport } = setup();
+    const { stop, push } = steps(transport);
+    let release!: (outcome: ChangeStart) => void;
+    const start = vi.spyOn(transport, 'sdlcStartChange').mockReturnValue(new Promise<ChangeStart>((resolve) => (release = resolve)));
+    await vm.init();
+    const name = await transport.sdlcChangeName('flag prices');
+    const running = vm.newChange('commerce', 'flag prices', 'full');
+    await vi.waitFor(() => expect(start).toHaveBeenCalled());
+    push(name, 'starting', 'Making the copy');
+    expect(vm.step()).toEqual({ label: 'Making the copy', stop: 'Stop starting the change' });
+    push('2026-01-01-other', 'starting', 'Not this change');
+    expect(vm.step()?.label).toBe('Making the copy');
+    await vm.stopStep();
+    expect(stop).toHaveBeenCalledWith({ workspace: vm.current()!.folder, system: 'commerce', change: name });
+    release({ outcome: 'stopped', answer });
+    await running;
+    expect(vm.step()).toBeNull();
+    expect(toastText()).toBe(message);
+  });
+
+  it.each<[string, string[], string]>([
+    ['naming what was kept', ['change/2026-10-12-product-photo-upload'], 'Stopped. The removal did not finish. Kept: change/2026-10-12-product-photo-upload'],
+    ['with nothing kept', [], 'Stopped. The removal did not finish'],
+  ])('removing a copy, stopped %s', async (_name, kept, message) => {
+    const ctx = setup({ home: 'listed' });
+    const { vm, transport } = ctx;
+    vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+    vi.spyOn(transport, 'sdlcHomeOpen').mockResolvedValue(openOf(NAMES.map((n, i) => homeRowOf(n, 'Stage', i === 0 ? 'remove-copy' : 'workflow'))));
+    vi.spyOn(transport, 'sdlcHomePullRequests').mockResolvedValue({ rows: [], problems: [] });
+    const { stop, push } = steps(transport);
+    let release!: (outcome: RemoveOutcome) => void;
+    vi.spyOn(transport, 'sdlcRemoveCopy').mockReturnValue(new Promise<RemoveOutcome>((resolve) => (release = resolve)));
+    await vm.init();
+    vm.askRemoveCopy(NAMES[0]);
+    const running = vm.confirmRemoveCopy();
+    await vi.waitFor(() => expect(vm.step()?.stop).toBe('Stop removing the copy'));
+    push(NAMES[0], 'removingCopy', 'Removing the copy folder');
+    expect(vm.step()?.label).toBe('Removing the copy folder');
+    await vm.stopStep();
+    expect(stop).toHaveBeenCalledWith({ workspace: vm.current()!.folder, system: 'commerce', change: NAMES[0] });
+    release({ outcome: 'stopped', kept });
+    await running;
+    expect(vm.step()).toBeNull();
+    expect(toastText()).toBe(message);
+  });
 });

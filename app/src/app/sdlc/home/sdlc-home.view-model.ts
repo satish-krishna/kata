@@ -28,6 +28,7 @@ import { VersionsStore } from '../../core/versions/versions.store';
 import { defaultWorkType, namingRefusal, orderedWorkTypes, type WorkType } from '../../lib/sdlc-naming';
 import { inTauri } from '../../lib/mock';
 import type { ProgressStepId } from '../../lib/progress-steps';
+import type { StepView } from '../../lib/sdlc-steps';
 import { shownChangeList } from '../../lib/doc-notice';
 import { hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
 import { DEMO_SETUP_FOLDER, DEMO_START_IDEA, DEMO_START_SYSTEM } from '../../lib/demo';
@@ -701,6 +702,15 @@ export class SdlcHomeViewModel {
 
   closeLeftovers(): void {
     this.runner.closeLeftovers();
+  }
+
+  // --- long steps: the label the backend reports and Stop
+  /** The long step of a change that runs from this page now (a start, a removal); null while none does. */
+  readonly step = signal<StepView | null>(null);
+
+  /** Stop the running step. */
+  async stopStep(): Promise<void> {
+    // not implemented
   }
 
   // --- removing a merged change's copy
