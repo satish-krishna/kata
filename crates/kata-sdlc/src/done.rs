@@ -5,7 +5,7 @@ use crate::ai_sdlc::{
     progress_of, Answer, Place, Program, StepOutcome, StepProgress, StepProgressKind,
 };
 use crate::plugin::{GhPresence, Readiness};
-use crate::pull_requests::{PullRequestSource, RecordedPullRequest};
+use crate::pull_requests::{recorded, PullRequestSource, RecordedPullRequest};
 use kata_core::proc::{CancelToken, LineSink};
 use serde::Serialize;
 use serde_json::Value;
@@ -188,7 +188,17 @@ pub fn declare(
     ];
     let answer = program.step_long(&command, place, cancel, Some(relay));
     if answer.outcome == StepOutcome::Stopped {
-        let pull_requests = opened.lock().unwrap().clone();
+        // The plugin's record in `change.yml` is the truth about what was opened; the stream (which the real
+        // plugin prints no pull request lines on) is the fallback when the record cannot be read or is empty.
+        let from_record = program
+            .change_show(place, change, false)
+            .map(|show| recorded(&show, &[]))
+            .unwrap_or_default();
+        let pull_requests = if from_record.is_empty() {
+            opened.lock().unwrap().clone()
+        } else {
+            from_record
+        };
         return DeclareView::Stopped { pull_requests };
     }
     outcome(&answer)
