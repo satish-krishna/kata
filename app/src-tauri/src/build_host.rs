@@ -5,6 +5,7 @@
 //! sits behind [`Tools`] and [`Launcher`], so the tests need no Tauri app.
 
 use crate::runs::{self, Lane};
+use crate::steps::StepTable;
 use kata_core::proc::{CancelToken, LineSink};
 use kata_core::spec::PermissionMode;
 use kata_core::RunSpec;
@@ -156,6 +157,9 @@ pub enum StartOutcome {
         output: String,
         repo: Option<String>,
     },
+    /// The engineer stopped the preparation; nothing was launched. `prepared` names the repositories the
+    /// plugin had prepared before the stop, in plan order.
+    Stopped { prepared: Vec<String> },
 }
 
 /// A change's build state, announced on [`BUILD_EVENT`].
@@ -492,6 +496,8 @@ pub struct BuildHost {
     tools: Arc<dyn Tools>,
     launcher: Arc<dyn Launcher>,
     workbench_dir: PathBuf,
+    /// The long steps that are running: a build's preparation is one entry of it.
+    steps: StepTable,
     inner: Mutex<Inner>,
 }
 
@@ -618,11 +624,13 @@ impl BuildHost {
         tools: Arc<dyn Tools>,
         launcher: Arc<dyn Launcher>,
         workbench_dir: PathBuf,
+        steps: StepTable,
     ) -> Arc<BuildHost> {
         Arc::new(BuildHost {
             tools,
             launcher,
             workbench_dir,
+            steps,
             inner: Mutex::new(Inner {
                 builds: HashMap::new(),
                 holds: HoldTable::default(),
@@ -1768,6 +1776,8 @@ mod tests {
     use super::*;
     use kata_sdlc::ai_sdlc::{answer_of, ExecError, Reply};
     use kata_sdlc::coordinator::BuildPhase;
+    use crate::steps::{StepEvent, StepKind};
+    use kata_sdlc::ai_sdlc::StepProgressKind;
     use kata_sdlc::format::{ParsedReviewSection, ParsedTask};
     use kata_sdlc::holds::{Purpose, RepoKey};
     use serde_json::json;
@@ -1897,6 +1907,18 @@ mod tests {
         gate: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
         /// The task links the host recorded.
         links: Mutex<Vec<kata_sdlc::store::TaskLink>>,
+        /// How long each long call takes.
+        delay: Mutex<std::time::Duration>,
+        /// What stops the call it names, `check` or a repository: `stop_in` stops during that call and
+        /// the call ends only once the token is cancelled; `stop_after` stops once that call has passed.
+        stop_in: Mutex<Option<String>>,
+        stop_after: Mutex<Option<String>>,
+        /// Stops the change under test, through the step table, as the page's Stop does.
+        stopper: Mutex<Option<Box<dyn Fn() + Send>>>,
+        /// Called at the start of every long call, to see what the host had registered by then.
+        probe: Mutex<Option<Box<dyn Fn() + Send>>>,
+        /// The stream lines a call prints, by call (`check` or a repository).
+        lines: Mutex<HashMap<String, Vec<String>>>,
     }
 
     impl FakeTools {
@@ -1913,7 +1935,19 @@ mod tests {
                 calls: Mutex::new(Vec::new()),
                 gate: Mutex::new(None),
                 links: Mutex::new(Vec::new()),
+                delay: Mutex::new(std::time::Duration::ZERO),
+                stop_in: Mutex::new(None),
+                stop_after: Mutex::new(None),
+                stopper: Mutex::new(None),
+                probe: Mutex::new(None),
+                lines: Mutex::new(HashMap::new()),
             })
+        }
+
+        fn stop_now(&self) {
+            if let Some(stop) = self.stopper.lock().unwrap().as_ref() {
+                stop();
+            }
         }
 
         fn add_change(
@@ -2029,12 +2063,43 @@ mod tests {
             command: &[&str],
             place: &Place,
             token: &CancelToken,
-            _on_line: Option<LineSink>,
+            on_line: Option<LineSink>,
         ) -> Answer {
+            let which = match command.iter().position(|a| *a == "--repo") {
+                Some(at) if !command.contains(&"--check") => command[at + 1].to_string(),
+                _ => "check".to_string(),
+            };
             if token.is_cancelled() {
                 return answer_of(Err(ExecError::Stopped));
             }
-            answer_of(self.exec(command, place).map_err(ExecError::Machine))
+            if let Some(probe) = self.probe.lock().unwrap().as_ref() {
+                probe();
+            }
+            if self.stop_in.lock().unwrap().as_deref() == Some(which.as_str()) {
+                self.stop_now();
+                let began = std::time::Instant::now();
+                while !token.is_cancelled() {
+                    assert!(
+                        began.elapsed() < std::time::Duration::from_secs(5),
+                        "the call named {which} was stopped but its token was never cancelled"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                return answer_of(Err(ExecError::Stopped));
+            }
+            let delay = *self.delay.lock().unwrap();
+            std::thread::sleep(delay);
+            let lines = self.lines.lock().unwrap().get(&which).cloned();
+            if let (Some(sink), Some(lines)) = (&on_line, lines) {
+                for line in lines {
+                    sink(&line);
+                }
+            }
+            let answer = answer_of(self.exec(command, place).map_err(ExecError::Machine));
+            if self.stop_after.lock().unwrap().as_deref() == Some(which.as_str()) {
+                self.stop_now();
+            }
+            answer
         }
         fn resolve(&self, _workspace: &Path) -> Result<Place, ProgramError> {
             Ok(self.place.clone())
@@ -2269,6 +2334,19 @@ mod tests {
         tools: Arc<FakeTools>,
         launcher: Arc<FakeLauncher>,
         host: Arc<BuildHost>,
+        steps: StepTable,
+        /// Every progress report the step table sent to the page.
+        labels: Arc<Mutex<Vec<StepEvent>>>,
+    }
+
+    /// A step table whose reports are kept.
+    fn test_steps() -> (StepTable, Arc<Mutex<Vec<StepEvent>>>) {
+        let labels: Arc<Mutex<Vec<StepEvent>>> = Arc::default();
+        let sink = labels.clone();
+        (
+            StepTable::new(Arc::new(move |e| sink.lock().unwrap().push(e))),
+            labels,
+        )
     }
 
     fn fake_place() -> Place {
@@ -2280,11 +2358,19 @@ mod tests {
 
     fn rig_with(tools: Arc<FakeTools>) -> Rig {
         let launcher = Arc::new(FakeLauncher::default());
-        let host = BuildHost::new(tools.clone(), launcher.clone(), PathBuf::from("D:/wb"));
+        let (steps, labels) = test_steps();
+        let host = BuildHost::new(
+            tools.clone(),
+            launcher.clone(),
+            PathBuf::from("D:/wb"),
+            steps.clone(),
+        );
         Rig {
             tools,
             launcher,
             host,
+            steps,
+            labels,
         }
     }
 
@@ -3301,10 +3387,11 @@ mod tests {
         );
     }
 
-    // R16.1, R16.2: a build whose start is under way has no run in the table yet, and still counts as
-    // live for the close question; once its run has an id, it is no longer launching.
+    // R9.1: a build whose preparation is under way is an entry of the step table, which the close question
+    // reads; `launching` lists only the runs whose launch has not answered. Once its run has an id, the
+    // build is neither.
     #[test]
-    fn a_build_being_started_is_launching() {
+    fn a_build_being_prepared_is_a_step_not_a_launch() {
         use std::sync::mpsc::channel;
         use std::time::Duration;
         let r = rig();
@@ -3317,14 +3404,11 @@ mod tests {
         entered_rx
             .recv_timeout(Duration::from_secs(10))
             .expect("A's start reached the plugin");
-        assert_eq!(
-            r.host.launching(),
-            vec![runs::Launching {
-                change: key("A"),
-                kind: runs::RunKind::Build,
-                repo: None,
-            }]
-        );
+        assert!(r.host.launching().is_empty());
+        let running = r.steps.running();
+        assert_eq!(running.len(), 1);
+        assert_eq!(running[0].change, key("A"));
+        assert_eq!(running[0].kind, StepKind::PreparingBuild);
         release_tx.send(()).unwrap();
         assert!(matches!(
             starting.join().unwrap(),
@@ -3332,6 +3416,363 @@ mod tests {
         ));
         assert_eq!(r.launcher.launched("kata").len(), 1);
         assert!(r.host.launching().is_empty());
+        assert!(r.steps.running().is_empty(), "the entry ends with the start");
+    }
+
+    impl Rig {
+        /// Records, at every long call, the kinds of step the table held.
+        fn probe_steps(&self) -> Arc<Mutex<Vec<Vec<StepKind>>>> {
+            let seen: Arc<Mutex<Vec<Vec<StepKind>>>> = Arc::default();
+            let (steps, sink) = (self.steps.clone(), seen.clone());
+            *self.tools.probe.lock().unwrap() = Some(Box::new(move || {
+                let kinds = steps.running().iter().map(|s| s.kind).collect();
+                sink.lock().unwrap().push(kinds);
+            }));
+            seen
+        }
+
+        /// `stop_in` and `stop_after` stop `change` through the step table, as the page's Stop does.
+        fn arm_stop(&self, change: &str) {
+            let steps = self.steps.clone();
+            let change = key(change);
+            *self.tools.stopper.lock().unwrap() = Some(Box::new(move || {
+                steps.stop(&change);
+            }));
+        }
+    }
+
+    // R12.1
+    #[test]
+    fn a_slow_preparation_is_not_cut_off() {
+        let r = rig();
+        r.simple("A", &["kata"]);
+        *r.tools.delay.lock().unwrap() = std::time::Duration::from_secs(2);
+        let seen = r.probe_steps();
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![vec![StepKind::PreparingBuild]; 2],
+            "the check and the repository both ran as the change's preparation step"
+        );
+        assert_eq!(r.tools.real_starts("A"), ["kata"]);
+        assert_eq!(r.launcher.launched("kata").len(), 1);
+    }
+
+    // R6.1
+    #[test]
+    fn stopping_a_preparation_starts_nothing_and_frees_the_holds() {
+        let r = rig();
+        r.simple("A", &["kata", "bob"]);
+        r.simple("B", &["kata"]);
+        r.arm_stop("A");
+        *r.tools.stop_in.lock().unwrap() = Some("check".into());
+        assert_eq!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Stopped {
+                prepared: Vec::new()
+            }
+        );
+        assert!(r.tools.real_starts("A").is_empty());
+        assert_eq!(r.launcher.count(), 0, "no run was launched");
+        assert_eq!(r.holder("kata"), None);
+        assert_eq!(r.holder("bob"), None);
+        assert!(r.steps.running().is_empty());
+        assert!(
+            matches!(
+                r.host.start(&cref("B"), form()),
+                StartOutcome::Started { .. }
+            ),
+            "another change takes the repository"
+        );
+    }
+
+    // R17.1, R6.1, R8.1: every row of the preparation's outcome table.
+    #[test]
+    fn a_preparation_stopped_partway_names_the_prepared_repositories() {
+        struct Row {
+            label: &'static str,
+            set: fn(&Rig),
+            want: StartOutcome,
+            real_starts: &'static [&'static str],
+            launched: usize,
+            held: bool,
+        }
+        let failed_hook = HookFailure {
+            id: "deps".into(),
+            on_failure: Some("stop".into()),
+            output: "npm ci: lockfile out of date".into(),
+        };
+        let rows = vec![
+            Row {
+                label: "check passed, every repository passes",
+                set: |_| {},
+                want: StartOutcome::Started {
+                    uncommitted: BTreeMap::new(),
+                },
+                real_starts: &["kata", "bob"],
+                launched: 2,
+                held: true,
+            },
+            Row {
+                label: "check refused",
+                set: |r| r.tools.refuse_check("bob", "bob is dirty"),
+                want: StartOutcome::Refused {
+                    problems: strs(&["bob is dirty"]),
+                },
+                real_starts: &[],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "check failed",
+                set: |r| {
+                    *r.tools.check.lock().unwrap() = Some(Ok(Reply::json(
+                        1,
+                        &json!({"event": "build.start", "check": true, "outcome": "failed",
+                            "problems": ["hook deps failed with exit code 1"], "hooks": [],
+                            "failed": {"id": "deps", "onFailure": "stop", "output": "npm ci: lockfile out of date"},
+                            "repos": []}),
+                    )));
+                },
+                want: StartOutcome::Failed {
+                    problems: strs(&["hook deps failed with exit code 1"]),
+                    hook: Some(failed_hook),
+                },
+                real_starts: &[],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "check could not run",
+                set: |r| r.tools.check_cannot_run("no node"),
+                want: StartOutcome::CouldNotRun {
+                    output: "no node".into(),
+                    repo: None,
+                },
+                real_starts: &[],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "check stopped",
+                set: |r| *r.tools.stop_in.lock().unwrap() = Some("check".into()),
+                want: StartOutcome::Stopped {
+                    prepared: Vec::new(),
+                },
+                real_starts: &[],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "repository 1 refused",
+                set: |r| {
+                    r.tools.start_answer(
+                        "kata",
+                        json!({"event": "build.start", "repo": "kata", "outcome": "refused", "problems": ["kata changed"], "details": null}),
+                    )
+                },
+                want: StartOutcome::Refused {
+                    problems: strs(&["kata changed"]),
+                },
+                real_starts: &["kata"],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "repository 2 failed",
+                set: |r| {
+                    r.tools.start_answer(
+                        "bob",
+                        json!({"event": "build.start", "repo": "bob", "outcome": "failed",
+                            "problems": ["hook deps failed with exit code 1"], "hooks": [],
+                            "failed": {"id": "deps", "onFailure": "stop", "output": "npm ci: lockfile out of date"}, "details": {}}),
+                    )
+                },
+                want: StartOutcome::Failed {
+                    problems: strs(&["hook deps failed with exit code 1"]),
+                    hook: Some(HookFailure {
+                        id: "deps".into(),
+                        on_failure: Some("stop".into()),
+                        output: "npm ci: lockfile out of date".into(),
+                    }),
+                },
+                real_starts: &["kata", "bob"],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "repository 1 could not run",
+                set: |r| {
+                    r.tools.start_answer(
+                        "kata",
+                        json!({"event": "build.start", "repo": "kata", "outcome": "could-not-run", "problems": ["git failed"], "details": null}),
+                    )
+                },
+                want: StartOutcome::CouldNotRun {
+                    output: "git failed".into(),
+                    repo: Some("kata".into()),
+                },
+                real_starts: &["kata"],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "repository 1 stopped",
+                set: |r| *r.tools.stop_in.lock().unwrap() = Some("kata".into()),
+                want: StartOutcome::Stopped {
+                    prepared: Vec::new(),
+                },
+                real_starts: &[],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "repository 2 stopped",
+                set: |r| *r.tools.stop_in.lock().unwrap() = Some("bob".into()),
+                want: StartOutcome::Stopped {
+                    prepared: strs(&["kata"]),
+                },
+                real_starts: &["kata"],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "token cancelled between the check and repository 1",
+                set: |r| *r.tools.stop_after.lock().unwrap() = Some("check".into()),
+                want: StartOutcome::Stopped {
+                    prepared: Vec::new(),
+                },
+                real_starts: &[],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "token cancelled between repository 1 and repository 2",
+                set: |r| *r.tools.stop_after.lock().unwrap() = Some("kata".into()),
+                want: StartOutcome::Stopped {
+                    prepared: strs(&["kata"]),
+                },
+                real_starts: &["kata"],
+                launched: 0,
+                held: false,
+            },
+        ];
+        for row in rows {
+            let r = rig();
+            r.simple("A", &["kata", "bob"]);
+            r.arm_stop("A");
+            (row.set)(&r);
+            assert_eq!(r.host.start(&cref("A"), form()), row.want, "{}", row.label);
+            assert_eq!(r.tools.real_starts("A"), row.real_starts, "{}", row.label);
+            assert_eq!(r.launcher.count(), row.launched, "{}", row.label);
+            let holder = if row.held { Some(key("A")) } else { None };
+            assert_eq!(r.holder("kata"), holder, "{}: kata", row.label);
+            assert_eq!(r.holder("bob"), holder, "{}: bob", row.label);
+        }
+    }
+
+    // R15.1
+    #[test]
+    fn preparation_labels_name_repo_and_check() {
+        let r = rig();
+        r.simple("A", &["kata", "bob"]);
+        let hook = |t: &str, outcome: Option<&str>| {
+            let mut line = json!({"type": t, "id": "base-tests"});
+            if let Some(o) = outcome {
+                line["outcome"] = json!(o);
+            }
+            line.to_string()
+        };
+        r.tools.lines.lock().unwrap().insert(
+            "check".into(),
+            vec![hook("hook-start", None), "not json".into()],
+        );
+        r.tools.lines.lock().unwrap().insert(
+            "kata".into(),
+            vec![hook("hook-start", None), hook("hook-end", Some("passed"))],
+        );
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        let seen: Vec<(StepProgressKind, String, Option<String>, Option<String>)> = r
+            .labels
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                assert_eq!(e.change, key("A"));
+                assert_eq!(e.kind, StepKind::PreparingBuild);
+                let p = e.progress.clone();
+                (p.kind, p.label, p.repo, p.check)
+            })
+            .collect();
+        let some = |s: &str| Some(s.to_string());
+        let expected = vec![
+            (
+                StepProgressKind::Verifying,
+                "Checking every repository before building".to_string(),
+                None,
+                None,
+            ),
+            (
+                StepProgressKind::Hook,
+                "Checking every repository before building: running base-tests".to_string(),
+                None,
+                some("base-tests"),
+            ),
+            (
+                StepProgressKind::Repository,
+                "Preparing kata".to_string(),
+                some("kata"),
+                None,
+            ),
+            (
+                StepProgressKind::Hook,
+                "Preparing kata: running base-tests".to_string(),
+                some("kata"),
+                some("base-tests"),
+            ),
+            (
+                StepProgressKind::Hook,
+                "Preparing kata: base-tests passed".to_string(),
+                some("kata"),
+                some("base-tests"),
+            ),
+            (
+                StepProgressKind::Repository,
+                "Preparing bob".to_string(),
+                some("bob"),
+                None,
+            ),
+        ];
+        assert_eq!(seen, expected);
+    }
+
+    // R19.1
+    #[test]
+    fn preparation_does_not_use_the_build_limit() {
+        let r = rig();
+        r.simple("A", &["kata"]);
+        *r.tools.delay.lock().unwrap() = std::time::Duration::from_secs(2);
+        let mut short = form();
+        short.timeout_secs = 1;
+        let seen = r.probe_steps();
+        assert!(matches!(
+            r.host.start(&cref("A"), short),
+            StartOutcome::Started { .. }
+        ));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![vec![StepKind::PreparingBuild]; 2],
+            "preparation is the step with no limit of its own"
+        );
+        let spec: Value =
+            serde_json::from_str(&r.launcher.spec_of(r.launcher.launched("kata")[0])).unwrap();
+        assert_eq!(spec["leash"]["timeout_secs"], 1, "{spec}");
     }
 
     // The page learns which runs are the build's from the announcement, not from a launch of its own.
@@ -3837,11 +4278,19 @@ mod tests {
             fake: fake.clone(),
         });
         let launcher = Arc::new(FakeLauncher::default());
-        let host = BuildHost::new(tools, launcher.clone(), PathBuf::from("D:/wb"));
+        let (steps, labels) = test_steps();
+        let host = BuildHost::new(
+            tools,
+            launcher.clone(),
+            PathBuf::from("D:/wb"),
+            steps.clone(),
+        );
         Rig {
             tools: fake,
             launcher,
             host,
+            steps,
+            labels,
         }
     }
 
@@ -3963,6 +4412,7 @@ process.exit(r.status ?? 1);
             tools,
             Arc::new(FakeLauncher::default()),
             PathBuf::from("D:/wb"),
+            test_steps().0,
         );
         let (snapshot, _) = host.snapshot(&real.place, SYSTEM, "2026-11-01-a").unwrap();
         let calls = std::fs::read_to_string(&log)

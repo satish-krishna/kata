@@ -88,7 +88,8 @@ struct Entry {
 
 type Emitter = Arc<dyn Fn(StepEvent) + Send + Sync>;
 
-/// Every long step that is running, one per change.
+/// Every long step that is running, one per change. A clone shares the table with the original.
+#[derive(Clone)]
 pub struct StepTable {
     entries: Arc<Mutex<HashMap<ChangeKey, Entry>>>,
     emit: Emitter,

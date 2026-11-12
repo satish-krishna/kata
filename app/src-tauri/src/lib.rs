@@ -2261,15 +2261,17 @@ pub fn run() {
         .manage(Arc::new(running::OpenedMarks::default()))
         .setup(|app| {
             let handle = app.handle().clone();
-            app.manage(steps::StepTable::new(Arc::new(move |event| {
+            let step_table = steps::StepTable::new(Arc::new(move |event| {
                 let _ = handle.emit(steps::STEP_EVENT, event);
-            })));
+            }));
+            app.manage(step_table.clone());
             app.manage(build_host::BuildHost::new(
                 Arc::new(PluginTools),
                 Arc::new(AppLauncher {
                     app: app.handle().clone(),
                 }),
                 sdlc::store::workbench_dir().unwrap_or_default(),
+                step_table,
             ));
             // Open at the remembered zoom; a failure leaves the window at 100%.
             let saved = zoom::load();
