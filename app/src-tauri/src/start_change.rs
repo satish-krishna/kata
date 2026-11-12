@@ -2,13 +2,34 @@
 //! and Kata only asks. Kata never creates a branch or a copy itself; a refusal is the plugin's own reason,
 //! sorted by what the engineer can do about it.
 use crate::steps::{StepKind, StepTable};
-use kata_core::proc::{CancelToken, LineSink};
+use kata_core::proc::LineSink;
 use kata_sdlc::ai_sdlc::{progress_of, HookFailure, Place, Program, StepOutcome};
 use kata_sdlc::holds::{ChangeKey, RepoKey};
 use kata_sdlc::naming;
 use serde::Serialize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+
+/// What a command answers when the change already has a long step running.
+pub const STEP_BUSY: &str = "This change already has a step running. Wait for it, or stop it.";
+
+/// What a long call prints: kept, so a stop can show it, and each progress line goes to the page through the
+/// step table under the change's key.
+pub fn relay(steps: &StepTable, key: &ChangeKey) -> (LineSink, Arc<Mutex<Vec<String>>>) {
+    let printed: Arc<Mutex<Vec<String>>> = Arc::default();
+    let (steps, key, kept) = (steps.clone(), key.clone(), printed.clone());
+    let sink: LineSink = Arc::new(move |line: &str| {
+        let line = line.trim();
+        if line.is_empty() {
+            return;
+        }
+        kept.lock().unwrap().push(line.to_string());
+        if let Some(progress) = progress_of(line) {
+            steps.label(&key, progress);
+        }
+    });
+    (sink, printed)
+}
 
 /// Why the plugin refused to start a change, by what the engineer can change.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -142,6 +163,17 @@ pub fn start_change(
         "" => naming::change_scope(&place.master, request.system, &change),
         typed => typed.to_string(),
     };
+    let key = ChangeKey {
+        workspace: RepoKey::of(workspace),
+        system: request.system.to_string(),
+        change: change.clone(),
+    };
+    let Ok(step) = steps.begin(key.clone(), StepKind::Starting) else {
+        return Ok(ChangeStart::CouldNotRun {
+            reason: STEP_BUSY.to_string(),
+            hook: None,
+        });
+    };
     let mut command = vec![
         "change",
         "start",
@@ -160,7 +192,8 @@ pub fn start_change(
     if let Some(branch) = request.branch {
         command.extend(["--branch", branch]);
     }
-    let answer = program.step_long(&command, place, &CancelToken::new(), None);
+    let (sink, printed) = relay(steps, &key);
+    let answer = program.step_long(&command, place, step.token(), Some(sink));
     let text = |key: &str| answer.json["details"][key].as_str().map(str::to_string);
     match answer.outcome {
         StepOutcome::Passed { .. } => match (text("branch"), text("copy")) {
@@ -185,10 +218,8 @@ pub fn start_change(
         StepOutcome::CouldNotRun { reason, hook, .. } => {
             Ok(ChangeStart::CouldNotRun { reason, hook })
         }
-        // The plan gives a stopped start its own outcome (T5).
-        StepOutcome::Stopped => Ok(ChangeStart::CouldNotRun {
-            reason: "it was stopped".to_string(),
-            hook: None,
+        StepOutcome::Stopped => Ok(ChangeStart::Stopped {
+            answer: printed.lock().unwrap().clone(),
         }),
     }
 }

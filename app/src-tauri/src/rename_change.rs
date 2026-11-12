@@ -1,14 +1,13 @@
 //! Renaming a change's branch: the plugin renames it in the master, the change's copy and every product
 //! repository that has it, all or nothing. Kata renames no branch itself; a refusal is the plugin's own
 //! reasons, as it printed them.
+use crate::start_change::{relay, STEP_BUSY};
 use crate::steps::{StepKind, StepTable};
-use kata_core::proc::LineSink;
-use kata_sdlc::ai_sdlc::{progress_of, Place, Program, StepOutcome};
+use kata_sdlc::ai_sdlc::{Place, Program, StepOutcome};
 use kata_sdlc::holds::ChangeKey;
 use kata_sdlc::prs::PrEntry;
 use kata_sdlc::pull_requests::{recorded, RecordedPullRequest};
 use serde::Serialize;
-use std::sync::{Arc, Mutex};
 
 /// What renaming a change's branch came to.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -46,6 +45,9 @@ pub fn rename_change(
     key: &ChangeKey,
 ) -> Result<RenameOutcome, String> {
     let (system, change) = (key.system.as_str(), key.change.as_str());
+    let Ok(step) = steps.begin(key.clone(), StepKind::Renaming) else {
+        return Err(STEP_BUSY.to_string());
+    };
     // The pull requests are read first: after the rename the engineer is told which were opened from the old name.
     let before = program
         .change_show(place, change, false)
@@ -54,15 +56,19 @@ pub fn rename_change(
     let command = [
         "change", "rename", "--json", "--system", system, "--change", change, "--to", to,
     ];
-    let answer = program.step_long(&command, place, &kata_core::proc::CancelToken::new(), None);
+    let (sink, printed) = relay(steps, key);
+    let answer = program.step_long(&command, place, step.token(), Some(sink));
     match answer.outcome {
         StepOutcome::Passed { .. } => {}
         StepOutcome::Refused { problems } | StepOutcome::Failed { problems, .. } => {
             return Ok(RenameOutcome::Refused { problems })
         }
         StepOutcome::CouldNotRun { reason, .. } => return Err(reason),
-        // The plan gives a stopped rename its own outcome (T6).
-        StepOutcome::Stopped => return Err("it was stopped".to_string()),
+        StepOutcome::Stopped => {
+            return Ok(RenameOutcome::Stopped {
+                answer: printed.lock().unwrap().clone(),
+            })
+        }
     }
     let answer = answer.json;
     let text = |key: &str| answer[key].as_str().map(str::to_string);
@@ -94,6 +100,7 @@ mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
     use std::process::Command;
+    use std::sync::{Arc, Mutex};
 
     const SYSTEM: &str = "demo";
     const CHANGE: &str = "2026-11-01-password-reset";

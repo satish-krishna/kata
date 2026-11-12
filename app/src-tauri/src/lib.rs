@@ -27,8 +27,6 @@ use tauri_plugin_shell::ShellExt;
 
 /// Channel the engine's normalized KataEvents are relayed on to the webview.
 const RUN_EVENT: &str = "kata://event";
-/// The step the plugin is on while a change is declared done, one `StepProgress` per event.
-
 /// Shared run control: every live run plus a monotonic id source. A stale
 /// reader task (a finished run still tearing down) removes only its own id, so
 /// it never clears a newer run's handle.
@@ -1119,11 +1117,14 @@ fn sdlc_accept(
 
 /// The accept step of `sdlc_accept`, with the program given.
 fn accept_in(
-    _steps: &steps::StepTable,
+    steps: &steps::StepTable,
     program: &sdlc::ai_sdlc::Program,
     change: &build_host::ChangeRef,
     doc: sdlc::accept::ChangeDocument,
 ) -> Result<sdlc::accept::AcceptOutcome, String> {
+    let step = steps
+        .begin(build_host::key_of(change), steps::StepKind::Accepting(doc))
+        .map_err(|_| start_change::STEP_BUSY.to_string())?;
     let home = change_home(program, change)?;
     Ok(sdlc::accept::apply(
         program,
@@ -1131,7 +1132,7 @@ fn accept_in(
         &change.system,
         &home.state,
         doc,
-        &kata_core::proc::CancelToken::new(),
+        step.token(),
     ))
 }
 
@@ -1150,11 +1151,17 @@ fn sdlc_reject(
 /// The reject step of `sdlc_reject`, with the program given.
 fn reject_in(
     control: &RunControl,
-    _steps: &steps::StepTable,
+    steps: &steps::StepTable,
     program: &sdlc::ai_sdlc::Program,
     change: &build_host::ChangeRef,
 ) -> Result<sdlc::accept::RejectOutcome, String> {
     let key = build_host::key_of(change);
+    let step = steps
+        .begin(
+            key.clone(),
+            steps::StepKind::Rejecting(sdlc::accept::ChangeDocument::Intent),
+        )
+        .map_err(|_| start_change::STEP_BUSY.to_string())?;
     control.state.lock().unwrap().begin_rejecting(&key)?;
     let outcome = change_home(program, change).map(|home| {
         sdlc::accept::reject(
@@ -1162,7 +1169,7 @@ fn reject_in(
             &home.place,
             &change.system,
             &home.state,
-            &kata_core::proc::CancelToken::new(),
+            step.token(),
         )
     });
     control.state.lock().unwrap().end_rejecting(&key);
@@ -1205,20 +1212,17 @@ fn sdlc_remove_copy(
 /// The removal step of `sdlc_remove_copy`, with the program given.
 fn remove_copy_in(
     control: &RunControl,
-    _steps: &steps::StepTable,
+    steps: &steps::StepTable,
     program: &sdlc::ai_sdlc::Program,
     change: &build_host::ChangeRef,
 ) -> Result<sdlc::copy_removal::RemoveOutcome, String> {
     let key = build_host::key_of(change);
+    let step = steps
+        .begin(key.clone(), steps::StepKind::RemovingCopy)
+        .map_err(|_| start_change::STEP_BUSY.to_string())?;
     control.state.lock().unwrap().begin_rejecting(&key)?;
-    let outcome = change_home(program, change).map(|home| {
-        sdlc::copy_removal::remove(
-            program,
-            &home.place,
-            &home.state,
-            &kata_core::proc::CancelToken::new(),
-        )
-    });
+    let outcome = change_home(program, change)
+        .map(|home| sdlc::copy_removal::remove(program, &home.place, &home.state, step.token()));
     control.state.lock().unwrap().end_rejecting(&key);
     outcome
 }
@@ -1890,7 +1894,7 @@ fn sdlc_checks_view(
 }
 
 /// Declare a change done through the plugin: it verifies the change, pushes every touched repository and
-/// opens one pull request each, the master's last. Each step it reports goes out on `sdlc://done-step`. A
+/// opens one pull request each, the master's last. Each step it reports goes out on `sdlc://step`. A
 /// step the machine cannot run is the answer, not an error.
 #[tauri::command(async)]
 fn sdlc_declare_done(
@@ -1907,12 +1911,16 @@ fn sdlc_declare_done(
 
 /// The declare step of `sdlc_declare_done`, with the program and the machine's readiness given.
 fn declare_in(
-    _steps: &steps::StepTable,
+    steps: &steps::StepTable,
     program: &sdlc::ai_sdlc::Program,
     readiness: &sdlc::plugin::Readiness,
     change: &build_host::ChangeRef,
 ) -> sdlc::done::DeclareView {
     let could_not_run = |message: String| sdlc::done::DeclareView::CouldNotRun { message };
+    let key = build_host::key_of(change);
+    let Ok(step) = steps.begin(key.clone(), steps::StepKind::DeclaringDone) else {
+        return could_not_run(start_change::STEP_BUSY.to_string());
+    };
     let (place, state) = match change_home(program, change) {
         Ok(home) => (home.place, home.state),
         Err(message) => return could_not_run(message),
@@ -1928,8 +1936,11 @@ fn declare_in(
         readiness,
         &change.system,
         &change.change,
-        Arc::new(|_| {}),
-        &kata_core::proc::CancelToken::new(),
+        {
+            let steps = steps.clone();
+            Arc::new(move |progress| steps.label(&key, progress))
+        },
+        step.token(),
     )
 }
 
@@ -3441,13 +3452,17 @@ mod steps_commands {
         let start_change::ChangeStart::Started { copy, .. } = started else {
             panic!("{started:?}");
         };
-        let folder = PathBuf::from(copy).join("intent").join(SYSTEM).join(CHANGE);
+        let copy = PathBuf::from(copy);
+        let folder = copy.join("intent").join(SYSTEM).join(CHANGE);
         std::fs::create_dir_all(&folder).unwrap();
         std::fs::write(
             folder.join("intent.md"),
             "---\ntitle: Reset\nsystem: demo\nauthor: t\ndate: 2026-11-01\nstatus: draft\nscope: demo\n---\n\n# Intent: Reset\n",
         )
         .unwrap();
+        // Rejecting is refused while the intent has uncommitted changes.
+        git(&copy, &["add", "."]);
+        git(&copy, &["commit", "-q", "-m", "intent"]);
         Fx {
             _dir: dir,
             change: build_host::ChangeRef {
@@ -3559,7 +3574,10 @@ if ({trigger}) {{
         let (outcome, stopped, steps) = stopped_during(&fx, commit, |steps, fake, _| {
             reject_in(&control, steps, fake, &fx.change).unwrap()
         });
-        assert!(stopped, "reject: the step was not in the table");
+        assert!(
+            stopped,
+            "reject: the step was not in the table: {outcome:?}"
+        );
         assert!(
             matches!(outcome, RejectOutcome::Stopped { .. }),
             "{outcome:?}"

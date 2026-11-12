@@ -8,4 +8,4 @@ export type RenameOutcome = { "outcome": "renamed", from: string, to: string, re
 /**
  * The change's pull requests, opened from the old name: the engineer closes them by hand.
  */
-oldPullRequests: Array<RecordedPullRequest>, } | { "outcome": "refused", problems: Array<string>, };
+oldPullRequests: Array<RecordedPullRequest>, } | { "outcome": "refused", problems: Array<string>, } | { "outcome": "stopped", answer: Array<string>, };
