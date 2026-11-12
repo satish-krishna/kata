@@ -2021,7 +2021,7 @@ fn close_window(app: &AppHandle, answer: close_guard::CloseAnswer) {
         .map(|h| h.inner().clone());
     let launching = host.as_ref().map(|h| h.launching()).unwrap_or_default();
     let live = app.state::<RunControl>().state.lock().unwrap().live();
-    match close_guard::on_close(&live, &launching, answer) {
+    match close_guard::on_close(&live, &launching, &[], answer) {
         close_guard::CloseOutcome::Close => destroy_main(app),
         ask @ close_guard::CloseOutcome::Ask { .. } => {
             let _ = app.emit(close_guard::CLOSE_ASKED_EVENT, ask);
