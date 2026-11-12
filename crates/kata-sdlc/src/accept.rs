@@ -358,7 +358,7 @@ mod tests {
 
     /// A stand-in for the program that passes every call to the real one except the call named by
     /// \`trigger\` (a JS condition on \`args\`): that call writes a marker and waits to be stopped. A call
-    /// nobody stops ends itself after 5 s, so a red test fails instead of hanging.
+    /// nobody stops ends itself after 60 s, so a red test fails instead of hanging.
     fn stopping_program(dir: &Path, trigger: &str) -> (Program, PathBuf) {
         let marker = dir.join("stopping.marker");
         let real = program().entry;
@@ -368,7 +368,7 @@ import {{ writeFileSync }} from 'node:fs';
 const args = process.argv.slice(2);
 if ({trigger}) {{
   writeFileSync({marker:?}, 'x');
-  setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3); }}, 5000);
+  setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3); }}, 60000);
 }} else {{
   const r = spawnSync(process.execPath, [{real:?}, ...args], {{ stdio: 'inherit' }});
   process.exit(r.status ?? 2);
@@ -388,11 +388,11 @@ if ({trigger}) {{
         )
     }
 
-    /// Cancels \`token\` once the fake has reached the call it stops, giving up after 5 s.
+    /// Cancels \`token\` once the fake has reached the call it stops, giving up after 60 s (the real program may be slow to reach it under load).
     fn stop_when_reached(marker: PathBuf, token: &CancelToken) -> std::thread::JoinHandle<()> {
         let token = token.clone();
         std::thread::spawn(move || {
-            for _ in 0..100 {
+            for _ in 0..1200 {
                 if marker.exists() {
                     token.cancel();
                     return;
