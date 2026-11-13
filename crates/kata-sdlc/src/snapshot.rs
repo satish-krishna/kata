@@ -755,6 +755,51 @@ mod tests {
         unchanged(&w);
     }
 
+    /// R6.2: a stopped document run of a single-repo change leaves files in the copy; the listing and
+    /// the discard act in the copy only, and the engineer's checkout is never touched.
+    #[test]
+    fn single_repo_leftovers_are_discarded_in_the_copy_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = crate::testutil::single_repo(dir.path(), "kata", &[("kata", "app")]);
+        commit_file(&root, "notes.md", "orig", "notes");
+        let copies = dir.path().join(".ai-sdlc").join("copies");
+        std::fs::create_dir_all(&copies).unwrap();
+        let copy = repo(&copies, "c");
+        commit_file(&copy, "notes.md", "orig", "notes");
+        // The engineer's own edit in the checkout, and the run's in the copy.
+        std::fs::write(root.join("mine.md"), "engineer").unwrap();
+        std::fs::write(root.join("notes.md"), "engineer edit").unwrap();
+        let before = take(&copy).unwrap();
+        std::fs::write(copy.join("notes.md"), "run edit").unwrap();
+        std::fs::write(copy.join("run.md"), "x").unwrap();
+
+        // A single-repo repository has no product repositories to list.
+        assert!(product_repos(dir.path(), "kata").is_empty());
+        assert!(sibling_repos(&root).is_empty());
+        let l = leftovers(&copy, &before, &[], None).unwrap();
+        assert_eq!(l.discardable, vec!["notes.md", "run.md"]);
+        assert!(l.product_repos_changed.is_empty());
+
+        let placing = Placing::Change(Ok(copy.as_path()));
+        discard_placed(&placing, &before, &l.discardable, None).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(copy.join("notes.md")).unwrap(),
+            "orig"
+        );
+        assert!(!copy.join("run.md").exists());
+        assert_eq!(
+            std::fs::read(root.join("notes.md")).unwrap(),
+            b"engineer edit"
+        );
+        assert_eq!(std::fs::read(root.join("mine.md")).unwrap(), b"engineer");
+
+        // A discard pointed at the checkout is refused.
+        let wrong = Placing::Change(Ok(root.as_path()));
+        let err = discard_placed(&wrong, &before, &["mine.md".into()], None).unwrap_err();
+        assert!(err.contains("Nothing discarded"), "{err}");
+        assert!(root.join("mine.md").exists());
+    }
+
     #[test]
     fn discard_itself_refuses_a_folder_other_than_the_snapshots() {
         let w = ws();
