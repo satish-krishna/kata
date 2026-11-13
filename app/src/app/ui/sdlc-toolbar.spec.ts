@@ -7,7 +7,7 @@ import { KataTransport } from '../core/transport/kata-transport';
 import { MockTransport } from '../core/transport/mock-transport';
 import { SdlcToolbar } from './sdlc-toolbar';
 
-const WS: WorkspaceEntry = { id: 'acme', name: 'acme-commerce', folder: '/a', last_opened: 1 };
+const WS: WorkspaceEntry = { id: 'acme', name: 'acme-commerce', folder: '/a', last_opened: 1, layout: 'workspace' };
 const inputs = (over: Record<string, unknown> = {}) => ({
   workspaces: [WS], current: WS, missing: [], branch: 'main', ...over,
 });

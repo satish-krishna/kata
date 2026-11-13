@@ -605,8 +605,8 @@ describe('ChangePageViewModel', () => {
   it('the current workspace is the one the backend names, not the newest last_opened', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([
-      { id: 'old', name: 'old', folder: MOCK_WORKSPACE_FOLDER, last_opened: 5 },
-      { id: 'new', name: 'new', folder: MOCK_WORKSPACE_FOLDER, last_opened: 50 },
+      { id: 'old', name: 'old', folder: MOCK_WORKSPACE_FOLDER, last_opened: 5, layout: 'workspace' },
+      { id: 'new', name: 'new', folder: MOCK_WORKSPACE_FOLDER, last_opened: 50, layout: 'workspace' },
     ]);
     vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('old');
     const { vm } = setup(PHOTOS_CHANGE, transport);

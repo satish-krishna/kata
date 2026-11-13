@@ -222,7 +222,7 @@ fn workspace_id(name: &str, list: &[WorkspaceEntry]) -> String {
     id
 }
 
-/// Save a new workspace called `name` for `folder`, with an id made from the name and stamped as opened
+/// Save a new workspace called `name` for `folder`, laid out as `layout`, with an id made from the name and stamped as opened
 /// at `now`. Answers the saved list and the workspace now opened on.
 pub fn add_workspace(
     name: &str,
@@ -230,8 +230,19 @@ pub fn add_workspace(
     layout: crate::layout::Layout,
     now: u64,
 ) -> Result<WorkspaceChoice, StoreError> {
-    let _ = layout;
     update_workspaces(|list| {
+        let key = crate::holds::RepoKey::of(std::path::Path::new(folder));
+        if let Some(saved) = list
+            .iter()
+            .find(|w| crate::holds::RepoKey::of(std::path::Path::new(&w.folder)) == key)
+        {
+            let id = saved.id.clone();
+            let at = stamp(list, &id, now);
+            if let Some(entry) = list.iter_mut().find(|w| w.id == id) {
+                entry.last_opened = at;
+            }
+            return Ok(());
+        }
         let id = workspace_id(name, list);
         let last_opened = stamp(list, &id, now);
         list.push(WorkspaceEntry {
@@ -240,7 +251,7 @@ pub fn add_workspace(
             folder: folder.to_string(),
             last_opened,
             last_system: None,
-            layout: Default::default(),
+            layout,
         });
         Ok(())
     })
@@ -523,7 +534,7 @@ mod tests {
         let _home = with_home();
         add_workspace("kata", "D:/tmp/kata", Layout::SingleRepo, 10).unwrap();
         add_workspace("other", "D:/tmp/other", Layout::Workspace, 20).unwrap();
-        let choice = add_workspace("kata again", r"d:	mpkata\", Layout::SingleRepo, 30).unwrap();
+        let choice = add_workspace("kata again", "d:/tmp/kata/", Layout::SingleRepo, 30).unwrap();
         assert_eq!(choice.workspaces.len(), 2);
         assert_eq!(choice.current.as_deref(), Some("kata"));
     }

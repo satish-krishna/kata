@@ -19,7 +19,7 @@ import { SdlcRunner, type RunTarget } from './sdlc-runner';
 const SNAPSHOT = { folder: '/ws/commerce-docs', head: 'abc', dirty: {} };
 const WS = (master: string) => ({ kind: 'workspace' as const, master });
 const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
-const WORKSPACE: WorkspaceEntry = { id: 'acme', name: 'acme', folder: '/ws', last_opened: 1 };
+const WORKSPACE: WorkspaceEntry = { id: 'acme', name: 'acme', folder: '/ws', last_opened: 1, layout: 'workspace' };
 const TARGET: RunTarget = {
   workspaceId: 'acme',
   target: WS('/ws/commerce-docs'),

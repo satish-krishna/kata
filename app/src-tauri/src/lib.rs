@@ -742,24 +742,26 @@ async fn sdlc_open_workspace(id: String) -> Result<sdlc::store::WorkspaceChoice,
     sdlc::store::open_workspace(&id, now_secs()).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-async fn sdlc_add_workspace(
+#[tauri::command(async)]
+fn sdlc_add_workspace(
     name: String,
     folder: String,
 ) -> Result<sdlc::store::WorkspaceChoice, String> {
-    sdlc::store::add_workspace(&name, &folder, sdlc::layout::Layout::Workspace, now_secs())
-        .map_err(|e| e.to_string())
+    let (root, layout) = resolve_added(state_inputs(&folder).0.as_ref(), &folder)?;
+    sdlc::store::add_workspace(&name, &root, layout, now_secs()).map_err(|e| e.to_string())
 }
 
 /// The folder to save for an added `folder` and its layout: the program's root for it. Without a program
 /// (the mode is not ready) the folder is saved as it is, a workspace, as before.
-#[allow(dead_code)]
 fn resolve_added(
     program: Option<&sdlc::ai_sdlc::Program>,
     folder: &str,
 ) -> Result<(String, sdlc::layout::Layout), String> {
-    let _ = program;
-    Ok((folder.to_string(), sdlc::layout::Layout::Workspace))
+    let Some(program) = program else {
+        return Ok((folder.to_string(), sdlc::layout::Layout::Workspace));
+    };
+    let opened = sdlc::layout::open(program, Path::new(folder)).map_err(|e| e.to_string())?;
+    Ok((opened.root.to_string_lossy().into_owned(), opened.layout))
 }
 
 #[tauri::command]

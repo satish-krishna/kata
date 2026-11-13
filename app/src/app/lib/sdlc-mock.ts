@@ -702,7 +702,7 @@ export class SdlcMock {
 
   private settings: Settings = { mode: 'workbench', remember: true, permission_mode: 'auto' };
   private workspaces: WorkspaceEntry[] = [{
-    id: 'acme-commerce', name: 'acme-commerce', folder: MOCK_WORKSPACE_FOLDER, last_opened: 1792281600,
+    id: 'acme-commerce', name: 'acme-commerce', folder: MOCK_WORKSPACE_FOLDER, last_opened: 1792281600, layout: 'workspace',
   }];
   private links: RunLink[] = [];
   /** The first demo task is linked to its run; the others are not, so both the known and the unknown session show in the browser. */
@@ -761,7 +761,7 @@ export class SdlcMock {
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'workspace';
     let id = slug;
     for (let n = 2; this.workspaces.some((w) => w.id === id); n++) id = `${slug}-${n}`;
-    this.workspaces.push({ id, name, folder, last_opened: this.stamp(id) });
+    this.workspaces.push({ id, name, folder, last_opened: this.stamp(id), layout: 'workspace' });
     return this.choice();
   }
 

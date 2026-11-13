@@ -90,8 +90,8 @@ describe('SdlcHomeViewModel init', () => {
   it('opens the workspace with the newest last_opened when several exist', async () => {
     const { vm, transport } = setup();
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([
-      { id: 'old', name: 'old', folder: '/old', last_opened: 5 },
-      { id: 'new', name: 'new', folder: '/new', last_opened: 50 },
+      { id: 'old', name: 'old', folder: '/old', last_opened: 5, layout: 'workspace' },
+      { id: 'new', name: 'new', folder: '/new', last_opened: 50, layout: 'workspace' },
     ]);
     vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('new');
     await vm.init();
@@ -101,8 +101,8 @@ describe('SdlcHomeViewModel init', () => {
   it('opens the workspace the backend names as current, even on a tie a TS sort would break the other way', async () => {
     const { vm, transport } = setup();
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([
-      { id: 'first', name: 'first', folder: '/first', last_opened: 0 },
-      { id: 'last', name: 'last', folder: '/last', last_opened: 0 },
+      { id: 'first', name: 'first', folder: '/first', last_opened: 0, layout: 'workspace' },
+      { id: 'last', name: 'last', folder: '/last', last_opened: 0, layout: 'workspace' },
     ]);
     const ask = vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('last');
     await vm.init();
@@ -113,9 +113,9 @@ describe('SdlcHomeViewModel init', () => {
   it('removing the current workspace moves to what the backend answers', async () => {
     const { vm, transport, removeWorkspace } = setup();
     const list: WorkspaceEntry[] = [
-      { id: 'a', name: 'a', folder: '/a', last_opened: 0 },
-      { id: 'b', name: 'b', folder: '/b', last_opened: 0 },
-      { id: 'c', name: 'c', folder: '/c', last_opened: 0 },
+      { id: 'a', name: 'a', folder: '/a', last_opened: 0, layout: 'workspace' },
+      { id: 'b', name: 'b', folder: '/b', last_opened: 0, layout: 'workspace' },
+      { id: 'c', name: 'c', folder: '/c', last_opened: 0, layout: 'workspace' },
     ];
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue(list);
     vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('a');
@@ -319,7 +319,7 @@ describe('SdlcHomeViewModel add workspace', () => {
   it('treats a listed folder as already listed despite slashes, a trailing separator and case', async () => {
     const { vm, transport, runSteps } = setup();
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([
-      { id: 'acme-commerce', name: 'acme-commerce', folder: 'D:\\Work\\acme-commerce\\', last_opened: 1 },
+      { id: 'acme-commerce', name: 'acme-commerce', folder: 'D:\\Work\\acme-commerce\\', last_opened: 1, layout: 'workspace' },
     ]);
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue('d:/work/acme-commerce');
     await vm.init();
@@ -689,7 +689,7 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
     const { vm, transport, openWorkspace } = setup();
     await vm.init();
     const first = vm.workspaces()[0];
-    const second = { id: 'second', name: 'second', folder: '/second', last_opened: 1 };
+    const second = { id: 'second', name: 'second', folder: '/second', last_opened: 1, layout: 'workspace' as const };
     vm.workspaces.set([first, second]);
     const appVersions = vi.spyOn(transport, 'appVersions');
     openWorkspace.mockResolvedValue({ workspaces: [first, { ...second, last_opened: 99 }], current: 'second' });
@@ -704,7 +704,7 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
     const { vm, transport, openWorkspace } = setup();
     await vm.init();
     const before = vm.workspaces();
-    vm.workspaces.set([...before, { id: 'second', name: 'second', folder: '/second', last_opened: 1 }]);
+    vm.workspaces.set([...before, { id: 'second', name: 'second', folder: '/second', last_opened: 1, layout: 'workspace' }]);
     const shown = vm.workspaces();
     const appVersions = vi.spyOn(transport, 'appVersions');
     openWorkspace.mockRejectedValue(new Error('disk full'));
@@ -734,7 +734,7 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
     await vm.init();
     const first = vm.workspaces()[0];
-    const added = { id: 'backend-chose-this', name: 'new-ws', folder: NEW_FOLDER, last_opened: 77 };
+    const added = { id: 'backend-chose-this', name: 'new-ws', folder: NEW_FOLDER, last_opened: 77, layout: 'workspace' as const };
     addWorkspace.mockResolvedValue({ workspaces: [first, added], current: added.id });
     await vm.addWorkspace();
     await vm.confirmAddWorkspace();
@@ -749,7 +749,7 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
     const versions = TestBed.inject(VersionsStore);
     const answer = await transport.appVersions();
     const appVersions = vi.spyOn(transport, 'appVersions').mockResolvedValue({ ...answer, copy: 'second workspace' });
-    const second = { id: 'second', name: 'second', folder: '/second', last_opened: 1 };
+    const second = { id: 'second', name: 'second', folder: '/second', last_opened: 1, layout: 'workspace' as const };
     vm.workspaces.set([...vm.workspaces(), second]);
     openWorkspace.mockResolvedValue({ workspaces: [...vm.workspaces()], current: 'second' });
     await vm.selectWorkspace('second');
@@ -964,7 +964,7 @@ const systemViewOf = (n: number, readiness: Readiness = READY): SystemView => ({
 /** The backend's answer for a workspace of one system: the set may start a change exactly when that system may. */
 const oneSystem = (v: SystemView): WorkspaceView => ({ systems: [v], canStartChange: v.canStartChange, startChangeReason: v.startChangeReason });
 
-const second: WorkspaceEntry = { id: 'second', name: 'second', folder: '/second', last_opened: 1 };
+const second: WorkspaceEntry = { id: 'second', name: 'second', folder: '/second', last_opened: 1, layout: 'workspace' as const };
 
 describe('SdlcHomeViewModel changes list', () => {
   it('names show at once and every stage fills in from one state read (R1.4)', async () => {
@@ -1043,9 +1043,9 @@ describe('SdlcHomeViewModel changes list', () => {
   it('reads only the current workspace; the switcher has no counts (R3.1)', async () => {
     const { vm, transport } = setup();
     const three: WorkspaceEntry[] = [
-      { id: 'a', name: 'a', folder: '/a', last_opened: 30 },
-      { id: 'b', name: 'b', folder: '/b', last_opened: 20 },
-      { id: 'c', name: 'c', folder: '/c', last_opened: 10 },
+      { id: 'a', name: 'a', folder: '/a', last_opened: 30, layout: 'workspace' },
+      { id: 'b', name: 'b', folder: '/b', last_opened: 20, layout: 'workspace' },
+      { id: 'c', name: 'c', folder: '/c', last_opened: 10, layout: 'workspace' },
     ];
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue(three);
     vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('a');
