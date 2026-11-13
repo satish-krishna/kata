@@ -1133,6 +1133,7 @@ fn accept_in(
         &home.state,
         doc,
         step.token(),
+        &(Arc::new(|_| {}) as sdlc::done::StepSink),
     ))
 }
 
@@ -3488,6 +3489,7 @@ mod steps_commands {
 import {{ writeFileSync }} from 'node:fs';
 const args = process.argv.slice(2);
 if ({trigger}) {{
+  if (args.includes('--stream')) console.log(JSON.stringify({{ type: 'hook-start', id: 'docs-lint' }}));
   writeFileSync({marker:?}, 'x');
   setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3); }}, 60000);
 }} else {{
@@ -3615,6 +3617,27 @@ if ({trigger}) {{
         assert!(stopped, "declare: the step was not in the table");
         assert!(matches!(view, DeclareView::Stopped { .. }), "{view:?}");
         assert!(steps.running().is_empty(), "declare");
+    }
+
+    /// R15.1 "accepts the spec | running a check after acceptance": the step table's label for the accepting
+    /// step names the check the plugin reports, replacing the generic first label.
+    #[test]
+    fn the_accepting_step_names_the_check_the_plugin_reports() {
+        let fx = fixture();
+        let accept = "args[0] === 'run' && args[1] === 'doc.accept'";
+        let (_, stopped, steps) = stopped_during(&fx, accept, |steps, fake, seen| {
+            let outcome = accept_in(steps, fake, &fx.change, ChangeDocument::Intent).unwrap();
+            let seen = seen.lock().unwrap();
+            assert!(
+                seen.iter()
+                    .any(|e| e.kind == StepKind::Accepting(ChangeDocument::Intent)
+                        && e.progress.check.as_deref() == Some("docs-lint")),
+                "{seen:?}"
+            );
+            outcome
+        });
+        assert!(stopped, "the step was not in the table");
+        assert!(steps.running().is_empty());
     }
 
     /// A change that already has a long step is refused by every command, and the program is not asked.
