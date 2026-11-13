@@ -3,6 +3,7 @@
 //! `doc.accept` event and removes the rejected change's copy. Kata makes no commit and runs no hook.
 use crate::ai_sdlc::state::{ChangeState, ChangeTrack};
 use crate::ai_sdlc::{Answer, Place, Program, StepOutcome};
+use crate::done::StepSink;
 use crate::frontmatter;
 use kata_core::proc::CancelToken;
 use serde::{Deserialize, Serialize};
@@ -84,7 +85,9 @@ pub fn apply(
     change: &ChangeState,
     doc: ChangeDocument,
     token: &CancelToken,
+    on_step: &StepSink,
 ) -> AcceptOutcome {
+    let _ = on_step;
     let file = doc.file();
     let mut edits = match Edit::start(&Path::new(&change.folder).join(file), "accepted") {
         Ok(edit) => vec![edit],
@@ -340,10 +343,12 @@ fn event_outcome(answer: &Answer) -> AcceptOutcome {
 mod tests {
     use super::*;
     use crate::ai_sdlc::state;
+    use crate::ai_sdlc::{StepProgress, StepProgressKind};
     use crate::offer::{self, LiveFacts, StageAction};
     use crate::testutil;
     use serde_json::{json, Value};
     use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
 
     const SYSTEM: &str = "demo";
     const CHANGE: &str = "2026-11-01-greeting";
@@ -528,6 +533,7 @@ if ({trigger}) {{
                 &self.state(),
                 doc,
                 &CancelToken::new(),
+                &(Arc::new(|_| {}) as StepSink),
             )
         }
 
@@ -605,6 +611,40 @@ if ({trigger}) {{
                     "after hook notify failed with exit code 3; nothing was undone".into()
                 ]
             }
+        );
+    }
+
+    /// R15.1 "accepts the spec | running a check after acceptance": the progress sink hears the step's
+    /// check as the plugin reports it, so the page can name it.
+    #[test]
+    fn a_check_on_accepting_reaches_the_progress_sink() {
+        let hooks = accept_hook(json!(["node", "-e", "0"]));
+        let fx = ready(
+            ChangeDocument::Spec,
+            SPEC_BODY,
+            &[("intent/demo/hooks.json", &hooks)],
+        );
+        let seen: Arc<Mutex<Vec<StepProgress>>> = Arc::default();
+        let sink: StepSink = {
+            let seen = Arc::clone(&seen);
+            Arc::new(move |step| seen.lock().unwrap().push(step))
+        };
+        let outcome = apply(
+            &program(),
+            &fx.place(),
+            SYSTEM,
+            &fx.state(),
+            ChangeDocument::Spec,
+            &CancelToken::new(),
+            &sink,
+        );
+        assert_eq!(outcome, AcceptOutcome::Accepted { warnings: vec![] });
+        let seen = seen.lock().unwrap();
+        assert!(
+            seen.iter().any(|s| s.kind == StepProgressKind::Hook
+                && s.check.as_deref() == Some("docs-lint")
+                && s.label.contains("docs-lint")),
+            "{seen:?}"
         );
     }
 
@@ -786,6 +826,7 @@ if ({trigger}) {{
                 &fx.state(),
                 ChangeDocument::Intent,
                 &CancelToken::new(),
+                &(Arc::new(|_| {}) as StepSink),
             );
             let AcceptOutcome::CouldNotRun { message } = outcome else {
                 panic!("expected CouldNotRun, got {outcome:?}");
@@ -978,6 +1019,7 @@ if ({trigger}) {{
                 &fx.state(),
                 ChangeDocument::Intent,
                 &token,
+                &(Arc::new(|_| {}) as StepSink),
             );
             watcher.join().unwrap();
             assert_eq!(outcome, AcceptOutcome::Stopped { accepted }, "{trigger}");
