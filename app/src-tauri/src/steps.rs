@@ -13,6 +13,10 @@ use std::sync::{Arc, Mutex};
 /// The channel a step's progress goes out on.
 pub const STEP_EVENT: &str = "sdlc://step";
 
+/// The channel a step's end goes out on, carrying the change's key, so a page that did not start the step
+/// learns it is over.
+pub const STEP_END_EVENT: &str = "sdlc://step-end";
+
 /// What a long step of a change is.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -160,6 +164,9 @@ struct Entry {
 
 type Emitter = Arc<dyn Fn(StepEvent) + Send + Sync>;
 
+/// Tells that the step of a change is over.
+pub type EndEmitter = Arc<dyn Fn(ChangeKey) + Send + Sync>;
+
 /// Every long step that is running, one per change. A clone shares the table with the original.
 #[derive(Clone)]
 pub struct StepTable {
@@ -201,6 +208,11 @@ impl StepTable {
             entries: Arc::default(),
             emit,
         }
+    }
+
+    /// Also tell `end` with the change's key each time a step is over.
+    pub fn with_end(self, _end: EndEmitter) -> Self {
+        self
     }
 
     /// Register a step of `change`, or `Busy` when it already has one.
@@ -515,6 +527,18 @@ mod tests {
         assert!(t.running().is_empty());
         assert!(!t.stop(&key("a")));
         assert!(t.begin(key("a"), StepKind::Renaming).is_ok());
+    }
+
+    #[test]
+    fn a_step_that_is_over_is_told_with_its_change() {
+        let ended: Arc<Mutex<Vec<ChangeKey>>> = Arc::default();
+        let sink = ended.clone();
+        let t = table().with_end(Arc::new(move |k| sink.lock().unwrap().push(k)));
+        let guard = t.begin(key("a"), StepKind::Starting).unwrap();
+        let _other = t.begin(key("b"), StepKind::Renaming).unwrap();
+        assert!(ended.lock().unwrap().is_empty());
+        drop(guard);
+        assert_eq!(*ended.lock().unwrap(), vec![key("a")]);
     }
 
     #[test]
