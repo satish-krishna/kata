@@ -1750,6 +1750,30 @@ describe('New change and copy removal can be stopped', () => {
     expect(toastText()).toBe('');
   });
 
+  // The real backend sends the step's first label as the step begins, which can be before the change's name
+  // has come back from its own call: the page keeps the report and shows it once the name is known.
+  it('New change shows the step and Stop from the first step event, even one that comes before the change name', async () => {
+    const { vm, transport } = setup();
+    const { stop, push } = steps(transport);
+    let named!: (change: string) => void;
+    // The first call is the page's own, for the step to match; the runner's later call answers at once.
+    vi.spyOn(transport, 'sdlcChangeName').mockReturnValueOnce(new Promise<string>((resolve) => (named = resolve)));
+    let release!: (outcome: ChangeStart) => void;
+    const start = vi.spyOn(transport, 'sdlcStartChange').mockReturnValue(new Promise<ChangeStart>((resolve) => (release = resolve)));
+    await vm.init();
+    const running = vm.newChange('commerce', 'flag prices', 'full');
+    await vi.waitFor(() => expect(start).toHaveBeenCalled());
+    push('2026-01-01-flag-prices', 'starting', 'Starting the change');
+    expect(vm.step()).toBeNull();
+    named('2026-01-01-flag-prices');
+    await vi.waitFor(() => expect(vm.step()).toEqual({ label: 'Starting the change', stop: 'Stop starting the change' }));
+    await vm.stopStep();
+    expect(stop).toHaveBeenCalled();
+    release({ outcome: 'stopped', answer: [] });
+    await running;
+    expect(vm.step()).toBeNull();
+  });
+
   it('a new start clears the stopped note', async () => {
     const { vm, transport } = setup();
     steps(transport);

@@ -609,6 +609,22 @@ describe('MockTransport declaring-done demos', () => {
     });
   });
 
+  // The vendored plugin's --stream prints hook-start and hook-end and nothing else, so the mock reports no more.
+  it('reports only what the plugin prints while declaring done: the step, then each check, in the backend wording', async () => {
+    await withDemo(null, async (t) => {
+      const steps: StepEvent[] = [];
+      await t.onStep((event) => steps.push(event));
+      await t.sdlcDeclareDone(ref);
+      expect(steps.some((s) => s.progress.kind === 'push' || s.progress.kind === 'pullRequest')).toBe(false);
+      expect(steps.every((s) => s.progress.label.startsWith('Declaring the change done'))).toBe(true);
+      expect(steps.map((s) => s.progress.label)).toEqual([
+        'Declaring the change done',
+        'Declaring the change done: running base-tests',
+        'Declaring the change done: base-tests passed',
+      ]);
+    });
+  });
+
   it.each([
     ['done-refused', 'notReady'],
     ['done-gh', 'notReady'],
