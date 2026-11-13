@@ -1126,6 +1126,11 @@ fn accept_in(
         .begin(build_host::key_of(change), steps::StepKind::Accepting(doc))
         .map_err(|_| start_change::STEP_BUSY.to_string())?;
     let home = change_home(program, change)?;
+    let key = build_host::key_of(change);
+    let on_step: sdlc::done::StepSink = {
+        let steps = steps.clone();
+        Arc::new(move |progress| steps.label(&key, progress))
+    };
     Ok(sdlc::accept::apply(
         program,
         &home.place,
@@ -1133,7 +1138,7 @@ fn accept_in(
         &home.state,
         doc,
         step.token(),
-        &(Arc::new(|_| {}) as sdlc::done::StepSink),
+        &on_step,
     ))
 }
 
