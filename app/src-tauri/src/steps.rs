@@ -178,9 +178,10 @@ impl StepTable {
         }
     }
 
-    /// Every step that is running.
+    /// Every step that is running, in change order, so the close question lists them the same way each time.
     pub fn running(&self) -> Vec<RunningStep> {
-        self.entries
+        let mut steps: Vec<RunningStep> = self
+            .entries
             .lock()
             .unwrap()
             .iter()
@@ -190,8 +191,15 @@ impl StepTable {
                 doing: entry.kind.doing(),
                 progress: entry.progress.clone(),
             })
-            .collect()
+            .collect();
+        steps.sort_by(|a, b| order_key(&a.change).cmp(&order_key(&b.change)));
+        steps
     }
+}
+
+/// The order of a change's entries: its system, its change name, then its workspace path.
+fn order_key(change: &ChangeKey) -> (&str, &str, &str) {
+    (&change.system, &change.change, change.workspace.path())
 }
 
 /// Stop the long step of a change; whether there was one.
