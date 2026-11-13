@@ -421,6 +421,7 @@ mod tests {
             rounds: BTreeMap::new(),
             waiting: Vec::new(),
             report: None,
+            app_turn: None,
         }
     }
 

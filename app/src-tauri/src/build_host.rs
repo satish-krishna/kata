@@ -1282,7 +1282,7 @@ impl BuildHost {
                 Ok(Some(record)) => review::currency(&record, &heads),
                 _ => ReviewCurrency::None,
             };
-            Some(Coordinator::new(currency, heads))
+            Some(Coordinator::new(currency, heads, false))
         };
         let generation = {
             let mut guard = self.inner.lock().unwrap();
