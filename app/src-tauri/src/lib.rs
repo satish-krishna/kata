@@ -2729,13 +2729,13 @@ mod tests {
     fn ready_with(version: Option<&str>) -> Result<(), String> {
         let _guard = CLAUDE_ENV.lock().unwrap_or_else(|e| e.into_inner());
         let exe = std::env::current_exe().unwrap();
-        let fake = exe
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("fake-claude{}", std::env::consts::EXE_SUFFIX));
-        assert!(fake.exists(), "build fake-claude first: {}", fake.display());
+        let name = format!("fake-claude{}", std::env::consts::EXE_SUFFIX);
+        let fake = find_upward(exe.parent().unwrap(), &name).unwrap_or_else(|| {
+            panic!(
+                "build fake-claude first (cargo build -p kata-core --bin fake-claude); none found above {}",
+                exe.display()
+            )
+        });
         std::env::set_var("KATA_CLAUDE_BIN", &fake);
         match version {
             Some(v) => std::env::set_var("KATA_FAKE_CLAUDE_VERSION", v),
@@ -2756,9 +2756,12 @@ mod tests {
         assert_eq!(ready_with(None), Ok(()));
     }
 
-    /// Stub: the first folder at or above `start` that holds `name`. Not implemented yet.
-    fn find_upward(_start: &std::path::Path, _name: &str) -> Option<std::path::PathBuf> {
-        None
+    /// The first folder at or above `start` that holds `name`, so the lookup works whatever depth cargo gives the test binary.
+    fn find_upward(start: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
+        start
+            .ancestors()
+            .map(|dir| dir.join(name))
+            .find(|p| p.is_file())
     }
 
     #[test]
