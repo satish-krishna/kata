@@ -279,6 +279,23 @@ mod tests {
         assert_eq!(running[0].progress.as_ref(), Some(&progress));
     }
 
+    // The close question lists the step lines in one order from one close to the next: the change key.
+    #[test]
+    fn running_lists_the_steps_in_change_order() {
+        let t = table();
+        let guards: Vec<_> = ["h", "c", "f", "a", "g", "b", "e", "d"]
+            .iter()
+            .map(|n| t.begin(key(n), StepKind::Starting).unwrap())
+            .collect();
+        let order: Vec<ChangeKey> = t.running().into_iter().map(|s| s.change).collect();
+        let sorted: Vec<ChangeKey> = ["a", "b", "c", "d", "e", "f", "g", "h"]
+            .iter()
+            .map(|n| key(n))
+            .collect();
+        assert_eq!(order, sorted);
+        drop(guards);
+    }
+
     #[test]
     fn doing_names_each_kind() {
         let rows: Vec<(StepKind, &str)> = vec![
