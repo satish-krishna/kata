@@ -1,5 +1,6 @@
 //! The run-spec of a run of a change.
 
+use crate::layout::Layout;
 use crate::permissions::{rules, slashes, Rules, RunKind, RunPlace};
 use kata_core::spec::{
     Auth, Given, Interactive, Leash, PermissionMode, Permissions, PluginConfig, UnmatchedPolicy,
@@ -100,7 +101,18 @@ const GITHUB_TOKENS: [&str; 3] = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOK
 
 /// The folder a build run of `repo` works in.
 pub fn build_workdir(place: &RunPlace, repo: &str) -> PathBuf {
-    PathBuf::from(slashes(&place.master_path()))
+    let master = PathBuf::from(slashes(&place.master_path()));
+    if place.layout == Layout::SingleRepo {
+        return match place.apps.iter().find(|(name, _)| name == repo) {
+            Some((_, folder)) if folder != "." => master.join(folder),
+            _ => master,
+        };
+    }
+    if repo == place.master_name() {
+        master
+    } else {
+        PathBuf::from(format!("{}/{repo}", slashes(&place.workspace)))
+    }
 }
 
 /// The run-spec of a run of a change. It is never bare (R5.4): the empty room would drop the plugin's
@@ -112,18 +124,13 @@ pub fn build_workdir(place: &RunPlace, repo: &str) -> PathBuf {
 /// keeps bypass and gets no rules: the posture is never switched here.
 pub fn change_spec(place: &RunPlace, form: RunForm) -> RunSpec {
     let master = slashes(&place.master_path());
-    let workspace = slashes(&place.workspace);
     let (name, task, workdir) = match &place.kind {
         RunKind::Build { .. } | RunKind::Review => {
             let (flag, name, workdir) = match &place.kind {
                 RunKind::Build { repo } => (
                     format!("--repo {repo}"),
                     format!("sdlc-{}-{}-build-{repo}", place.system, place.state.change),
-                    if *repo == place.master_name() {
-                        master.clone()
-                    } else {
-                        format!("{workspace}/{repo}")
-                    },
+                    slashes(&build_workdir(place, repo)),
                 ),
                 _ => (
                     "--review".to_string(),

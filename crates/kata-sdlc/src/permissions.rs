@@ -103,6 +103,9 @@ impl RunPlace {
 
     /// The system's repositories and the master, once each, in order.
     fn all_repos(&self) -> Vec<String> {
+        if self.layout == Layout::SingleRepo {
+            return self.apps.iter().map(|(name, _)| name.clone()).collect();
+        }
         let mut seen: Vec<String> = Vec::new();
         for r in self
             .system_repos
@@ -132,9 +135,18 @@ pub fn rules(place: &RunPlace) -> Rules {
         let master_name = place.master_name();
         // Every product repository: a system repository other than the master.
         let mut product: Vec<(&str, String)> = Vec::new();
-        for repo in &place.system_repos {
-            if *repo != master_name && !product.iter().any(|(r, _)| r == repo) {
-                product.push((repo, edit_tree(&Path::new(&root).join(repo))));
+        if place.layout == Layout::SingleRepo {
+            // An app is a folder of the copy; an app at the root has no folder of its own to deny.
+            for (name, folder) in &place.apps {
+                if folder != "." {
+                    product.push((name, edit_tree(&place.master_path().join(folder))));
+                }
+            }
+        } else {
+            for repo in &place.system_repos {
+                if *repo != master_name && !product.iter().any(|(r, _)| r == repo) {
+                    product.push((repo, edit_tree(&Path::new(&root).join(repo))));
+                }
             }
         }
         allow.push(format!("Read({}/**)", rule_path(Path::new(&root))));
