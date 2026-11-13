@@ -314,7 +314,7 @@ export class ChangePageViewModel {
     if (ref === null) return;
     let out: RemoveOutcome;
     try {
-      out = await this.inStep('removingCopy', 'Removing the copy', 'Stop removing the copy', () => this.transport.sdlcRemoveCopy(ref));
+      out = await this.inStep('removingCopy', 'Stop removing the copy', () => this.transport.sdlcRemoveCopy(ref));
     } catch (e) {
       this.setCopyNote({ tone: 'warning', text: `The copy was not removed: ${message(e)}`, lines: [] });
       return;
@@ -754,10 +754,10 @@ export class ChangePageViewModel {
   }
 
   /**
-   * Run a long step of this change, showing the label the backend reports for it and Stop while it runs. `first` is the label until the
-   * backend reports one; `onReport` sees each report of this change's step.
+   * Run a long step of this change, showing the label the backend reports for it and Stop while it runs. The backend reports the step as it
+   * begins, so the page words nothing itself; `onReport` sees each report of this change's step.
    */
-  private async inStep<T>(want: StepWant, first: string, stop: string, call: () => Promise<T>, onReport?: (event: StepEvent) => void): Promise<T> {
+  private async inStep<T>(want: StepWant, stop: string, call: () => Promise<T>, onReport?: (event: StepEvent) => void): Promise<T> {
     const ref = { system: this.system(), change: this.changeName() };
     this.stepStopped.set(null);
     let unlisten = (): void => undefined;
@@ -770,7 +770,6 @@ export class ChangePageViewModel {
     } catch {
       // The step still runs and Stop still works; only its label does not follow.
     }
-    this.step.set({ label: first, stop });
     try {
       return await call();
     } finally {
@@ -816,7 +815,6 @@ export class ChangePageViewModel {
     try {
       out = await this.inStep(
         'declaringDone',
-        'Declaring the change done',
         'Stop declaring the change done',
         () =>
           this.lock.runSteps('Opening pull requests', [
@@ -1002,7 +1000,7 @@ export class ChangePageViewModel {
   // --- renaming
 
   acceptName(name: string): void {
-    void this.inStep('renaming', 'Renaming the branch', 'Stop renaming the branch', () => this.runner.confirmName(name));
+    void this.inStep('renaming', 'Stop renaming the branch', () => this.runner.confirmName(name));
   }
 
   closeName(): void {
@@ -1399,7 +1397,7 @@ export class ChangePageViewModel {
     if (ref === null) return;
     let out: AcceptOutcome;
     try {
-      out = await this.inStep('accepting', `Accepting the ${doc}`, `Stop accepting the ${doc}`, () => this.transport.sdlcAccept(ref, doc));
+      out = await this.inStep('accepting', `Stop accepting the ${doc}`, () => this.transport.sdlcAccept(ref, doc));
     } catch (e) {
       this.toasts.error(`Could not accept the ${doc}: ${message(e)}`);
       return;
@@ -1436,7 +1434,7 @@ export class ChangePageViewModel {
     const doc = this.change()?.state.track === 'fix' ? 'fix' : 'intent';
     let out: RejectOutcome;
     try {
-      out = await this.inStep('rejecting', `Rejecting the ${doc}`, `Stop rejecting the ${doc}`, () => this.transport.sdlcReject(ref));
+      out = await this.inStep('rejecting', `Stop rejecting the ${doc}`, () => this.transport.sdlcReject(ref));
     } catch (e) {
       this.toasts.error(`Could not reject the change: ${message(e)}`);
       return;

@@ -1276,10 +1276,13 @@ export class SdlcMock {
    * repository and the master last; the demos give a refusal, a part-way stop (once), a machine that cannot run it and a missing gh.
    */
   declareDone(_changeName: string): { view: DeclareView; steps: StepProgress[] } {
-    const verifying: StepProgress = { kind: 'verifying', label: 'Declaring done: the plugin is verifying the change', repo: null, check: null };
-    const stepsFor = (repos: string[]): StepProgress[] => [
+    // What the plugin's --stream prints is a hook-start and a hook-end for each team check, so the mock reports the step, then a check, worded
+    // as the backend words it ("<step>: <check line>"); the plugin prints nothing for a push or a pull request.
+    const verifying: StepProgress = { kind: 'verifying', label: 'Declaring the change done', repo: null, check: null };
+    const reported: StepProgress[] = [
       verifying,
-      ...repos.flatMap((repo): StepProgress[] => [{ kind: 'push', label: `Pushing ${repo}`, repo, check: null }, { kind: 'pullRequest', label: `Opening a pull request in ${repo}`, repo, check: null }]),
+      { kind: 'hook', label: 'Declaring the change done: running base-tests', repo: null, check: 'base-tests' },
+      { kind: 'hook', label: 'Declaring the change done: base-tests passed', repo: null, check: 'base-tests' },
     ];
     const link = (repo: string, number: number) => ({ repo, url: prUrl(repo), number, source: 'plugin' as const });
     switch (this.demo) {
@@ -1310,14 +1313,14 @@ export class SdlcMock {
               opened: [link(first, 7)],
               failed: [`opening the pull request in ${this.repos[1]} failed: GraphQL: something went wrong`, `pushed so far: ${first}; running done again carries on from there`],
             },
-            steps: stepsFor([first]),
+            steps: reported,
           };
         }
     }
     const all = [...this.repos, MOCK_MASTER];
     all.forEach((repo) => this.published.add(repo));
     const warnings = this.demo === 'done-warnings' ? ['after hook announce failed with exit code 1; nothing was undone'] : [];
-    return { view: { kind: 'done', pullRequests: all.map((repo, i) => link(repo, 7 + i)), warnings }, steps: stepsFor(all) };
+    return { view: { kind: 'done', pullRequests: all.map((repo, i) => link(repo, 7 + i)), warnings }, steps: reported };
   }
 
   /**

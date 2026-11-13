@@ -416,7 +416,7 @@ export class MockTransport extends KataTransport {
     return Promise.resolve();
   }
   sdlcAccept(change: ChangeRef, doc: ChangeDocument): Promise<AcceptOutcome> {
-    return this.longStep(change, { accepting: doc }, 'Accepting the document', () => this.sdlc.accept(change.change, doc), { outcome: 'stopped', accepted: false });
+    return this.longStep(change, { accepting: doc }, `Accepting the ${doc}`, () => this.sdlc.accept(change.change, doc), { outcome: 'stopped', accepted: false });
   }
   sdlcCopyRemoval(change: ChangeRef): Promise<CopyRemoval> { return Promise.resolve(this.sdlc.copyRemoval(change.change)); }
   sdlcCopyBranch(change: ChangeRef): Promise<string> { return Promise.resolve(this.sdlc.copyBranch(change.change)); }
@@ -432,7 +432,7 @@ export class MockTransport extends KataTransport {
     }
   }
   sdlcReject(change: ChangeRef): Promise<RejectOutcome> {
-    return this.longStep(change, { rejecting: 'intent' }, 'Rejecting the change', () => this.sdlc.reject(change.change), { outcome: 'stopped', rejected: false });
+    return this.longStep(change, { rejecting: 'intent' }, 'Rejecting the intent', () => this.sdlc.reject(change.change), { outcome: 'stopped', rejected: false });
   }
   sdlcRunLinks(): Promise<RunLink[]> { return Promise.resolve(this.sdlc.runLinks()); }
   sdlcLinkRun(link: RunLink): Promise<void> { this.sdlc.linkRun(link); return Promise.resolve(); }
@@ -476,7 +476,7 @@ export class MockTransport extends KataTransport {
    * `stopped`, so a spec or a browser check can press Stop; otherwise it answers at once.
    */
   private longStep<T>(change: ChangeRef, kind: StepKind, doing: string, run: () => T, stopped: T): Promise<T> {
-    const progress: StepProgress = { kind: 'repository', label: doing, repo: null, check: null };
+    const progress: StepProgress = { kind: 'verifying', label: doing, repo: null, check: null };
     this.announceStep(change, kind, progress);
     if (demoParam() !== 'steps-hold') return settled(run);
     return new Promise<T>((resolve) => {
@@ -550,11 +550,11 @@ export class MockTransport extends KataTransport {
     return id;
   }
   async sdlcBuildStart(change: ChangeRef, form: StartForm): Promise<StartOutcome> {
-    return this.longStep(change, 'preparingBuild', 'Preparing the build', () => this.host.start(change, form), { kind: 'stopped', prepared: [] });
+    return this.longStep(change, 'preparingBuild', 'Checking every repository before building', () => this.host.start(change, form), { kind: 'stopped', prepared: [] });
   }
   // The scripted host runs no agent, so the choices a continue or review carries change nothing it shows.
   async sdlcBuildContinue(change: ChangeRef, repo: string, _off?: string[]): Promise<StartOutcome> {
-    return this.longStep(change, 'preparingBuild', 'Preparing the build in ' + repo, () => this.host.continueRepo(change, repo), { kind: 'stopped', prepared: [] });
+    return this.longStep(change, 'preparingBuild', 'Preparing ' + repo, () => this.host.continueRepo(change, repo), { kind: 'stopped', prepared: [] });
   }
   async sdlcBuildState(change: ChangeRef): Promise<BuildState | null> { return this.host.state(change); }
   async sdlcChangeKey(change: ChangeRef): Promise<ChangeKey> { return mockChangeKey(change); }
@@ -599,7 +599,7 @@ export class MockTransport extends KataTransport {
     return mockReviewView(this.sdlc.reviewRecord(), this.reviewRepos(change));
   }
   async sdlcReviewStart(change: ChangeRef, _off?: string[]): Promise<StartOutcome> {
-    return this.longStep(change, 'preparingReview', 'Preparing the review', () => this.host.reviewStart(change), { kind: 'stopped', prepared: [] });
+    return this.longStep(change, 'preparingReview', 'Checking every repository before the review', () => this.host.reviewStart(change), { kind: 'stopped', prepared: [] });
   }
   async sdlcReviewWaiting(change: ChangeRef): Promise<HeldRepo[]> { return this.host.reviewWaiting(change); }
   /** The repositories a round may go to: the change's own, then the master. */

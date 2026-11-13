@@ -1921,13 +1921,20 @@ describe('each long step shows Stop and says it was stopped', () => {
     let release!: (outcome: T) => void;
     const call = new Promise<T>((resolve) => (release = resolve));
     const push = (change: string, kind: StepKind, label: string, system = 'commerce') => listeners.forEach((cb) => cb({ change: keyOf(change, system), kind, progress: progress(label) }));
-    return { stop, call, release, push };
+    /** The backend's first report of the step, which the page waits for: pushed once the page is listening. */
+    const begin = (change: string, kind: StepKind, label: string, system = 'commerce') =>
+      vi.waitFor(() => {
+        if (listeners.size === 0) throw new Error('the page is not listening yet');
+        push(change, kind, label, system);
+      });
+    return { stop, call, release, push, begin };
   }
 
   /** Run `start`, check the step shows its label and Stop for this change only, stop it and answer the call with `outcome`. */
   async function stopped<T>(vm: ChangePageViewModel, h: ReturnType<typeof hold<T>>, start: () => Promise<unknown>, kind: StepKind, stopName: string, outcome: T) {
     const running = start();
-    await vi.waitFor(() => expect(vm.step()?.stop).toBe(stopName));
+    await h.begin(PHOTOS_CHANGE, kind, 'Accepting the spec');
+    expect(vm.step()).toEqual({ label: 'Accepting the spec', stop: stopName });
     h.push(PHOTOS_CHANGE, kind, 'Committing the document');
     expect(vm.step()?.label).toBe('Committing the document');
     h.push('2026-01-01-other', kind, 'Not this change');
@@ -1962,7 +1969,8 @@ describe('each long step shows Stop and says it was stopped', () => {
     vi.spyOn(transport, 'sdlcReject').mockReturnValue(h.call);
     await ready(vm);
     const running = vm.act('reject-intent');
-    await vi.waitFor(() => expect(vm.step()?.stop).toBe('Stop rejecting the intent'));
+    await h.begin(FRAUD, { rejecting: 'intent' }, 'Rejecting the intent');
+    expect(vm.step()).toEqual({ label: 'Rejecting the intent', stop: 'Stop rejecting the intent' });
     h.push(FRAUD, { rejecting: 'intent' }, 'Removing the copy');
     expect(vm.step()?.label).toBe('Removing the copy');
     await vm.stopStep();
@@ -1984,7 +1992,7 @@ describe('each long step shows Stop and says it was stopped', () => {
     vi.spyOn(transport, 'sdlcReject').mockReturnValue(h.call);
     await ready(vm);
     const running = vm.act('reject-fix');
-    await vi.waitFor(() => expect(vm.step()).not.toBeNull());
+    await h.begin(PHOTOS_CHANGE, 'rejectingFix', 'Rejecting the fix');
     h.release({ outcome: 'stopped', rejected });
     await running;
     expect(vm.stepStopped()).toBe(message);
@@ -1998,7 +2006,7 @@ describe('each long step shows Stop and says it was stopped', () => {
     vi.spyOn(transport, 'sdlcReject').mockReturnValue(h.call);
     await ready(vm);
     const running = vm.act('reject-fix');
-    await vi.waitFor(() => expect(vm.step()).not.toBeNull());
+    await h.begin(PHOTOS_CHANGE, 'rejectingFix', 'Rejecting the fix');
     expect(vm.step()).toEqual({ label: 'Rejecting the fix', stop: 'Stop rejecting the fix' });
     h.push(PHOTOS_CHANGE, 'rejectingFix', 'Removing the copy');
     expect(vm.step()?.label).toBe('Removing the copy');
@@ -2018,7 +2026,8 @@ describe('each long step shows Stop and says it was stopped', () => {
     void vm.renameBranch('feat/old');
     await vi.waitFor(() => expect(runner.nameRequest()).not.toBeNull());
     vm.acceptName('feat/new');
-    await vi.waitFor(() => expect(vm.step()?.stop).toBe('Stop renaming the branch'));
+    await h.begin(PHOTOS_CHANGE, 'renaming', 'Renaming the change');
+    expect(vm.step()?.stop).toBe('Stop renaming the branch');
     h.push(PHOTOS_CHANGE, 'renaming', 'Renaming the branch in kata');
     expect(vm.step()?.label).toBe('Renaming the branch in kata');
     await vm.stopStep();
@@ -2044,7 +2053,8 @@ describe('each long step shows Stop and says it was stopped', () => {
     await ready(vm);
     vm.doneReport.set({ branch: null, repos: [], departures: [] });
     const running = vm.confirmDone();
-    await vi.waitFor(() => expect(vm.step()?.stop).toBe('Stop declaring the change done'));
+    await h.begin(MOCK_BUILD_CHANGE, 'declaringDone', 'Declaring the change done');
+    expect(vm.step()?.stop).toBe('Stop declaring the change done');
     h.push(MOCK_BUILD_CHANGE, 'declaringDone', 'Pushing kata in another system', 'other-system');
     expect(vm.step()?.label).not.toBe('Pushing kata in another system');
     h.push(MOCK_BUILD_CHANGE, 'declaringDone', 'Pushing kata');

@@ -1040,7 +1040,8 @@ describe('SdlcHomeViewModel changes list', () => {
     expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', '2026-10-12-product-photo-upload']);
     // The reload after the run waits for the slow reads, so the call is not awaited.
     void vm.newChange('commerce', 'flag prices', 'full');
-    expect(start).toHaveBeenCalledTimes(1);
+    // The page listens for the step's reports before it starts, so none is lost: the start follows the listener.
+    await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(1));
   });
 
   it('reads only the current workspace; the switcher has no counts (R3.1)', async () => {
@@ -1801,7 +1802,11 @@ describe('New change and copy removal can be stopped', () => {
     await vm.init();
     vm.askRemoveCopy(NAMES[0]);
     const running = vm.confirmRemoveCopy();
-    await vi.waitFor(() => expect(vm.step()?.stop).toBe('Stop removing the copy'));
+    // The backend's first report of the step: pushed until the page is listening.
+    await vi.waitFor(() => {
+      push(NAMES[0], 'removingCopy', "Removing the change's copy");
+      expect(vm.step()).toEqual({ label: "Removing the change's copy", stop: 'Stop removing the copy' });
+    });
     push(NAMES[0], 'removingCopy', 'Not this system', 'other-system');
     expect(vm.step()?.label).not.toBe('Not this system');
     push(NAMES[0], 'removingCopy', 'Removing the copy folder');

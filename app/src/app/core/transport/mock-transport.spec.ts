@@ -602,10 +602,7 @@ describe('MockTransport declaring-done demos', () => {
       expect(view.kind).toBe('done');
       const repos = view.kind === 'done' ? view.pullRequests.map((p) => p.repo) : [];
       expect(repos.at(-1)).toBe('commerce-docs');
-      expect(steps.map((s) => s.progress.label)).toEqual([
-        'Declaring done: the plugin is verifying the change',
-        ...repos.flatMap((r) => [`Pushing ${r}`, `Opening a pull request in ${r}`]),
-      ]);
+      expect(steps.map((s) => s.progress.label)).toEqual(['Declaring the change done', 'Declaring the change done: running base-tests', 'Declaring the change done: base-tests passed']);
     });
   });
 

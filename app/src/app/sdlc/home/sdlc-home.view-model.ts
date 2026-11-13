@@ -1,6 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import type { BranchInfo } from '@bindings/BranchInfo';
+import type { StepEvent } from '@bindings/StepEvent';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { FinishedChange } from '@bindings/FinishedChange';
@@ -620,7 +621,7 @@ export class SdlcHomeViewModel {
       const more: [PickedNaming?, string?] = branch ? [picked ?? undefined, branch] : picked ? [picked] : [];
       const run = () => this.runner.newChange(target, system, idea, track, confirm, ...more);
       // The start is a step of the change the form names; the triage of the light track makes its change later, in a run.
-      const outcome = track === 'full' ? await this.inStep(this.transport.sdlcChangeName(idea).then((change) => ({ workspace: workspace.folder, system, change })), 'starting', null, 'Stop starting the change', run) : await run();
+      const outcome = track === 'full' ? await this.inStep(this.transport.sdlcChangeName(idea).then((change) => ({ workspace: workspace.folder, system, change })), 'starting', 'Stop starting the change', run) : await run();
       if (outcome.kind === 'none' && track === 'decide') this.triageNotice.set({ idea: outcome.idea, runId: outcome.runId });
       if (outcome.kind === 'retry') this.askAgain(system, idea, track, outcome);
       if (outcome.kind === 'startStopped') this.stepStopped.set(startStopped(outcome.answer));
@@ -731,26 +732,32 @@ export class SdlcHomeViewModel {
   }
 
   /**
-   * Run a long step of the change `ref` names, showing the label the backend reports for it and Stop while it runs. `first` is the label
-   * until one is reported; null shows nothing until the backend reports the step. `ref` may still be on its way (the name of a change
-   * about to start comes from the backend): `call` starts at once, and the step is matched once the name is known.
+   * Run a long step of the change `ref` names, showing the label the backend reports for it and Stop while it runs. The backend reports the
+   * step as it begins, so the page words nothing itself. `ref` may still be on its way (the name of a change about to start comes from the
+   * backend): that report can come first, so the reports are kept and the step is matched once the name is known.
    */
-  private async inStep<T>(ref: ChangeRef | Promise<ChangeRef>, want: StepWant, first: string | null, stop: string, call: () => Promise<T>): Promise<T> {
+  private async inStep<T>(ref: ChangeRef | Promise<ChangeRef>, want: StepWant, stop: string, call: () => Promise<T>): Promise<T> {
     this.stepRef = null;
+    const early: StepEvent[] = [];
+    const show = (event: StepEvent): void => {
+      if (this.stepRef !== null && sameStepChange(event.change, this.stepRef) && isStep(event.kind, want)) this.step.set({ label: event.progress.label, stop });
+    };
     void Promise.resolve(ref).then(
-      (named) => (this.stepRef = named),
+      (named) => {
+        this.stepRef = named;
+        const heard = early.splice(0);
+        const last = heard.filter((e) => sameStepChange(e.change, named) && isStep(e.kind, want)).at(-1);
+        if (last !== undefined) show(last);
+      },
       () => undefined,
     );
-    const listening = this.transport
-      .onStep((event) => {
-        if (this.stepRef !== null && sameStepChange(event.change, this.stepRef) && isStep(event.kind, want)) this.step.set({ label: event.progress.label, stop });
-      })
+    const unlisten = await this.transport
+      .onStep((event) => (this.stepRef === null ? early.push(event) : show(event)))
       .catch(() => (): void => undefined);
-    if (first !== null) this.step.set({ label: first, stop });
     try {
       return await call();
     } finally {
-      (await listening)();
+      unlisten();
       this.stepRef = null;
       this.step.set(null);
     }
@@ -777,7 +784,7 @@ export class SdlcHomeViewModel {
     if (change === null || !workspace || !system) return;
     try {
       const ref = { workspace, system, change };
-      const out = await this.inStep(ref, 'removingCopy', 'Removing the copy', 'Stop removing the copy', () => this.transport.sdlcRemoveCopy(ref));
+      const out = await this.inStep(ref, 'removingCopy', 'Stop removing the copy', () => this.transport.sdlcRemoveCopy(ref));
       switch (out.outcome) {
         case 'stopped':
           this.stepStopped.set(removalStopped(out.kept));
