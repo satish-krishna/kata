@@ -1162,7 +1162,7 @@ export class ChangePageViewModel {
         this.toasts.success(rejectedSaid(out.recordBranch));
         break;
       case 'stopped':
-        this.toasts.info(`${rejectStopped('intent', out.rejected)} (the fix ${fix.change})`);
+        this.toasts.info(`${rejectStopped('fix', out.rejected)} (the fix ${fix.change})`);
         break;
       case 'rejectedNotRemoved':
         this.toasts.error(`The new change started and the fix ${fix.change} is rejected, but its copy was not removed: ${out.problems.join('\n')}`);
@@ -1441,7 +1441,7 @@ export class ChangePageViewModel {
     }
     switch (out.outcome) {
       case 'stopped':
-        this.stepStopped.set(rejectStopped('intent', out.rejected));
+        this.stepStopped.set(rejectStopped(this.change()?.state.track === 'fix' ? 'fix' : 'intent', out.rejected));
         break;
       case 'rejected':
         this.toasts.success(rejectedSaid(out.recordBranch));

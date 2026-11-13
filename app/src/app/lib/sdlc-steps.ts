@@ -33,8 +33,8 @@ export function acceptStopped(doc: ChangeDocument, accepted: boolean): string {
   return accepted ? `Stopped. The ${doc} is accepted; its checks did not finish` : `Stopped. The ${doc} was not accepted`;
 }
 
-/** A stopped rejecting: whether the plugin had committed the rejection when it stopped. */
-export function rejectStopped(doc: ChangeDocument, rejected: boolean): string {
+/** A stopped rejecting: whether the plugin had committed the rejection when it stopped. A light-track change is rejected as a `fix`. */
+export function rejectStopped(doc: 'intent' | 'fix', rejected: boolean): string {
   return rejected ? `Stopped. The ${doc} is rejected; its copy was not removed` : `Stopped. The ${doc} was not rejected`;
 }
 
