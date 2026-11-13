@@ -323,6 +323,7 @@ fn goes_through_every_step(need: Need) {
             &change,
             doc,
             &kata_core::proc::CancelToken::new(),
+            &(std::sync::Arc::new(|_| {}) as kata_sdlc::done::StepSink),
         );
         assert_eq!(
             outcome,
