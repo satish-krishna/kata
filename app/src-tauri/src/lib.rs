@@ -989,9 +989,7 @@ fn sdlc_start_change(
     branch: Option<String>,
 ) -> Result<start_change::ChangeStart, String> {
     let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&folder)?);
-    let place = program
-        .resolve(Path::new(&folder))
-        .map_err(|e| e.to_string())?;
+    let place = start_change::place_for(&program, Path::new(&folder))?;
     start_change::start_change(
         &program,
         &place,

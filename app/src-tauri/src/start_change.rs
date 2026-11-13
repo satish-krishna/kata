@@ -116,7 +116,14 @@ fn classify(problems: &[String]) -> StartRefusal {
 /// The place a change starts in for `folder`: the repository root and its parent for a single-repo
 /// repository, the program's own master and workspace for a workspace.
 pub fn place_for(program: &Program, folder: &std::path::Path) -> Result<Place, String> {
-    program.resolve(folder).map_err(|e| e.to_string())
+    match kata_sdlc::layout::open(program, folder).map_err(|e| e.to_string())? {
+        opened if opened.layout == kata_sdlc::layout::Layout::SingleRepo => Ok(Place {
+            layout: opened.layout,
+            master: opened.root,
+            workspace: opened.workspace,
+        }),
+        _ => program.resolve(folder).map_err(|e| e.to_string()),
+    }
 }
 
 /// Asks the plugin to start a change named from `date` and the title, and reads its answer through
