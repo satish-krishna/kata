@@ -453,6 +453,13 @@ impl Program {
         }
     }
 
+    /// The program's own `resolve --json` answer for `folder`, run from there with no `--workspace`, so the
+    /// program finds the master and the workspace from the folder: the folder itself, a folder inside it
+    /// or the parent of a single-repo repository. A refusal is an answer too, left for the caller to read.
+    pub(crate) fn resolve_from(&self, folder: &Path) -> Result<Value, ProgramError> {
+        self.call(&["resolve", "--json"], folder)
+    }
+
     /// Runs the program with `args` as given, in `cwd`, within [`TIMEOUT`], and reads the answer as
     /// `run` does.
     fn call(&self, args: &[&str], cwd: &Path) -> Result<Value, ProgramError> {

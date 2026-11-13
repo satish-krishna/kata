@@ -63,8 +63,68 @@ pub enum OpenError {
 }
 
 /// Opens `folder` as the program places it.
-pub fn open(_program: &Program, _folder: &Path) -> Result<Opened, OpenError> {
-    unimplemented!("open")
+///
+/// The program runs `resolve` from the folder, so the repository folder, a folder inside it and the
+/// parent of a single-repo repository all find the same master. A single-repo master is the root and
+/// the program's workspace is the folder around it; a workspace's root is its workspace. A program
+/// before 1.4.0 prints no layout; then, and only then, the marker's `layout` field says it.
+pub fn open(program: &Program, folder: &Path) -> Result<Opened, OpenError> {
+    let found = program.resolve_from(folder)?;
+    let path = |key: &str| {
+        found[key]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+    };
+    let (Some(master), Some(workspace)) = (path("master"), path("workspace")) else {
+        let problems: Vec<String> = found["problems"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+        return Err(OpenError::Refused(if problems.is_empty() {
+            vec!["the program found no master repository".into()]
+        } else {
+            problems
+        }));
+    };
+    let layout = if found["layout"].is_null() {
+        marker_layout(&master).or_else(|| repository_root(folder).and_then(|r| marker_layout(&r)))
+    } else {
+        Some(read(&found["layout"])?)
+    }
+    .unwrap_or_default();
+    Ok(match layout {
+        Layout::SingleRepo => Opened {
+            root: master,
+            workspace,
+            layout,
+        },
+        Layout::Workspace => Opened {
+            root: workspace.clone(),
+            workspace,
+            layout,
+        },
+    })
+}
+
+/// The `layout` field of the marker in `dir`, when there is a marker that has one.
+fn marker_layout(dir: &Path) -> Option<Layout> {
+    let text = std::fs::read_to_string(dir.join(crate::workspace::MARKER)).ok()?;
+    let marker: Value = serde_json::from_str(&text).ok()?;
+    read(&marker["layout"]).ok()
+}
+
+/// The folder holding `.git` that `folder` is, or is inside.
+fn repository_root(folder: &Path) -> Option<PathBuf> {
+    folder
+        .ancestors()
+        .find(|d| d.join(".git").exists())
+        .map(Path::to_path_buf)
 }
 
 /// The layout `resolve --json` names. A plugin before 1.4.0 prints none, which reads as the workspace layout.
@@ -185,7 +245,7 @@ mod tests {
     #[test]
     fn open_rows() {
         let tmp = tempfile::tempdir().unwrap();
-        let parent = tmp.path().canonicalize().unwrap();
+        let parent = tmp.path().to_path_buf();
         let root = testutil::single_repo(&parent, "kata", &[("engine", "engine")]);
         let program = program();
 
@@ -212,7 +272,7 @@ mod tests {
     #[test]
     fn open_reads_the_marker_only_for_an_old_plugin() {
         let tmp = tempfile::tempdir().unwrap();
-        let parent = tmp.path().canonicalize().unwrap();
+        let parent = tmp.path().to_path_buf();
         let root = testutil::single_repo(&parent, "kata", &[("engine", "engine")]);
         // A program of an older plugin: it names the master and the workspace and prints no layout.
         let entry = parent.join("old-program.mjs");
@@ -222,7 +282,7 @@ mod tests {
             "masterIsCopy": false,
             "problems": [],
         });
-        std::fs::write(&entry, format!("console.log({answer});\n")).unwrap();
+        std::fs::write(&entry, format!("console.log(JSON.stringify({answer}));\n")).unwrap();
         let old = Program {
             node: "node".into(),
             entry,

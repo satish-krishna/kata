@@ -757,6 +757,16 @@ async fn sdlc_remove_workspace(id: String) -> Result<sdlc::store::WorkspaceChoic
 
 #[tauri::command(async)]
 fn sdlc_scan(folder: String) -> Result<sdlc::workspace::WorkspaceScan, String> {
+    // Ask the program first. A single-repo repository scans as itself; everything else, including a
+    // refusal or a mode that is not ready, scans the folder as before, so the home shows its setup state.
+    let (program, _) = state_inputs(&folder);
+    if let Some(program) = program {
+        if let Ok(opened) = sdlc::layout::open(&program, Path::new(&folder)) {
+            if opened.layout == sdlc::layout::Layout::SingleRepo {
+                return Ok(sdlc::workspace::scan_single_repo(&opened.root));
+            }
+        }
+    }
     sdlc::workspace::scan(Path::new(&folder)).map_err(|e| e.to_string())
 }
 

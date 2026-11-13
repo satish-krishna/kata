@@ -59,7 +59,6 @@ pub enum MasterState {
 pub struct WorkspaceScan {
     /// How the folder holds its system. A single-repo scan has no sibling repositories to list.
     #[serde(default)]
-    #[cfg_attr(feature = "ts", ts(optional))]
     pub layout: crate::layout::Layout,
     pub folder: String,
     pub repos: Vec<String>,
@@ -96,6 +95,32 @@ pub fn is_committed(repo: &Path, rel: &str) -> bool {
 }
 
 /// Scan a workspace folder: immediate child git repos, the master, and the marker.
+/// The scan of a single-repo repository at `root`: it is its own master, and there are no sibling
+/// repositories to list, so `repos` is empty.
+pub fn scan_single_repo(root: &Path) -> WorkspaceScan {
+    let (marker, marker_error) = match std::fs::read_to_string(root.join(MARKER)) {
+        Ok(text) => match serde_json::from_str::<Marker>(&text) {
+            Ok(m) => (Some(m), None),
+            Err(e) => (None, Some(e.to_string())),
+        },
+        Err(e) => (None, Some(e.to_string())),
+    };
+    WorkspaceScan {
+        layout: crate::layout::Layout::SingleRepo,
+        folder: root.to_string_lossy().into_owned(),
+        repos: Vec::new(),
+        master: MasterState::One {
+            repo: root
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            committed: is_committed(root, MARKER),
+        },
+        marker,
+        marker_error,
+    }
+}
+
 pub fn scan(folder: &Path) -> Result<WorkspaceScan, ScanError> {
     let mut repos = Vec::new();
     for entry in std::fs::read_dir(folder)? {
@@ -147,6 +172,9 @@ pub fn scan(folder: &Path) -> Result<WorkspaceScan, ScanError> {
 
 /// The repos of `system`: the marker's list, or every repo except the master when empty or missing.
 pub fn system_repos(scan: &WorkspaceScan, system: &str) -> Vec<String> {
+    if scan.layout == crate::layout::Layout::SingleRepo {
+        return Vec::new();
+    }
     let listed = scan
         .marker
         .as_ref()
