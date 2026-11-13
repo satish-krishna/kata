@@ -1990,6 +1990,22 @@ describe('each long step shows Stop and says it was stopped', () => {
     expect(vm.stepStopped()).toBe(message);
   });
 
+  it('rejecting a fix on the light track names the fix in the label and the Stop button, and follows the backend report', async () => {
+    const transport = new MockTransport();
+    withStage(transport, PHOTOS_CHANGE, 'fix-awaiting', { track: 'fix', fix_row: 6 });
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    const h = hold<RejectOutcome>(transport);
+    vi.spyOn(transport, 'sdlcReject').mockReturnValue(h.call);
+    await ready(vm);
+    const running = vm.act('reject-fix');
+    await vi.waitFor(() => expect(vm.step()).not.toBeNull());
+    expect(vm.step()).toEqual({ label: 'Rejecting the fix', stop: 'Stop rejecting the fix' });
+    h.push(PHOTOS_CHANGE, 'rejectingFix', 'Removing the copy');
+    expect(vm.step()?.label).toBe('Removing the copy');
+    h.release({ outcome: 'stopped', rejected: false });
+    await running;
+  });
+
   it.each<[string, string[], string]>([
     ['with the workflow\'s answer', ['the branch was half renamed in kata'], 'Stopped. The rename did not finish: the branch was half renamed in kata'],
     ['without an answer', [], 'Stopped. The rename did not finish'],
