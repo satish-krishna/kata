@@ -694,6 +694,67 @@ setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3)
         assert_eq!(seen[0].progress.label, "Pushing app");
     }
 
+    /// The real plugin's `change start` prints no stream line, so the page learns the step from the first label
+    /// the step sends when it begins, before the plugin call returns. The stand-in prints nothing and waits;
+    /// a call nobody stops ends itself after 60 s, so a red test fails instead of hanging.
+    #[test]
+    fn starting_a_change_sends_the_first_label_before_the_plugin_returns() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("quiet.marker");
+        let script = format!(
+            "import {{ writeFileSync }} from 'node:fs';
+writeFileSync({marker:?}, 'x');
+setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3); }}, 60000);
+",
+            marker = marker.display().to_string()
+        );
+        let entry = dir.path().join("quiet.mjs");
+        std::fs::write(&entry, script).unwrap();
+        let program = Program {
+            node: "node".into(),
+            entry,
+        };
+        let (_ws, place) = workspace(PLAIN);
+        let (steps, seen) = capturing_steps();
+        let key = key_of(&place);
+        let watcher = {
+            let (steps, seen, key) = (steps.clone(), seen.clone(), key.clone());
+            std::thread::spawn(move || {
+                for _ in 0..1200 {
+                    if marker.exists() {
+                        let heard: Vec<String> = seen
+                            .lock()
+                            .unwrap()
+                            .iter()
+                            .map(|e| e.progress.label.clone())
+                            .collect();
+                        steps.stop(&key);
+                        return heard;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                steps.stop(&key);
+                Vec::new()
+            })
+        };
+        let outcome = start_change(
+            &program,
+            &place,
+            DATE,
+            &request("", None),
+            &steps,
+            &place.workspace,
+        )
+        .unwrap();
+        assert!(
+            matches!(outcome, ChangeStart::Stopped { .. }),
+            "{outcome:?}"
+        );
+        assert_eq!(watcher.join().unwrap(), ["Starting the change"]);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0].kind, StepKind::Starting);
+    }
+
     /// A change that already has a long step running is not started again, and the program is not asked.
     #[test]
     fn a_busy_change_is_not_started_twice() {

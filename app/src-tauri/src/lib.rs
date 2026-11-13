@@ -3682,10 +3682,41 @@ if ({trigger}) {{
                         && e.progress.check.as_deref() == Some("docs-lint")),
                 "{seen:?}"
             );
+            // The line names the step and the check, not the check alone.
+            assert!(
+                seen.iter()
+                    .any(|e| e.progress.label == "Accepting the intent: running docs-lint"),
+                "{seen:?}"
+            );
             outcome
         });
         assert!(stopped, "the step was not in the table");
         assert!(steps.running().is_empty());
+    }
+
+    /// Declaring done says the step first, then names the check the plugin reports under the step's words.
+    #[test]
+    fn the_declaring_step_names_itself_and_the_check_the_plugin_reports() {
+        let fx = fixture();
+        let done = "args[0] === 'run' && args[1] === 'change.done'";
+        let (_, stopped, _) = stopped_during(&fx, done, |steps, fake, seen| {
+            let view = declare_in(steps, fake, &ready(), &fx.change);
+            let labels: Vec<String> = seen
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|e| e.progress.label.clone())
+                .collect();
+            assert_eq!(
+                labels,
+                [
+                    "Declaring the change done",
+                    "Declaring the change done: running docs-lint"
+                ]
+            );
+            view
+        });
+        assert!(stopped, "the step was not in the table");
     }
 
     /// A change that already has a long step is refused by every command, and the program is not asked.

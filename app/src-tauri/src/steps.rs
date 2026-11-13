@@ -4,7 +4,7 @@
 use crate::build_host::ChangeRef;
 use kata_core::proc::CancelToken;
 use kata_sdlc::accept::ChangeDocument;
-use kata_sdlc::ai_sdlc::StepProgress;
+use kata_sdlc::ai_sdlc::{StepProgress, StepProgressKind};
 use kata_sdlc::holds::ChangeKey;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -49,6 +49,29 @@ impl StepKind {
             StepKind::RejectingFix => "rejecting its fix".into(),
             StepKind::DeclaringDone => "being declared done".into(),
         }
+    }
+}
+
+impl StepKind {
+    /// The step's own words, the start of every progress line it shows: what the step is doing, or, for a
+    /// preparation, the repository it is preparing.
+    pub fn words(&self, _repo: Option<&str>) -> String {
+        String::new()
+    }
+}
+
+/// The one owner of a progress line's text: `kind`'s words, then the latest line the plugin streamed for it,
+/// when there is one. `repo` is the repository the call is for, when it is for one.
+pub fn progress_line(
+    _kind: StepKind,
+    _repo: Option<&str>,
+    _line: Option<&StepProgress>,
+) -> StepProgress {
+    StepProgress {
+        kind: StepProgressKind::Verifying,
+        label: String::new(),
+        repo: None,
+        check: None,
     }
 }
 
@@ -169,6 +192,9 @@ impl StepTable {
         });
     }
 
+    /// Record and send the progress of the change's step: the step's words and the plugin's latest line, if any.
+    pub fn report(&self, _change: &ChangeKey, _repo: Option<&str>, _line: Option<StepProgress>) {}
+
     /// Cancel the change's step; whether there was one.
     pub fn stop(&self, change: &ChangeKey) -> bool {
         match self.entries.lock().unwrap().get(change) {
@@ -219,7 +245,7 @@ pub fn sdlc_steps(steps: tauri::State<'_, StepTable>) -> Vec<RunningStep> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kata_sdlc::ai_sdlc::StepProgressKind;
+    use kata_sdlc::ai_sdlc::progress_of;
     use kata_sdlc::holds::RepoKey;
     use std::path::Path;
 
@@ -233,6 +259,182 @@ mod tests {
 
     fn table() -> StepTable {
         StepTable::new(Arc::new(|_| {}))
+    }
+
+    fn capturing() -> (StepTable, Arc<Mutex<Vec<StepEvent>>>) {
+        let seen: Arc<Mutex<Vec<StepEvent>>> = Arc::default();
+        let sink = seen.clone();
+        (
+            StepTable::new(Arc::new(move |e| sink.lock().unwrap().push(e))),
+            seen,
+        )
+    }
+
+    fn line(json: &str) -> Option<StepProgress> {
+        Some(progress_of(json).expect("a progress line"))
+    }
+
+    // The one owner of the progress line's text: the step, and the check or action the plugin reports.
+    #[test]
+    fn the_progress_line_is_the_step_and_the_line_it_names() {
+        let start = r#"{"type":"hook-start","id":"base-tests"}"#;
+        let end = r#"{"type":"hook-end","id":"base-tests","outcome":"passed"}"#;
+        let failed = r#"{"type":"hook-end","id":"docs-lint","outcome":"failed"}"#;
+        let push = r#"{"type":"push","repo":"kata"}"#;
+        let spec = StepKind::Accepting(ChangeDocument::Spec);
+        let rows: Vec<(StepKind, Option<&str>, Option<StepProgress>, &str)> = vec![
+            (spec, None, None, "Accepting the spec"),
+            (
+                spec,
+                None,
+                line(start),
+                "Accepting the spec: running base-tests",
+            ),
+            (
+                spec,
+                None,
+                line(end),
+                "Accepting the spec: base-tests passed",
+            ),
+            (
+                StepKind::Accepting(ChangeDocument::Plan),
+                None,
+                line(failed),
+                "Accepting the plan: docs-lint failed",
+            ),
+            (
+                StepKind::PreparingBuild,
+                None,
+                None,
+                "Checking every repository before building",
+            ),
+            (
+                StepKind::PreparingReview,
+                None,
+                None,
+                "Checking every repository before the review",
+            ),
+            (
+                StepKind::PreparingBuild,
+                None,
+                line(start),
+                "Checking every repository before building: running base-tests",
+            ),
+            (
+                StepKind::PreparingBuild,
+                Some("kata"),
+                None,
+                "Preparing kata",
+            ),
+            (
+                StepKind::PreparingReview,
+                Some("kata"),
+                line(start),
+                "Preparing kata: running base-tests",
+            ),
+            (
+                StepKind::PreparingBuild,
+                Some("kata"),
+                line(end),
+                "Preparing kata: base-tests passed",
+            ),
+            (StepKind::Starting, None, None, "Starting the change"),
+            (StepKind::Renaming, None, None, "Renaming the change"),
+            (
+                StepKind::RemovingCopy,
+                None,
+                None,
+                "Removing the change's copy",
+            ),
+            (
+                StepKind::Rejecting(ChangeDocument::Intent),
+                None,
+                None,
+                "Rejecting the intent",
+            ),
+            (StepKind::RejectingFix, None, None, "Rejecting the fix"),
+            (
+                StepKind::DeclaringDone,
+                None,
+                None,
+                "Declaring the change done",
+            ),
+            (
+                StepKind::DeclaringDone,
+                None,
+                line(push),
+                "Declaring the change done: pushing kata",
+            ),
+        ];
+        for (kind, repo, line, label) in rows {
+            let made = progress_line(kind, repo, line.as_ref());
+            assert_eq!(made.label, label, "{kind:?} {repo:?} {line:?}");
+        }
+    }
+
+    // What the line is about rides along: its kind, the check it names and the repository of the call.
+    #[test]
+    fn the_progress_line_keeps_what_the_line_is_about() {
+        let start = progress_of(r#"{"type":"hook-start","id":"base-tests"}"#);
+        let made = progress_line(StepKind::PreparingBuild, Some("kata"), start.as_ref());
+        assert_eq!(made.kind, StepProgressKind::Hook);
+        assert_eq!(made.check.as_deref(), Some("base-tests"));
+        assert_eq!(made.repo.as_deref(), Some("kata"));
+        let alone = progress_line(StepKind::PreparingBuild, Some("kata"), None);
+        assert_eq!(alone.kind, StepProgressKind::Repository);
+        assert_eq!(alone.repo.as_deref(), Some("kata"));
+        let first = progress_line(StepKind::Accepting(ChangeDocument::Spec), None, None);
+        assert_eq!(first.kind, StepProgressKind::Verifying);
+        assert_eq!((first.repo, first.check), (None, None));
+    }
+
+    // Every long step says what it is the moment it begins, so a page sees it with no stream line to wait for.
+    #[test]
+    fn a_step_sends_its_first_label_when_it_begins() {
+        let (t, seen) = capturing();
+        let _g = t.begin(key("a"), StepKind::Starting).unwrap();
+        {
+            let events = seen.lock().unwrap();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].change, key("a"));
+            assert_eq!(events[0].kind, StepKind::Starting);
+            assert_eq!(events[0].progress.label, "Starting the change");
+        }
+        let running = t.running();
+        assert_eq!(
+            running[0].progress.as_ref().map(|p| p.label.as_str()),
+            Some("Starting the change")
+        );
+    }
+
+    #[test]
+    fn a_report_is_the_step_and_the_line_and_is_what_a_late_page_reads() {
+        let (t, seen) = capturing();
+        let _g = t
+            .begin(key("a"), StepKind::Accepting(ChangeDocument::Spec))
+            .unwrap();
+        t.report(
+            &key("a"),
+            None,
+            line(r#"{"type":"hook-start","id":"docs-lint"}"#),
+        );
+        let events = seen.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            events[1].progress.label,
+            "Accepting the spec: running docs-lint"
+        );
+        assert_eq!(events[1].progress.check.as_deref(), Some("docs-lint"));
+        let running = t.running();
+        assert_eq!(running[0].progress.as_ref(), Some(&events[1].progress));
+    }
+
+    // A report for a change with no step is dropped.
+    #[test]
+    fn a_report_for_no_step_is_dropped() {
+        let (t, seen) = capturing();
+        t.report(&key("a"), None, None);
+        assert!(seen.lock().unwrap().is_empty());
     }
 
     #[test]
