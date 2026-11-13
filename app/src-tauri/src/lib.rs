@@ -1521,9 +1521,28 @@ fn ai_sdlc_readiness(workdir: Option<&str>) -> sdlc::plugin::Readiness {
     let roots = catalog::roots_for_workdir(workdir);
     let found = catalog::discover(&roots);
     let plugin = ai_sdlc_entry(&found);
-    sdlc::plugin::readiness(&sdlc::plugin::Machine::detect(
+    let machine = sdlc::plugin::readiness(&sdlc::plugin::Machine::detect(
         plugin.map(|e| e.path.as_path()),
-    ))
+    ));
+    // For an opened folder, the layout the program reports decides whether this plugin is new enough.
+    // A plugin refused as too old (a pre-release too) is asked as well: for a single-repo folder it reads as
+    // needing 1.4.0.
+    let askable = matches!(
+        machine,
+        sdlc::plugin::Readiness::Ready { .. }
+            | sdlc::plugin::Readiness::Blocked {
+                reason: sdlc::plugin::BlockReason::PluginTooOld,
+                ..
+            }
+    );
+    let (Some(folder), Some(plugin), true) = (workdir, plugin, askable) else {
+        return machine;
+    };
+    let program = sdlc::ai_sdlc::Program::locate(&plugin.path);
+    match sdlc::layout::open(&program, Path::new(folder)) {
+        Ok(opened) => sdlc::plugin::for_layout(&machine, opened.layout),
+        Err(_) => machine,
+    }
 }
 
 /// The ai-sdlc plugin folder the format program is read from, or why the build cannot be read. It is

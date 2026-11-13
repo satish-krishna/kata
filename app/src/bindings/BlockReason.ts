@@ -3,4 +3,4 @@
 /**
  * Why the AI-SDLC mode cannot run.
  */
-export type BlockReason = "pluginMissing" | "pluginTooOld" | "nodeMissing" | "nodeTooOld" | "gitMissing";
+export type BlockReason = "pluginMissing" | "pluginTooOld" | "layoutNeedsNewerPlugin" | "nodeMissing" | "nodeTooOld" | "gitMissing";

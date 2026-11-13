@@ -160,9 +160,36 @@ pub fn readiness(env: &Machine) -> Readiness {
 }
 
 /// The readiness for a folder opened with `layout`: the machine's `readiness`, unless the folder is a
-/// single-repo repository and the plugin is not a release of [`LAYOUT_MIN_VERSION`] or later.
-pub fn for_layout(readiness: Readiness, _layout: crate::layout::Layout) -> Readiness {
-    readiness
+/// single-repo repository and the plugin is not a release of [`LAYOUT_MIN_VERSION`] or later. A plugin
+/// the machine check refused as too old, a pre-release included, reads the same for a single-repo folder.
+pub fn for_layout(readiness: &Readiness, layout: crate::layout::Layout) -> Readiness {
+    if layout != crate::layout::Layout::SingleRepo {
+        return readiness.clone();
+    }
+    let needs = |version: &str| {
+        blocked(
+            BlockReason::LayoutNeedsNewerPlugin,
+            format!(
+                "The single-repo layout needs ai-sdlc {LAYOUT_MIN_VERSION} or later; this machine has {version}."
+            ),
+        )
+    };
+    match readiness {
+        Readiness::Ready { plugin, .. } if !at_least(&plugin.version, LAYOUT_MIN_VERSION) => {
+            needs(&plugin.version)
+        }
+        Readiness::Blocked {
+            reason: BlockReason::PluginTooOld,
+            message,
+        } => match message
+            .rsplit_once("this machine has ")
+            .and_then(|(_, v)| v.strip_suffix('.'))
+        {
+            Some(version) => needs(version),
+            None => readiness.clone(),
+        },
+        _ => readiness.clone(),
+    }
 }
 
 /// Whether the installed plugin can list changes and read the open ones alone: a ready machine whose
@@ -434,7 +461,7 @@ mod tests {
         ];
         for (name, version, layout, expected) in rows {
             let machine = machine(version, Some("v22.18.0"), true, true);
-            assert_eq!(for_layout(readiness(&machine), layout), expected, "{name}");
+            assert_eq!(for_layout(&readiness(&machine), layout), expected, "{name}");
         }
     }
 

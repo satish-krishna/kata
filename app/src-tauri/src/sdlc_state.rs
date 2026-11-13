@@ -400,7 +400,7 @@ mod tests {
     fn a_blocked_single_repo_offers_nothing() {
         let source = counting(2);
         let readiness = kata_sdlc::plugin::for_layout(
-            Readiness::Ready {
+            &Readiness::Ready {
                 plugin: Plugin {
                     dir: PathBuf::from("plugin"),
                     version: "1.3.1".into(),
