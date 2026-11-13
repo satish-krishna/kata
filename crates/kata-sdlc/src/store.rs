@@ -60,6 +60,8 @@ pub struct WorkspaceEntry {
     /// The system the home showed last; no screen reads it.
     #[cfg_attr(feature = "ts", ts(skip))]
     pub last_system: Option<String>,
+    /// How the saved folder is laid out; an entry saved before this field existed is a workspace.
+    pub layout: crate::layout::Layout,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -222,7 +224,13 @@ fn workspace_id(name: &str, list: &[WorkspaceEntry]) -> String {
 
 /// Save a new workspace called `name` for `folder`, with an id made from the name and stamped as opened
 /// at `now`. Answers the saved list and the workspace now opened on.
-pub fn add_workspace(name: &str, folder: &str, now: u64) -> Result<WorkspaceChoice, StoreError> {
+pub fn add_workspace(
+    name: &str,
+    folder: &str,
+    layout: crate::layout::Layout,
+    now: u64,
+) -> Result<WorkspaceChoice, StoreError> {
+    let _ = layout;
     update_workspaces(|list| {
         let id = workspace_id(name, list);
         let last_opened = stamp(list, &id, now);
@@ -232,6 +240,7 @@ pub fn add_workspace(name: &str, folder: &str, now: u64) -> Result<WorkspaceChoi
             folder: folder.to_string(),
             last_opened,
             last_system: None,
+            layout: Default::default(),
         });
         Ok(())
     })
@@ -313,6 +322,7 @@ pub fn save_build_layout(v: &serde_json::Value) -> Result<(), StoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layout::Layout;
     use serial_test::serial;
 
     fn entry(id: &str, last_opened: u64) -> WorkspaceEntry {
@@ -322,6 +332,7 @@ mod tests {
             folder: format!("/{id}"),
             last_opened,
             last_system: None,
+            layout: Default::default(),
         }
     }
 
@@ -454,12 +465,12 @@ mod tests {
     #[serial]
     fn add_workspace_makes_a_unique_id() {
         let _home = with_home();
-        add_workspace("My Repo", "/one", 10).unwrap();
-        let second = add_workspace("My Repo", "/two", 10).unwrap();
+        add_workspace("My Repo", "/one", Layout::Workspace, 10).unwrap();
+        let second = add_workspace("My Repo", "/two", Layout::Workspace, 10).unwrap();
         let ids: Vec<&str> = second.workspaces.iter().map(|w| w.id.as_str()).collect();
         assert_eq!(ids, ["my-repo", "my-repo-2"]);
         assert_eq!(second.current.as_deref(), Some("my-repo-2"));
-        let odd = add_workspace("!!!", "/three", 10).unwrap();
+        let odd = add_workspace("!!!", "/three", Layout::Workspace, 10).unwrap();
         assert_eq!(odd.workspaces.last().unwrap().id, "workspace");
     }
 
@@ -482,6 +493,39 @@ mod tests {
         let prev = std::env::var_os("KATA_HOME");
         std::env::set_var("KATA_HOME", temp.path());
         HomeGuard { temp, prev }
+    }
+
+    #[test]
+    #[serial]
+    fn a_single_repo_entry_keeps_its_layout() {
+        let _home = with_home();
+        add_workspace("workspaces", "D:/workspaces", Layout::Workspace, 10).unwrap();
+        add_workspace("kata", "D:/tmp/kata", Layout::SingleRepo, 20).unwrap();
+        let list = load_workspaces();
+        let seen: Vec<(&str, Layout)> =
+            list.iter().map(|w| (w.folder.as_str(), w.layout)).collect();
+        assert_eq!(
+            seen,
+            vec![
+                ("D:/workspaces", Layout::Workspace),
+                ("D:/tmp/kata", Layout::SingleRepo)
+            ]
+        );
+        // A file written before the field existed reads as a workspace.
+        let old = r#"[{"id":"old","name":"old","folder":"/old","last_opened":3}]"#;
+        std::fs::write(workbench_dir().unwrap().join("workspaces.json"), old).unwrap();
+        assert_eq!(load_workspaces()[0].layout, Layout::Workspace);
+    }
+
+    #[test]
+    #[serial]
+    fn adding_a_saved_root_selects_that_entry() {
+        let _home = with_home();
+        add_workspace("kata", "D:/tmp/kata", Layout::SingleRepo, 10).unwrap();
+        add_workspace("other", "D:/tmp/other", Layout::Workspace, 20).unwrap();
+        let choice = add_workspace("kata again", r"d:	mpkata\", Layout::SingleRepo, 30).unwrap();
+        assert_eq!(choice.workspaces.len(), 2);
+        assert_eq!(choice.current.as_deref(), Some("kata"));
     }
 
     fn link(run_id: &str) -> RunLink {

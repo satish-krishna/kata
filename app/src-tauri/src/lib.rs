@@ -747,7 +747,19 @@ async fn sdlc_add_workspace(
     name: String,
     folder: String,
 ) -> Result<sdlc::store::WorkspaceChoice, String> {
-    sdlc::store::add_workspace(&name, &folder, now_secs()).map_err(|e| e.to_string())
+    sdlc::store::add_workspace(&name, &folder, sdlc::layout::Layout::Workspace, now_secs())
+        .map_err(|e| e.to_string())
+}
+
+/// The folder to save for an added `folder` and its layout: the program's root for it. Without a program
+/// (the mode is not ready) the folder is saved as it is, a workspace, as before.
+#[allow(dead_code)]
+fn resolve_added(
+    program: Option<&sdlc::ai_sdlc::Program>,
+    folder: &str,
+) -> Result<(String, sdlc::layout::Layout), String> {
+    let _ = program;
+    Ok((folder.to_string(), sdlc::layout::Layout::Workspace))
 }
 
 #[tauri::command]
@@ -2469,6 +2481,31 @@ fn warns(next: Next, step: &Step) -> bool {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// R1.3: adding an app folder of a single-repo repository saves the repository, marked single-repo.
+    #[test]
+    fn adding_an_app_folder_saves_its_repository() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("kata");
+        let app = repo.join("engine");
+        std::fs::create_dir_all(&app).unwrap();
+        let plugin = tmp.path().join("plugin");
+        std::fs::create_dir_all(plugin.join("tools")).unwrap();
+        let answer = serde_json::json!({
+            "master": repo,
+            "workspace": tmp.path(),
+            "layout": "single-repo",
+        });
+        std::fs::write(
+            plugin.join("tools").join("ai-sdlc.ts"),
+            format!("console.log(JSON.stringify({answer}));\n"),
+        )
+        .unwrap();
+        let program = sdlc::ai_sdlc::Program::locate(&plugin);
+        let (root, layout) = resolve_added(Some(&program), app.to_str().unwrap()).unwrap();
+        assert_eq!(Path::new(&root), repo);
+        assert_eq!(layout, sdlc::layout::Layout::SingleRepo);
+    }
 
     #[test]
     fn relay_ends_per_table() {
