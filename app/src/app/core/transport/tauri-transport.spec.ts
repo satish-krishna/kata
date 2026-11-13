@@ -1,5 +1,6 @@
 import { TauriTransport, type TauriIpc } from './tauri-transport';
 import { seedSpec } from '../../lib/mock';
+import type { ChangeKey } from '@bindings/ChangeKey';
 import type { StepEvent } from '@bindings/StepEvent';
 import type { KataEvent } from '../../lib/events';
 import type { Settings } from '@bindings/Settings';
@@ -198,6 +199,18 @@ describe('TauriTransport', () => {
     const event = { type: 'turn', n: 1 } as KataEvent;
     handler({ payload: { runId: 7, seq: 12, event } });
     expect(seen).toEqual([['7', event, 12]]);
+  });
+
+  it('hands the key of sdlc://step-end over as the end of that change\x27s step', async () => {
+    const ipc = fakeIpc();
+    const t = new TauriTransport(asIpc(ipc));
+    const seen: ChangeKey[] = [];
+    await t.onStepEnd((key) => seen.push(key));
+    const [event, handler] = ipc.listen.mock.calls[0] as unknown as [string, (e: { payload: ChangeKey }) => void];
+    expect(event).toBe('sdlc://step-end');
+    const payload: ChangeKey = { workspace: { key: 'w', name: 'w' }, system: 's', change: 'c' };
+    handler({ payload });
+    expect(seen).toEqual([payload]);
   });
 
   it('hands the payload of sdlc://step over as the step event', async () => {

@@ -13,6 +13,7 @@ import type { HomeAction } from '@bindings/HomeAction';
 import type { ChangeKey } from '@bindings/ChangeKey';
 import type { ChangeStart } from '@bindings/ChangeStart';
 import type { RemoveOutcome } from '@bindings/RemoveOutcome';
+import type { RunningStep } from '@bindings/RunningStep';
 import type { StepEvent } from '@bindings/StepEvent';
 import type { StepKind } from '@bindings/StepKind';
 import type { StepProgress } from '@bindings/StepProgress';
@@ -1838,6 +1839,52 @@ describe('New change and copy removal can be stopped', () => {
     expect(vm.stepStopped()).toBeNull();
   });
 });
+
+describe('a start or a removal the backend runs is the home\'s, whoever started it (F3)', () => {
+  const keyOf = (change: string, system = 'commerce'): ChangeKey => ({ workspace: { key: MOCK_WORKSPACE_FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system, change });
+  const running = (change: string, kind: StepKind, label: string, system = 'commerce'): RunningStep => ({
+    change: keyOf(change, system),
+    kind,
+    doing: 'doing',
+    progress: { kind: 'repository', label, repo: null, check: null },
+  });
+
+  it.each<[string, StepKind, string]>([
+    ['a start', 'starting', 'Stop starting the change'],
+    ['a removal of a copy', 'removingCopy', 'Stop removing the copy'],
+  ])('a home opened while %s runs shows its label and Stop, and Stop stops that change', async (_name, kind, stopName) => {
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'steps').mockResolvedValue([running('2026-01-01-flag-prices', kind, 'Making the copy')]);
+    const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
+    await vm.init();
+    await vi.waitFor(() => expect(vm.step()).toEqual({ label: 'Making the copy', stop: stopName }));
+    await vm.stopStep();
+    expect(stop).toHaveBeenCalledWith({ workspace: vm.current()!.folder, system: 'commerce', change: '2026-01-01-flag-prices' });
+  });
+
+  it('a step of a system this workspace does not have, or of a kind the home does not run, is not shown', async () => {
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'steps').mockResolvedValue([running('a', 'starting', 'Elsewhere', 'other-system'), running('b', { accepting: 'spec' }, 'Accepting the spec')]);
+    await vm.init();
+    await vi.waitFor(() => expect(vm.current()).not.toBeNull());
+    expect(vm.step()).toBeNull();
+  });
+
+  it('a step that ends takes its label and Stop away', async () => {
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'steps').mockResolvedValue([running('a', 'starting', 'Making the copy')]);
+    let ended: (c: ChangeKey) => void = () => undefined;
+    vi.spyOn(transport, 'onStepEnd').mockImplementation(async (cb) => {
+      ended = cb;
+      return () => undefined;
+    });
+    await vm.init();
+    await vi.waitFor(() => expect(vm.step()).not.toBeNull());
+    ended(keyOf('a'));
+    expect(vm.step()).toBeNull();
+  });
+});
+
 
 describe('SdlcHomeViewModel: a new triage clears the pane (R10.1)', () => {
   const EARLIER_SAYS = 'Earlier triage said this';

@@ -9,6 +9,7 @@ import type { DeclareView } from '@bindings/DeclareView';
 import type { RecordedPullRequest } from '@bindings/RecordedPullRequest';
 import type { RejectOutcome } from '@bindings/RejectOutcome';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
+import type { RunningStep } from '@bindings/RunningStep';
 import type { StepEvent } from '@bindings/StepEvent';
 import type { StepKind } from '@bindings/StepKind';
 import type { StepProgress } from '@bindings/StepProgress';
@@ -2065,6 +2066,57 @@ describe('each long step shows Stop and says it was stopped', () => {
     await running;
     expect(vm.step()).toBeNull();
     expect(vm.stepStopped()).toBe(message);
+  });
+});
+
+describe('a step the backend runs is the page\x27s, whoever started it (F3, F5)', () => {
+  const keyOf = (change: string): ChangeKey => ({ workspace: { key: MOCK_WORKSPACE_FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system: 'commerce', change });
+  const accepting = (change: string): RunningStep => ({
+    change: keyOf(change),
+    kind: { accepting: 'spec' },
+    doing: 'accepting its spec',
+    progress: { kind: 'verifying', label: 'Accepting the spec: running docs-lint', repo: null, check: 'docs-lint' },
+  });
+
+  it('a page opened while the spec is being accepted shows the label and Stop, and Stop stops that change', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'steps').mockResolvedValue([accepting(PHOTOS_CHANGE)]);
+    const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    await ready(vm);
+    await vi.waitFor(() => expect(vm.step()).toEqual({ label: 'Accepting the spec: running docs-lint', stop: 'Stop accepting the spec' }));
+    await vm.stopStep();
+    expect(stop).toHaveBeenCalledWith({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: PHOTOS_CHANGE });
+  });
+
+  it('the step of another change is not shown, and after the page moves on Stop stops nothing', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'steps').mockResolvedValue([accepting(PHOTOS_CHANGE)]);
+    const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
+    const { vm, params } = setup(FRAUD, transport);
+    await ready(vm);
+    expect(vm.step()).toBeNull();
+    params.next(convertToParamMap({ system: 'commerce', change: PHOTOS_CHANGE }));
+    await vi.waitFor(() => expect(vm.step()?.stop).toBe('Stop accepting the spec'));
+    params.next(convertToParamMap({ system: 'commerce', change: FRAUD }));
+    await vi.waitFor(() => expect(vm.step()).toBeNull());
+    await vm.stopStep();
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it('a step that ends takes its label and Stop away', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'steps').mockResolvedValue([accepting(PHOTOS_CHANGE)]);
+    let ended: (c: ChangeKey) => void = () => undefined;
+    vi.spyOn(transport, 'onStepEnd').mockImplementation(async (cb) => {
+      ended = cb;
+      return () => undefined;
+    });
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    await ready(vm);
+    await vi.waitFor(() => expect(vm.step()).not.toBeNull());
+    ended(keyOf(PHOTOS_CHANGE));
+    expect(vm.step()).toBeNull();
   });
 });
 

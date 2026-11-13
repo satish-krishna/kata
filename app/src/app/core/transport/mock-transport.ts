@@ -517,6 +517,8 @@ export class MockTransport extends KataTransport {
     return () => { this.stepListeners.delete(cb); };
   }
 
+  async onStepEnd(_cb: (change: ChangeKey) => void): Promise<() => void> { return () => undefined; }
+
   async onRunEvent(cb: (runId: string, ev: KataEvent, seq?: number) => void): Promise<() => void> {
     this.listeners.add(cb);
     return () => { this.listeners.delete(cb); };

@@ -6,6 +6,7 @@ import { runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, seedSpe
 import type { KataEvent } from '../../lib/events';
 import { stageName, transcriptRunId } from '../../lib/sdlc';
 import type { RunSpec } from '@bindings/RunSpec';
+import type { ChangeKey } from '@bindings/ChangeKey';
 import type { StepEvent } from '@bindings/StepEvent';
 import type { Resolved } from '@bindings/Resolved';
 import type { BuildEvent } from '@bindings/BuildEvent';
@@ -606,6 +607,15 @@ describe('MockTransport declaring-done demos', () => {
     });
   });
 
+  it('tells the end of the step when declaring done has answered', async () => {
+    await withDemo(null, async (t) => {
+      const ended: ChangeKey[] = [];
+      await t.onStepEnd((key) => ended.push(key));
+      await t.sdlcDeclareDone(ref);
+      expect(ended.map((k) => k.change)).toEqual([ref.change]);
+    });
+  });
+
   // The vendored plugin's --stream prints hook-start and hook-end and nothing else, so the mock reports no more.
   it('reports only what the plugin prints while declaring done: the step, then each check, in the backend wording', async () => {
     await withDemo(null, async (t) => {
@@ -945,6 +955,19 @@ describe('MockTransport stopping a step', () => {
       window.history.replaceState({}, '', '/');
     }
   };
+
+  it('stopping a step tells its end', async () => {
+    await held(async (t) => {
+      const ended: ChangeKey[] = [];
+      await t.onStepEnd((key) => ended.push(key));
+      const pending = t.sdlcAccept(ref, 'intent');
+      await Promise.resolve();
+      expect(ended).toEqual([]);
+      await t.stopStep(ref);
+      await pending;
+      expect(ended.map((k) => k.change)).toEqual([ref.change]);
+    });
+  });
 
   it('stopping a step answers Stopped', async () => {
     await held(async (t) => {

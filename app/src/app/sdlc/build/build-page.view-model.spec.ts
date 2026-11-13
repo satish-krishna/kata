@@ -16,6 +16,7 @@ import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { StartForm } from '@bindings/StartForm';
 import type { StartOutcome } from '@bindings/StartOutcome';
+import type { RunningStep } from '@bindings/RunningStep';
 import type { StepEvent } from '@bindings/StepEvent';
 import type { TaskLink } from '@bindings/TaskLink';
 import { toastState } from '@spartan-ng/brain/sonner';
@@ -1187,6 +1188,66 @@ describe('the build page reads the backend\'s build and starts it through the ho
     release({ kind: 'stopped', prepared: [] });
     await starting;
     expect(vm.preparing()).toBe(false);
+  });
+
+  describe('a preparation the backend runs is the page\'s, whoever started it (F3, F5)', () => {
+    const preparation = (change: string): RunningStep => ({
+      change: keyOf(change),
+      kind: 'preparingBuild',
+      doing: 'preparing',
+      progress: { kind: 'repository', label: 'Preparing commerce-core: running base-tests', repo: 'commerce-core', check: 'base-tests' },
+    });
+
+    it('a page opened while the preparation runs shows it and offers Stop, which stops that change (R6.1)', async () => {
+      const { vm, transport, load } = await opened();
+      vi.spyOn(transport, 'steps').mockResolvedValue([preparation(MOCK_BUILD_CHANGE)]);
+      const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
+      await load();
+      await advance(100);
+      expect(vm.preparing()).toBe(true);
+      await vm.stopPreparing();
+      expect(stop).toHaveBeenCalledWith(REF);
+    });
+
+    it('the label of a preparation the page did not start is the backend\'s, and the progress line follows it', async () => {
+      const { vm, transport, load } = await opened();
+      vi.spyOn(transport, 'steps').mockResolvedValue([preparation(MOCK_BUILD_CHANGE)]);
+      await load();
+      await advance(1000);
+      expect(TestBed.inject(ProgressStore).view('build')()?.label).toBe('Preparing commerce-core: running base-tests');
+      expect(vm.preparing()).toBe(true);
+    });
+
+    it('a preparation of another change is not shown, and Stop stops nothing, after the page moved to that other change', async () => {
+      const { vm, transport, load, input } = await opened();
+      vi.spyOn(transport, 'steps').mockResolvedValue([preparation(MOCK_BUILD_CHANGE)]);
+      const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
+      await load();
+      await advance(100);
+      expect(vm.preparing()).toBe(true);
+      await vm.load({ ...input, ctx: { ...CTX, change: '2026-01-01-other' } });
+      await advance(100);
+      expect(vm.preparing()).toBe(false);
+      await vm.stopPreparing();
+      expect(stop).not.toHaveBeenCalled();
+      expect(TestBed.inject(ProgressStore).view('build')()).toBeNull();
+    });
+
+    it('a preparation that ends elsewhere takes Stop away', async () => {
+      const { vm, transport, load } = await opened();
+      vi.spyOn(transport, 'steps').mockResolvedValue([preparation(MOCK_BUILD_CHANGE)]);
+      let ended: (c: ChangeKey) => void = () => undefined;
+      vi.spyOn(transport, 'onStepEnd').mockImplementation(async (cb) => {
+        ended = cb;
+        return () => undefined;
+      });
+      await load();
+      await advance(100);
+      expect(vm.preparing()).toBe(true);
+      ended(keyOf(MOCK_BUILD_CHANGE));
+      await advance(100);
+      expect(vm.preparing()).toBe(false);
+    });
   });
 
   it('the round dialog shows the backend\'s plan for the picks', async () => {

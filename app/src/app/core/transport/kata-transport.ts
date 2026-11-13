@@ -272,6 +272,8 @@ export abstract class KataTransport {
   abstract steps(): Promise<RunningStep[]>;
   /** Register for the progress of a long step, each time the plugin reports it. Resolves to the unlisten function. */
   abstract onStep(cb: (event: StepEvent) => void): Promise<() => void>;
+  /** Register for the end of a long step: the key of the change whose step is over, however it ended. Resolves to the unlisten function. */
+  abstract onStepEnd(cb: (change: ChangeKey) => void): Promise<() => void>;
   /** Register for a change's build state each time it changes. Resolves to the unlisten function. */
   abstract onBuildState(cb: (event: BuildEvent) => void): Promise<() => void>;
   /** Register for the running changes each time they may have changed. Resolves to the unlisten function. */
