@@ -2,12 +2,13 @@
 //! line; the plugin commits it (`commit --kind accept-<doc>` or `reject-intent` / `reject-fix`), runs the
 //! `doc.accept` event and removes the rejected change's copy. Kata makes no commit and runs no hook.
 use crate::ai_sdlc::state::{ChangeState, ChangeTrack};
-use crate::ai_sdlc::{Answer, Place, Program, StepOutcome};
+use crate::ai_sdlc::{progress_of, Answer, Place, Program, StepOutcome};
 use crate::done::StepSink;
 use crate::frontmatter;
-use kata_core::proc::CancelToken;
+use kata_core::proc::{CancelToken, LineSink};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// A document of the full pipeline that is accepted by the engineer.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,7 +88,6 @@ pub fn apply(
     token: &CancelToken,
     on_step: &StepSink,
 ) -> AcceptOutcome {
-    let _ = on_step;
     let file = doc.file();
     let mut edits = match Edit::start(&Path::new(&change.folder).join(file), "accepted") {
         Ok(edit) => vec![edit],
@@ -120,7 +120,16 @@ pub fn apply(
         "--document",
         file,
     ];
-    event_outcome(&program.step_long(&command, &at, token, None))
+    // The plugin's `--stream` lines (added by `step_long` for an event) name each check as it starts and ends.
+    let relay: LineSink = {
+        let on_step = Arc::clone(on_step);
+        Arc::new(move |line: &str| {
+            if let Some(step) = progress_of(line) {
+                on_step(step);
+            }
+        })
+    };
+    event_outcome(&program.step_long(&command, &at, token, Some(relay)))
 }
 
 /// Rejects `change` the way the plugin's own `intent --reject` and `fix --reject` do (section 13 of its
