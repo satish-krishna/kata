@@ -111,12 +111,16 @@ pub fn slug(name: &str) -> String {
     }
 }
 
-/// The first file named `name` in `start` or any folder above it. Tests use it to find a binary
-/// cargo built beside them (`fake-claude`, `kata`), since the depth of a test binary under `target/`
-/// differs between cargo versions.
+/// The first file named `name` in `start` or in a folder above it, up to and including the first
+/// folder named `target`; the search never goes above that folder. Returns None when no `target`
+/// folder encloses `start`. Tests use it to find a binary cargo built beside them (`fake-claude`,
+/// `kata`), since the depth of a test binary under `target/` differs between cargo versions.
 pub fn find_upward(start: &Path, name: &str) -> Option<PathBuf> {
+    let is_target = |dir: &Path| dir.file_name().is_some_and(|n| n == "target");
+    let depth = start.ancestors().position(is_target)?;
     start
         .ancestors()
+        .take(depth + 1)
         .map(|dir| dir.join(name))
         .find(|p| p.is_file())
 }
