@@ -435,7 +435,7 @@ impl Program {
         };
         match (path("master"), path("workspace")) {
             (Some(master), Some(workspace)) => Ok(Place {
-                layout: crate::layout::Layout::Workspace,
+                layout: crate::layout::read(&found["layout"])?,
                 master,
                 workspace,
             }),

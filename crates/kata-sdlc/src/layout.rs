@@ -4,6 +4,8 @@
 use crate::ai_sdlc::{Place, Program, ProgramError};
 use crate::workspace::InstructionsState;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::path::Path;
 
 /// How a folder holds its system: a master repository beside product repositories, or one repository that
 /// is its own master and holds the system's apps in folders.
@@ -41,18 +43,93 @@ pub struct AppHealth {
     pub context: ContextHealth,
 }
 
-/// The apps of `system`, in the program's order, with their context health.
-pub fn apps(
-    _program: &Program,
-    _place: &Place,
-    _system: &str,
-) -> Result<Vec<AppHealth>, ProgramError> {
-    Ok(Vec::new())
+/// The layout `resolve --json` names. A plugin before 1.4.0 prints none, which reads as the workspace layout.
+pub(crate) fn read(layout: &Value) -> Result<Layout, ProgramError> {
+    if layout.is_null() {
+        return Ok(Layout::Workspace);
+    }
+    serde_json::from_value(layout.clone()).map_err(|_| ProgramError::CouldNotRun {
+        message: format!("the program names a layout this version does not know: {layout}"),
+    })
 }
 
-/// Whether the instructions in the repository's root file are current, as the program's check says.
-pub fn instructions(_program: &Program, _place: &Place) -> Result<InstructionsState, ProgramError> {
-    Ok(InstructionsState::Missing)
+/// The apps of `system`, in the order the program's `stale --json` lists them, with their context
+/// health. Only the single-repo layout has apps; the workspace layout reads repositories instead.
+pub fn apps(
+    program: &Program,
+    place: &Place,
+    system: &str,
+) -> Result<Vec<AppHealth>, ProgramError> {
+    let answer = program.run(&["stale", "--json", "--system", system], place)?;
+    let entries = answer["repos"]
+        .as_array()
+        .ok_or_else(|| ProgramError::CouldNotRun {
+            message: "the stale answer lists no repos".into(),
+        })?;
+    entries.iter().map(|e| app_of(e, &place.master)).collect()
+}
+
+fn app_of(entry: &Value, root: &Path) -> Result<AppHealth, ProgramError> {
+    let bad = |what: &str| ProgramError::CouldNotRun {
+        message: format!("the stale answer has {what}: {entry}"),
+    };
+    let name = entry["repo"].as_str().ok_or_else(|| bad("no repo"))?;
+    let path = entry["path"].as_str().ok_or_else(|| bad("no path"))?;
+    let context = match entry["reason"].as_str() {
+        Some("current") => ContextHealth::Current,
+        Some("behind") => ContextHealth::Behind {
+            commits: entry["behind"]
+                .as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .ok_or_else(|| bad("no count of commits behind"))?,
+        },
+        Some("missing") => ContextHealth::Missing,
+        Some("no-source-commit") => ContextHealth::NoSourceCommit,
+        Some("unknown-commit") => ContextHealth::UnknownCommit,
+        _ => return Err(bad("a reason this version does not read")),
+    };
+    Ok(AppHealth {
+        name: name.to_string(),
+        folder: folder_in(root, path),
+        context,
+    })
+}
+
+/// `path` relative to `root` with `/` separators; `.` for the root itself.
+fn folder_in(root: &Path, path: &str) -> String {
+    let relative = Path::new(path)
+        .strip_prefix(root)
+        .unwrap_or(Path::new(path));
+    let text = relative.to_string_lossy().replace('\\', "/");
+    if text.is_empty() {
+        ".".into()
+    } else {
+        text
+    }
+}
+
+/// Whether the instructions in the repository's root file are current: the two states of
+/// `instructions --json` read by the rules of the workspace reference. A missing `workspaceMd` is
+/// `Missing`; else a `claudeMd` that is `missing`, `stale` or `bad-markers` is `OutOfDate`; `current`
+/// and `home-folder` are `Current`.
+pub fn instructions(program: &Program, place: &Place) -> Result<InstructionsState, ProgramError> {
+    let answer = program.run(&["instructions", "--json"], place)?;
+    let state = |key: &str| answer[key].as_str().map(str::to_string);
+    let (Some(workspace_md), Some(claude_md)) = (state("workspaceMd"), state("claudeMd")) else {
+        return Err(ProgramError::CouldNotRun {
+            message: format!("the instructions answer has no workspaceMd and claudeMd: {answer}"),
+        });
+    };
+    Ok(match (workspace_md.as_str(), claude_md.as_str()) {
+        ("missing", _) => InstructionsState::Missing,
+        (_, "missing" | "stale" | "bad-markers") => InstructionsState::OutOfDate,
+        (_, "current" | "home-folder") => InstructionsState::Current,
+        _ => {
+            return Err(ProgramError::CouldNotRun {
+                message: format!("the instructions answer is not one this version reads: {answer}"),
+            })
+        }
+    })
 }
 
 #[cfg(test)]

@@ -206,7 +206,7 @@ impl ChangeDocument {
 /// Where the plugin works for `change`: the master that holds it (its copy) in the workspace of `place`.
 fn copy_place(place: &Place, change: &ChangeState) -> Place {
     Place {
-        layout: crate::layout::Layout::Workspace,
+        layout: place.layout,
         master: PathBuf::from(&change.master),
         workspace: place.workspace.clone(),
     }

@@ -1844,7 +1844,7 @@ fn sdlc_declare_done(app: AppHandle, change: build_host::ChangeRef) -> sdlc::don
     };
     // A change that lives in a copy is declared done from its copy.
     let at = sdlc::ai_sdlc::Place {
-        layout: kata_sdlc::layout::Layout::Workspace,
+        layout: place.layout,
         master: std::path::PathBuf::from(&state.master),
         workspace: place.workspace,
     };

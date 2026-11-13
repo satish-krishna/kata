@@ -160,7 +160,7 @@ pub struct ChangeState {
     pub finished: Option<Finished>,
     /// Single-repo layout only: each app of the system with its folder and whether the change touched
     /// it. Absent in the workspace layout.
-    #[serde(default, skip_deserializing)]
+    #[serde(default)]
     pub apps: Option<BTreeMap<String, AppFacts>>,
 }
 
