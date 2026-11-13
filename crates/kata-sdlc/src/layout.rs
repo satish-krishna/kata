@@ -5,7 +5,7 @@ use crate::ai_sdlc::{Place, Program, ProgramError};
 use crate::workspace::InstructionsState;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// How a folder holds its system: a master repository beside product repositories, or one repository that
 /// is its own master and holds the system's apps in folders.
@@ -41,6 +41,30 @@ pub struct AppHealth {
     pub name: String,
     pub folder: String,
     pub context: ContextHealth,
+}
+
+/// The folder the Workbench works from once a folder is opened: the repository or workspace root, the
+/// folder the program names as the workspace, and the layout.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Opened {
+    pub root: PathBuf,
+    pub workspace: PathBuf,
+    pub layout: Layout,
+}
+
+/// Why a folder did not open.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum OpenError {
+    /// The program refused to place the folder; these are its problems, as it printed them.
+    #[error("{}", .0.join(" "))]
+    Refused(Vec<String>),
+    #[error(transparent)]
+    Program(#[from] ProgramError),
+}
+
+/// Opens `folder` as the program places it.
+pub fn open(_program: &Program, _folder: &Path) -> Result<Opened, OpenError> {
+    unimplemented!("open")
 }
 
 /// The layout `resolve --json` names. A plugin before 1.4.0 prints none, which reads as the workspace layout.
@@ -141,6 +165,70 @@ mod tests {
     use std::path::Path;
 
     const CHANGE: &str = "2026-11-12-greeting";
+
+    fn same(a: &Path, b: &Path) -> bool {
+        let norm = |p: &Path| p.display().to_string().replace('\\', "/").to_lowercase();
+        norm(a) == norm(b)
+    }
+
+    fn assert_opened(got: Result<Opened, OpenError>, root: &Path, workspace: &Path, l: Layout) {
+        let got = got.unwrap();
+        assert!(same(&got.root, root), "root {:?} is not {root:?}", got.root);
+        assert!(
+            same(&got.workspace, workspace),
+            "workspace {:?} is not {workspace:?}",
+            got.workspace
+        );
+        assert_eq!(got.layout, l);
+    }
+
+    #[test]
+    fn open_rows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let parent = tmp.path().canonicalize().unwrap();
+        let root = testutil::single_repo(&parent, "kata", &[("engine", "engine")]);
+        let program = program();
+
+        // The repository folder itself, an app folder inside it, and the parent that holds no master.
+        for folder in [root.clone(), root.join("engine"), parent.clone()] {
+            let got = open(&program, &folder);
+            assert_opened(got, &root, &parent, Layout::SingleRepo);
+        }
+
+        // A workspace folder of a master and a product repository, as today.
+        let ws = parent.join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        let master = testutil::repo(&ws, "m");
+        testutil::commit_file(
+            &master,
+            ".ai-sdlc.json",
+            "{\"version\":1,\"systems\":{}}\n",
+            "marker",
+        );
+        testutil::repo(&ws, "app");
+        assert_opened(open(&program, &ws), &ws, &ws, Layout::Workspace);
+    }
+
+    #[test]
+    fn open_reads_the_marker_only_for_an_old_plugin() {
+        let tmp = tempfile::tempdir().unwrap();
+        let parent = tmp.path().canonicalize().unwrap();
+        let root = testutil::single_repo(&parent, "kata", &[("engine", "engine")]);
+        // A program of an older plugin: it names the master and the workspace and prints no layout.
+        let entry = parent.join("old-program.mjs");
+        let answer = serde_json::json!({
+            "workspace": parent.display().to_string(),
+            "master": root.display().to_string(),
+            "masterIsCopy": false,
+            "problems": [],
+        });
+        std::fs::write(&entry, format!("console.log({answer});\n")).unwrap();
+        let old = Program {
+            node: "node".into(),
+            entry,
+        };
+        assert_opened(open(&old, &root), &root, &parent, Layout::SingleRepo);
+    }
 
     fn program() -> Program {
         Program {

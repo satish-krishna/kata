@@ -57,6 +57,10 @@ pub enum MasterState {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct WorkspaceScan {
+    /// How the folder holds its system. A single-repo scan has no sibling repositories to list.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub layout: crate::layout::Layout,
     pub folder: String,
     pub repos: Vec<String>,
     pub master: MasterState,
@@ -132,6 +136,7 @@ pub fn scan(folder: &Path) -> Result<WorkspaceScan, ScanError> {
     };
 
     Ok(WorkspaceScan {
+        layout: crate::layout::Layout::Workspace,
         folder: folder.to_string_lossy().into_owned(),
         repos,
         master,
@@ -265,6 +270,22 @@ fn normalize(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::testutil::{commit_file, repo};
+
+    #[test]
+    fn system_repos_lists_nothing_for_a_single_repo_scan() {
+        let scan = WorkspaceScan {
+            layout: crate::layout::Layout::SingleRepo,
+            folder: "/p/kata".into(),
+            repos: vec!["engine".into(), "app".into()],
+            master: MasterState::One {
+                repo: "kata".into(),
+                committed: true,
+            },
+            marker: None,
+            marker_error: None,
+        };
+        assert!(system_repos(&scan, "kata").is_empty());
+    }
 
     const WS_TEXT: &str = "# ai-sdlc workspace\n\nRules here.\n";
     const GEN: &str =
