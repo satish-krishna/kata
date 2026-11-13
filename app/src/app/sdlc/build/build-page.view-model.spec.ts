@@ -1356,14 +1356,16 @@ describe('the shown session follows the decision table', () => {
     await s.vm.load({ ctx: CTX, masterRepo: MOCK_MASTER, change: found, status, done: false, review: null });
     await advance(50);
     const live: string[] = [];
-    const tell = async () => {
-      announce({ change: keyOf(MOCK_BUILD_CHANGE), state: state(), reviewWaiting: [], runs: live.map((run) => ({ key: REPO, run })) });
+    const keys = new Map<string, string>();
+    const tell = async (over: Partial<BuildState> = {}) => {
+      announce({ change: keyOf(MOCK_BUILD_CHANGE), state: state(over), reviewWaiting: [], runs: live.map((run) => ({ key: keys.get(run) ?? REPO, run })) });
       await advance(50);
     };
     /** A session starts running, later than every session before it. */
-    const start = async (id: string) => {
+    const start = async (id: string, key: string = REPO) => {
       await advance(2000);
       live.push(id);
+      keys.set(id, key);
       await tell();
     };
     const send = async (id: string, ev: unknown) => {
@@ -1430,6 +1432,31 @@ describe('the shown session follows the decision table', () => {
     expect(fresh.messages).toEqual([]);
     // The earlier run stays a session of its own, with its summary.
     expect(r.session('live-1').summary?.result).toBe('last build task done');
+  });
+
+  it('R10.1: the review run the build starts by itself opens a clean pane after the last build run ended with its summary', async () => {
+    const r = await repo();
+    await r.send('live-1', { type: 'assistant.text', text: 'last build task said this' });
+    await r.send('live-1', asks);
+    await r.send('live-1', { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.03, duration_ms: 1, result: 'last build task done' });
+    expect(r.session('live-1').summary?.result).toBe('last build task done');
+    // The build is over: the host starts the review, a run of its own under the review key.
+    r.live.length = 0;
+    await r.start('review-1', 'review');
+    await r.tell({ phase: 'reviewing', going: ['review'] });
+    expect(r.vm.selected()).toBe('review');
+    expect(r.vm.shownSessions().map((x) => x.id)).toEqual(['review-1']);
+    expect(r.shown()).toEqual(['review-1']);
+    const review = r.session('review-1');
+    expect(review.summary).toBeNull();
+    expect(JSON.stringify(review.events)).not.toContain('last build task said this');
+    expect(JSON.stringify(review.events)).not.toContain('last build task done');
+    expect(review.asks).toEqual([]);
+    expect(review.messages).toEqual([]);
+    // No completed summary until the review run itself ends.
+    expect(r.vm.shownSessions().every((x) => x.summary === null)).toBe(true);
+    await r.send('review-1', { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 1, cost_usd: 0.01, duration_ms: 1, result: 'review done' });
+    expect(r.session('review-1').summary?.result).toBe('review done');
   });
 
   it('picked P, a new session starts: P stays in view', async () => {
