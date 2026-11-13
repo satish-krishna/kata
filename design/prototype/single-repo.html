@@ -1,0 +1,55 @@
+<!-- Kata Workbench: single-repo workbench prototype (change 2026-11-12-single-repo-workbench, T1). Opens from disk. Recreate in Angular, never copy. -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Kata Workbench: single-repo prototype</title>
+<link rel="stylesheet" href="../design_system/styles.css" />
+<link rel="stylesheet" href="workbench.css" />
+<style>
+  /* Prototype-only layout glue. Tokens only, no literals. */
+  html, body { margin: 0; height: 100%; }
+  [hidden] { display: none !important; }
+  .sr { display: flex; flex-direction: column; height: 100vh; background: var(--surface-app); color: var(--text-primary); font: var(--text-base)/1.4 var(--font-sans); }
+  .sr-switch { position: relative; z-index: 30; flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-5); padding: var(--space-3) var(--space-5); background: var(--surface-card); border-bottom: 1px solid var(--accent-border); }
+  .sr-switch__group { display: flex; align-items: center; gap: var(--space-2); }
+  .sr-switch__label { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-faint); }
+  .sr-main { flex: 1; min-height: 0; overflow: auto; }
+  .sr-cols { display: grid; grid-template-columns: 1fr 1fr; min-height: 100%; }
+  .sr-col { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-5); min-width: 0; }
+  .sr-col + .sr-col { border-left: 1px solid var(--border-default); background: var(--surface-panel); }
+  .sr-page { display: flex; flex-direction: column; gap: var(--space-5); padding: var(--space-5) var(--space-6); max-width: 1100px; }
+  .sr-table { width: 100%; border-collapse: collapse; }
+  .sr-table th { text-align: left; font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-faint); padding: var(--space-3); border-bottom: 1px solid var(--border-default); }
+  .sr-table td { padding: var(--space-3); border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
+  .sr-end { text-align: right; white-space: nowrap; }
+  .sr-note { font: var(--text-xs)/1.5 var(--font-sans); color: var(--text-muted); margin: 0; }
+  .sr-faint { color: var(--text-faint); }
+  .sr-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+  .sr-mark { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); padding: 3px 6px; border: 1px solid var(--accent-border); border-radius: var(--radius-xs); color: var(--accent-text); }
+  .sr-menu { position: absolute; top: calc(var(--rail-toolbar) - 4px); left: 120px; z-index: 5; min-width: 360px; background: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: var(--space-2); box-shadow: var(--shadow-lg); display: flex; flex-direction: column; }
+  .sr-menu__item { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3); border-radius: var(--radius-sm); cursor: pointer; background: transparent; border: 0; color: var(--text-primary); text-align: left; font: inherit; }
+  .sr-menu__item:hover { background: var(--surface-inset); }
+  .sr-menu__folder { font: var(--font-code-sm); color: var(--text-faint); margin-left: auto; }
+  .sr-lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--space-4); }
+  .sr-lane { display: flex; flex-direction: column; gap: var(--space-3); }
+  .sr-lane--one { max-width: 520px; }
+  .sr-task { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-inset); }
+  .sr-tabs { display: flex; gap: var(--space-2); }
+  .sr-dialog-scrim { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--surface-app) 80%, transparent); z-index: 20; }
+  .sr-dialog { width: 560px; max-width: 90vw; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-5); background: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); }
+  .sr-diff { margin: 0; padding: var(--space-4); background: var(--surface-inset); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); font: var(--font-code-sm); color: var(--text-secondary); white-space: pre; overflow: auto; }
+  .sr-group { display: flex; flex-direction: column; gap: var(--space-2); }
+  .sr-group__head { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-faint); padding: var(--space-3) 0 var(--space-2); border-bottom: 1px solid var(--border-subtle); }
+</style>
+</head>
+<body>
+<div class="sr">
+  <nav class="sr-switch" id="switch" aria-label="Prototype screens"></nav>
+  <div class="wb-toolbar" id="toolbar"></div>
+  <main class="sr-main" id="screen"></main>
+</div>
+<div id="overlay"></div>
+<script src="single-repo.js"></script>
+</body>
+</html>
