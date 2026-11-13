@@ -15,6 +15,9 @@ import type { RoundPlan } from '@bindings/RoundPlan';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { StartForm } from '@bindings/StartForm';
+import type { StartOutcome } from '@bindings/StartOutcome';
+import type { RunningStep } from '@bindings/RunningStep';
+import type { StepEvent } from '@bindings/StepEvent';
 import type { TaskLink } from '@bindings/TaskLink';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
@@ -1136,6 +1139,117 @@ describe('the build page reads the backend\'s build and starts it through the ho
     expect(vm.refusal()).toEqual({ reason: "This machine could not run the plugin's step in commerce-core", problems: ['hook prep could not run'] });
   });
 
+  describe('the preparation message, by outcome and step', () => {
+    const cases: { name: string; outcome: StartOutcome; stopped: string | null; refusal: object | null }[] = [
+      { name: 'started', outcome: { kind: 'started', uncommitted: {} }, stopped: null, refusal: null },
+      { name: 'refused', outcome: { kind: 'refused', problems: ['kata: the plan is not accepted'] }, stopped: null, refusal: { reason: 'The plugin refused to start the build', problems: ['kata: the plan is not accepted'] } },
+      { name: 'failed', outcome: { kind: 'failed', problems: ['hook deps failed'], hook: { id: 'deps', onFailure: 'stop', output: 'boom' } }, stopped: null, refusal: { reason: "The team's hook deps failed", problems: ['hook deps failed', 'boom'] } },
+      { name: 'could not run', outcome: { kind: 'couldNotRun', output: 'no node', repo: null }, stopped: null, refusal: { reason: "This machine could not run the plugin's step", problems: ['no node'] } },
+      { name: 'stopped during the check of every repository', outcome: { kind: 'stopped', prepared: [] }, stopped: 'Preparation stopped', refusal: null },
+      { name: 'stopped during one repository', outcome: { kind: 'stopped', prepared: ['kata', 'bob'] }, stopped: 'Preparation stopped. Prepared: kata, bob', refusal: null },
+    ];
+    for (const c of cases) {
+      it(c.name, async () => {
+        const { vm, transport, load } = await opened();
+        await load();
+        vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue(c.outcome);
+        expect(await vm.startBuild({ timeoutSecs: 60 })).toBe(c.outcome.kind);
+        expect(vm.stoppedNote()).toBe(c.stopped);
+        expect(vm.refusal()).toEqual(c.refusal);
+        expect(vm.preparing()).toBe(false);
+      });
+    }
+  });
+
+  it('Stop calls stopStep, and the step label feeds the progress line for this change only', async () => {
+    const { vm, transport, load } = await opened();
+    await load();
+    let push: (e: StepEvent) => void = () => undefined;
+    vi.spyOn(transport, 'onStep').mockImplementation(async (cb) => {
+      push = cb;
+      return () => undefined;
+    });
+    const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
+    let release!: (o: StartOutcome) => void;
+    vi.spyOn(transport, 'sdlcBuildStart').mockReturnValue(new Promise<StartOutcome>((resolve) => (release = resolve)));
+    const update = vi.spyOn(TestBed.inject(ProgressStore), 'update');
+    const starting = vm.startBuild({ timeoutSecs: 60 });
+    await advance(100);
+    expect(vm.preparing()).toBe(true);
+    const progress = { kind: 'repository' as const, label: 'Preparing kata: running base-tests', repo: 'kata', check: 'base-tests' };
+    push({ change: keyOf('2026-01-01-other'), kind: 'preparingBuild', progress });
+    expect(update).not.toHaveBeenCalled();
+    push({ change: { ...keyOf(MOCK_BUILD_CHANGE), system: 'other-system' }, kind: 'preparingBuild', progress });
+    expect(update).not.toHaveBeenCalled();
+    push({ change: keyOf(MOCK_BUILD_CHANGE), kind: 'preparingBuild', progress });
+    expect(update).toHaveBeenCalledWith('Preparing kata: running base-tests', 'build');
+    await vm.stopPreparing();
+    expect(stop).toHaveBeenCalledWith(REF);
+    release({ kind: 'stopped', prepared: [] });
+    await starting;
+    expect(vm.preparing()).toBe(false);
+  });
+
+  describe('a preparation the backend runs is the page\'s, whoever started it (F3, F5)', () => {
+    const preparation = (change: string): RunningStep => ({
+      change: keyOf(change),
+      kind: 'preparingBuild',
+      doing: 'preparing',
+      progress: { kind: 'repository', label: 'Preparing commerce-core: running base-tests', repo: 'commerce-core', check: 'base-tests' },
+    });
+
+    it('a page opened while the preparation runs shows it and offers Stop, which stops that change (R6.1)', async () => {
+      const { vm, transport, load } = await opened();
+      vi.spyOn(transport, 'steps').mockResolvedValue([preparation(MOCK_BUILD_CHANGE)]);
+      const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
+      await load();
+      await advance(100);
+      expect(vm.preparing()).toBe(true);
+      await vm.stopPreparing();
+      expect(stop).toHaveBeenCalledWith(REF);
+    });
+
+    it('the label of a preparation the page did not start is the backend\'s, and the progress line follows it', async () => {
+      const { vm, transport, load } = await opened();
+      vi.spyOn(transport, 'steps').mockResolvedValue([preparation(MOCK_BUILD_CHANGE)]);
+      await load();
+      await advance(1000);
+      expect(TestBed.inject(ProgressStore).view('build')()?.label).toBe('Preparing commerce-core: running base-tests');
+      expect(vm.preparing()).toBe(true);
+    });
+
+    it('a preparation of another change is not shown, and Stop stops nothing, after the page moved to that other change', async () => {
+      const { vm, transport, load, input } = await opened();
+      vi.spyOn(transport, 'steps').mockResolvedValue([preparation(MOCK_BUILD_CHANGE)]);
+      const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
+      await load();
+      await advance(100);
+      expect(vm.preparing()).toBe(true);
+      await vm.load({ ...input, ctx: { ...CTX, change: '2026-01-01-other' } });
+      await advance(100);
+      expect(vm.preparing()).toBe(false);
+      await vm.stopPreparing();
+      expect(stop).not.toHaveBeenCalled();
+      expect(TestBed.inject(ProgressStore).view('build')()).toBeNull();
+    });
+
+    it('a preparation that ends elsewhere takes Stop away', async () => {
+      const { vm, transport, load } = await opened();
+      vi.spyOn(transport, 'steps').mockResolvedValue([preparation(MOCK_BUILD_CHANGE)]);
+      let ended: (c: ChangeKey) => void = () => undefined;
+      vi.spyOn(transport, 'onStepEnd').mockImplementation(async (cb) => {
+        ended = cb;
+        return () => undefined;
+      });
+      await load();
+      await advance(100);
+      expect(vm.preparing()).toBe(true);
+      ended(keyOf(MOCK_BUILD_CHANGE));
+      await advance(100);
+      expect(vm.preparing()).toBe(false);
+    });
+  });
+
   it('the round dialog shows the backend\'s plan for the picks', async () => {
     const { vm, transport, preview, load } = await opened();
     await load();
@@ -1303,14 +1417,16 @@ describe('the shown session follows the decision table', () => {
     await s.vm.load({ ctx: CTX, masterRepo: MOCK_MASTER, change: found, status, done: false, review: null });
     await advance(50);
     const live: string[] = [];
-    const tell = async () => {
-      announce({ change: keyOf(MOCK_BUILD_CHANGE), state: state(), reviewWaiting: [], runs: live.map((run) => ({ key: REPO, run })) });
+    const keys = new Map<string, string>();
+    const tell = async (over: Partial<BuildState> = {}) => {
+      announce({ change: keyOf(MOCK_BUILD_CHANGE), state: state(over), reviewWaiting: [], runs: live.map((run) => ({ key: keys.get(run) ?? REPO, run })) });
       await advance(50);
     };
     /** A session starts running, later than every session before it. */
-    const start = async (id: string) => {
+    const start = async (id: string, key: string = REPO) => {
       await advance(2000);
       live.push(id);
+      keys.set(id, key);
       await tell();
     };
     const send = async (id: string, ev: unknown) => {
@@ -1361,6 +1477,47 @@ describe('the shown session follows the decision table', () => {
     await r.start('live-2');
     expect(r.shown()).toEqual(['live-2']);
     expect(await r.mode()).toBe('following');
+  });
+
+  it('the review started by itself opens a clean pane', async () => {
+    const r = await repo();
+    await r.send('live-1', { type: 'assistant.text', text: 'last build task said this' });
+    await r.send('live-1', { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.03, duration_ms: 1, result: 'last build task done' });
+    expect(r.session('live-1').summary?.result).toBe('last build task done');
+    await r.start('live-2');
+    const fresh = r.session('live-2');
+    expect(r.shown()).toEqual(['live-2']);
+    expect(fresh.summary).toBeNull();
+    expect(JSON.stringify(fresh.events)).not.toContain('last build task said this');
+    expect(fresh.asks).toEqual([]);
+    expect(fresh.messages).toEqual([]);
+    // The earlier run stays a session of its own, with its summary.
+    expect(r.session('live-1').summary?.result).toBe('last build task done');
+  });
+
+  it('R10.1: the review run the build starts by itself opens a clean pane after the last build run ended with its summary', async () => {
+    const r = await repo();
+    await r.send('live-1', { type: 'assistant.text', text: 'last build task said this' });
+    await r.send('live-1', asks);
+    await r.send('live-1', { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.03, duration_ms: 1, result: 'last build task done' });
+    expect(r.session('live-1').summary?.result).toBe('last build task done');
+    // The build is over: the host starts the review, a run of its own under the review key.
+    r.live.length = 0;
+    await r.start('review-1', 'review');
+    await r.tell({ phase: 'reviewing', going: ['review'] });
+    expect(r.vm.selected()).toBe('review');
+    expect(r.vm.shownSessions().map((x) => x.id)).toEqual(['review-1']);
+    expect(r.shown()).toEqual(['review-1']);
+    const review = r.session('review-1');
+    expect(review.summary).toBeNull();
+    expect(JSON.stringify(review.events)).not.toContain('last build task said this');
+    expect(JSON.stringify(review.events)).not.toContain('last build task done');
+    expect(review.asks).toEqual([]);
+    expect(review.messages).toEqual([]);
+    // No completed summary until the review run itself ends.
+    expect(r.vm.shownSessions().every((x) => x.summary === null)).toBe(true);
+    await r.send('review-1', { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 1, cost_usd: 0.01, duration_ms: 1, result: 'review done' });
+    expect(r.session('review-1').summary?.result).toBe('review done');
   });
 
   it('picked P, a new session starts: P stays in view', async () => {

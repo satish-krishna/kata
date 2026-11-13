@@ -2,10 +2,13 @@
 //! line; the plugin commits it (`commit --kind accept-<doc>` or `reject-intent` / `reject-fix`), runs the
 //! `doc.accept` event and removes the rejected change's copy. Kata makes no commit and runs no hook.
 use crate::ai_sdlc::state::{ChangeState, ChangeTrack};
-use crate::ai_sdlc::{Answer, Place, Program, StepOutcome};
+use crate::ai_sdlc::{progress_of, Answer, Place, Program, StepOutcome};
+use crate::done::StepSink;
 use crate::frontmatter;
+use kata_core::proc::{CancelToken, LineSink};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// A document of the full pipeline that is accepted by the engineer.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,6 +44,10 @@ pub enum AcceptOutcome {
     AcceptedHookCouldNotRun { output: String },
     /// Nothing was committed and the status edit was taken back; `problems` are the plugin's words.
     NotCommitted { problems: Vec<String> },
+    /// The engineer stopped it. `accepted` is true when the acceptance commit was recorded and the stop came
+    /// during `doc.accept`; running the acceptance again carries on, since the plugin reuses a run that
+    /// passed at the same commit.
+    Stopped { accepted: bool },
     /// The plugin could not run, or the document could not be edited; the edit was taken back.
     CouldNotRun { message: String },
 }
@@ -63,6 +70,9 @@ pub enum RejectOutcome {
     Refused { message: String },
     /// Nothing was committed and the status edits were taken back.
     NotCommitted { problems: Vec<String> },
+    /// The engineer stopped it. `rejected` is true when the rejection commit was recorded and the stop came
+    /// during `change remove`; running the rejection again removes the copy.
+    Stopped { rejected: bool },
     /// The plugin could not run, or a document could not be edited.
     CouldNotRun { message: String },
 }
@@ -75,6 +85,8 @@ pub fn apply(
     system: &str,
     change: &ChangeState,
     doc: ChangeDocument,
+    token: &CancelToken,
+    on_step: &StepSink,
 ) -> AcceptOutcome {
     let file = doc.file();
     let mut edits = match Edit::start(&Path::new(&change.folder).join(file), "accepted") {
@@ -83,8 +95,11 @@ pub fn apply(
     };
     let at = copy_place(place, change);
     let kind = format!("accept-{}", doc.name());
-    match commit(program, &at, system, &change.change, &kind, &edits) {
+    match commit(program, &at, system, &change.change, &kind, &edits, token) {
         Committed::Yes => {}
+        // The commit may or may not have landed; the edit stays, and accepting again commits it or finds it
+        // committed.
+        Committed::Stopped => return AcceptOutcome::Stopped { accepted: false },
         Committed::No(problems) => {
             revert(&mut edits);
             return AcceptOutcome::NotCommitted { problems };
@@ -105,7 +120,16 @@ pub fn apply(
         "--document",
         file,
     ];
-    event_outcome(&program.step(&command, &at))
+    // The plugin's `--stream` lines (added by `step_long` for an event) name each check as it starts and ends.
+    let relay: LineSink = {
+        let on_step = Arc::clone(on_step);
+        Arc::new(move |line: &str| {
+            if let Some(step) = progress_of(line) {
+                on_step(step);
+            }
+        })
+    };
+    event_outcome(&program.step_long(&command, &at, token, Some(relay)))
 }
 
 /// Rejects `change` the way the plugin's own `intent --reject` and `fix --reject` do (section 13 of its
@@ -117,6 +141,7 @@ pub fn reject(
     place: &Place,
     system: &str,
     change: &ChangeState,
+    token: &CancelToken,
 ) -> RejectOutcome {
     if let Some(message) = &change.ready.reject.stop {
         return RejectOutcome::Refused {
@@ -152,8 +177,10 @@ pub fn reject(
         ChangeTrack::Fix => "reject-fix",
         ChangeTrack::Full => "reject-intent",
     };
-    match commit(program, &at, system, &change.change, kind, &edits) {
+    match commit(program, &at, system, &change.change, kind, &edits, token) {
         Committed::Yes => {}
+        // As when accepting: the edits stay, and rejecting again commits them or finds them committed.
+        Committed::Stopped => return RejectOutcome::Stopped { rejected: false },
         Committed::No(problems) => {
             revert(&mut edits);
             return RejectOutcome::NotCommitted { problems };
@@ -172,7 +199,7 @@ pub fn reject(
         &change.change,
         "--abandon",
     ];
-    match program.step(&command, place).outcome {
+    match program.step_long(&command, place, token, None).outcome {
         StepOutcome::Passed { .. } => RejectOutcome::Rejected {
             record_branch: branch,
         },
@@ -182,6 +209,7 @@ pub fn reject(
         StepOutcome::CouldNotRun { reason, .. } => RejectOutcome::RejectedNotRemoved {
             problems: vec![reason],
         },
+        StepOutcome::Stopped => RejectOutcome::Stopped { rejected: true },
     }
 }
 
@@ -253,6 +281,8 @@ enum Committed {
     /// The check failed or git refused; the plugin's problems.
     No(Vec<String>),
     CouldNotRun(String),
+    /// The engineer stopped it.
+    Stopped,
 }
 
 /// Asks the plugin to commit the edited documents as `kind`.
@@ -263,6 +293,7 @@ fn commit(
     change: &str,
     kind: &str,
     edits: &[Edit],
+    token: &CancelToken,
 ) -> Committed {
     let paths: Vec<String> = edits.iter().map(|e| e.path.display().to_string()).collect();
     let mut command = vec![
@@ -270,7 +301,7 @@ fn commit(
     ];
     command.extend(paths.iter().map(String::as_str));
     // Exit 0 is committed, or nothing differed from `HEAD`.
-    match program.step(&command, at).outcome {
+    match program.step_long(&command, at, token, None).outcome {
         StepOutcome::Passed { .. } => Committed::Yes,
         StepOutcome::Refused { problems } | StepOutcome::Failed { problems, .. } => {
             Committed::No(if problems.is_empty() {
@@ -280,6 +311,7 @@ fn commit(
             })
         }
         StepOutcome::CouldNotRun { reason, .. } => Committed::CouldNotRun(reason),
+        StepOutcome::Stopped => Committed::Stopped,
     }
 }
 
@@ -311,6 +343,8 @@ fn event_outcome(answer: &Answer) -> AcceptOutcome {
 ",
                 ),
         },
+        // The acceptance is committed; running it again reruns the checks.
+        StepOutcome::Stopped => AcceptOutcome::Stopped { accepted: true },
     }
 }
 
@@ -318,10 +352,12 @@ fn event_outcome(answer: &Answer) -> AcceptOutcome {
 mod tests {
     use super::*;
     use crate::ai_sdlc::state;
+    use crate::ai_sdlc::{StepProgress, StepProgressKind};
     use crate::offer::{self, LiveFacts, StageAction};
     use crate::testutil;
     use serde_json::{json, Value};
     use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
 
     const SYSTEM: &str = "demo";
     const CHANGE: &str = "2026-11-01-greeting";
@@ -334,6 +370,51 @@ mod tests {
         }
     }
 
+    /// A stand-in for the program that passes every call to the real one except the call named by
+    /// \`trigger\` (a JS condition on \`args\`): that call writes a marker and waits to be stopped. A call
+    /// nobody stops ends itself after 60 s, so a red test fails instead of hanging.
+    fn stopping_program(dir: &Path, trigger: &str) -> (Program, PathBuf) {
+        let marker = dir.join("stopping.marker");
+        let real = program().entry;
+        let script = format!(
+            "import {{ spawnSync }} from 'node:child_process';
+import {{ writeFileSync }} from 'node:fs';
+const args = process.argv.slice(2);
+if ({trigger}) {{
+  writeFileSync({marker:?}, 'x');
+  setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3); }}, 60000);
+}} else {{
+  const r = spawnSync(process.execPath, [{real:?}, ...args], {{ stdio: 'inherit' }});
+  process.exit(r.status ?? 2);
+}}
+",
+            marker = marker.display().to_string(),
+            real = real.display().to_string(),
+        );
+        let entry = dir.join("fake-ai-sdlc.mjs");
+        std::fs::write(&entry, script).unwrap();
+        (
+            Program {
+                node: "node".into(),
+                entry,
+            },
+            marker,
+        )
+    }
+
+    /// Cancels \`token\` once the fake has reached the call it stops, giving up after 60 s (the real program may be slow to reach it under load).
+    fn stop_when_reached(marker: PathBuf, token: &CancelToken) -> std::thread::JoinHandle<()> {
+        let token = token.clone();
+        std::thread::spawn(move || {
+            for _ in 0..1200 {
+                if marker.exists() {
+                    token.cancel();
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        })
+    }
     fn git(dir: &Path, args: &[&str]) -> String {
         testutil::run(dir, args).unwrap()
     }
@@ -379,14 +460,16 @@ mod tests {
                 workspace: ws.clone(),
             };
             let started = program()
-                .run(
+                .step_long(
                     &[
                         "change", "start", "--json", "--system", SYSTEM, "--change", CHANGE,
                         "--type", "feat", "--scope", "demo", "--title", "Greeting",
                     ],
                     &place,
+                    &kata_core::proc::CancelToken::new(),
+                    None,
                 )
-                .unwrap();
+                .json;
             assert_eq!(started["outcome"], "passed", "{started}");
             Fx {
                 copy: ws.join(".ai-sdlc").join("copies").join(CHANGE),
@@ -452,7 +535,15 @@ mod tests {
         }
 
         fn apply(&self, doc: ChangeDocument) -> AcceptOutcome {
-            apply(&program(), &self.place(), SYSTEM, &self.state(), doc)
+            apply(
+                &program(),
+                &self.place(),
+                SYSTEM,
+                &self.state(),
+                doc,
+                &CancelToken::new(),
+                &(Arc::new(|_| {}) as StepSink),
+            )
         }
 
         fn log_of(&self, branch: &str) -> String {
@@ -529,6 +620,40 @@ mod tests {
                     "after hook notify failed with exit code 3; nothing was undone".into()
                 ]
             }
+        );
+    }
+
+    /// R15.1 "accepts the spec | running a check after acceptance": the progress sink hears the step's
+    /// check as the plugin reports it, so the page can name it.
+    #[test]
+    fn a_check_on_accepting_reaches_the_progress_sink() {
+        let hooks = accept_hook(json!(["node", "-e", "0"]));
+        let fx = ready(
+            ChangeDocument::Spec,
+            SPEC_BODY,
+            &[("intent/demo/hooks.json", &hooks)],
+        );
+        let seen: Arc<Mutex<Vec<StepProgress>>> = Arc::default();
+        let sink: StepSink = {
+            let seen = Arc::clone(&seen);
+            Arc::new(move |step| seen.lock().unwrap().push(step))
+        };
+        let outcome = apply(
+            &program(),
+            &fx.place(),
+            SYSTEM,
+            &fx.state(),
+            ChangeDocument::Spec,
+            &CancelToken::new(),
+            &sink,
+        );
+        assert_eq!(outcome, AcceptOutcome::Accepted { warnings: vec![] });
+        let seen = seen.lock().unwrap();
+        assert!(
+            seen.iter().any(|s| s.kind == StepProgressKind::Hook
+                && s.check.as_deref() == Some("docs-lint")
+                && s.label.contains("docs-lint")),
+            "{seen:?}"
         );
     }
 
@@ -709,6 +834,8 @@ mod tests {
                 SYSTEM,
                 &fx.state(),
                 ChangeDocument::Intent,
+                &CancelToken::new(),
+                &(Arc::new(|_| {}) as StepSink),
             );
             let AcceptOutcome::CouldNotRun { message } = outcome else {
                 panic!("expected CouldNotRun, got {outcome:?}");
@@ -737,7 +864,13 @@ mod tests {
             let before = git(&fx.master, &["rev-list", "--count", &branch])
                 .parse::<u32>()
                 .unwrap();
-            let outcome = reject(&program(), &fx.place(), SYSTEM, &fx.state());
+            let outcome = reject(
+                &program(),
+                &fx.place(),
+                SYSTEM,
+                &fx.state(),
+                &CancelToken::new(),
+            );
             assert_eq!(
                 outcome,
                 RejectOutcome::Rejected {
@@ -772,7 +905,13 @@ mod tests {
         {
             let fx = fix_change();
             let branch = fx.state_branch();
-            let outcome = reject(&program(), &fx.place(), SYSTEM, &fx.state());
+            let outcome = reject(
+                &program(),
+                &fx.place(),
+                SYSTEM,
+                &fx.state(),
+                &CancelToken::new(),
+            );
             assert_eq!(
                 outcome,
                 RejectOutcome::Rejected {
@@ -807,7 +946,7 @@ mod tests {
             let state = fx.state();
             let stop = state.ready.reject.stop.clone().expect("the plugin refuses");
             let head = fx.head();
-            let outcome = reject(&program(), &fx.place(), SYSTEM, &state);
+            let outcome = reject(&program(), &fx.place(), SYSTEM, &state, &CancelToken::new());
             assert_eq!(outcome, RejectOutcome::Refused { message: stop });
             assert_eq!(fx.head(), head, "no commit was made");
             assert!(fx.copy.exists(), "nothing was removed");
@@ -821,7 +960,13 @@ mod tests {
             pre_commit_hook(&fx.master, "echo hook says no >&2\nexit 1");
             let head = fx.head();
             let (intent_before, plan_before) = (fx.text("intent.md"), fx.text("plan.md"));
-            let outcome = reject(&program(), &fx.place(), SYSTEM, &fx.state());
+            let outcome = reject(
+                &program(),
+                &fx.place(),
+                SYSTEM,
+                &fx.state(),
+                &CancelToken::new(),
+            );
             let RejectOutcome::NotCommitted { problems } = outcome else {
                 panic!("expected NotCommitted, got {outcome:?}");
             };
@@ -836,7 +981,13 @@ mod tests {
         {
             let fx = ready(ChangeDocument::Intent, SPEC_BODY, &[]);
             std::fs::write(fx.folder().join("notes.txt"), "keep me\n").unwrap();
-            let outcome = reject(&program(), &fx.place(), SYSTEM, &fx.state());
+            let outcome = reject(
+                &program(),
+                &fx.place(),
+                SYSTEM,
+                &fx.state(),
+                &CancelToken::new(),
+            );
             let RejectOutcome::RejectedNotRemoved { problems } = outcome else {
                 panic!("expected RejectedNotRemoved, got {outcome:?}");
             };
@@ -856,6 +1007,40 @@ mod tests {
                 .change_show(&self.place(), CHANGE, false)
                 .unwrap()
                 .branch
+        }
+    }
+    #[test]
+    fn stopped_outcomes() {
+        // R17.1: a stop during the commit records nothing; a stop during doc.accept follows a recorded
+        // acceptance. The same two for rejecting, whose second call is the copy's removal.
+        let commit = "args[0] === 'commit'";
+        let accept = "args[0] === 'run' && args[1] === 'doc.accept'";
+        let remove = "args[0] === 'change' && args[1] === 'remove'";
+        for (trigger, accepted) in [(commit, false), (accept, true)] {
+            let fx = ready(ChangeDocument::Intent, SPEC_BODY, &[]);
+            let (fake, marker) = stopping_program(fx._dir.path(), trigger);
+            let token = CancelToken::new();
+            let watcher = stop_when_reached(marker, &token);
+            let outcome = apply(
+                &fake,
+                &fx.place(),
+                SYSTEM,
+                &fx.state(),
+                ChangeDocument::Intent,
+                &token,
+                &(Arc::new(|_| {}) as StepSink),
+            );
+            watcher.join().unwrap();
+            assert_eq!(outcome, AcceptOutcome::Stopped { accepted }, "{trigger}");
+        }
+        for (trigger, rejected) in [(commit, false), (remove, true)] {
+            let fx = ready(ChangeDocument::Intent, SPEC_BODY, &[]);
+            let (fake, marker) = stopping_program(fx._dir.path(), trigger);
+            let token = CancelToken::new();
+            let watcher = stop_when_reached(marker, &token);
+            let outcome = reject(&fake, &fx.place(), SYSTEM, &fx.state(), &token);
+            watcher.join().unwrap();
+            assert_eq!(outcome, RejectOutcome::Stopped { rejected }, "{trigger}");
         }
     }
 }

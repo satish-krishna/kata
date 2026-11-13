@@ -2,7 +2,7 @@ import { NgTemplateOutlet } from '@angular/common';
 import { Component, inject } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideChevronDown, lucideTriangleAlert } from '@ng-icons/lucide';
+import { lucideChevronDown, lucideSquare, lucideTriangleAlert } from '@ng-icons/lucide';
 import { HlmAlertImports } from '@spartan-ng/helm/alert';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmPopoverImports } from '@spartan-ng/helm/popover';
@@ -30,13 +30,14 @@ import { StagePills } from '../../ui/stage-pills';
 import { TasksView } from '../../ui/tasks-view';
 import { RunPreviewDialog } from '../../ui/run-preview-dialog';
 import { ProgressLine } from '../../ui/progress-line';
+import { StoppedNote } from '../../ui/stopped-note';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { ChangePageViewModel } from './change-page.view-model';
 
 @Component({
   selector: 'app-change-page',
-  providers: [ChangePageViewModel, BuildPageViewModel, BuildLayoutViewModel,RunPreviewViewModel, provideIcons({ lucideChevronDown, lucideTriangleAlert })],
-  imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, HlmTabsImports, SdlcToolbar, RunningChanges, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, BranchNameDialog, ConfirmDialog, NewChangeDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildPage, RunPreviewDialog, ProgressLine],
+  providers: [ChangePageViewModel, BuildPageViewModel, BuildLayoutViewModel,RunPreviewViewModel, provideIcons({ lucideChevronDown, lucideSquare, lucideTriangleAlert })],
+  imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, HlmTabsImports, SdlcToolbar, RunningChanges, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, BranchNameDialog, ConfirmDialog, NewChangeDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildPage, RunPreviewDialog, ProgressLine, StoppedNote],
   templateUrl: './change-page.html',
 })
 export class ChangePage {

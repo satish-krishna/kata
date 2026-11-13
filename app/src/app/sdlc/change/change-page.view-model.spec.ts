@@ -2,7 +2,17 @@ import { Injector, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import type { ChangeInfo } from '../../lib/sdlc-mock-types';
+import type { AcceptOutcome } from '@bindings/AcceptOutcome';
+import type { ChangeKey } from '@bindings/ChangeKey';
 import type { CopyRemoval } from '@bindings/CopyRemoval';
+import type { DeclareView } from '@bindings/DeclareView';
+import type { RecordedPullRequest } from '@bindings/RecordedPullRequest';
+import type { RejectOutcome } from '@bindings/RejectOutcome';
+import type { RenameOutcome } from '@bindings/RenameOutcome';
+import type { RunningStep } from '@bindings/RunningStep';
+import type { StepEvent } from '@bindings/StepEvent';
+import type { StepKind } from '@bindings/StepKind';
+import type { StepProgress } from '@bindings/StepProgress';
 import type { PullRequestLink } from '@bindings/PullRequestLink';
 import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { RemoveOutcome } from '@bindings/RemoveOutcome';
@@ -11,6 +21,7 @@ import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
 import { ChangeRunStore, changeRunKey } from '../../core/run/change-run.store';
+import { RunStore } from '../../core/run/run.store';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
@@ -1891,5 +1902,325 @@ describe('ChangePageViewModel: where the change lives', () => {
     await vm.showDoc('intent');
     expect(vm.resolutionError()).toBeNull();
     expect(vm.doc()).toContain('The copy holds this intent.');
+  });
+});
+
+describe('each long step shows Stop and says it was stopped', () => {
+  const REF = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: PHOTOS_CHANGE };
+  const keyOf = (change: string, system = 'commerce'): ChangeKey => ({ workspace: { key: MOCK_WORKSPACE_FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system, change });
+  const pr = (repo: string): RecordedPullRequest => ({ repo, url: `https://github.com/acme/${repo}/pull/1`, number: 1, source: 'plugin' });
+  const progress = (label: string): StepProgress => ({ kind: 'repository', label, repo: null, check: null });
+
+  /** A call the test releases when it likes, and the backend's step reports the test pushes by hand. */
+  function hold<T>(transport: MockTransport) {
+    const listeners = new Set<(e: StepEvent) => void>();
+    vi.spyOn(transport, 'onStep').mockImplementation(async (cb) => {
+      listeners.add(cb);
+      return () => void listeners.delete(cb);
+    });
+    const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
+    let release!: (outcome: T) => void;
+    const call = new Promise<T>((resolve) => (release = resolve));
+    const push = (change: string, kind: StepKind, label: string, system = 'commerce') => listeners.forEach((cb) => cb({ change: keyOf(change, system), kind, progress: progress(label) }));
+    /** The backend's first report of the step, which the page waits for: pushed once the page is listening. */
+    const begin = (change: string, kind: StepKind, label: string, system = 'commerce') =>
+      vi.waitFor(() => {
+        if (listeners.size === 0) throw new Error('the page is not listening yet');
+        push(change, kind, label, system);
+      });
+    return { stop, call, release, push, begin };
+  }
+
+  /** Run `start`, check the step shows its label and Stop for this change only, stop it and answer the call with `outcome`. */
+  async function stopped<T>(vm: ChangePageViewModel, h: ReturnType<typeof hold<T>>, start: () => Promise<unknown>, kind: StepKind, stopName: string, outcome: T) {
+    const running = start();
+    await h.begin(PHOTOS_CHANGE, kind, 'Accepting the spec');
+    expect(vm.step()).toEqual({ label: 'Accepting the spec', stop: stopName });
+    h.push(PHOTOS_CHANGE, kind, 'Committing the document');
+    expect(vm.step()?.label).toBe('Committing the document');
+    h.push('2026-01-01-other', kind, 'Not this change');
+    expect(vm.step()?.label).toBe('Committing the document');
+    h.push(PHOTOS_CHANGE, kind, 'Not this system', 'other-system');
+    expect(vm.step()?.label).toBe('Committing the document');
+    await vm.stopStep();
+    expect(h.stop).toHaveBeenCalledWith(REF);
+    h.release(outcome);
+    await running;
+    expect(vm.step()).toBeNull();
+  }
+
+  it.each<[string, boolean, string]>([
+    ['accepted', true, 'Stopped. The spec is accepted; its checks did not finish'],
+    ['not accepted', false, 'Stopped. The spec was not accepted'],
+  ])('accepting a document, stopped when it was %s', async (_name, accepted, message) => {
+    const { vm, transport } = setup(PHOTOS_CHANGE);
+    const h = hold<AcceptOutcome>(transport);
+    vi.spyOn(transport, 'sdlcAccept').mockReturnValue(h.call);
+    await ready(vm);
+    await stopped(vm, h, () => vm.act('accept-spec'), { accepting: 'spec' }, 'Stop accepting the spec', { outcome: 'stopped', accepted });
+    expect(vm.stepStopped()).toBe(message);
+  });
+
+  it.each<[string, boolean, string]>([
+    ['rejected', true, 'Stopped. The intent is rejected; its copy was not removed'],
+    ['not rejected', false, 'Stopped. The intent was not rejected'],
+  ])('rejecting a document, stopped when it was %s', async (_name, rejected, message) => {
+    const { vm, transport } = setup(FRAUD);
+    const h = hold<RejectOutcome>(transport);
+    vi.spyOn(transport, 'sdlcReject').mockReturnValue(h.call);
+    await ready(vm);
+    const running = vm.act('reject-intent');
+    await h.begin(FRAUD, { rejecting: 'intent' }, 'Rejecting the intent');
+    expect(vm.step()).toEqual({ label: 'Rejecting the intent', stop: 'Stop rejecting the intent' });
+    h.push(FRAUD, { rejecting: 'intent' }, 'Removing the copy');
+    expect(vm.step()?.label).toBe('Removing the copy');
+    await vm.stopStep();
+    expect(h.stop).toHaveBeenCalledWith({ ...REF, change: FRAUD });
+    h.release({ outcome: 'stopped', rejected });
+    await running;
+    expect(vm.step()).toBeNull();
+    expect(vm.stepStopped()).toBe(message);
+  });
+
+  it.each<[string, boolean, string]>([
+    ['rejected', true, 'Stopped. The fix is rejected; its copy was not removed'],
+    ['not rejected', false, 'Stopped. The fix was not rejected'],
+  ])('rejecting a fix on the light track, stopped when it was %s, names the fix', async (_name, rejected, message) => {
+    const transport = new MockTransport();
+    withStage(transport, PHOTOS_CHANGE, 'fix-awaiting', { track: 'fix', fix_row: 6 });
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    const h = hold<RejectOutcome>(transport);
+    vi.spyOn(transport, 'sdlcReject').mockReturnValue(h.call);
+    await ready(vm);
+    const running = vm.act('reject-fix');
+    await h.begin(PHOTOS_CHANGE, 'rejectingFix', 'Rejecting the fix');
+    h.release({ outcome: 'stopped', rejected });
+    await running;
+    expect(vm.stepStopped()).toBe(message);
+  });
+
+  it('rejecting a fix on the light track names the fix in the label and the Stop button, and follows the backend report', async () => {
+    const transport = new MockTransport();
+    withStage(transport, PHOTOS_CHANGE, 'fix-awaiting', { track: 'fix', fix_row: 6 });
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    const h = hold<RejectOutcome>(transport);
+    vi.spyOn(transport, 'sdlcReject').mockReturnValue(h.call);
+    await ready(vm);
+    const running = vm.act('reject-fix');
+    await h.begin(PHOTOS_CHANGE, 'rejectingFix', 'Rejecting the fix');
+    expect(vm.step()).toEqual({ label: 'Rejecting the fix', stop: 'Stop rejecting the fix' });
+    h.push(PHOTOS_CHANGE, 'rejectingFix', 'Removing the copy');
+    expect(vm.step()?.label).toBe('Removing the copy');
+    h.release({ outcome: 'stopped', rejected: false });
+    await running;
+  });
+
+  it.each<[string, string[], string]>([
+    ['with the workflow\'s answer', ['the branch was half renamed in kata'], 'Stopped. The rename did not finish: the branch was half renamed in kata'],
+    ['without an answer', [], 'Stopped. The rename did not finish'],
+  ])('renaming a change, stopped %s', async (_name, answer, message) => {
+    const { vm, transport } = setup(PHOTOS_CHANGE);
+    const h = hold<RenameOutcome>(transport);
+    vi.spyOn(transport, 'sdlcRenameBranch').mockReturnValue(h.call);
+    await ready(vm);
+    const runner = TestBed.inject(SdlcRunner);
+    void vm.renameBranch('feat/old');
+    await vi.waitFor(() => expect(runner.nameRequest()).not.toBeNull());
+    vm.acceptName('feat/new');
+    await h.begin(PHOTOS_CHANGE, 'renaming', 'Renaming the change');
+    expect(vm.step()?.stop).toBe('Stop renaming the branch');
+    h.push(PHOTOS_CHANGE, 'renaming', 'Renaming the branch in kata');
+    expect(vm.step()?.label).toBe('Renaming the branch in kata');
+    await vm.stopStep();
+    expect(h.stop).toHaveBeenCalledWith(REF);
+    h.release({ outcome: 'stopped', answer });
+    await vi.waitFor(() => expect(vm.step()).toBeNull());
+    expect(vm.nameRequest()?.error).toBe(message);
+    expect(vm.nameRequest()?.busy).toBe(false);
+    vm.closeName();
+  });
+
+  it.each<[string, RecordedPullRequest[], string]>([
+    ['after a pull request opened', [pr('kata')], 'Stopped. Pull request opened for kata'],
+    ['after two opened', [pr('kata'), pr('bob')], 'Stopped. Pull request opened for kata, bob'],
+    ['before any opened', [], 'Stopped. Nothing was pushed or opened'],
+  ])('declaring the change done, stopped %s', async (_name, pullRequests, message) => {
+    const transport = new MockTransport();
+    withStage(transport, MOCK_BUILD_CHANGE, 'build-finished');
+    vi.spyOn(transport, 'sdlcDiffFiles').mockResolvedValue({ files: [], loc: [] });
+    const { vm } = setup(MOCK_BUILD_CHANGE, transport);
+    const h = hold<DeclareView>(transport);
+    vi.spyOn(transport, 'sdlcDeclareDone').mockReturnValue(h.call);
+    await ready(vm);
+    vm.doneReport.set({ branch: null, repos: [], departures: [] });
+    const running = vm.confirmDone();
+    await h.begin(MOCK_BUILD_CHANGE, 'declaringDone', 'Declaring the change done');
+    expect(vm.step()?.stop).toBe('Stop declaring the change done');
+    h.push(MOCK_BUILD_CHANGE, 'declaringDone', 'Pushing kata in another system', 'other-system');
+    expect(vm.step()?.label).not.toBe('Pushing kata in another system');
+    h.push(MOCK_BUILD_CHANGE, 'declaringDone', 'Pushing kata');
+    expect(vm.step()?.label).toBe('Pushing kata');
+    await vm.stopStep();
+    expect(h.stop).toHaveBeenCalledWith({ ...REF, change: MOCK_BUILD_CHANGE });
+    h.release({ kind: 'stopped', pullRequests });
+    await running;
+    expect(vm.step()).toBeNull();
+    expect(vm.stepStopped()).toBe(message);
+  });
+});
+
+describe('a step the backend runs is the page\x27s, whoever started it (F3, F5)', () => {
+  const keyOf = (change: string): ChangeKey => ({ workspace: { key: MOCK_WORKSPACE_FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system: 'commerce', change });
+  const accepting = (change: string): RunningStep => ({
+    change: keyOf(change),
+    kind: { accepting: 'spec' },
+    doing: 'accepting its spec',
+    progress: { kind: 'verifying', label: 'Accepting the spec: running docs-lint', repo: null, check: 'docs-lint' },
+  });
+
+  it('a page opened while the spec is being accepted shows the label and Stop, and Stop stops that change', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'steps').mockResolvedValue([accepting(PHOTOS_CHANGE)]);
+    const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    await ready(vm);
+    await vi.waitFor(() => expect(vm.step()).toEqual({ label: 'Accepting the spec: running docs-lint', stop: 'Stop accepting the spec' }));
+    await vm.stopStep();
+    expect(stop).toHaveBeenCalledWith({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: PHOTOS_CHANGE });
+  });
+
+  it('the step of another change is not shown, and after the page moves on Stop stops nothing', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'steps').mockResolvedValue([accepting(PHOTOS_CHANGE)]);
+    const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
+    const { vm, params } = setup(FRAUD, transport);
+    await ready(vm);
+    expect(vm.step()).toBeNull();
+    params.next(convertToParamMap({ system: 'commerce', change: PHOTOS_CHANGE }));
+    await vi.waitFor(() => expect(vm.step()?.stop).toBe('Stop accepting the spec'));
+    params.next(convertToParamMap({ system: 'commerce', change: FRAUD }));
+    await vi.waitFor(() => expect(vm.step()).toBeNull());
+    await vm.stopStep();
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it('a step that ends takes its label and Stop away', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'steps').mockResolvedValue([accepting(PHOTOS_CHANGE)]);
+    let ended: (c: ChangeKey) => void = () => undefined;
+    vi.spyOn(transport, 'onStepEnd').mockImplementation(async (cb) => {
+      ended = cb;
+      return () => undefined;
+    });
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    await ready(vm);
+    await vi.waitFor(() => expect(vm.step()).not.toBeNull());
+    ended(keyOf(PHOTOS_CHANGE));
+    expect(vm.step()).toBeNull();
+  });
+});
+
+
+describe('ChangePageViewModel: the run pane shows only the run in front of it (R10, R11)', () => {
+  const KEY = changeRunKey({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: PHOTOS_CHANGE });
+  const EARLIER_SAYS = 'Earlier run said this';
+  const emitter = (transport: MockTransport) => transport as unknown as { emit(id: string, ev: unknown): void };
+
+  /** A run of no change that ended with a completed summary and left it in the solo view, as the run that took the screen before. */
+  async function earlierRun(transport: MockTransport, name: string): Promise<string> {
+    const id = await TestBed.inject(RunStore).startRun({ ...seedSpec(), name }, undefined, async () => `earlier-${name}`);
+    if (id === null) throw new Error('the earlier run did not start');
+    emitter(transport).emit(id, { type: 'assistant.text', text: EARLIER_SAYS });
+    emitter(transport).emit(id, { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.03, duration_ms: 21000, result: EARLIER_SAYS });
+    return id;
+  }
+  const noEarlier = (vm: ChangePageViewModel) => {
+    expect(vm.summary()).toBeNull();
+    expect(JSON.stringify(vm.events())).not.toContain(EARLIER_SAYS);
+    expect(vm.asks()).toEqual([]);
+    expect(vm.messages()).toEqual([]);
+    expect(vm.permissions()).toEqual([]);
+    expect(vm.given()).toBeNull();
+  };
+
+  it.each<[string, string, string]>([
+    ['intent', 'spec', 'start-spec'],
+    ['spec', 'plan', 'start-plan'],
+    ['plan', 'fix', 'finish-fix-draft'],
+    ['fix', 'fix', 'change-fix'],
+  ])("a new run's pane shows nothing of the run before: %s then %s", async (earlier, _next, action) => {
+    const transport = new MockTransport();
+    const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+    runAgent.mockRestore();
+    await ready(vm);
+    await earlierRun(transport, `sdlc-commerce-${PHOTOS_CHANGE}-${earlier}`);
+    expect(TestBed.inject(RunStore).summary()?.result).toBe(EARLIER_SAYS);
+    void vm.act(action as StageAction);
+    await vi.waitFor(() => expect(vm.session()).not.toBeNull());
+    expect(vm.session()!.finished).toBeNull();
+    noEarlier(vm);
+    await vi.waitFor(() => expect(TestBed.inject(ChangeRunStore).session(KEY)?.runId).toBeTruthy());
+    noEarlier(vm);
+    TestBed.inject(ChangeRunStore).cancel(KEY);
+  });
+
+  it('the pane is clean before the new run reports', async () => {
+    const transport = new MockTransport();
+    const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+    runAgent.mockRestore();
+    // The backend has not answered with an id yet.
+    vi.spyOn(transport, 'sdlcRunChange').mockReturnValue(new Promise<string>(() => undefined));
+    await ready(vm);
+    await earlierRun(transport, 'sdlc-commerce-intent');
+    void vm.act('start-spec');
+    await vi.waitFor(() => expect(vm.session()).not.toBeNull());
+    expect(TestBed.inject(ChangeRunStore).session(KEY)?.runId).toBeNull();
+    expect(['running', 'awaiting']).toContain(vm.runState());
+    expect(vm.events()).toEqual([]);
+    noEarlier(vm);
+    expect(vm.messageRefusal()).toBeNull();
+  });
+
+  it('the earlier run stays in past runs', async () => {
+    const transport = new MockTransport();
+    const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+    runAgent.mockRestore();
+    await ready(vm);
+    const id = await earlierRun(transport, 'sdlc-commerce-intent');
+    void vm.act('start-spec');
+    await vi.waitFor(() => expect(vm.session()).not.toBeNull());
+    const past = await transport.sdlcRunHistory(id);
+    expect(past.map((h) => h.event.type)).toEqual(['assistant.text', 'run.completed']);
+    // Opening it where finished runs are reopened shows its completed summary.
+    const runs = TestBed.inject(RunStore);
+    await runs.open(id);
+    expect(runs.snapshot(id)().summary?.result).toBe(EARLIER_SAYS);
+    noEarlier(vm);
+  });
+
+  it.each<[string, string, 'other-change' | 'home']>([
+    ['spec', 'start-spec', 'other-change'],
+    ['plan', 'start-plan', 'home'],
+    ['fix', 'change-fix', 'other-change'],
+  ])('a run opened late shows its whole session: a %s run while the engineer was on %s', async (_stage, action, elsewhere) => {
+    const transport = new MockTransport();
+    const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+    runAgent.mockRestore();
+    await ready(vm);
+    void vm.act(action as StageAction);
+    await vi.waitFor(() => expect(TestBed.inject(ChangeRunStore).session(KEY)?.runId).toBeTruthy());
+    // Elsewhere, another run takes the screen and ends.
+    if (elsewhere === 'home') await earlierRun(transport, 'sdlc-triage');
+    else void TestBed.inject(SdlcRunner).run('Starting spec of A', { ...seedSpec(), name: 'sdlc-commerce-a-spec' }, { workspaceId: 'w', target: null, link: null }, { ref: { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE }, kind: 'spec' });
+    await vi.waitFor(() => expect(vm.events().length).toBeGreaterThan(0));
+    // The page opened again shows the run from its first event, and nothing of the other run.
+    const again = Injector.create({ parent: TestBed.inject(Injector), providers: [ChangePageViewModel, BuildPageViewModel, RunPreviewViewModel] }).get(ChangePageViewModel);
+    await ready(again);
+    const id = TestBed.inject(ChangeRunStore).session(KEY)!.runId!;
+    const whole = (await transport.sdlcRunHistory(id)).map((h) => h.event);
+    await vi.waitFor(() => expect(again.events().length).toBeGreaterThanOrEqual(1));
+    expect(JSON.stringify(again.events())).not.toContain(EARLIER_SAYS);
+    expect(again.events().slice(0, whole.length)).toEqual(whole.slice(0, again.events().length));
+    TestBed.inject(ChangeRunStore).cancel(KEY);
   });
 });

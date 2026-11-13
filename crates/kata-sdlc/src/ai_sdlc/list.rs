@@ -127,14 +127,16 @@ mod tests {
         };
         let open = "2026-11-01-greeting";
         let started = program()
-            .run(
+            .step_long(
                 &[
                     "change", "start", "--json", "--system", "demo", "--change", open, "--type",
                     "feat", "--scope", "X-1",
                 ],
                 &place,
+                &kata_core::proc::CancelToken::new(),
+                None,
             )
-            .unwrap();
+            .json;
         assert_eq!(started["outcome"], "passed", "{started}");
         let copy = started["details"]["copy"].as_str().unwrap().to_string();
         testutil::write(

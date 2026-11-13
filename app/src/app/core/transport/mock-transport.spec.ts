@@ -6,7 +6,8 @@ import { runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, seedSpe
 import type { KataEvent } from '../../lib/events';
 import { stageName, transcriptRunId } from '../../lib/sdlc';
 import type { RunSpec } from '@bindings/RunSpec';
-import type { DoneStep } from '@bindings/DoneStep';
+import type { ChangeKey } from '@bindings/ChangeKey';
+import type { StepEvent } from '@bindings/StepEvent';
 import type { Resolved } from '@bindings/Resolved';
 import type { BuildEvent } from '@bindings/BuildEvent';
 import type { ChangeRef } from '@bindings/ChangeRef';
@@ -596,15 +597,37 @@ describe('MockTransport declaring-done demos', () => {
 
   it('declares done with every pull request, the master last, naming each step it is on (R7.1 passes, R7.3)', async () => {
     await withDemo(null, async (t) => {
-      const steps: DoneStep[] = [];
-      await t.onDoneStep((step) => steps.push(step));
+      const steps: StepEvent[] = [];
+      await t.onStep((event) => steps.push(event));
       const view = await t.sdlcDeclareDone(ref);
       expect(view.kind).toBe('done');
       const repos = view.kind === 'done' ? view.pullRequests.map((p) => p.repo) : [];
       expect(repos.at(-1)).toBe('commerce-docs');
-      expect(steps.map((s) => s.label)).toEqual([
-        'Declaring done: the plugin is verifying the change',
-        ...repos.flatMap((r) => [`Pushing ${r}`, `Opening a pull request in ${r}`]),
+      expect(steps.map((s) => s.progress.label)).toEqual(['Declaring the change done', 'Declaring the change done: running base-tests', 'Declaring the change done: base-tests passed']);
+    });
+  });
+
+  it('tells the end of the step when declaring done has answered', async () => {
+    await withDemo(null, async (t) => {
+      const ended: ChangeKey[] = [];
+      await t.onStepEnd((key) => ended.push(key));
+      await t.sdlcDeclareDone(ref);
+      expect(ended.map((k) => k.change)).toEqual([ref.change]);
+    });
+  });
+
+  // The vendored plugin's --stream prints hook-start and hook-end and nothing else, so the mock reports no more.
+  it('reports only what the plugin prints while declaring done: the step, then each check, in the backend wording', async () => {
+    await withDemo(null, async (t) => {
+      const steps: StepEvent[] = [];
+      await t.onStep((event) => steps.push(event));
+      await t.sdlcDeclareDone(ref);
+      expect(steps.some((s) => s.progress.kind === 'push' || s.progress.kind === 'pullRequest')).toBe(false);
+      expect(steps.every((s) => s.progress.label.startsWith('Declaring the change done'))).toBe(true);
+      expect(steps.map((s) => s.progress.label)).toEqual([
+        'Declaring the change done',
+        'Declaring the change done: running base-tests',
+        'Declaring the change done: base-tests passed',
       ]);
     });
   });
@@ -917,6 +940,69 @@ describe('MockTransport home listing', () => {
     });
     await withDemo('old-plugin', async (t) => {
       expect(await t.sdlcHomeList('acme-commerce', ['commerce'])).toEqual({ kind: 'legacy' });
+    });
+  });
+});
+
+describe('MockTransport stopping a step', () => {
+  const ref: ChangeRef = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_DONE_CHANGE };
+  /** Run `body` with `?demo=steps-hold`, which keeps every long call pending until it is stopped. */
+  const held = async (body: (t: MockTransport) => Promise<void>) => {
+    window.history.replaceState({}, '', '/?demo=steps-hold');
+    try {
+      await body(new MockTransport());
+    } finally {
+      window.history.replaceState({}, '', '/');
+    }
+  };
+
+  it('stopping a step tells its end', async () => {
+    await held(async (t) => {
+      const ended: ChangeKey[] = [];
+      await t.onStepEnd((key) => ended.push(key));
+      const pending = t.sdlcAccept(ref, 'intent');
+      await Promise.resolve();
+      expect(ended).toEqual([]);
+      await t.stopStep(ref);
+      await pending;
+      expect(ended.map((k) => k.change)).toEqual([ref.change]);
+    });
+  });
+
+  it('stopping a step answers Stopped', async () => {
+    await held(async (t) => {
+      const events: StepEvent[] = [];
+      await t.onStep((e) => events.push(e));
+      const calls = [
+        () => t.sdlcAccept(ref, 'intent'),
+        () => t.sdlcReject(ref),
+        () => t.sdlcRemoveCopy(ref),
+        () => t.sdlcDeclareDone(ref),
+        () => t.sdlcBuildStart(ref, { instructions: '', off: [], branch: null } as never),
+        () => t.sdlcBuildContinue(ref, 'commerce-core'),
+        () => t.sdlcReviewStart(ref),
+        () => t.sdlcRenameBranch(MOCK_WORKSPACE_FOLDER, 'w1', 'commerce', MOCK_DONE_CHANGE, 'other'),
+      ];
+      const expected = [
+        { outcome: 'stopped', accepted: false },
+        { outcome: 'stopped', rejected: false },
+        { outcome: 'stopped', kept: [] },
+        { kind: 'stopped', pullRequests: [] },
+        { kind: 'stopped', prepared: [] },
+        { kind: 'stopped', prepared: [] },
+        { kind: 'stopped', prepared: [] },
+        { outcome: 'stopped', answer: [] },
+      ];
+      for (const [i, call] of calls.entries()) {
+        const pending = call();
+        await Promise.resolve();
+        expect((await t.steps()).length).toBe(1);
+        expect(await t.stopStep(ref)).toBe(true);
+        expect(await pending).toEqual(expected[i]);
+        expect(await t.steps()).toEqual([]);
+        expect(await t.stopStep(ref)).toBe(false);
+      }
+      expect(events.length).toBe(calls.length);
     });
   });
 });

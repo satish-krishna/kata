@@ -147,7 +147,18 @@
               @if (vm.readingProgress(); as entry) {
                 <div class="wb-pane__progress" data-testid="reading-progress"><app-progress-line [entry]="entry" [compact]="true" /></div>
               }
+              @if (vm.step(); as step) {
+                <div class="wb-pane__progress" data-testid="step-running" role="status">
+                  {{ step.label }}
+                  <button hlmBtn variant="secondary" size="sm" type="button" [attr.aria-label]="step.stop" data-testid="stop-step" (click)="vm.stopStep()">
+                    <ng-icon name="lucideSquare" />Stop
+                  </button>
+                </div>
+              }
             </div>
+            @if (vm.stepStopped(); as note) {
+              <div class="wb-banner wb-banner--warn" data-testid="step-stopped" role="status"><app-stopped-note [note]="note" /></div>
+            }
             @if (vm.listNotice(); as notice) {
               <div class="wb-banner wb-banner--warn" data-testid="list-notice" role="status">
                 <span class="k-status k-status--warning"><span class="k-status__dot"></span>{{ notice.text }}</span>

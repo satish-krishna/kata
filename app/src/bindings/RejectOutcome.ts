@@ -3,4 +3,4 @@
 /**
  * What rejecting a change came to.
  */
-export type RejectOutcome = { "outcome": "rejected", recordBranch: string, } | { "outcome": "rejectedNotRemoved", problems: Array<string>, } | { "outcome": "refused", message: string, } | { "outcome": "notCommitted", problems: Array<string>, } | { "outcome": "couldNotRun", message: string, };
+export type RejectOutcome = { "outcome": "rejected", recordBranch: string, } | { "outcome": "rejectedNotRemoved", problems: Array<string>, } | { "outcome": "refused", message: string, } | { "outcome": "notCommitted", problems: Array<string>, } | { "outcome": "stopped", rejected: boolean, } | { "outcome": "couldNotRun", message: string, };

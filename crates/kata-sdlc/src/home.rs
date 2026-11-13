@@ -110,14 +110,16 @@ mod tests {
                 workspace: ws.clone(),
             };
             let started = program()
-                .run(
+                .step_long(
                     &[
                         "change", "start", "--json", "--system", SYSTEM, "--change", CHANGE,
                         "--type", "feat", "--scope", "demo", "--title", "Greeting",
                     ],
                     &place,
+                    &kata_core::proc::CancelToken::new(),
+                    None,
                 )
-                .unwrap();
+                .json;
             assert_eq!(started["outcome"], "passed", "{started}");
             let copy = ws.join(".ai-sdlc").join("copies").join(CHANGE);
             testutil::commit_file(
@@ -236,14 +238,16 @@ status: accepted
         };
         for other in ["2026-11-02-one", "2026-11-02-two", "2026-11-02-three"] {
             let started = program()
-                .run(
+                .step_long(
                     &[
                         "change", "start", "--json", "--system", SYSTEM, "--change", other,
                         "--type", "feat", "--scope", "demo", "--title", "Other",
                     ],
                     &place,
+                    &kata_core::proc::CancelToken::new(),
+                    None,
                 )
-                .unwrap();
+                .json;
             assert_eq!(started["outcome"], "passed", "{started}");
         }
         let tools = tempfile::tempdir().unwrap();

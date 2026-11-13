@@ -4,7 +4,7 @@
 
 import type { Departure } from '@bindings/Departure';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
-import type { DoneStepKind } from '@bindings/DoneStepKind';
+import type { StepProgressKind } from '@bindings/StepProgressKind';
 import type { ProgressStepId } from './progress-steps';
 
 /** Why there is no review of the current work. */
@@ -28,10 +28,11 @@ export const REVIEW_MISSING_TEXT: Record<ReviewMissing, string> = {
   invalid: 'The review document does not pass its checks.',
 };
 
-/** The progress line each kind of step the plugin reports shows on. */
-export const DONE_STEP_LINE: Record<DoneStepKind, ProgressStepId> = {
+/** The progress line each kind of progress the plugin reports while a change is declared done shows on. */
+export const DONE_PROGRESS_LINE: Record<StepProgressKind, ProgressStepId> = {
   verifying: 'running-checks',
   hook: 'running-checks',
   push: 'pushing',
   pullRequest: 'opening-prs',
+  repository: 'running-checks',
 };

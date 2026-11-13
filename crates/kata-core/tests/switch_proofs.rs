@@ -174,13 +174,13 @@ fn kata_bin() -> PathBuf {
         .unwrap();
     assert!(st.success(), "building the kata binary failed");
     let exe = std::env::current_exe().unwrap();
-    let kata = exe
-        .parent()
-        .and_then(|p| p.parent())
-        .unwrap()
-        .join(format!("kata{}", std::env::consts::EXE_SUFFIX));
-    assert!(kata.exists(), "no kata binary at {}", kata.display());
-    kata
+    let name = format!("kata{}", std::env::consts::EXE_SUFFIX);
+    kata_core::find_upward(exe.parent().unwrap(), &name).unwrap_or_else(|| {
+        panic!(
+            "build kata first (cargo build -p kata-cli --bin kata); none found above {}",
+            exe.display()
+        )
+    })
 }
 
 /// A project with two hooks in project settings (A, B), two in local settings (C, D),

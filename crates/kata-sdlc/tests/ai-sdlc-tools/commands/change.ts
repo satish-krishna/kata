@@ -27,6 +27,7 @@ import { copiesFolder, findChange, systemRepos, type EventContext } from '../eve
 import { runEvent } from '../events/runner.ts';
 import { baseBranch, commitOf, currentBranch, mainCheckout } from '../git/git.ts';
 import { stateOf } from '../git/gh.ts';
+import { isSingleRepo, repoPathOf } from '../workspace/apps.ts';
 import { readMarker } from '../workspace/marker.ts';
 import { resolveWorkspace } from '../workspace/resolve.ts';
 
@@ -57,6 +58,7 @@ async function start(args: string[]): Promise<number> {
     folder: join(copiesFolder(workspace), change, 'intent', system, change),
     repo: 'master',
     repoPath: master,
+    root: master,
     branch: currentBranch(master),
     base: baseBranch(master),
     head: commitOf(master, 'HEAD'),
@@ -99,10 +101,13 @@ function show(args: string[]): number {
   const c = located(o);
   const record = readRecord(c.folder);
   const states = o.flags.has('refresh') && record ? Object.fromEntries(record.pullRequests.map((p) => [p.url, stateOf(c.master, p.url)])) : null;
+  // Single-repo layout: each app's path is its folder in the change's copy (or the master), and the one repository gives the branch and base.
+  const single = isSingleRepo(c.master);
   const repos = Object.fromEntries(c.repos.map((name) => {
-    const path = join(c.workspace, name);
-    const checkedOut = existsSync(join(path, '.git'));
-    return [name, { path, checkedOut, branch: checkedOut ? currentBranch(path) : null, base: checkedOut ? baseBranch(path) : null }];
+    const path = repoPathOf(c.master, c.workspace, c.system, name);
+    const root = single ? c.master : path;
+    const checkedOut = existsSync(join(root, '.git'));
+    return [name, { path, checkedOut, branch: checkedOut ? currentBranch(root) : null, base: checkedOut ? baseBranch(root) : null }];
   }));
   printJson({ change: c.change, system: c.system, master: c.master, branch: branchOf(c.folder), record, repos, ...(states ? { states } : {}) });
   return EXIT.PASS;

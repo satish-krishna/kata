@@ -3,4 +3,4 @@
 /**
  * What a progress line is about.
  */
-export type DoneStepKind = "verifying" | "hook" | "push" | "pullRequest";
+export type StepProgressKind = "verifying" | "hook" | "push" | "pullRequest" | "repository";

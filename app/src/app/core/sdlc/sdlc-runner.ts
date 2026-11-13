@@ -15,6 +15,7 @@ import { documentForm, type DocumentKind } from '../../lib/build-host';
 import { IDLE, type RunSnapshot } from '../run/reduce';
 import { ChangeRunStore, changeRunKey } from '../run/change-run.store';
 import { restrictedFor, specFor, transcriptRunId, type StartTrack } from '../../lib/sdlc';
+import { renameStopped } from '../../lib/sdlc-steps';
 import { masterPath, masterRepo } from '../../lib/sdlc-workspace';
 import { LockStore } from '../lock/lock.store';
 import { RunStore } from '../run/run.store';
@@ -52,12 +53,14 @@ export type Confirm = (spec: RunSpec) => Promise<RunSpec | null>;
  * `retry`: the plugin refused the branch name or the scope and the engineer is asked again, with the plugin's reasons as they are.
  * `none`: a triage ended and no change was started (the idea and the run's id let the engineer describe it again or read the verdict).
  * `stopped`: nothing to report, because no run started or the run's engine was still stopping; a toast already said why where one was due.
+ * `startStopped`: the engineer stopped the start; the caller says so (the home in a note) with the workflow's answer.
  */
 export type NewChangeOutcome =
   | { kind: 'opened'; change: string; branch: string | null }
   | { kind: 'retry'; ask: 'branch' | 'scope'; problems: string[] }
   | { kind: 'refused' }
   | { kind: 'stopped' }
+  | { kind: 'startStopped'; answer: string[] }
   | { kind: 'none'; idea: string; runId: string | null };
 
 /** The branch name dialog of one change: what it shows and the engineer may edit. */
@@ -251,6 +254,11 @@ export class SdlcRunner {
         // The plugin renamed nothing; its reasons are shown as it printed them.
         const reasons = done.problems.join('\n');
         this.request.update((r) => (r === null ? r : { ...r, error: reasons, busy: false }));
+        return;
+      }
+      if (done.outcome === 'stopped') {
+        // Stopped by the engineer: the confirmation stays open and says how far the rename got.
+        this.request.update((r) => (r === null ? r : { ...r, error: renameStopped(done.answer), busy: false }));
         return;
       }
       this.finishName({ branch: done.to, change: ask.change, from: done.from, oldPullRequests: done.oldPullRequests });
@@ -538,6 +546,9 @@ export class SdlcRunner {
       if (started.kind === 'scope') return { kind: 'retry', ask: 'scope', problems: started.problems };
       this.toasts.error(started.problems.join('\n'));
       return { kind: 'stopped' };
+    }
+    if (started.outcome === 'stopped') {
+      return { kind: 'startStopped', answer: started.answer };
     }
     if (started.outcome === 'failed') {
       // A team hook or the plugin's own step failed: its words and the hook's output, and what it had made by then.

@@ -6,7 +6,9 @@
         [view]="v"
         [elapsed]="elapsed()"
         [stepProgress]="stepProgress()"
+        [stopLabel]="stopLabel()"
         (cancel)="cancel.emit()"
+        (stop)="stop.emit()"
       />
     }
   </hlm-dialog-content>

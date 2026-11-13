@@ -451,8 +451,9 @@ describe("declaring done is the plugin's step", () => {
     await vm.confirmDone();
     const lines = begin.mock.calls.filter((c) => c[2] === 'lock').map((c) => [c[0], c[1]]);
     expect(lines).toEqual([
-      ['running-checks', 'Declaring done: the plugin is verifying the change'],
-      ...[...REPOS, 'commerce-docs'].flatMap((r) => [['pushing', `Pushing ${r}`], ['opening-prs', `Opening a pull request in ${r}`]]),
+      ['running-checks', 'Declaring the change done'],
+      ['running-checks', 'Declaring the change done: running base-tests'],
+      ['running-checks', 'Declaring the change done: base-tests passed'],
     ]);
     expect(progress.view('lock')()).toBeNull();
   });

@@ -19,6 +19,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { baseBranch, checkedOutIn, commitsBeyondBase, dirtyPaths, git, hasLocalBranch, mainCheckout, showFile } from '../git/git.ts';
+import { isSingleRepo, productRepositories } from '../workspace/apps.ts';
 import { readRecord, type ChangeRecord } from './record.ts';
 import { statusOf } from './fix-state.ts';
 
@@ -41,10 +42,10 @@ function workDone(input: RemoveInput, record: ChangeRecord, isRejected: boolean)
   for (const pr of record.pullRequests) problems.push(`change.yml records a pull request: ${pr.url}; a change with a pull request is not abandoned, close the pull request and remove the change once it is done`);
   const own = `docs(${record.scope}): start change ${input.change}`;
   const master = commitsBeyondBase(input.copy, record.branch, record.base).filter((c) => !(c.subject === own && c.generatedBy.includes('ai-sdlc')));
-  if (master.length > 0 && !isRejected) problems.push(`the master's change branch ${record.branch} has commits beyond ${record.base}: ${master.map((c) => c.subject).join('; ')}`);
-  for (const repo of input.repos) {
-    const path = join(input.workspace, repo);
-    if (!existsSync(path) || !hasLocalBranch(path, record.branch)) continue;
+  const whose = isSingleRepo(input.master) ? "the repository's" : "the master's";
+  if (master.length > 0 && !isRejected) problems.push(`${whose} change branch ${record.branch} has commits beyond ${record.base}: ${master.map((c) => c.subject).join('; ')}`);
+  for (const { repo, path } of productRepositories(input.master, input.workspace, input.repos)) {
+    if (!hasLocalBranch(path, record.branch)) continue;
     const base = baseBranch(path);
     if (base === null) {
       problems.push(`${repo} has no base branch (the remote's default, main or master) to compare ${record.branch} with`);
@@ -64,6 +65,8 @@ export function removeChange(input: RemoveInput): RemoveOutput {
   const record = readRecord(join(input.copy, 'intent', input.system, input.change));
   if (!existsSync(input.copy) || !record) return refuse([`${input.change} has no copy with a change.yml at ${input.copy}`]);
   const main = mainCheckout(input.copy);
+  // Worked out while the copy still exists: its marker says the layout, and the copy is about to go.
+  const products = productRepositories(input.master, input.workspace, input.repos);
   const isRejected = input.abandon === true && rejected(input);
   if (input.abandon) {
     const problems = workDone(input, record, isRejected);
@@ -77,7 +80,7 @@ export function removeChange(input: RemoveInput): RemoveOutput {
   }
   const removed = ['copy'];
   const kept: string[] = [];
-  for (const [repo, path] of [['master', main], ...input.repos.map((r) => [r, join(input.workspace, r)])] as [string, string][]) {
+  for (const [repo, path] of [['master', main], ...products.map((r) => [r.repo, r.path])] as [string, string][]) {
     if (!existsSync(path) || !hasLocalBranch(path, record.branch)) continue;
     if (repo === 'master' && isRejected) {
       kept.push(`master: ${record.branch} (it records the rejected intent)`);

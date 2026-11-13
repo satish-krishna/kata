@@ -104,6 +104,10 @@ pub use run::{
 #[doc(hidden)]
 pub mod ask;
 
+// ---- test support for other crates: a binary cargo built beside a test binary ----
+#[doc(hidden)]
+pub use fsutil::find_upward;
+
 // ---- portable operations the GUI and CLI also build on ----
 pub mod bundle;
 pub mod changeset;

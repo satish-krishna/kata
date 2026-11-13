@@ -1,15 +1,17 @@
-//! The backend's host for each change's build: one `Coordinator` per change, the holds on product
+//! Th backend's host for each change's build: one `Coordinator` per change, the holds on product
 //! repositories, and the plugin's `build.start` that prepares every repository before any run starts.
 //! The host executes the coordinator's commands; it decides nothing the coordinator or the plugin decides.
 //! Everything outside the process (the ai-sdlc program, the run table and sidecar, the event channel)
 //! sits behind [`Tools`] and [`Launcher`], so the tests need no Tauri app.
 
 use crate::runs::{self, Lane};
+use crate::steps::{StepGuard, StepKind, StepTable};
+use kata_core::proc::{CancelToken, LineSink};
 use kata_core::spec::PermissionMode;
 use kata_core::RunSpec;
 use kata_sdlc::ai_sdlc::state::{self, read_state, ChangeState};
 use kata_sdlc::ai_sdlc::{
-    answer_of, HookFailure, Place, Program, ProgramError, Reply, StepOutcome,
+    progress_of, Answer, HookFailure, Place, Program, ProgramError, StepOutcome, StepProgressKind,
 };
 use kata_sdlc::coordinator::{
     self, BuildChoices, BuildFacts, BuildPhase, BuildState, Command, Coordinator, Input,
@@ -23,7 +25,7 @@ use kata_sdlc::round::{self, RoundOffer, RoundPicks, RoundPlan, RoundRequest};
 use kata_sdlc::runspec::{change_spec, given_for, RunForm};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -157,6 +159,9 @@ pub enum StartOutcome {
         output: String,
         repo: Option<String>,
     },
+    /// The engineer stopped the preparation; nothing was launched. `prepared` names the repositories the
+    /// plugin had prepared before the stop, in plan order.
+    Stopped { prepared: Vec<String> },
 }
 
 /// A change's build state, announced on [`BUILD_EVENT`].
@@ -245,8 +250,15 @@ pub trait Tools: Send + Sync {
     fn resolve(&self, workspace: &Path) -> Result<Place, ProgramError>;
     /// One program command that reads, as `Program::run`.
     fn run(&self, command: &[&str], place: &Place) -> Result<Value, ProgramError>;
-    /// One program step, as `Program::exec`: how it exited, for `ai_sdlc::answer_of` to read.
-    fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String>;
+    /// One long program step, as `Program::step_long`: no time limit, ended when the plugin answers or
+    /// `token` is cancelled.
+    fn step_long(
+        &self,
+        command: &[&str],
+        place: &Place,
+        token: &CancelToken,
+        on_line: Option<LineSink>,
+    ) -> Answer;
     /// Where `change` stands, read for that change alone; `None` when the plugin knows no such change.
     fn change_state(
         &self,
@@ -320,8 +332,14 @@ impl Tools for ProgramTools {
         self.program.run(command, place)
     }
 
-    fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String> {
-        self.program.exec(command, place)
+    fn step_long(
+        &self,
+        command: &[&str],
+        place: &Place,
+        token: &CancelToken,
+        on_line: Option<LineSink>,
+    ) -> Answer {
+        self.program.step_long(command, place, token, on_line)
     }
 
     fn change_state(
@@ -466,8 +484,6 @@ struct Build {
 struct Inner {
     builds: HashMap<ChangeKey, Build>,
     holds: HoldTable,
-    /// The changes whose build is being started or continued: a second start waits for none.
-    starting: HashSet<ChangeKey>,
     /// The last start of each change that another change held, with when; cleared when the change
     /// is started again and gets its repositories.
     held_starts: HashMap<ChangeKey, (Vec<HeldRepo>, u64)>,
@@ -480,6 +496,8 @@ pub struct BuildHost {
     tools: Arc<dyn Tools>,
     launcher: Arc<dyn Launcher>,
     workbench_dir: PathBuf,
+    /// The long steps that are running: a build's preparation is one entry of it.
+    steps: StepTable,
     inner: Mutex<Inner>,
 }
 
@@ -548,8 +566,8 @@ fn could_not_run(e: &ProgramError) -> StartOutcome {
 }
 
 /// What a step of the plugin that did not pass came to, as `ai_sdlc::answer_of` read it; None when it
-/// passed.
-fn failure(outcome: StepOutcome) -> Option<StartOutcome> {
+/// passed. `prepared` names the repositories already prepared, for a call that was stopped.
+fn failure(outcome: StepOutcome, prepared: &[String]) -> Option<StartOutcome> {
     match outcome {
         StepOutcome::Passed { .. } => None,
         StepOutcome::Refused { problems } => Some(StartOutcome::Refused { problems }),
@@ -563,6 +581,9 @@ fn failure(outcome: StepOutcome) -> Option<StartOutcome> {
                 _ => reason,
             },
             repo,
+        }),
+        StepOutcome::Stopped => Some(StartOutcome::Stopped {
+            prepared: prepared.to_vec(),
         }),
     }
 }
@@ -601,15 +622,16 @@ impl BuildHost {
         tools: Arc<dyn Tools>,
         launcher: Arc<dyn Launcher>,
         workbench_dir: PathBuf,
+        steps: StepTable,
     ) -> Arc<BuildHost> {
         Arc::new(BuildHost {
             tools,
             launcher,
             workbench_dir,
+            steps,
             inner: Mutex::new(Inner {
                 builds: HashMap::new(),
                 holds: HoldTable::default(),
-                starting: HashSet::new(),
                 held_starts: HashMap::new(),
                 next_generation: 0,
                 stopped: false,
@@ -620,7 +642,7 @@ impl BuildHost {
     /// Start `change`'s build: nothing starts unless every repository it needs is free and the
     /// plugin's `build.start` passes in all of them.
     pub fn start(self: &Arc<Self>, change: &ChangeRef, form: StartForm) -> StartOutcome {
-        self.begin(change, Some(form), None, None)
+        self.begin(change, Some(form), None, None, StepKind::PreparingBuild)
     }
 
     /// Continue `change`'s build in `repo` with the given items the engineer switched off in the preview
@@ -631,7 +653,7 @@ impl BuildHost {
         repo: &str,
         off: Option<Vec<String>>,
     ) -> StartOutcome {
-        self.begin(change, None, Some(repo), off)
+        self.begin(change, None, Some(repo), off, StepKind::PreparingBuild)
     }
 
     /// Start a document run (intent, spec, plan, triage or fix) of an existing change: the change's
@@ -801,7 +823,7 @@ impl BuildHost {
                 held: held_repos(held),
             };
         }
-        let outcome = self.begin(change, None, None, off);
+        let outcome = self.begin(change, None, None, off, StepKind::PreparingReview);
         // The hold stays only with a review that is running.
         let mut guard = self.inner.lock().unwrap();
         let reviewing = guard
@@ -875,19 +897,11 @@ impl BuildHost {
         }
     }
 
-    /// The runs of builds being started or launched that have no run id yet, for the close question: a
-    /// start still preparing its repositories, and a launch that has not answered.
+    /// The runs of builds being launched that have no run id yet, for the close question: a launch that
+    /// has not answered. A start still preparing its repositories is an entry of the step table.
     pub fn launching(&self) -> Vec<runs::Launching> {
         let inner = self.inner.lock().unwrap();
-        let mut out: Vec<runs::Launching> = inner
-            .starting
-            .iter()
-            .map(|key| runs::Launching {
-                change: key.clone(),
-                kind: runs::RunKind::Build,
-                repo: None,
-            })
-            .collect();
+        let mut out: Vec<runs::Launching> = Vec::new();
         for (key, build) in &inner.builds {
             for run in build.live.values().filter(|r| r.run_id.is_none()) {
                 let review = run.key == REVIEW;
@@ -1156,14 +1170,15 @@ impl BuildHost {
         form: Option<StartForm>,
         only: Option<&str>,
         off: Option<Vec<String>>,
+        kind: StepKind,
     ) -> StartOutcome {
         let place = match self.tools.resolve(Path::new(&change.workspace)) {
             Ok(p) => p,
             Err(e) => return could_not_run(&e),
         };
         let key = key_of(change);
-        let before = {
-            let mut guard = self.inner.lock().unwrap();
+        let (before, step) = {
+            let guard = self.inner.lock().unwrap();
             let existing = guard.builds.get(&key);
             let live_build = existing.is_some_and(|b| !b.live.is_empty());
             let already = match only {
@@ -1173,7 +1188,7 @@ impl BuildHost {
             if guard.stopped {
                 return closing();
             }
-            if already || guard.starting.contains(&key) {
+            if already {
                 return StartOutcome::AlreadyRunning;
             }
             let before = Before {
@@ -1182,14 +1197,17 @@ impl BuildHost {
                 form: existing.map(|b| b.form.clone()),
                 off,
             };
-            guard.starting.insert(key.clone());
-            before
+            // The change's long step: a second start, or any other step of the change, is refused as busy.
+            let Ok(step) = self.steps.begin(key.clone(), kind) else {
+                return StartOutcome::AlreadyRunning;
+            };
+            (before, step)
         };
-        let outcome = self.begin_marked(&place, change, &key, form, only, before);
-        self.inner.lock().unwrap().starting.remove(&key);
-        outcome
+        // The step's entry ends when `step` drops, after the build has begun.
+        self.begin_marked(&place, change, &key, form, only, before, &step)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn begin_marked(
         self: &Arc<Self>,
         place: &Place,
@@ -1198,6 +1216,7 @@ impl BuildHost {
         form: Option<StartForm>,
         only: Option<&str>,
         before: Before,
+        step: &StepGuard,
     ) -> StartOutcome {
         let Before {
             live_build,
@@ -1263,7 +1282,7 @@ impl BuildHost {
             }
             outcome
         };
-        let uncommitted = match self.prepare(place, change, &needed) {
+        let uncommitted = match self.prepare(place, change, &needed, step) {
             Ok(u) => u,
             Err(outcome) => return release(outcome),
         };
@@ -1380,12 +1399,49 @@ impl BuildHost {
     /// One `build.start --check` naming every repository, then `build.start` in each in plan order.
     /// The error is the outcome to give; when the check refused, no repository was changed. The Ok is
     /// the uncommitted files the plugin named, per repository.
+    /// Whether the change has a preparation under way, which has taken the holds for the build it is
+    /// about to begin.
+    fn preparing(&self, key: &ChangeKey) -> bool {
+        self.steps.running().iter().any(|s| {
+            s.change == *key
+                && matches!(s.kind, StepKind::PreparingBuild | StepKind::PreparingReview)
+        })
+    }
+
+    /// Tell the page which repository the preparation is on, and give a sink that does the same for each hook
+    /// line the plugin streams while it runs. `repo` is the repository of the call, which the lines never name.
+    /// The step's own first label ("Checking every repository before building") went out when the step began, so
+    /// the call that is for no repository says nothing more until a line arrives. The words are the step
+    /// table's.
+    fn announce(&self, key: &ChangeKey, repo: Option<&str>) -> LineSink {
+        if repo.is_some() {
+            self.steps.report(key, repo, None);
+        }
+        let (steps, key) = (self.steps.clone(), key.clone());
+        let repo = repo.map(str::to_string);
+        Arc::new(move |line: &str| {
+            let Some(progress) = progress_of(line) else {
+                return;
+            };
+            if progress.kind != StepProgressKind::Hook {
+                return;
+            }
+            steps.report(&key, repo.as_deref(), Some(progress));
+        })
+    }
+
     fn prepare(
         &self,
         place: &Place,
         change: &ChangeRef,
         repos: &[String],
+        step: &StepGuard,
     ) -> Result<BTreeMap<String, Vec<String>>, StartOutcome> {
+        let key = key_of(change);
+        let token = step.token();
+        let stopped = |prepared: &[String]| StartOutcome::Stopped {
+            prepared: prepared.to_vec(),
+        };
         let mut uncommitted = BTreeMap::new();
         if repos.is_empty() {
             return Ok(uncommitted);
@@ -1404,17 +1460,27 @@ impl BuildHost {
         for repo in repos {
             check.extend(["--repo", repo]);
         }
-        let answer = answer_of(self.tools.exec(&check, place));
-        if let Some(outcome) = failure(answer.outcome) {
+        if token.is_cancelled() {
+            return Err(stopped(&[]));
+        }
+        let sink = self.announce(&key, None);
+        let answer = self.tools.step_long(&check, place, token, Some(sink));
+        if let Some(outcome) = failure(answer.outcome, &[]) {
             return Err(outcome);
         }
+        let mut prepared: Vec<String> = Vec::new();
         for repo in repos {
+            if token.is_cancelled() {
+                return Err(stopped(&prepared));
+            }
             let mut command: Vec<&str> = base.to_vec();
             command.extend(["--repo", repo]);
-            let answer = answer_of(self.tools.exec(&command, place));
-            if let Some(outcome) = failure(answer.outcome) {
+            let sink = self.announce(&key, Some(repo));
+            let answer = self.tools.step_long(&command, place, token, Some(sink));
+            if let Some(outcome) = failure(answer.outcome, &prepared) {
                 return Err(outcome);
             }
+            prepared.push(repo.clone());
             let files = strings(&answer.json["details"]["uncommitted"]);
             if !files.is_empty() {
                 uncommitted.insert(repo.clone(), files);
@@ -1437,7 +1503,6 @@ impl BuildHost {
                 let Inner {
                     builds,
                     holds,
-                    starting,
                     stopped,
                     ..
                 } = &mut *guard;
@@ -1537,7 +1602,7 @@ impl BuildHost {
                     });
                 }
                 // A start under way has taken the holds for the build it is about to begin.
-                if settled && build.live.is_empty() && !starting.contains(key) {
+                if settled && build.live.is_empty() && !self.preparing(key) {
                     holds.release(key, Purpose::Build);
                 }
                 let exec = Exec {
@@ -1745,6 +1810,9 @@ struct Before {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::steps::{StepEvent, StepKind};
+    use kata_sdlc::ai_sdlc::StepProgressKind;
+    use kata_sdlc::ai_sdlc::{answer_of, ExecError, Reply};
     use kata_sdlc::coordinator::BuildPhase;
     use kata_sdlc::format::{ParsedReviewSection, ParsedTask};
     use kata_sdlc::holds::{Purpose, RepoKey};
@@ -1875,6 +1943,18 @@ mod tests {
         gate: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
         /// The task links the host recorded.
         links: Mutex<Vec<kata_sdlc::store::TaskLink>>,
+        /// How long each long call takes.
+        delay: Mutex<std::time::Duration>,
+        /// What stops the call it names, `check` or a repository: `stop_in` stops during that call and
+        /// the call ends only once the token is cancelled; `stop_after` stops once that call has passed.
+        stop_in: Mutex<Option<String>>,
+        stop_after: Mutex<Option<String>>,
+        /// Stops the change under test, through the step table, as the page's Stop does.
+        stopper: Mutex<Option<Box<dyn Fn() + Send>>>,
+        /// Called at the start of every long call, to see what the host had registered by then.
+        probe: Mutex<Option<Box<dyn Fn() + Send>>>,
+        /// The stream lines a call prints, by call (`check` or a repository).
+        lines: Mutex<HashMap<String, Vec<String>>>,
     }
 
     impl FakeTools {
@@ -1891,7 +1971,19 @@ mod tests {
                 calls: Mutex::new(Vec::new()),
                 gate: Mutex::new(None),
                 links: Mutex::new(Vec::new()),
+                delay: Mutex::new(std::time::Duration::ZERO),
+                stop_in: Mutex::new(None),
+                stop_after: Mutex::new(None),
+                stopper: Mutex::new(None),
+                probe: Mutex::new(None),
+                lines: Mutex::new(HashMap::new()),
             })
+        }
+
+        fn stop_now(&self) {
+            if let Some(stop) = self.stopper.lock().unwrap().as_ref() {
+                stop();
+            }
         }
 
         fn add_change(
@@ -1977,22 +2069,7 @@ mod tests {
         }
     }
 
-    impl Tools for FakeTools {
-        fn resolve(&self, _workspace: &Path) -> Result<Place, ProgramError> {
-            Ok(self.place.clone())
-        }
-        fn run(&self, command: &[&str], _place: &Place) -> Result<Value, ProgramError> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(command.iter().map(|s| s.to_string()).collect());
-            if command.starts_with(&["change", "show"]) {
-                let repos: BTreeMap<&String, Value> =
-                    self.system_repos.iter().map(|r| (r, json!({}))).collect();
-                return Ok(json!({"repos": repos}));
-            }
-            panic!("a step goes through exec: {command:?}")
-        }
+    impl FakeTools {
         fn exec(&self, command: &[&str], _place: &Place) -> Result<Reply, String> {
             self.calls
                 .lock()
@@ -2013,6 +2090,67 @@ mod tests {
                 Some(answer) => answer,
                 None => Ok(Reply::json(0, &passed_start(&repos[0], &[]))),
             }
+        }
+    }
+
+    impl Tools for FakeTools {
+        fn step_long(
+            &self,
+            command: &[&str],
+            place: &Place,
+            token: &CancelToken,
+            on_line: Option<LineSink>,
+        ) -> Answer {
+            let which = match command.iter().position(|a| *a == "--repo") {
+                Some(at) if !command.contains(&"--check") => command[at + 1].to_string(),
+                _ => "check".to_string(),
+            };
+            if token.is_cancelled() {
+                return answer_of(Err(ExecError::Stopped));
+            }
+            if let Some(probe) = self.probe.lock().unwrap().as_ref() {
+                probe();
+            }
+            if self.stop_in.lock().unwrap().as_deref() == Some(which.as_str()) {
+                self.stop_now();
+                let began = std::time::Instant::now();
+                while !token.is_cancelled() {
+                    assert!(
+                        began.elapsed() < std::time::Duration::from_secs(60),
+                        "the call named {which} was stopped but its token was never cancelled"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                return answer_of(Err(ExecError::Stopped));
+            }
+            let delay = *self.delay.lock().unwrap();
+            std::thread::sleep(delay);
+            let lines = self.lines.lock().unwrap().get(&which).cloned();
+            if let (Some(sink), Some(lines)) = (&on_line, lines) {
+                for line in lines {
+                    sink(&line);
+                }
+            }
+            let answer = answer_of(self.exec(command, place).map_err(ExecError::Machine));
+            if self.stop_after.lock().unwrap().as_deref() == Some(which.as_str()) {
+                self.stop_now();
+            }
+            answer
+        }
+        fn resolve(&self, _workspace: &Path) -> Result<Place, ProgramError> {
+            Ok(self.place.clone())
+        }
+        fn run(&self, command: &[&str], _place: &Place) -> Result<Value, ProgramError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(command.iter().map(|s| s.to_string()).collect());
+            if command.starts_with(&["change", "show"]) {
+                let repos: BTreeMap<&String, Value> =
+                    self.system_repos.iter().map(|r| (r, json!({}))).collect();
+                return Ok(json!({"repos": repos}));
+            }
+            panic!("a step goes through exec: {command:?}")
         }
         fn change_state(
             &self,
@@ -2232,6 +2370,19 @@ mod tests {
         tools: Arc<FakeTools>,
         launcher: Arc<FakeLauncher>,
         host: Arc<BuildHost>,
+        steps: StepTable,
+        /// Every progress report the step table sent to the page.
+        labels: Arc<Mutex<Vec<StepEvent>>>,
+    }
+
+    /// A step table whose reports are kept.
+    fn test_steps() -> (StepTable, Arc<Mutex<Vec<StepEvent>>>) {
+        let labels: Arc<Mutex<Vec<StepEvent>>> = Arc::default();
+        let sink = labels.clone();
+        (
+            StepTable::new(Arc::new(move |e| sink.lock().unwrap().push(e))),
+            labels,
+        )
     }
 
     fn fake_place() -> Place {
@@ -2243,11 +2394,19 @@ mod tests {
 
     fn rig_with(tools: Arc<FakeTools>) -> Rig {
         let launcher = Arc::new(FakeLauncher::default());
-        let host = BuildHost::new(tools.clone(), launcher.clone(), PathBuf::from("D:/wb"));
+        let (steps, labels) = test_steps();
+        let host = BuildHost::new(
+            tools.clone(),
+            launcher.clone(),
+            PathBuf::from("D:/wb"),
+            steps.clone(),
+        );
         Rig {
             tools,
             launcher,
             host,
+            steps,
+            labels,
         }
     }
 
@@ -3264,10 +3423,11 @@ mod tests {
         );
     }
 
-    // R16.1, R16.2: a build whose start is under way has no run in the table yet, and still counts as
-    // live for the close question; once its run has an id, it is no longer launching.
+    // R9.1: a build whose preparation is under way is an entry of the step table, which the close question
+    // reads; `launching` lists only the runs whose launch has not answered. Once its run has an id, the
+    // build is neither.
     #[test]
-    fn a_build_being_started_is_launching() {
+    fn a_build_being_prepared_is_a_step_not_a_launch() {
         use std::sync::mpsc::channel;
         use std::time::Duration;
         let r = rig();
@@ -3280,14 +3440,11 @@ mod tests {
         entered_rx
             .recv_timeout(Duration::from_secs(10))
             .expect("A's start reached the plugin");
-        assert_eq!(
-            r.host.launching(),
-            vec![runs::Launching {
-                change: key("A"),
-                kind: runs::RunKind::Build,
-                repo: None,
-            }]
-        );
+        assert!(r.host.launching().is_empty());
+        let running = r.steps.running();
+        assert_eq!(running.len(), 1);
+        assert_eq!(running[0].change, key("A"));
+        assert_eq!(running[0].kind, StepKind::PreparingBuild);
         release_tx.send(()).unwrap();
         assert!(matches!(
             starting.join().unwrap(),
@@ -3295,6 +3452,367 @@ mod tests {
         ));
         assert_eq!(r.launcher.launched("kata").len(), 1);
         assert!(r.host.launching().is_empty());
+        assert!(
+            r.steps.running().is_empty(),
+            "the entry ends with the start"
+        );
+    }
+
+    impl Rig {
+        /// Records, at every long call, the kinds of step the table held.
+        fn probe_steps(&self) -> Arc<Mutex<Vec<Vec<StepKind>>>> {
+            let seen: Arc<Mutex<Vec<Vec<StepKind>>>> = Arc::default();
+            let (steps, sink) = (self.steps.clone(), seen.clone());
+            *self.tools.probe.lock().unwrap() = Some(Box::new(move || {
+                let kinds = steps.running().iter().map(|s| s.kind).collect();
+                sink.lock().unwrap().push(kinds);
+            }));
+            seen
+        }
+
+        /// `stop_in` and `stop_after` stop `change` through the step table, as the page's Stop does.
+        fn arm_stop(&self, change: &str) {
+            let steps = self.steps.clone();
+            let change = key(change);
+            *self.tools.stopper.lock().unwrap() = Some(Box::new(move || {
+                steps.stop(&change);
+            }));
+        }
+    }
+
+    // R12.1
+    #[test]
+    fn a_slow_preparation_is_not_cut_off() {
+        let r = rig();
+        r.simple("A", &["kata"]);
+        *r.tools.delay.lock().unwrap() = std::time::Duration::from_secs(2);
+        let seen = r.probe_steps();
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![vec![StepKind::PreparingBuild]; 2],
+            "the check and the repository both ran as the change's preparation step"
+        );
+        assert_eq!(r.tools.real_starts("A"), ["kata"]);
+        assert_eq!(r.launcher.launched("kata").len(), 1);
+    }
+
+    // R6.1
+    #[test]
+    fn stopping_a_preparation_starts_nothing_and_frees_the_holds() {
+        let r = rig();
+        r.simple("A", &["kata", "bob"]);
+        r.simple("B", &["kata"]);
+        r.arm_stop("A");
+        *r.tools.stop_in.lock().unwrap() = Some("check".into());
+        assert_eq!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Stopped {
+                prepared: Vec::new()
+            }
+        );
+        assert!(r.tools.real_starts("A").is_empty());
+        assert_eq!(r.launcher.count(), 0, "no run was launched");
+        assert_eq!(r.holder("kata"), None);
+        assert_eq!(r.holder("bob"), None);
+        assert!(r.steps.running().is_empty());
+        *r.tools.stop_in.lock().unwrap() = None;
+        assert!(
+            matches!(
+                r.host.start(&cref("B"), form()),
+                StartOutcome::Started { .. }
+            ),
+            "another change takes the repository"
+        );
+    }
+
+    // R17.1, R6.1, R8.1: every row of the preparation's outcome table.
+    #[test]
+    fn a_preparation_stopped_partway_names_the_prepared_repositories() {
+        struct Row {
+            label: &'static str,
+            set: fn(&Rig),
+            want: StartOutcome,
+            real_starts: &'static [&'static str],
+            launched: usize,
+            held: bool,
+        }
+        let failed_hook = HookFailure {
+            id: "deps".into(),
+            on_failure: Some("stop".into()),
+            output: "npm ci: lockfile out of date".into(),
+        };
+        let rows = vec![
+            Row {
+                label: "check passed, every repository passes",
+                set: |_| {},
+                want: StartOutcome::Started {
+                    uncommitted: BTreeMap::new(),
+                },
+                real_starts: &["kata", "bob"],
+                launched: 2,
+                held: true,
+            },
+            Row {
+                label: "check refused",
+                set: |r| r.tools.refuse_check("bob", "bob is dirty"),
+                want: StartOutcome::Refused {
+                    problems: strs(&["bob is dirty"]),
+                },
+                real_starts: &[],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "check failed",
+                set: |r| {
+                    *r.tools.check.lock().unwrap() = Some(Ok(Reply::json(
+                        1,
+                        &json!({"event": "build.start", "check": true, "outcome": "failed",
+                            "problems": ["hook deps failed with exit code 1"], "hooks": [],
+                            "failed": {"id": "deps", "onFailure": "stop", "output": "npm ci: lockfile out of date"},
+                            "repos": []}),
+                    )));
+                },
+                want: StartOutcome::Failed {
+                    problems: strs(&["hook deps failed with exit code 1"]),
+                    hook: Some(failed_hook),
+                },
+                real_starts: &[],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "check could not run",
+                set: |r| r.tools.check_cannot_run("no node"),
+                want: StartOutcome::CouldNotRun {
+                    output: "no node".into(),
+                    repo: None,
+                },
+                real_starts: &[],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "check stopped",
+                set: |r| *r.tools.stop_in.lock().unwrap() = Some("check".into()),
+                want: StartOutcome::Stopped {
+                    prepared: Vec::new(),
+                },
+                real_starts: &[],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "repository 1 refused",
+                set: |r| {
+                    r.tools.start_answer(
+                        "kata",
+                        json!({"event": "build.start", "repo": "kata", "outcome": "refused", "problems": ["kata changed"], "details": null}),
+                    )
+                },
+                want: StartOutcome::Refused {
+                    problems: strs(&["kata changed"]),
+                },
+                real_starts: &["kata"],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "repository 2 failed",
+                set: |r| {
+                    r.tools.start_answer(
+                        "bob",
+                        json!({"event": "build.start", "repo": "bob", "outcome": "failed",
+                            "problems": ["hook deps failed with exit code 1"], "hooks": [],
+                            "failed": {"id": "deps", "onFailure": "stop", "output": "npm ci: lockfile out of date"}, "details": {}}),
+                    )
+                },
+                want: StartOutcome::Failed {
+                    problems: strs(&["hook deps failed with exit code 1"]),
+                    hook: Some(HookFailure {
+                        id: "deps".into(),
+                        on_failure: Some("stop".into()),
+                        output: "npm ci: lockfile out of date".into(),
+                    }),
+                },
+                real_starts: &["kata", "bob"],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "repository 1 could not run",
+                set: |r| {
+                    r.tools.start_answer(
+                        "kata",
+                        json!({"event": "build.start", "repo": "kata", "outcome": "could-not-run", "problems": ["git failed"], "details": null}),
+                    )
+                },
+                want: StartOutcome::CouldNotRun {
+                    output: "git failed".into(),
+                    repo: Some("kata".into()),
+                },
+                real_starts: &["kata"],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "repository 1 stopped",
+                set: |r| *r.tools.stop_in.lock().unwrap() = Some("kata".into()),
+                want: StartOutcome::Stopped {
+                    prepared: Vec::new(),
+                },
+                real_starts: &[],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "repository 2 stopped",
+                set: |r| *r.tools.stop_in.lock().unwrap() = Some("bob".into()),
+                want: StartOutcome::Stopped {
+                    prepared: strs(&["kata"]),
+                },
+                real_starts: &["kata"],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "token cancelled between the check and repository 1",
+                set: |r| *r.tools.stop_after.lock().unwrap() = Some("check".into()),
+                want: StartOutcome::Stopped {
+                    prepared: Vec::new(),
+                },
+                real_starts: &[],
+                launched: 0,
+                held: false,
+            },
+            Row {
+                label: "token cancelled between repository 1 and repository 2",
+                set: |r| *r.tools.stop_after.lock().unwrap() = Some("kata".into()),
+                want: StartOutcome::Stopped {
+                    prepared: strs(&["kata"]),
+                },
+                real_starts: &["kata"],
+                launched: 0,
+                held: false,
+            },
+        ];
+        for row in rows {
+            let r = rig();
+            r.simple("A", &["kata", "bob"]);
+            r.arm_stop("A");
+            (row.set)(&r);
+            assert_eq!(r.host.start(&cref("A"), form()), row.want, "{}", row.label);
+            assert_eq!(r.tools.real_starts("A"), row.real_starts, "{}", row.label);
+            assert_eq!(r.launcher.count(), row.launched, "{}", row.label);
+            let holder = if row.held { Some(key("A")) } else { None };
+            assert_eq!(r.holder("kata"), holder, "{}: kata", row.label);
+            assert_eq!(r.holder("bob"), holder, "{}: bob", row.label);
+        }
+    }
+
+    // R15.1
+    #[test]
+    fn preparation_labels_name_repo_and_check() {
+        let r = rig();
+        r.simple("A", &["kata", "bob"]);
+        let hook = |t: &str, outcome: Option<&str>| {
+            let mut line = json!({"type": t, "id": "base-tests"});
+            if let Some(o) = outcome {
+                line["outcome"] = json!(o);
+            }
+            line.to_string()
+        };
+        r.tools.lines.lock().unwrap().insert(
+            "check".into(),
+            vec![hook("hook-start", None), "not json".into()],
+        );
+        r.tools.lines.lock().unwrap().insert(
+            "kata".into(),
+            vec![hook("hook-start", None), hook("hook-end", Some("passed"))],
+        );
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        let seen: Vec<(StepProgressKind, String, Option<String>, Option<String>)> = r
+            .labels
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                assert_eq!(e.change, key("A"));
+                assert_eq!(e.kind, StepKind::PreparingBuild);
+                let p = e.progress.clone();
+                (p.kind, p.label, p.repo, p.check)
+            })
+            .collect();
+        let some = |s: &str| Some(s.to_string());
+        let expected = vec![
+            (
+                StepProgressKind::Verifying,
+                "Checking every repository before building".to_string(),
+                None,
+                None,
+            ),
+            (
+                StepProgressKind::Hook,
+                "Checking every repository before building: running base-tests".to_string(),
+                None,
+                some("base-tests"),
+            ),
+            (
+                StepProgressKind::Repository,
+                "Preparing kata".to_string(),
+                some("kata"),
+                None,
+            ),
+            (
+                StepProgressKind::Hook,
+                "Preparing kata: running base-tests".to_string(),
+                some("kata"),
+                some("base-tests"),
+            ),
+            (
+                StepProgressKind::Hook,
+                "Preparing kata: base-tests passed".to_string(),
+                some("kata"),
+                some("base-tests"),
+            ),
+            (
+                StepProgressKind::Repository,
+                "Preparing bob".to_string(),
+                some("bob"),
+                None,
+            ),
+        ];
+        assert_eq!(seen, expected);
+    }
+
+    // R19.1
+    #[test]
+    fn preparation_does_not_use_the_build_limit() {
+        let r = rig();
+        r.simple("A", &["kata"]);
+        *r.tools.delay.lock().unwrap() = std::time::Duration::from_secs(2);
+        let mut short = form();
+        short.timeout_secs = 1;
+        let seen = r.probe_steps();
+        assert!(matches!(
+            r.host.start(&cref("A"), short),
+            StartOutcome::Started { .. }
+        ));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![vec![StepKind::PreparingBuild]; 2],
+            "preparation is the step with no limit of its own"
+        );
+        let spec: Value =
+            serde_json::from_str(&r.launcher.spec_of(r.launcher.launched("kata")[0])).unwrap();
+        assert_eq!(spec["leash"]["timeout_secs"], 1, "{spec}");
     }
 
     // The page learns which runs are the build's from the announcement, not from a launch of its own.
@@ -3677,7 +4195,7 @@ mod tests {
         let mut copies = HashMap::new();
         for change in changes {
             let started = program
-                .run(
+                .step_long(
                     &[
                         "change",
                         "start",
@@ -3696,8 +4214,10 @@ mod tests {
                         &place.workspace.display().to_string(),
                     ],
                     &place,
+                    &kata_core::proc::CancelToken::new(),
+                    None,
                 )
-                .unwrap();
+                .json;
             assert_eq!(started["outcome"], "passed", "{started}");
             let copy = started["details"]["copy"].as_str().unwrap().to_string();
             std::fs::create_dir_all(Path::new(&copy).join(format!("intent/{SYSTEM}/{change}")))
@@ -3729,14 +4249,20 @@ mod tests {
     }
 
     impl Tools for RealRun {
+        fn step_long(
+            &self,
+            command: &[&str],
+            place: &Place,
+            token: &CancelToken,
+            on_line: Option<LineSink>,
+        ) -> Answer {
+            self.real.step_long(command, place, token, on_line)
+        }
         fn resolve(&self, workspace: &Path) -> Result<Place, ProgramError> {
             self.real.resolve(workspace)
         }
         fn run(&self, command: &[&str], place: &Place) -> Result<Value, ProgramError> {
             self.real.run(command, place)
-        }
-        fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String> {
-            self.real.exec(command, place)
         }
         fn change_state(
             &self,
@@ -3792,11 +4318,19 @@ mod tests {
             fake: fake.clone(),
         });
         let launcher = Arc::new(FakeLauncher::default());
-        let host = BuildHost::new(tools, launcher.clone(), PathBuf::from("D:/wb"));
+        let (steps, labels) = test_steps();
+        let host = BuildHost::new(
+            tools,
+            launcher.clone(),
+            PathBuf::from("D:/wb"),
+            steps.clone(),
+        );
         Rig {
             tools: fake,
             launcher,
             host,
+            steps,
+            labels,
         }
     }
 
@@ -3815,14 +4349,20 @@ mod tests {
     }
 
     impl Tools for ReadsReal {
+        fn step_long(
+            &self,
+            command: &[&str],
+            place: &Place,
+            token: &CancelToken,
+            on_line: Option<LineSink>,
+        ) -> Answer {
+            self.real.step_long(command, place, token, on_line)
+        }
         fn resolve(&self, workspace: &Path) -> Result<Place, ProgramError> {
             self.real.resolve(workspace)
         }
         fn run(&self, command: &[&str], place: &Place) -> Result<Value, ProgramError> {
             self.real.run(command, place)
-        }
-        fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String> {
-            self.real.exec(command, place)
         }
         fn change_state(
             &self,
@@ -3912,6 +4452,7 @@ process.exit(r.status ?? 1);
             tools,
             Arc::new(FakeLauncher::default()),
             PathBuf::from("D:/wb"),
+            test_steps().0,
         );
         let (snapshot, _) = host.snapshot(&real.place, SYSTEM, "2026-11-01-a").unwrap();
         let calls = std::fs::read_to_string(&log)

@@ -30,6 +30,8 @@ export type Hook = {
   run: string[];
   /** The repositories it runs in, `master` for the master repository; null for every one the event runs in. */
   repos: string[] | null;
+  /** The apps it runs for in the single-repo layout; null for every app the event runs for. */
+  apps: string[] | null;
   timeout: number;
   blocking: boolean;
   onFailure: OnFailure;
@@ -45,11 +47,14 @@ export type HookConfig = {
   problems: string[];
 };
 
-const FIELDS = ['id', 'when', 'run', 'repos', 'timeout', 'blocking', 'onFailure'];
+const FIELDS = ['id', 'when', 'run', 'repos', 'apps', 'timeout', 'blocking', 'onFailure'];
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-/** Reads one layer's `hooks` value. `where` names the file in every problem. */
-export function parseHooks(value: unknown, layer: Hook['layer'], where: string): { hooks: Hook[]; problems: string[] } {
+/** The layout a hook configuration is read under: `apps` is the system's app names in `single-repo`, null in the default layout. */
+export type HookLayout = { apps: string[] | null };
+
+/** Reads one layer's `hooks` value. `where` names the file in every problem. `layout` says which of `repos` and `apps` is valid. */
+export function parseHooks(value: unknown, layer: Hook['layer'], where: string, layout: HookLayout = { apps: null }, system = ''): { hooks: Hook[]; problems: string[] } {
   const hooks: Hook[] = [];
   const problems: string[] = [];
   if (value === undefined) return { hooks, problems };
@@ -67,7 +72,7 @@ export function parseHooks(value: unknown, layer: Hook['layer'], where: string):
       const at = `${where}: hooks.${event}[${i}]`;
       if (!isObject(entry)) return void problems.push(`${at} must be an object`);
       for (const key of Object.keys(entry)) if (!FIELDS.includes(key)) problems.push(`${at}: unknown field ${key}`);
-      const { id, when = 'before', run, repos, timeout = 600, blocking, onFailure } = entry;
+      const { id, when = 'before', run, repos, apps, timeout = 600, blocking, onFailure } = entry;
       const name = typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) ? id : null;
       if (name === null) problems.push(`${at}: id must be letters, digits, dots, hyphens or underscores, starting with a letter or digit`);
       if (when !== 'before' && when !== 'after') problems.push(`${at}: when must be before or after`);
@@ -76,6 +81,15 @@ export function parseHooks(value: unknown, layer: Hook['layer'], where: string):
       }
       if (repos !== undefined && (!Array.isArray(repos) || !repos.every((r) => typeof r === 'string' && r !== ''))) {
         problems.push(`${at}: repos must be a list of repository names`);
+      }
+      if (apps !== undefined && (!Array.isArray(apps) || !apps.every((a) => typeof a === 'string' && a !== ''))) {
+        problems.push(`${at}: apps must be a list of app names`);
+      }
+      const hookId = name ?? `hooks.${event}[${i}]`;
+      if (layout.apps !== null && repos !== undefined) problems.push(`${where}: hook ${hookId} uses repos; use apps in the single-repo layout`);
+      if (layout.apps === null && apps !== undefined) problems.push(`${where}: hook ${hookId} uses apps, which only the single-repo layout has`);
+      if (layout.apps !== null && Array.isArray(apps)) {
+        for (const a of apps) if (typeof a === 'string' && a !== '' && !layout.apps.includes(a)) problems.push(`${where}: hook ${hookId}: apps names ${a}, which is not an app of system ${system}`);
       }
       if (typeof timeout !== 'number' || !Number.isInteger(timeout) || timeout < 1 || timeout > 86400) {
         problems.push(`${at}: timeout must be a whole number of seconds from 1 to 86400`);
@@ -90,6 +104,7 @@ export function parseHooks(value: unknown, layer: Hook['layer'], where: string):
         when: when === 'after' ? 'after' : 'before',
         run: run as string[],
         repos: Array.isArray(repos) ? (repos as string[]) : null,
+        apps: Array.isArray(apps) ? (apps as string[]) : null,
         timeout: typeof timeout === 'number' ? timeout : 600,
         blocking: when === 'after' ? false : blocking !== false,
         onFailure: onFailure === 'fix' || onFailure === 'stop' ? onFailure : DEFAULT_ON_FAILURE[event as EventName],
@@ -124,6 +139,17 @@ function readGateRetries(marker: Record<string, unknown>, problems: string[]): n
   return value;
 }
 
+/**
+ * The layout the marker's text declares, as `readMarker` reads it: the app names of `system` in `single-repo`, or the
+ * names of every system's apps when the marker does not list `system` (as when `check` reads a marker alone).
+ */
+function layoutOf(marker: Record<string, unknown>, system: string): HookLayout {
+  if (marker.layout !== 'single-repo') return { apps: null };
+  const systems = isObject(marker.systems) ? marker.systems : {};
+  const namesOf = (s: unknown): string[] => (isObject(s) && isObject(s.apps) ? Object.keys(s.apps) : []);
+  return { apps: system in systems ? namesOf(systems[system]) : Object.values(systems).flatMap(namesOf) };
+}
+
 /** Parses both files' text, as committed or as written; either may be null when it does not exist. */
 export function parseConfig(markerText: string | null, systemText: string | null, system: string): Omit<HookConfig, 'revision'> {
   const problems: string[] = [];
@@ -152,8 +178,9 @@ export function parseConfig(markerText: string | null, systemText: string | null
       problems.push(`${systemFile}: not JSON: ${(e as Error).message}`);
     }
   }
-  const global = parseHooks(marker.hooks, 'global', '.ai-sdlc.json');
-  const own = parseHooks(systemHooks, 'system', systemFile);
+  const layout = layoutOf(marker, system);
+  const global = parseHooks(marker.hooks, 'global', '.ai-sdlc.json', layout, system);
+  const own = parseHooks(systemHooks, 'system', systemFile, layout, system);
   const merged = mergeLayers(global.hooks, own.hooks, systemFile);
   const gateRetries = readGateRetries(marker, problems);
   return { hooks: merged.hooks, gateRetries, problems: [...problems, ...global.problems, ...own.problems, ...merged.problems] };
@@ -170,5 +197,5 @@ export function readHookConfig(master: string, system: string): HookConfig {
 
 /** The hooks of one event and side, in the order they run, for one repository. */
 export function hooksFor(config: HookConfig, event: EventName, when: Hook['when'], repo: string): Hook[] {
-  return config.hooks.filter((h) => h.event === event && h.when === when && (h.repos === null || h.repos.includes(repo)));
+  return config.hooks.filter((h) => h.event === event && h.when === when && (h.repos === null || h.repos.includes(repo)) && (h.apps === null || h.apps.includes(repo)));
 }

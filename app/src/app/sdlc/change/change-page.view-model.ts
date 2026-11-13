@@ -45,8 +45,10 @@ import { RunLandingStore } from '../../core/run/run-landing.store';
 import { BuildLayoutViewModel } from '../build/build-layout.view-model';
 import { ChangeDraftStore } from '../../core/sdlc/change-draft.store';
 import { RunStore } from '../../core/run/run.store';
+import type { RunSnapshot } from '../../core/run/reduce';
 import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
+import { StepStore } from '../../core/step/step.store';
 import { ProgressStore } from '../../core/progress/progress.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { documentForm } from '../../lib/build-host';
@@ -71,7 +73,9 @@ import {
 import { shownBuild, shownDocument, type DocNotice, type ReadError, type Shown } from '../../lib/doc-notice';
 import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy } from '../../lib/doc-rail';
 import { prNumber } from '../../lib/pull-request';
-import { DONE_STEP_LINE, type DoneReport } from '../../lib/sdlc-done';
+import { DONE_PROGRESS_LINE, type DoneReport } from '../../lib/sdlc-done';
+import { acceptStopped, CHANGE_STEPS, doneStopped, isStep, rejectStopped, removalStopped, sameStepChange, startStopped, stepOf, stepRef, stopWords, type StepView, type StepWant } from '../../lib/sdlc-steps';
+import type { StepEvent } from '@bindings/StepEvent';
 import { section } from '../../lib/doc';
 import { fullPipelineIdea } from '../../lib/sdlc-fix';
 import { inTauri } from '../../lib/mock';
@@ -215,6 +219,7 @@ export class ChangePageViewModel {
   private readonly toasts = inject(ToastStore);
   private readonly versions = inject(VersionsStore);
   private readonly progress = inject(ProgressStore);
+  private readonly steps = inject(StepStore);
   /** Reading the change, reading a picked document, preparing a build, and the lock's long step: one progress entry for each place on the page. */
   readonly readingChange = this.progress.view('page');
   readonly readingDoc = this.progress.view('doc');
@@ -311,7 +316,7 @@ export class ChangePageViewModel {
     if (ref === null) return;
     let out: RemoveOutcome;
     try {
-      out = await this.transport.sdlcRemoveCopy(ref);
+      out = await this.inStep('removingCopy', () => this.transport.sdlcRemoveCopy(ref));
     } catch (e) {
       this.setCopyNote({ tone: 'warning', text: `The copy was not removed: ${message(e)}`, lines: [] });
       return;
@@ -329,6 +334,10 @@ export class ChangePageViewModel {
         return;
       case 'refused':
         this.setCopyNote({ tone: 'warning', text: 'The plugin did not remove the copy.', lines: out.problems });
+        return;
+      case 'stopped':
+        this.setCopyNote({ tone: 'warning', text: removalStopped([]), lines: out.kept });
+        await this.load();
         return;
       case 'couldNotRun':
         this.setCopyNote({ tone: 'warning', text: `The copy was not removed: the plugin could not run: ${out.message}`, lines: [] });
@@ -729,6 +738,57 @@ export class ChangePageViewModel {
     return named.branch;
   }
 
+  // --- long steps: the label the backend reports, Stop, and how a stopped step is worded
+  /** The backend's running step of the change on screen, with the call that stops it; null while none runs. A step of another change is never picked. */
+  private readonly shownStep = computed(() => {
+    const workspace = this.current();
+    const step = workspace === null ? null : stepOf(this.steps.running(), { system: this.system(), change: this.changeName() }, CHANGE_STEPS);
+    return workspace === null || step === null ? null : { step, ref: stepRef(step, workspace.folder) };
+  });
+  /** What the page shows of the running step of this change, whoever started it; null while none runs. */
+  readonly step = computed<StepView | null>(() => {
+    const shown = this.shownStep();
+    return shown === null ? null : { label: shown.step.label, stop: stopWords(shown.step.kind) };
+  });
+  /** How the last stopped step is worded; null while there is none. */
+  readonly stepStopped = signal<string | null>(null);
+
+  /** Stop the running step the page shows: the step's own change, never whichever change is current when the button is pressed. */
+  async stopStep(): Promise<void> {
+    const shown = this.shownStep();
+    if (shown === null) return;
+    try {
+      await this.transport.stopStep(shown.ref);
+    } catch (e) {
+      this.toasts.error(`Could not stop the step: ${message(e)}`);
+    }
+  }
+
+  /**
+   * Run a long step of this change. What the page shows of it (label, Stop) is the backend's step of the change on screen, which the page
+   * follows through the step store; `onReport` sees each report of this change's step of kind `want`.
+   */
+  private async inStep<T>(want: StepWant, call: () => Promise<T>, onReport?: (event: StepEvent) => void): Promise<T> {
+    const ref = { system: this.system(), change: this.changeName() };
+    this.stepStopped.set(null);
+    let unlisten = (): void => undefined;
+    if (onReport !== undefined) {
+      try {
+        unlisten = await this.transport.onStep((event) => {
+          if (sameStepChange(event.change, ref) && isStep(event.kind, want)) onReport(event);
+        });
+      } catch {
+        // The step still runs and Stop still works; only the report does not follow.
+      }
+    }
+    try {
+      return await call();
+    } finally {
+      unlisten();
+      this.steps.ended(ref);
+    }
+  }
+
   // --- declaring done: the confirmation, then the plugin's step
   /** What the done dialog shows; the dialog is open exactly while this is set. */
   readonly doneReport = signal<DoneReport | null>(null);
@@ -761,29 +821,35 @@ export class ChangePageViewModel {
     if (!w) return;
     const ref = { workspace: w.folder, system: this.system(), change: this.changeName() };
     let view: DeclareView | null = null;
-    const unlisten = await this.transport.onDoneStep((step) => this.progress.begin(DONE_STEP_LINE[step.kind], step.label, 'lock'));
+    const progressOf = (event: StepEvent): void => this.progress.begin(DONE_PROGRESS_LINE[event.progress.kind], event.progress.label, 'lock');
     let out: Awaited<ReturnType<LockStore['runSteps']>>;
     try {
-      out = await this.lock.runSteps('Opening pull requests', [
-        {
-          label: 'Declare done',
-          run: async () => {
-            try {
-              view = await this.transport.sdlcDeclareDone(ref);
-            } catch (e) {
-              this.progress.fail('lock');
-              throw e;
-            }
-            this.progress.end('lock');
-            return null;
-          },
-        },
-      ]);
+      out = await this.inStep(
+        'declaringDone',
+        () =>
+          this.lock.runSteps('Opening pull requests', [
+            {
+              label: 'Declare done',
+              run: async () => {
+                try {
+                  view = await this.transport.sdlcDeclareDone(ref);
+                } catch (e) {
+                  this.progress.fail('lock');
+                  throw e;
+                }
+                this.progress.end('lock');
+                return null;
+              },
+            },
+          ]),
+        progressOf,
+      );
     } finally {
-      unlisten();
       this.progress.end('lock');
     }
-    if (out === 'done') this.declareView.set(view);
+    const answer = view as DeclareView | null;
+    if (out === 'done' && answer?.kind === 'stopped') this.stepStopped.set(doneStopped(answer.pullRequests));
+    else if (out === 'done') this.declareView.set(answer);
     await this.load();
   }
 
@@ -846,14 +912,29 @@ export class ChangePageViewModel {
     const key = this.runKey();
     return this.ownRun() !== null && key !== null ? this.changeRuns.deadlineSecs(key) : this.lock.deadlineSecs();
   };
-  readonly runState = computed(() => this.ownSnap()?.state ?? this.runs.state());
-  readonly events = computed(() => this.ownSnap()?.events ?? this.runs.events());
-  readonly summary = computed(() => this.ownSnap()?.summary ?? this.runs.summary());
-  readonly asks = computed(() => this.ownSnap()?.asks ?? this.runs.asks());
-  readonly messages = computed(() => this.ownSnap()?.messages ?? this.runs.messages());
-  readonly messageRefusal = computed(() => this.ownSnap()?.refusal ?? this.runs.refusal());
-  readonly permissions = computed(() => this.ownSnap()?.permissions ?? this.runs.permissions());
-  readonly given = computed(() => this.ownSnap() === null ? this.runs.given() : this.ownSnap()!.given);
+  /**
+   * The one run the pane shows. This change's own session when it has one, whole: a field it has nothing in yet (no summary before the
+   * run ends, nothing at all before the backend answers with its id) stays empty and never reads the run that took the screen before.
+   * Without a session of its own, the run that took the screen.
+   */
+  private readonly paneSource = computed<RunSnapshot>(() => this.ownSnap() ?? {
+    state: this.runs.state(),
+    events: this.runs.events(),
+    summary: this.runs.summary(),
+    asks: this.runs.asks(),
+    permissions: this.runs.permissions(),
+    given: this.runs.given(),
+    messages: this.runs.messages(),
+    refusal: this.runs.refusal(),
+  });
+  readonly runState = computed(() => this.paneSource().state);
+  readonly events = computed(() => this.paneSource().events);
+  readonly summary = computed(() => this.paneSource().summary);
+  readonly asks = computed(() => this.paneSource().asks);
+  readonly messages = computed(() => this.paneSource().messages);
+  readonly messageRefusal = computed(() => this.paneSource().refusal);
+  readonly permissions = computed(() => this.paneSource().permissions);
+  readonly given = computed(() => this.paneSource().given);
   /**
    * What a stopped run of this change left behind. A run of no change offers its leftovers on the home, where it was started, and
    * another change's on that change; neither shows here, even while this page has no workspace and so no change key.
@@ -929,7 +1010,7 @@ export class ChangePageViewModel {
   // --- renaming
 
   acceptName(name: string): void {
-    void this.runner.confirmName(name);
+    void this.inStep('renaming', () => this.runner.confirmName(name));
   }
 
   closeName(): void {
@@ -1066,6 +1147,7 @@ export class ChangePageViewModel {
       this.toasts.error(`Could not start the change: ${message(e)}`);
       return;
     }
+    if (outcome.kind === 'startStopped') this.toasts.info(startStopped(outcome.answer));
     if (outcome.kind !== 'opened') return;
     await this.closeFix(fixRef);
   }
@@ -1086,6 +1168,9 @@ export class ChangePageViewModel {
     switch (out.outcome) {
       case 'rejected':
         this.toasts.success(rejectedSaid(out.recordBranch));
+        break;
+      case 'stopped':
+        this.toasts.info(`${rejectStopped('fix', out.rejected)} (the fix ${fix.change})`);
         break;
       case 'rejectedNotRemoved':
         this.toasts.error(`The new change started and the fix ${fix.change} is rejected, but its copy was not removed: ${out.problems.join('\n')}`);
@@ -1322,12 +1407,15 @@ export class ChangePageViewModel {
     if (ref === null) return;
     let out: AcceptOutcome;
     try {
-      out = await this.transport.sdlcAccept(ref, doc);
+      out = await this.inStep('accepting', () => this.transport.sdlcAccept(ref, doc));
     } catch (e) {
       this.toasts.error(`Could not accept the ${doc}: ${message(e)}`);
       return;
     }
     switch (out.outcome) {
+      case 'stopped':
+        this.stepStopped.set(acceptStopped(doc, out.accepted));
+        break;
       case 'accepted':
         if (out.warnings.length === 0) this.toasts.success(`Accepted ${doc} · committed`);
         else this.toasts.info([`Accepted ${doc} · committed, with warnings from the plugin.`, ...out.warnings].join('\n'));
@@ -1352,14 +1440,19 @@ export class ChangePageViewModel {
   private async rejectChange(): Promise<void> {
     const ref = this.draftRef();
     if (ref === null) return;
+    // A light-track change is rejected as a fix, as the page's button says.
+    const doc = this.change()?.state.track === 'fix' ? 'fix' : 'intent';
     let out: RejectOutcome;
     try {
-      out = await this.transport.sdlcReject(ref);
+      out = await this.inStep('rejecting', () => this.transport.sdlcReject(ref));
     } catch (e) {
       this.toasts.error(`Could not reject the change: ${message(e)}`);
       return;
     }
     switch (out.outcome) {
+      case 'stopped':
+        this.stepStopped.set(rejectStopped(doc, out.rejected));
+        break;
       case 'rejected':
         this.toasts.success(rejectedSaid(out.recordBranch));
         await this.toHome();
@@ -1578,6 +1671,8 @@ export class ChangePageViewModel {
     const seq = ++this.loadSeq;
     const system = this.system();
     const name = this.changeName();
+    // Seed the running steps from the backend and follow them, so a step this page did not start shows too.
+    void this.steps.follow();
     this.progress.begin('reading-change', progressLabels.readingChange(), 'page');
     // A failed read clears its progress line before the error toast shows.
     const failRead = () => {

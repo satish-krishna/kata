@@ -260,7 +260,7 @@ mod tests {
         let master = ws.join("ai-sdlc");
         let change = "2026-11-01-greeting";
         let started = program()
-            .run(
+            .step_long(
                 &[
                     "change", "start", "--json", "--system", "demo", "--change", change, "--type",
                     "feat", "--scope", "X-1",
@@ -269,8 +269,10 @@ mod tests {
                     master: master.clone(),
                     workspace: ws.clone(),
                 },
+                &kata_core::proc::CancelToken::new(),
+                None,
             )
-            .unwrap();
+            .json;
         assert_eq!(started["outcome"], "passed", "{started}");
         let copy = PathBuf::from(started["details"]["copy"].as_str().unwrap());
         let folder = copy.join("intent/demo").join(change);

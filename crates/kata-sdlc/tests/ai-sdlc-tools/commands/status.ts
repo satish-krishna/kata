@@ -9,6 +9,7 @@ import { CouldNotRun, EXIT } from '../common/types.ts';
 import { findChange } from '../events/context.ts';
 import { ledgerFolder, readLedgers } from '../events/ledger.ts';
 import { commitOf, gitOut } from '../git/git.ts';
+import { appFolders, currentAppHead, isSingleRepo } from '../workspace/apps.ts';
 import { resolveWorkspace } from '../workspace/resolve.ts';
 
 export const status: Command = {
@@ -20,8 +21,11 @@ export const status: Command = {
     if (r.master === null || r.workspace === null) throw new CouldNotRun(r.problems.join('\n'));
     const found = findChange(r.master, r.workspace, o.values.change, o.values.system);
     const folder = join(found.master, 'intent', found.system, o.values.change);
+    const single = isSingleRepo(found.master);
+    const apps = single ? appFolders(found.master, found.system) : {};
     const repos = readLedgers(ledgerFolder(found.master, found.system, o.values.change)).map((l) => {
-      const head = commitOf(l.path, 'HEAD');
+      // An app's ledger is keyed by the app's head; the master's (and every default-layout one) by HEAD.
+      const head = single && l.repo in apps ? currentAppHead(found.master, found.master, found.system, l.repo) : commitOf(l.path, 'HEAD');
       const runs = l.runs.map((run) => {
         const now = run.event === 'doc.accept' ? gitOut(found.master, ['log', '-1', '--format=%H', '--', join(folder, run.subject ?? '')]) : head;
         return { ...run, current: run.key === now };

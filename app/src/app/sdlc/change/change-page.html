@@ -160,6 +160,34 @@
         @if (vm.preparingBuild(); as entry) {
           <div class="k-change__missing" data-testid="build-progress"><app-progress-line [entry]="entry" /></div>
         }
+        @if (build.preparing()) {
+          <div class="k-change__missing">
+            <button hlmBtn variant="secondary" type="button" aria-label="Stop preparing the build" data-testid="stop-preparing" (click)="build.stopPreparing()">
+              <ng-icon name="lucideSquare" />Stop
+            </button>
+          </div>
+        }
+        @if (build.stoppedNote(); as note) {
+          <div class="k-change__missing" data-testid="preparation-stopped" role="status">
+            <span class="k-status k-status--warning"><span class="k-status__dot"></span>Stopped</span>
+            {{ note }}
+          </div>
+        }
+        @if (vm.step(); as step) {
+          @if (!vm.lockView() && vm.nameRequest() === null) {
+            <div class="k-change__missing" data-testid="step-running" role="status">
+              {{ step.label }}
+              <button hlmBtn variant="secondary" type="button" [attr.aria-label]="step.stop" data-testid="stop-step" (click)="vm.stopStep()">
+                <ng-icon name="lucideSquare" />Stop
+              </button>
+            </div>
+          }
+        }
+        @if (vm.stepStopped(); as note) {
+          <div class="k-change__missing" data-testid="step-stopped" role="status">
+            <app-stopped-note [note]="note" />
+          </div>
+        }
         <main class="k-change">
           <h1 class="sr-only">{{ vm.changeName() }}</h1>
           @for (stem of vm.stems; track stem) {
@@ -307,7 +335,9 @@
     [view]="vm.lockView()"
     [elapsed]="vm.lockElapsed()"
     [stepProgress]="vm.lockProgress()"
+    [stopLabel]="vm.step()?.stop ?? null"
     (cancel)="vm.cancelLock()"
+    (stop)="vm.stopStep()"
   />
   <app-confirm-dialog
     [open]="vm.removeAsked()"
@@ -317,7 +347,7 @@
     (confirm)="vm.confirmRemoveCopy()"
     (cancel)="vm.declineRemoveCopy()"
   />
-  <app-branch-name-dialog [request]="vm.nameRequest()" (accept)="vm.acceptName($event)" (cancel)="vm.closeName()" />
+  <app-branch-name-dialog [request]="vm.nameRequest()" [step]="vm.step()" (accept)="vm.acceptName($event)" (cancel)="vm.closeName()" (stop)="vm.stopStep()" />
   <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />
   <app-feedback-dialog [action]="vm.feedbackFor()" [required]="vm.feedbackRequired()" (run)="vm.runWithFeedback($event)" (cancel)="vm.cancelFeedback()" />
   <app-build-refusal-dialog [reason]="build.refusal()?.reason ?? null" [problems]="build.refusal()?.problems ?? []" (close)="build.closeRefusal()" />

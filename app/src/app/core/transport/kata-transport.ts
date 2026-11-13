@@ -41,7 +41,8 @@ import type { BaseInfo } from '@bindings/BaseInfo';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { DeclareView } from '@bindings/DeclareView';
-import type { DoneStep } from '@bindings/DoneStep';
+import type { RunningStep } from '@bindings/RunningStep';
+import type { StepEvent } from '@bindings/StepEvent';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { PullRequestsView } from '@bindings/PullRequestsView';
 import type { Resolved } from '@bindings/Resolved';
@@ -250,7 +251,7 @@ export abstract class KataTransport {
   abstract sdlcOldChecks(folder: string, systems: string[]): Promise<OldChecksNotice[]>;
   /** Record that the engineer has been told about the old checks files of these systems. */
   abstract sdlcOldChecksSeen(systems: string[]): Promise<void>;
-  /** Declare the change done through the plugin: it verifies, pushes every touched repository and opens the pull requests. Resolves to what it came to; progress arrives through `onDoneStep`. */
+  /** Declare the change done through the plugin: it verifies, pushes every touched repository and opens the pull requests. Resolves to what it came to; progress arrives through `onStep`. */
   abstract sdlcDeclareDone(change: ChangeRef): Promise<DeclareView>;
   /** The change's pull requests as the page shows them: the plugin's record, else what an earlier version of Kata saved. With `refresh` the plugin also asks GitHub for each state, which is slow; the page reads without it first. */
   abstract sdlcPullRequestsView(folder: string, workspaceId: string, system: string, change: string, refresh: boolean): Promise<PullRequestsView>;
@@ -265,8 +266,14 @@ export abstract class KataTransport {
   abstract appVersions(): Promise<Versions>;
   /** Put plain text on the clipboard. */
   abstract copyText(text: string): Promise<void>;
-  /** Register for the step the plugin is on while a change is declared done. Resolves to the unlisten function. */
-  abstract onDoneStep(cb: (step: DoneStep) => void): Promise<() => void>;
+  /** Stop the long step of the change that is running (a preparation, a start, an accept, a rename, a removal, a reject or a declare done). Resolves to whether there was one to stop; the step's own call then answers with its `stopped` outcome. */
+  abstract stopStep(change: ChangeRef): Promise<boolean>;
+  /** The long steps running now, for a page opened while one runs. */
+  abstract steps(): Promise<RunningStep[]>;
+  /** Register for the progress of a long step, each time the plugin reports it. Resolves to the unlisten function. */
+  abstract onStep(cb: (event: StepEvent) => void): Promise<() => void>;
+  /** Register for the end of a long step: the key of the change whose step is over, however it ended. Resolves to the unlisten function. */
+  abstract onStepEnd(cb: (change: ChangeKey) => void): Promise<() => void>;
   /** Register for a change's build state each time it changes. Resolves to the unlisten function. */
   abstract onBuildState(cb: (event: BuildEvent) => void): Promise<() => void>;
   /** Register for the running changes each time they may have changed. Resolves to the unlisten function. */

@@ -10,7 +10,13 @@ import type { HomeOpen } from '@bindings/HomeOpen';
 import type { HomeRow } from '@bindings/HomeRow';
 import type { HomeChecked } from '@bindings/HomeChecked';
 import type { HomeAction } from '@bindings/HomeAction';
+import type { ChangeKey } from '@bindings/ChangeKey';
+import type { ChangeStart } from '@bindings/ChangeStart';
 import type { RemoveOutcome } from '@bindings/RemoveOutcome';
+import type { RunningStep } from '@bindings/RunningStep';
+import type { StepEvent } from '@bindings/StepEvent';
+import type { StepKind } from '@bindings/StepKind';
+import type { StepProgress } from '@bindings/StepProgress';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
@@ -1035,7 +1041,8 @@ describe('SdlcHomeViewModel changes list', () => {
     expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', '2026-10-12-product-photo-upload']);
     // The reload after the run waits for the slow reads, so the call is not awaited.
     void vm.newChange('commerce', 'flag prices', 'full');
-    expect(start).toHaveBeenCalledTimes(1);
+    // The page listens for the step's reports before it starts, so none is lost: the start follows the listener.
+    await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(1));
   });
 
   it('reads only the current workspace; the switcher has no counts (R3.1)', async () => {
@@ -1700,4 +1707,211 @@ describe('SdlcHomeViewModel removing a merged change\'s copy', () => {
       expect(open.mock.calls[0][3]).toBe('action-ended');
     });
   }
+});
+
+describe('New change and copy removal can be stopped', () => {
+  const keyOf = (change: string, system = 'commerce'): ChangeKey => ({ workspace: { key: MOCK_WORKSPACE_FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system, change });
+  const progress = (label: string): StepProgress => ({ kind: 'repository', label, repo: null, check: null });
+
+  /** The backend's step reports, pushed by hand, and Stop as a spy. */
+  function steps(transport: MockTransport) {
+    const listeners = new Set<(e: StepEvent) => void>();
+    vi.spyOn(transport, 'onStep').mockImplementation(async (cb) => {
+      listeners.add(cb);
+      return () => void listeners.delete(cb);
+    });
+    const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
+    const push = (change: string, kind: StepKind, label: string, system = 'commerce') => listeners.forEach((cb) => cb({ change: keyOf(change, system), kind, progress: progress(label) }));
+    return { stop, push };
+  }
+
+  it.each<[string, string[], string]>([
+    ['with the workflow\'s answer', ['the plugin ran out of room'], 'Stopped. The start did not finish: the plugin ran out of room'],
+    ['without an answer', [], 'Stopped. The start did not finish'],
+  ])('starting a new change, stopped %s', async (_name, answer, message) => {
+    const { vm, transport } = setup();
+    const { stop, push } = steps(transport);
+    let release!: (outcome: ChangeStart) => void;
+    const start = vi.spyOn(transport, 'sdlcStartChange').mockReturnValue(new Promise<ChangeStart>((resolve) => (release = resolve)));
+    await vm.init();
+    const name = await transport.sdlcChangeName('flag prices');
+    const running = vm.newChange('commerce', 'flag prices', 'full');
+    await vi.waitFor(() => expect(start).toHaveBeenCalled());
+    push(name, 'starting', 'Making the copy');
+    expect(vm.step()).toEqual({ label: 'Making the copy', stop: 'Stop starting the change' });
+    push('2026-01-01-other', 'starting', 'Not this change');
+    expect(vm.step()?.label).toBe('Making the copy');
+    push(name, 'starting', 'Not this system', 'other-system');
+    expect(vm.step()?.label).toBe('Making the copy');
+    await vm.stopStep();
+    expect(stop).toHaveBeenCalledWith({ workspace: vm.current()!.folder, system: 'commerce', change: name });
+    release({ outcome: 'stopped', answer });
+    await running;
+    expect(vm.step()).toBeNull();
+    expect(vm.stepStopped()).toBe(message);
+    expect(toastText()).toBe('');
+  });
+
+  // The real backend sends the step's first label as the step begins, which can be before the change's name
+  // has come back from its own call: the page keeps the report and shows it once the name is known.
+  it('New change shows the step and Stop from the first step event, even one that comes before the change name', async () => {
+    const { vm, transport } = setup();
+    const { stop, push } = steps(transport);
+    let named!: (change: string) => void;
+    // The first call is the page's own, for the step to match; the runner's later call answers at once.
+    vi.spyOn(transport, 'sdlcChangeName').mockReturnValueOnce(new Promise<string>((resolve) => (named = resolve)));
+    let release!: (outcome: ChangeStart) => void;
+    const start = vi.spyOn(transport, 'sdlcStartChange').mockReturnValue(new Promise<ChangeStart>((resolve) => (release = resolve)));
+    await vm.init();
+    const running = vm.newChange('commerce', 'flag prices', 'full');
+    await vi.waitFor(() => expect(start).toHaveBeenCalled());
+    push('2026-01-01-flag-prices', 'starting', 'Starting the change');
+    expect(vm.step()).toBeNull();
+    named('2026-01-01-flag-prices');
+    await vi.waitFor(() => expect(vm.step()).toEqual({ label: 'Starting the change', stop: 'Stop starting the change' }));
+    await vm.stopStep();
+    expect(stop).toHaveBeenCalled();
+    release({ outcome: 'stopped', answer: [] });
+    await running;
+    expect(vm.step()).toBeNull();
+  });
+
+  it('a new start clears the stopped note', async () => {
+    const { vm, transport } = setup();
+    steps(transport);
+    const start = vi.spyOn(transport, 'sdlcStartChange').mockResolvedValueOnce({ outcome: 'stopped', answer: [] });
+    await vm.init();
+    await vm.newChange('commerce', 'flag prices', 'full');
+    expect(vm.stepStopped()).toBe('Stopped. The start did not finish');
+    start.mockResolvedValueOnce({ outcome: 'refused', kind: 'branchTaken', problems: ['feat/x is taken'] });
+    await vm.newChange('commerce', 'flag prices', 'full');
+    expect(vm.stepStopped()).toBeNull();
+  });
+
+  it.each<[string, string[], string]>([
+    ['naming what was kept', ['change/2026-10-12-product-photo-upload'], 'Stopped. The removal did not finish. Kept: change/2026-10-12-product-photo-upload'],
+    ['with nothing kept', [], 'Stopped. The removal did not finish'],
+  ])('removing a copy, stopped %s', async (_name, kept, message) => {
+    const ctx = setup({ home: 'listed' });
+    const { vm, transport } = ctx;
+    vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+    vi.spyOn(transport, 'sdlcHomeOpen').mockResolvedValue(openOf(NAMES.map((n, i) => homeRowOf(n, 'Stage', i === 0 ? 'remove-copy' : 'workflow'))));
+    vi.spyOn(transport, 'sdlcHomePullRequests').mockResolvedValue({ rows: [], problems: [] });
+    const { stop, push } = steps(transport);
+    let release!: (outcome: RemoveOutcome) => void;
+    vi.spyOn(transport, 'sdlcRemoveCopy').mockReturnValue(new Promise<RemoveOutcome>((resolve) => (release = resolve)));
+    await vm.init();
+    vm.askRemoveCopy(NAMES[0]);
+    const running = vm.confirmRemoveCopy();
+    // The backend's first report of the step: pushed until the page is listening.
+    await vi.waitFor(() => {
+      push(NAMES[0], 'removingCopy', "Removing the change's copy");
+      expect(vm.step()).toEqual({ label: "Removing the change's copy", stop: 'Stop removing the copy' });
+    });
+    push(NAMES[0], 'removingCopy', 'Not this system', 'other-system');
+    expect(vm.step()?.label).not.toBe('Not this system');
+    push(NAMES[0], 'removingCopy', 'Removing the copy folder');
+    expect(vm.step()?.label).toBe('Removing the copy folder');
+    await vm.stopStep();
+    expect(stop).toHaveBeenCalledWith({ workspace: vm.current()!.folder, system: 'commerce', change: NAMES[0] });
+    release({ outcome: 'stopped', kept });
+    await running;
+    expect(vm.step()).toBeNull();
+    expect(vm.stepStopped()).toBe(message);
+    expect(toastText()).toBe('');
+  });
+
+  it('a new removal clears the stopped note', async () => {
+    const ctx = setup({ home: 'listed' });
+    const { vm, transport } = ctx;
+    vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+    vi.spyOn(transport, 'sdlcHomeOpen').mockResolvedValue(openOf(NAMES.map((n, i) => homeRowOf(n, 'Stage', i === 0 ? 'remove-copy' : 'workflow'))));
+    vi.spyOn(transport, 'sdlcHomePullRequests').mockResolvedValue({ rows: [], problems: [] });
+    steps(transport);
+    const remove = vi.spyOn(transport, 'sdlcRemoveCopy').mockResolvedValueOnce({ outcome: 'stopped', kept: [] });
+    await vm.init();
+    vm.askRemoveCopy(NAMES[0]);
+    await vm.confirmRemoveCopy();
+    expect(vm.stepStopped()).toBe('Stopped. The removal did not finish');
+    remove.mockResolvedValueOnce({ outcome: 'removed', kept: [] });
+    vm.askRemoveCopy(NAMES[0]);
+    await vm.confirmRemoveCopy();
+    expect(vm.stepStopped()).toBeNull();
+  });
+});
+
+describe('a start or a removal the backend runs is the home\'s, whoever started it (F3)', () => {
+  const keyOf = (change: string, system = 'commerce'): ChangeKey => ({ workspace: { key: MOCK_WORKSPACE_FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system, change });
+  const running = (change: string, kind: StepKind, label: string, system = 'commerce'): RunningStep => ({
+    change: keyOf(change, system),
+    kind,
+    doing: 'doing',
+    progress: { kind: 'repository', label, repo: null, check: null },
+  });
+
+  it.each<[string, StepKind, string]>([
+    ['a start', 'starting', 'Stop starting the change'],
+    ['a removal of a copy', 'removingCopy', 'Stop removing the copy'],
+  ])('a home opened while %s runs shows its label and Stop, and Stop stops that change', async (_name, kind, stopName) => {
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'steps').mockResolvedValue([running('2026-01-01-flag-prices', kind, 'Making the copy')]);
+    const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
+    await vm.init();
+    await vi.waitFor(() => expect(vm.step()).toEqual({ label: 'Making the copy', stop: stopName }));
+    await vm.stopStep();
+    expect(stop).toHaveBeenCalledWith({ workspace: vm.current()!.folder, system: 'commerce', change: '2026-01-01-flag-prices' });
+  });
+
+  it('a step of a system this workspace does not have, or of a kind the home does not run, is not shown', async () => {
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'steps').mockResolvedValue([running('a', 'starting', 'Elsewhere', 'other-system'), running('b', { accepting: 'spec' }, 'Accepting the spec')]);
+    await vm.init();
+    await vi.waitFor(() => expect(vm.current()).not.toBeNull());
+    expect(vm.step()).toBeNull();
+  });
+
+  it('a step that ends takes its label and Stop away', async () => {
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'steps').mockResolvedValue([running('a', 'starting', 'Making the copy')]);
+    let ended: (c: ChangeKey) => void = () => undefined;
+    vi.spyOn(transport, 'onStepEnd').mockImplementation(async (cb) => {
+      ended = cb;
+      return () => undefined;
+    });
+    await vm.init();
+    await vi.waitFor(() => expect(vm.step()).not.toBeNull());
+    ended(keyOf('a'));
+    expect(vm.step()).toBeNull();
+  });
+});
+
+
+describe('SdlcHomeViewModel: a new triage clears the pane (R10.1)', () => {
+  const EARLIER_SAYS = 'Earlier triage said this';
+
+  it.each<[string, string]>([
+    ['triage', 'sdlc-commerce-intent'],
+    ['triage', 'sdlc-triage'],
+  ])('the pane shows nothing of the earlier %s run once the next run (%s) begins', async (_earlier, next) => {
+    const { vm, transport, runAgent, runner } = setup();
+    runAgent.mockRestore();
+    await vm.init();
+    const solo = TestBed.inject(RunStore);
+    const emit = (id: string, ev: unknown) => (transport as unknown as { emit(id: string, ev: unknown): void }).emit(id, ev);
+    const id = await solo.startRun({ ...seedSpec(), name: 'sdlc-triage' }, undefined, async () => 'earlier-triage');
+    emit(id!, { type: 'assistant.text', text: EARLIER_SAYS });
+    emit(id!, { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.03, duration_ms: 21000, result: EARLIER_SAYS });
+    expect(vm.summary()?.result).toBe(EARLIER_SAYS);
+    // The earlier run's lock view is closed, as the engineer does before starting the next.
+    TestBed.inject(LockStore).close();
+    void runner.run('Next run', { ...seedSpec(), name: next }, { workspaceId: 'w', target: null, link: null });
+    await vi.waitFor(() => expect(vm.session()).not.toBeNull());
+    expect(vm.summary()).toBeNull();
+    expect(JSON.stringify(vm.events())).not.toContain(EARLIER_SAYS);
+    expect(vm.asks()).toEqual([]);
+    expect(vm.messages()).toEqual([]);
+    expect(vm.permissions()).toEqual([]);
+    expect(vm.given()).toBeNull();
+    TestBed.inject(LockStore).cancel();
+  });
 });

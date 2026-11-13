@@ -45,7 +45,7 @@ import type { ParsedTask } from '@bindings/ParsedTask';
 import type { Part } from '@bindings/Part';
 import type { ChangeInfo, DocState, PlanTask, Stage, Track } from './sdlc-mock-types';
 import type { DeclareView } from '@bindings/DeclareView';
-import type { DoneStep } from '@bindings/DoneStep';
+import type { StepProgress } from '@bindings/StepProgress';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { NamingState } from '../core/transport/kata-transport';
 import type { PullRequestLink } from '@bindings/PullRequestLink';
@@ -1275,11 +1275,14 @@ export class SdlcMock {
    * The plugin's answer to declaring `changeName` done, with the steps it reports on the way. It opens a pull request in each product
    * repository and the master last; the demos give a refusal, a part-way stop (once), a machine that cannot run it and a missing gh.
    */
-  declareDone(_changeName: string): { view: DeclareView; steps: DoneStep[] } {
-    const verifying: DoneStep = { kind: 'verifying', label: 'Declaring done: the plugin is verifying the change' };
-    const stepsFor = (repos: string[]): DoneStep[] => [
+  declareDone(_changeName: string): { view: DeclareView; steps: StepProgress[] } {
+    // What the plugin's --stream prints is a hook-start and a hook-end for each team check, so the mock reports the step, then a check, worded
+    // as the backend words it ("<step>: <check line>"); the plugin prints nothing for a push or a pull request.
+    const verifying: StepProgress = { kind: 'verifying', label: 'Declaring the change done', repo: null, check: null };
+    const reported: StepProgress[] = [
       verifying,
-      ...repos.flatMap((repo): DoneStep[] => [{ kind: 'push', label: `Pushing ${repo}` }, { kind: 'pullRequest', label: `Opening a pull request in ${repo}` }]),
+      { kind: 'hook', label: 'Declaring the change done: running base-tests', repo: null, check: 'base-tests' },
+      { kind: 'hook', label: 'Declaring the change done: base-tests passed', repo: null, check: 'base-tests' },
     ];
     const link = (repo: string, number: number) => ({ repo, url: prUrl(repo), number, source: 'plugin' as const });
     switch (this.demo) {
@@ -1310,14 +1313,14 @@ export class SdlcMock {
               opened: [link(first, 7)],
               failed: [`opening the pull request in ${this.repos[1]} failed: GraphQL: something went wrong`, `pushed so far: ${first}; running done again carries on from there`],
             },
-            steps: stepsFor([first]),
+            steps: reported,
           };
         }
     }
     const all = [...this.repos, MOCK_MASTER];
     all.forEach((repo) => this.published.add(repo));
     const warnings = this.demo === 'done-warnings' ? ['after hook announce failed with exit code 1; nothing was undone'] : [];
-    return { view: { kind: 'done', pullRequests: all.map((repo, i) => link(repo, 7 + i)), warnings }, steps: stepsFor(all) };
+    return { view: { kind: 'done', pullRequests: all.map((repo, i) => link(repo, 7 + i)), warnings }, steps: reported };
   }
 
   /**

@@ -1,25 +1,59 @@
 //! The one door to the ai-sdlc program: `node <plugin>/tools/ai-sdlc.ts <command>`.
 //!
-//! Every call Kata makes to the program goes through [`execute`]: it starts Node.js hidden, with a time
-//! limit, and kills the whole process tree on a timeout. Every answer is read by [`answer_of`]: a step
-//! (an event, a commit, a change command) through [`Program::step`] as a typed [`StepOutcome`], and a
-//! read through [`Program::run`] as its JSON.
+//! Every call Kata makes to the program goes through [`execute`]: it starts Node.js hidden and kills the
+//! whole process tree when it ends early. A quick read has a time limit ([`TIMEOUT`]); a long step
+//! ([`call_kind`]) has none and ends when the plugin answers or its [`CancelToken`] is cancelled. Every
+//! answer is read by [`answer_of`]: a step (an event, a commit, a change command) through
+//! [`Program::step`] or [`Program::step_long`] as a typed [`StepOutcome`], and a read through
+//! [`Program::run`] as its JSON.
 pub mod list;
 pub mod show;
 pub mod state;
 pub mod status;
 
 use crate::process::CapturedExit;
-use kata_core::proc::{run_limited, run_limited_streaming, Limited, LineSink, Outcome, StartError};
+use kata_core::proc::{
+    run_limited, run_limited_streaming, Bound, CancelToken, Limited, LineSink, Outcome, StartError,
+};
 use serde::Serialize;
 use serde_json::Value;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// How long a command may run before its process tree is killed, when it runs no team hook. A step that
-/// runs hooks gets this plus the hooks' own time limits (see [`Program::limit_for`]).
-pub const TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a quick read may run before its process tree is killed.
+pub const TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Whether a command is a quick read, which has a time limit, or a long step, which has none and can be
+/// stopped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallKind {
+    Quick,
+    Long,
+}
+
+/// What a refused long command is told.
+const LONG_REFUSED: &str = "a long step must be run through step_long";
+
+/// The kind of `command`: the commands that change things and run the team's hooks or git are long;
+/// every read is quick.
+pub fn call_kind(command: &[&str]) -> CallKind {
+    match command {
+        ["change", "start" | "rename" | "remove", ..] | ["commit", ..] | ["run", ..] => {
+            CallKind::Long
+        }
+        _ => CallKind::Quick,
+    }
+}
+
+/// Why a step has no exit to read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecError {
+    /// The program could not run; the reason as the engineer reads it.
+    Machine(String),
+    /// The engineer stopped it.
+    Stopped,
+}
 
 /// What a missing `node` is reported as.
 pub const NEEDS_NODE: &str = "ai-sdlc needs Node.js 22.18 or later";
@@ -69,6 +103,8 @@ pub(crate) enum Failure {
     Other(String),
     /// It ran past its limit and its tree was killed.
     TimedOut { secs: u64 },
+    /// The engineer stopped it and its tree was killed.
+    Stopped,
 }
 
 /// Runs `node <entry> <args>` in `cwd`, hidden, within `limit`, and returns how it exited.
@@ -77,9 +113,10 @@ pub(crate) fn execute(
     entry: &Path,
     cwd: &Path,
     args: &[&str],
-    limit: Duration,
+    bound: Bound,
     on_line: Option<LineSink>,
 ) -> Result<CapturedExit, Failure> {
+    let secs = bound.limit().map_or(0, |l| l.as_secs());
     let mut argv: Vec<OsString> = vec![entry.into()];
     argv.extend(args.iter().map(OsString::from));
     let spec = Limited {
@@ -88,7 +125,7 @@ pub(crate) fn execute(
         cwd,
         env: &[],
         stdin: None,
-        limit,
+        bound,
         keep_stdout: true,
     };
     let outcome = match on_line {
@@ -101,9 +138,8 @@ pub(crate) fn execute(
             stdout,
             stderr: tail,
         }),
-        Outcome::TimedOut { .. } => Err(Failure::TimedOut {
-            secs: limit.as_secs(),
-        }),
+        Outcome::TimedOut { .. } => Err(Failure::TimedOut { secs }),
+        Outcome::Cancelled { .. } => Err(Failure::Stopped),
         Outcome::NotStarted(StartError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
             Err(Failure::NodeMissing)
         }
@@ -172,6 +208,8 @@ pub enum StepOutcome {
         repo: Option<String>,
         hook: Option<HookFailure>,
     },
+    /// The engineer stopped the step.
+    Stopped,
 }
 
 /// A step's outcome with the JSON it came from (`Value::Null` when there was none), for the details a
@@ -193,7 +231,7 @@ pub struct Answer {
 /// | 5 | exit 1, not JSON | `Refused` with what it printed |
 /// | 6 | exit 2, JSON | `CouldNotRun`: the problems, the repository it names and the hook that could not run |
 /// | 7 | anything else | `CouldNotRun` with stderr, or the exit code |
-pub fn answer_of(reply: Result<Reply, String>) -> Answer {
+pub fn answer_of(reply: Result<Reply, ExecError>) -> Answer {
     let machine = |reason: String, json: Value| Answer {
         outcome: StepOutcome::CouldNotRun {
             reason,
@@ -204,7 +242,13 @@ pub fn answer_of(reply: Result<Reply, String>) -> Answer {
     };
     let reply = match reply {
         Ok(reply) => reply,
-        Err(reason) => return machine(reason, Value::Null),
+        Err(ExecError::Machine(reason)) => return machine(reason, Value::Null),
+        Err(ExecError::Stopped) => {
+            return Answer {
+                outcome: StepOutcome::Stopped,
+                json: Value::Null,
+            }
+        }
     };
     let json = reply
         .stdout
@@ -359,31 +403,57 @@ impl Program {
         answer_of(self.exec(command, place))
     }
 
-    /// [`Program::step`] that hands each whole stdout line to `on_line` while it runs (`--stream`).
-    pub fn step_streaming(&self, command: &[&str], place: &Place, on_line: LineSink) -> Answer {
-        answer_of(self.exec_within(command, place, base_limit(command), Some(on_line)))
-    }
-
-    /// Runs `command` in `place` and returns how it exited, within the time limit chosen for it.
-    pub fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, String> {
-        self.exec_within(command, place, base_limit(command), None)
-    }
-
-    /// [`Program::exec`] with `base` as the limit before the time limits of the team's hooks are added.
-    pub fn exec_within(
+    /// Runs a long step: no time limit, ended when the plugin answers or `token` is cancelled. Adds
+    /// `--stream` to an event when `on_line` is given.
+    pub fn step_long(
         &self,
         command: &[&str],
         place: &Place,
-        base: Duration,
+        token: &CancelToken,
         on_line: Option<LineSink>,
-    ) -> Result<Reply, String> {
-        if !self.entry.is_file() {
-            return Err(ProgramError::TooOld {
-                found: format!("{} does not exist", self.entry.display()),
-            }
-            .to_string());
+    ) -> Answer {
+        let mut args = command.to_vec();
+        if on_line.is_some() && args.first() == Some(&"run") && !args.contains(&"--stream") {
+            let at = args.iter().position(|a| *a == "--").unwrap_or(args.len());
+            args.insert(at, "--stream");
         }
-        let limit = self.limit_for(command, place, base);
+        answer_of(self.exec_bound(&args, place, Bound::UntilCancelled(token.clone()), on_line))
+    }
+
+    /// Runs `command`, a quick read, in `place` and returns how it exited, within [`TIMEOUT`]. A long
+    /// command is refused: it runs through [`Program::step_long`], which can be stopped.
+    pub fn exec(&self, command: &[&str], place: &Place) -> Result<Reply, ExecError> {
+        if call_kind(command) == CallKind::Long {
+            return Err(ExecError::Machine(LONG_REFUSED.to_string()));
+        }
+        self.exec_within(command, place, TIMEOUT)
+    }
+
+    /// [`Program::exec`] with `limit` as the time limit.
+    pub(crate) fn exec_within(
+        &self,
+        command: &[&str],
+        place: &Place,
+        limit: Duration,
+    ) -> Result<Reply, ExecError> {
+        self.exec_bound(command, place, Bound::Within(limit), None)
+    }
+
+    fn exec_bound(
+        &self,
+        command: &[&str],
+        place: &Place,
+        bound: Bound,
+        on_line: Option<LineSink>,
+    ) -> Result<Reply, ExecError> {
+        if !self.entry.is_file() {
+            return Err(ExecError::Machine(
+                ProgramError::TooOld {
+                    found: format!("{} does not exist", self.entry.display()),
+                }
+                .to_string(),
+            ));
+        }
         let master = place.master.display().to_string();
         let workspace = place.workspace.display().to_string();
         let args = with_place(command, &master, &workspace);
@@ -392,7 +462,7 @@ impl Program {
             &self.entry,
             &place.workspace,
             &args,
-            limit,
+            bound,
             on_line,
         ) {
             Ok(exit) => Ok(Reply {
@@ -400,23 +470,8 @@ impl Program {
                 stdout: String::from_utf8_lossy(&exit.stdout).into_owned(),
                 stderr: exit.stderr,
             }),
-            Err(failure) => Err(failure.reason()),
-        }
-    }
-
-    /// How long `command` may run in `place`: `base`, plus the time limits of the team's hooks it runs.
-    /// Only an event that runs hooks (`run <event>` without `--check`, and `change start`, which runs
-    /// `change.start`) gets more; every hook of the event is counted, as the plugin runs them one after
-    /// another. When the hooks cannot be read the plugin will not run them either, and `base` stands.
-    pub fn limit_for(&self, command: &[&str], place: &Place, base: Duration) -> Duration {
-        let (Some(event), Some(system)) = (hook_event(command), option(command, "--system")) else {
-            return base;
-        };
-        match self.hooks(place, system, Some(event)) {
-            Ok(hooks) => {
-                base + Duration::from_secs(hooks.hooks.iter().map(|h| h.timeout).sum::<u64>())
-            }
-            Err(_) => base,
+            Err(Failure::Stopped) => Err(ExecError::Stopped),
+            Err(failure) => Err(ExecError::Machine(failure.reason())),
         }
     }
 
@@ -450,13 +505,18 @@ impl Program {
     /// Runs the program with `args` as given, in `cwd`, within [`TIMEOUT`], and reads the answer as
     /// `run` does.
     fn call(&self, args: &[&str], cwd: &Path) -> Result<Value, ProgramError> {
-        let reply = match execute(&self.node, &self.entry, cwd, args, TIMEOUT, None) {
+        if call_kind(args) == CallKind::Long {
+            return Err(could_not_run(LONG_REFUSED));
+        }
+        let bound = Bound::Within(TIMEOUT);
+        let reply = match execute(&self.node, &self.entry, cwd, args, bound, None) {
             Ok(exit) => Ok(Reply {
                 code: exit.code,
                 stdout: String::from_utf8_lossy(&exit.stdout).into_owned(),
                 stderr: exit.stderr,
             }),
-            Err(failure) => Err(failure.reason()),
+            Err(Failure::Stopped) => Err(ExecError::Stopped),
+            Err(failure) => Err(ExecError::Machine(failure.reason())),
         };
         read_value(reply)
     }
@@ -469,49 +529,23 @@ impl Failure {
             Failure::NodeMissing => NEEDS_NODE.to_string(),
             Failure::Other(message) => message,
             Failure::TimedOut { secs } => format!("it did not finish in {secs} seconds"),
+            Failure::Stopped => "it was stopped".to_string(),
         }
     }
 }
 
 /// A read's answer: the JSON of exit 0 and exit 1 (an answer such as `refused` is still an answer), read
 /// through [`answer_of`] like every step's, so an exit 2 is the plugin's own reason.
-fn read_value(reply: Result<Reply, String>) -> Result<Value, ProgramError> {
+fn read_value(reply: Result<Reply, ExecError>) -> Result<Value, ProgramError> {
     let code = reply.as_ref().ok().and_then(|r| r.code);
     let stdout = reply.as_ref().map(|r| r.stdout.clone()).unwrap_or_default();
     let answer = answer_of(reply);
     match (code, answer.outcome) {
         (Some(0 | 1), _) if !answer.json.is_null() => Ok(answer.json),
         (_, StepOutcome::CouldNotRun { reason, .. }) => Err(could_not_run(reason)),
+        (_, StepOutcome::Stopped) => Err(could_not_run("it was stopped")),
         _ => Err(ProgramError::Refused { stdout }),
     }
-}
-
-/// The time limit a command starts from, before the team's hooks are added: declaring done pushes and
-/// opens pull requests, and a commit runs the repository's own git hooks, which the plugin does not limit.
-fn base_limit(command: &[&str]) -> Duration {
-    match (command.first().copied(), hook_event(command)) {
-        (_, Some("change.done")) => Duration::from_secs(30 * 60),
-        (Some("commit"), _) => Duration::from_secs(10 * 60),
-        _ => TIMEOUT,
-    }
-}
-
-/// The event whose team hooks `command` runs: `run <event>` without `--check`, or `change start`.
-fn hook_event<'a>(command: &[&'a str]) -> Option<&'a str> {
-    match command {
-        ["run", event, rest @ ..] if !rest.contains(&"--check") => Some(event),
-        ["change", "start", ..] => Some("change.start"),
-        _ => None,
-    }
-}
-
-/// The value given for `name` in `command`, before a `--` that starts paths.
-fn option<'a>(command: &[&'a str], name: &str) -> Option<&'a str> {
-    command
-        .iter()
-        .take_while(|a| **a != "--")
-        .position(|a| *a == name)
-        .and_then(|i| command.get(i + 1).copied())
 }
 
 fn could_not_run(message: impl Into<String>) -> ProgramError {
@@ -541,6 +575,97 @@ fn with_place<'a>(command: &[&'a str], master: &'a str, workspace: &'a str) -> V
     }
     args.extend(tail);
     args
+}
+
+/// What a progress line is about.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum StepProgressKind {
+    /// The plugin is verifying the change.
+    Verifying,
+    /// A team check is running or has ended.
+    Hook,
+    /// A repository is being pushed.
+    Push,
+    /// A pull request is being opened.
+    PullRequest,
+    /// A repository is being prepared.
+    Repository,
+}
+
+/// A progress line: what the plugin is doing, named for the engineer, with the repository and the team
+/// check it names when the line names them.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct StepProgress {
+    pub kind: StepProgressKind,
+    pub label: String,
+    pub repo: Option<String>,
+    pub check: Option<String>,
+}
+
+/// The progress line a `--stream` line stands for, if it stands for a step.
+///
+/// | line `type` | kind | label |
+/// |---|---|---|
+/// | `hook-start` | `Hook` | "Running <id>", " in <repo>" when the line names one |
+/// | `hook-end` | `Hook` | "<id> <outcome>", " in <repo>" when the line names one |
+/// | `push` | `Push` | "Pushing <repo>" |
+/// | `pull-request` | `PullRequest` | "Opening a pull request in <repo>" |
+///
+/// The label words the line alone. The words of the step the line belongs to are the Workbench's: its step
+/// table puts them in front, in `steps::progress_line`, the one owner of what the progress line says.
+///
+/// Any other line (the closing outcome, a type not known yet, text that is not JSON) is not progress.
+/// `Repository` and `Verifying` are never read from a line: the program prints no line for either.
+pub fn progress_of(line: &str) -> Option<StepProgress> {
+    let line: Value = serde_json::from_str(line).ok()?;
+    let text = |key: &str| line[key].as_str().map(str::to_string);
+    let in_repo = |label: String, repo: &Option<String>| match repo {
+        Some(repo) => format!("{label} in {repo}"),
+        None => label,
+    };
+    let repo = text("repo");
+    let (kind, label, check) = match line["type"].as_str()? {
+        "hook-start" => {
+            let id = text("id")?;
+            (
+                StepProgressKind::Hook,
+                in_repo(format!("Running {id}"), &repo),
+                Some(id),
+            )
+        }
+        "hook-end" => {
+            let id = text("id")?;
+            let outcome = text("outcome")?;
+            (
+                StepProgressKind::Hook,
+                in_repo(format!("{id} {outcome}"), &repo),
+                Some(id),
+            )
+        }
+        "push" => (
+            StepProgressKind::Push,
+            format!("Pushing {}", repo.as_deref()?),
+            None,
+        ),
+        "pull-request" => (
+            StepProgressKind::PullRequest,
+            format!("Opening a pull request in {}", repo.as_deref()?),
+            None,
+        ),
+        _ => return None,
+    };
+    Some(StepProgress {
+        kind,
+        label,
+        repo,
+        check,
+    })
 }
 
 #[cfg(test)]
@@ -672,7 +797,12 @@ mod tests {
             "problems": ["hook prep could not run"], "hooks": [],
             "failed": {"id": "prep", "onFailure": "stop", "output": "spawn prep ENOENT"}});
         let (program, place) = answering(dir.path(), 2, &event);
-        let answer = program.step(&["run", "build.start", "--json"], &place);
+        let answer = program.step_long(
+            &["run", "build.start", "--json"],
+            &place,
+            &CancelToken::new(),
+            None,
+        );
         assert_eq!(
             answer.outcome,
             StepOutcome::CouldNotRun {
@@ -696,7 +826,12 @@ mod tests {
         let (program, place) = answering(dir.path(), 2, &check);
         assert_eq!(
             program
-                .step(&["run", "build.start", "--json"], &place)
+                .step_long(
+                    &["run", "build.start", "--json"],
+                    &place,
+                    &CancelToken::new(),
+                    None
+                )
                 .outcome,
             StepOutcome::CouldNotRun {
                 reason: "the hook configuration on the base branch: bad".into(),
@@ -716,7 +851,12 @@ mod tests {
         let (program, place) = answering(dir.path(), 1, &event);
         assert_eq!(
             program
-                .step(&["run", "build.start", "--json"], &place)
+                .step_long(
+                    &["run", "build.start", "--json"],
+                    &place,
+                    &CancelToken::new(),
+                    None
+                )
                 .outcome,
             StepOutcome::Failed {
                 problems: vec!["hook lint failed with exit code 1".into()],
@@ -738,7 +878,12 @@ mod tests {
         let (program, place) = answering(dir.path(), 0, &event);
         assert_eq!(
             program
-                .step(&["run", "doc.accept", "--json"], &place)
+                .step_long(
+                    &["run", "doc.accept", "--json"],
+                    &place,
+                    &CancelToken::new(),
+                    None
+                )
                 .outcome,
             StepOutcome::Passed {
                 problems: vec![
@@ -792,7 +937,7 @@ mod tests {
             }
         );
         assert_eq!(
-            answer_of(Err(NEEDS_NODE.into())).outcome,
+            answer_of(Err(ExecError::Machine(NEEDS_NODE.into()))).outcome,
             StepOutcome::CouldNotRun {
                 reason: NEEDS_NODE.into(),
                 repo: None,
@@ -801,48 +946,223 @@ mod tests {
         );
     }
 
-    /// F2: a step that runs the team's hooks may take as long as their own time limits allow. The base
-    /// limit here is 3 seconds and the hook takes 6, within its own limit of 30: it is not killed.
+    /// The commands each action of the Workbench sends, and what kind each is.
     #[test]
-    fn a_hook_is_limited_by_its_own_time_limit_not_the_base_one() {
+    fn call_kind_table() {
+        let long: &[&[&str]] = &[
+            &["change", "start", "--json", "--system", "demo"],
+            &["change", "rename", "--json", "--change", "a"],
+            &["change", "remove", "--json", "--change", "a"],
+            &["commit", "--json", "--kind", "work"],
+            &["run", "build.start", "--json", "--check"],
+            &["run", "build.start", "--json", "--repo", "kata"],
+            &["run", "build.start", "--json"],
+            &["run", "doc.accept", "--json"],
+            &["run", "doc.reject", "--json"],
+            &["run", "change.done", "--json", "--stream"],
+            &["run", "review.start", "--json"],
+        ];
+        for command in long {
+            assert_eq!(call_kind(command), CallKind::Long, "{command:?}");
+        }
+        let quick: &[&[&str]] = &[
+            &["change", "show", "--json", "--change", "a"],
+            &["resolve", "--json"],
+            &["state", "--json"],
+            &["list", "--json"],
+            &["stale", "--json"],
+            &["instructions", "--json"],
+            &["hooks", "--json"],
+            &["status", "--json"],
+            &["scope", "--json"],
+            &["naming", "--json"],
+            &["branch-name", "--json"],
+            &["read", "plan.md"],
+            &["check", "--json"],
+            &["baseline", "show", "--json"],
+        ];
+        for command in quick {
+            assert_eq!(call_kind(command), CallKind::Quick, "{command:?}");
+        }
+    }
+
+    #[test]
+    fn a_quick_read_may_run_five_minutes() {
+        assert_eq!(TIMEOUT, Duration::from_secs(300));
+        // The format program's reads use the same limit, with no limit of their own.
+        let format = include_str!("format.rs");
+        assert!(format.contains("ai_sdlc::TIMEOUT"));
+        assert!(!format.contains("const TIMEOUT"));
+    }
+
+    #[test]
+    fn a_hung_quick_read_ends_at_its_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let (program, place) = scripted(dir.path(), "setTimeout(() => {}, 60000);");
+        let started = std::time::Instant::now();
+        let reply = program.exec_within(&["state", "--json"], &place, Duration::from_secs(1));
+        assert!(started.elapsed() < Duration::from_secs(30));
+        let Err(ExecError::Machine(message)) = &reply else {
+            panic!("{reply:?}");
+        };
+        assert!(message.contains("1 seconds"), "{message}");
+        assert!(matches!(
+            answer_of(reply).outcome,
+            StepOutcome::CouldNotRun { .. }
+        ));
+    }
+
+    /// R14.2: the team's hook limits add up to 1 second, the step takes 3, and it is not cut off.
+    #[test]
+    fn a_long_call_has_no_limit_from_its_hooks() {
         let dir = tempfile::tempdir().unwrap();
         let master = testutil::repo(dir.path(), "ai-sdlc");
-        testutil::repo(dir.path(), "app");
-        let marker = serde_json::json!({"version": 1, "systems": {"demo": {"repos": ["app"]}},
-            "hooks": {"change.start": [{"id": "slow", "run": ["node", "-e", "setTimeout(() => {}, 6000)"], "timeout": 30}]}});
+        let marker = serde_json::json!({"version": 1, "systems": {"demo": {"repos": []}},
+            "hooks": {"build.start": [{"id": "quick", "run": ["node", "-e", "0"], "timeout": 1}]}});
         testutil::commit_file(&master, ".ai-sdlc.json", &marker.to_string(), "marker");
-        let place = Place {
-            master,
-            workspace: dir.path().to_path_buf(),
+        let (program, mut place) = scripted(
+            dir.path(),
+            "setTimeout(() => { process.stdout.write(JSON.stringify({outcome: 'passed', problems: []}) + '\\n'); }, 3000);",
+        );
+        place.master = master;
+        let answer = program.step_long(
+            &["run", "build.start", "--json", "--system", "demo"],
+            &place,
+            &CancelToken::new(),
+            None,
+        );
+        assert_eq!(answer.outcome, StepOutcome::Passed { problems: vec![] });
+    }
+
+    /// R14.1: a hook that ran past its own limit is the plugin's could-not-run answer, in its words.
+    #[test]
+    fn a_hook_past_its_own_limit_reads_as_could_not_run() {
+        let event = serde_json::json!({"event": "build.start", "repo": "kata", "outcome": "could-not-run",
+            "problems": ["hook base-tests ran past its time limit of 600 seconds and was stopped"],
+            "hooks": [],
+            "failed": {"id": "base-tests", "onFailure": "stop", "output": ""}});
+        assert_eq!(
+            answer_of(Ok(Reply::json(2, &event))).outcome,
+            StepOutcome::CouldNotRun {
+                reason: "hook base-tests ran past its time limit of 600 seconds and was stopped"
+                    .into(),
+                repo: Some("kata".into()),
+                hook: Some(HookFailure {
+                    id: "base-tests".into(),
+                    on_failure: Some("stop".into()),
+                    output: String::new(),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn a_long_command_through_exec_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (program, place) = answering(
+            dir.path(),
+            0,
+            &serde_json::json!({"outcome": "passed", "problems": []}),
+        );
+        let command = ["run", "build.start", "--json"];
+        match program.exec(&command, &place) {
+            Err(ExecError::Machine(message)) => {
+                assert!(message.contains("step_long"), "{message}")
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            program.step(&command, &place).outcome,
+            StepOutcome::CouldNotRun { .. }
+        ));
+    }
+
+    #[test]
+    fn stopping_a_long_call_reads_as_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let (program, place) = scripted(dir.path(), "setTimeout(() => {}, 60000);");
+        let token = CancelToken::new();
+        let stopper = {
+            let token = token.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(700));
+                token.cancel();
+            })
         };
-        let command = [
-            "change",
-            "start",
-            "--json",
-            "--system",
-            "demo",
-            "--change",
-            "2026-11-01-slow",
-            "--type",
-            "feat",
-            "--scope",
-            "demo",
+        let started = std::time::Instant::now();
+        let answer = program.step_long(&["run", "build.start", "--json"], &place, &token, None);
+        stopper.join().unwrap();
+        assert_eq!(answer.outcome, StepOutcome::Stopped);
+        assert!(started.elapsed() < Duration::from_secs(30));
+    }
+
+    fn p(
+        kind: StepProgressKind,
+        label: &str,
+        repo: Option<&str>,
+        check: Option<&str>,
+    ) -> Option<StepProgress> {
+        Some(StepProgress {
+            kind,
+            label: label.to_string(),
+            repo: repo.map(str::to_string),
+            check: check.map(str::to_string),
+        })
+    }
+
+    /// R15.1: every line type the program's `--stream` prints (hook-start, hook-end, outcome) and the
+    /// push and pull-request lines declaring done relays, each against what it reads as.
+    #[test]
+    fn progress_of_table() {
+        use StepProgressKind::*;
+        let rows: Vec<(&str, Option<StepProgress>)> = vec![
+            (
+                r#"{"type":"hook-start","id":"base-tests","when":"build.finish"}"#,
+                p(Hook, "Running base-tests", None, Some("base-tests")),
+            ),
+            (
+                r#"{"type":"hook-start","id":"base-tests","when":"build.finish","repo":"kata"}"#,
+                p(
+                    Hook,
+                    "Running base-tests in kata",
+                    Some("kata"),
+                    Some("base-tests"),
+                ),
+            ),
+            (
+                r#"{"type":"hook-end","id":"pr-lint","when":"change.done","outcome":"passed"}"#,
+                p(Hook, "pr-lint passed", None, Some("pr-lint")),
+            ),
+            (
+                r#"{"type":"hook-end","id":"pr-lint","when":"change.done","outcome":"failed","repo":"kata"}"#,
+                p(
+                    Hook,
+                    "pr-lint failed in kata",
+                    Some("kata"),
+                    Some("pr-lint"),
+                ),
+            ),
+            (
+                r#"{"type":"push","repo":"kata"}"#,
+                p(Push, "Pushing kata", Some("kata"), None),
+            ),
+            (
+                r#"{"type":"pull-request","repo":"kata"}"#,
+                p(
+                    PullRequest,
+                    "Opening a pull request in kata",
+                    Some("kata"),
+                    None,
+                ),
+            ),
+            (r#"{"type":"outcome","outcome":"passed"}"#, None),
+            (r#"{"type":"something-new"}"#, None),
+            (r#"{"id":"no-type"}"#, None),
+            ("not json", None),
         ];
-        let answer =
-            answer_of(program().exec_within(&command, &place, Duration::from_secs(3), None));
-        assert_eq!(
-            answer.outcome,
-            StepOutcome::Passed { problems: vec![] },
-            "{:?}",
-            answer.json
-        );
-        // Plain reads keep the base limit; an event checked with `--check` runs no hook.
-        let base = Duration::from_secs(3);
-        assert_eq!(
-            program().limit_for(&["state", "--json"], &place, base),
-            base
-        );
-        assert!(program().limit_for(&command, &place, base) >= Duration::from_secs(33));
+        for (line, expected) in rows {
+            assert_eq!(progress_of(line), expected, "{line}");
+        }
     }
 
     #[test]

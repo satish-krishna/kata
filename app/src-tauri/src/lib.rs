@@ -8,6 +8,7 @@ mod runs;
 mod sdlc_home;
 mod sdlc_state;
 mod start_change;
+mod steps;
 mod versions;
 mod zoom;
 
@@ -26,9 +27,6 @@ use tauri_plugin_shell::ShellExt;
 
 /// Channel the engine's normalized KataEvents are relayed on to the webview.
 const RUN_EVENT: &str = "kata://event";
-/// The step the plugin is on while a change is declared done, one `DoneStep` per event.
-const DONE_STEP_EVENT: &str = "sdlc://done-step";
-
 /// Shared run control: every live run plus a monotonic id source. A stale
 /// reader task (a finished run still tearing down) removes only its own id, so
 /// it never clears a newer run's handle.
@@ -420,14 +418,19 @@ impl build_host::Tools for PluginTools {
     ) -> Result<Value, sdlc::ai_sdlc::ProgramError> {
         Self::program(&place.workspace)?.run(command, place)
     }
-    fn exec(
+    fn step_long(
         &self,
         command: &[&str],
         place: &sdlc::ai_sdlc::Place,
-    ) -> Result<sdlc::ai_sdlc::Reply, String> {
-        Self::program(&place.workspace)
-            .map_err(|e| e.to_string())?
-            .exec(command, place)
+        token: &kata_core::proc::CancelToken,
+        on_line: Option<kata_core::proc::LineSink>,
+    ) -> sdlc::ai_sdlc::Answer {
+        match Self::program(&place.workspace) {
+            Ok(tools) => tools.step_long(command, place, token, on_line),
+            Err(e) => {
+                sdlc::ai_sdlc::answer_of(Err(sdlc::ai_sdlc::ExecError::Machine(e.to_string())))
+            }
+        }
     }
     fn change_state(
         &self,
@@ -949,6 +952,7 @@ fn sdlc_change_name(title: String) -> String {
 /// not run.
 #[tauri::command(async)]
 fn sdlc_start_change(
+    steps: State<'_, steps::StepTable>,
     folder: String,
     system: String,
     title: String,
@@ -971,6 +975,8 @@ fn sdlc_start_change(
             scope: &scope,
             branch: branch.as_deref(),
         },
+        &steps,
+        Path::new(&folder),
     )
 }
 
@@ -1038,6 +1044,7 @@ fn sdlc_check_scope(folder: String, scope: String) -> Result<Vec<String>, String
 #[tauri::command(async)]
 fn sdlc_rename_branch(
     control: State<'_, RunControl>,
+    steps: State<'_, steps::StepTable>,
     folder: String,
     workspace_id: String,
     system: String,
@@ -1052,7 +1059,12 @@ fn sdlc_rename_branch(
         .resolve(Path::new(&folder))
         .map_err(|e| e.to_string())?;
     let legacy = sdlc::pull_requests::legacy_entries(&workspace_id, &system, &change);
-    rename_change::rename_change(&program, &place, &system, &change, &to, &legacy)
+    let key = sdlc::holds::ChangeKey {
+        workspace: sdlc::holds::RepoKey::of(Path::new(&folder)),
+        system,
+        change,
+    };
+    rename_change::rename_change(&program, &place, &to, &legacy, &steps, &key)
 }
 
 /// The change a triage run started, named by the run's own record: the plugin's `change start` answer among its
@@ -1095,17 +1107,38 @@ fn change_home(
 /// Accept a document of a change: the status edit, the plugin's acceptance commit, then its `doc.accept` event.
 #[tauri::command(async)]
 fn sdlc_accept(
+    steps: State<'_, steps::StepTable>,
     change: build_host::ChangeRef,
     doc: sdlc::accept::ChangeDocument,
 ) -> Result<sdlc::accept::AcceptOutcome, String> {
     let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
-    let home = change_home(&program, &change)?;
+    accept_in(&steps, &program, &change, doc)
+}
+
+/// The accept step of `sdlc_accept`, with the program given.
+fn accept_in(
+    steps: &steps::StepTable,
+    program: &sdlc::ai_sdlc::Program,
+    change: &build_host::ChangeRef,
+    doc: sdlc::accept::ChangeDocument,
+) -> Result<sdlc::accept::AcceptOutcome, String> {
+    let step = steps
+        .begin(build_host::key_of(change), steps::StepKind::Accepting(doc))
+        .map_err(|_| start_change::STEP_BUSY.to_string())?;
+    let home = change_home(program, change)?;
+    let key = build_host::key_of(change);
+    let on_step: sdlc::done::StepSink = {
+        let steps = steps.clone();
+        Arc::new(move |progress| steps.report(&key, None, Some(progress)))
+    };
     Ok(sdlc::accept::apply(
-        &program,
+        program,
         &home.place,
         &change.system,
         &home.state,
         doc,
+        step.token(),
+        &on_step,
     ))
 }
 
@@ -1114,13 +1147,42 @@ fn sdlc_accept(
 #[tauri::command(async)]
 fn sdlc_reject(
     control: State<'_, RunControl>,
+    steps: State<'_, steps::StepTable>,
     change: build_host::ChangeRef,
 ) -> Result<sdlc::accept::RejectOutcome, String> {
     let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
-    let key = build_host::key_of(&change);
+    reject_in(&control, &steps, &program, &change)
+}
+
+/// The reject step of `sdlc_reject`, with the program given.
+fn reject_in(
+    control: &RunControl,
+    steps: &steps::StepTable,
+    program: &sdlc::ai_sdlc::Program,
+    change: &build_host::ChangeRef,
+) -> Result<sdlc::accept::RejectOutcome, String> {
+    let key = build_host::key_of(change);
+    // The track decides what the step says it rejects: a fix on the light track, else the intent.
+    let home = change_home(program, change);
+    let kind = match &home {
+        Ok(home) if home.state.track == sdlc::ai_sdlc::state::ChangeTrack::Fix => {
+            steps::StepKind::RejectingFix
+        }
+        _ => steps::StepKind::Rejecting(sdlc::accept::ChangeDocument::Intent),
+    };
+    let step = steps
+        .begin(key.clone(), kind)
+        .map_err(|_| start_change::STEP_BUSY.to_string())?;
     control.state.lock().unwrap().begin_rejecting(&key)?;
-    let outcome = change_home(&program, &change)
-        .map(|home| sdlc::accept::reject(&program, &home.place, &change.system, &home.state));
+    let outcome = home.map(|home| {
+        sdlc::accept::reject(
+            program,
+            &home.place,
+            &change.system,
+            &home.state,
+            step.token(),
+        )
+    });
     control.state.lock().unwrap().end_rejecting(&key);
     outcome
 }
@@ -1151,13 +1213,27 @@ fn sdlc_copy_branch(change: build_host::ChangeRef) -> Result<String, String> {
 #[tauri::command(async)]
 fn sdlc_remove_copy(
     control: State<'_, RunControl>,
+    steps: State<'_, steps::StepTable>,
     change: build_host::ChangeRef,
 ) -> Result<sdlc::copy_removal::RemoveOutcome, String> {
     let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
-    let key = build_host::key_of(&change);
+    remove_copy_in(&control, &steps, &program, &change)
+}
+
+/// The removal step of `sdlc_remove_copy`, with the program given.
+fn remove_copy_in(
+    control: &RunControl,
+    steps: &steps::StepTable,
+    program: &sdlc::ai_sdlc::Program,
+    change: &build_host::ChangeRef,
+) -> Result<sdlc::copy_removal::RemoveOutcome, String> {
+    let key = build_host::key_of(change);
+    let step = steps
+        .begin(key.clone(), steps::StepKind::RemovingCopy)
+        .map_err(|_| start_change::STEP_BUSY.to_string())?;
     control.state.lock().unwrap().begin_rejecting(&key)?;
-    let outcome = change_home(&program, &change)
-        .map(|home| sdlc::copy_removal::remove(&program, &home.place, &home.state));
+    let outcome = change_home(program, change)
+        .map(|home| sdlc::copy_removal::remove(program, &home.place, &home.state, step.token()));
     control.state.lock().unwrap().end_rejecting(&key);
     outcome
 }
@@ -1829,16 +1905,34 @@ fn sdlc_checks_view(
 }
 
 /// Declare a change done through the plugin: it verifies the change, pushes every touched repository and
-/// opens one pull request each, the master's last. Each step it reports goes out on `sdlc://done-step`. A
+/// opens one pull request each, the master's last. Each step it reports goes out on `sdlc://step`. A
 /// step the machine cannot run is the answer, not an error.
 #[tauri::command(async)]
-fn sdlc_declare_done(app: AppHandle, change: build_host::ChangeRef) -> sdlc::done::DeclareView {
-    let could_not_run = |message: String| sdlc::done::DeclareView::CouldNotRun { message };
+fn sdlc_declare_done(
+    steps: State<'_, steps::StepTable>,
+    change: build_host::ChangeRef,
+) -> sdlc::done::DeclareView {
     let program = match change_plugin_dir(&change.workspace) {
         Ok(dir) => sdlc::ai_sdlc::Program::locate(&dir),
-        Err(message) => return could_not_run(message),
+        Err(message) => return sdlc::done::DeclareView::CouldNotRun { message },
     };
-    let (place, state) = match change_home(&program, &change) {
+    let readiness = ai_sdlc_readiness(Some(&change.workspace));
+    declare_in(&steps, &program, &readiness, &change)
+}
+
+/// The declare step of `sdlc_declare_done`, with the program and the machine's readiness given.
+fn declare_in(
+    steps: &steps::StepTable,
+    program: &sdlc::ai_sdlc::Program,
+    readiness: &sdlc::plugin::Readiness,
+    change: &build_host::ChangeRef,
+) -> sdlc::done::DeclareView {
+    let could_not_run = |message: String| sdlc::done::DeclareView::CouldNotRun { message };
+    let key = build_host::key_of(change);
+    let Ok(step) = steps.begin(key.clone(), steps::StepKind::DeclaringDone) else {
+        return could_not_run(start_change::STEP_BUSY.to_string());
+    };
+    let (place, state) = match change_home(program, change) {
         Ok(home) => (home.place, home.state),
         Err(message) => return could_not_run(message),
     };
@@ -1847,16 +1941,17 @@ fn sdlc_declare_done(app: AppHandle, change: build_host::ChangeRef) -> sdlc::don
         master: std::path::PathBuf::from(&state.master),
         workspace: place.workspace,
     };
-    let readiness = ai_sdlc_readiness(Some(&change.workspace));
     sdlc::done::declare(
-        &program,
+        program,
         &at,
-        &readiness,
+        readiness,
         &change.system,
         &change.change,
-        Arc::new(move |step| {
-            let _ = app.emit(DONE_STEP_EVENT, step);
-        }),
+        {
+            let steps = steps.clone();
+            Arc::new(move |progress| steps.report(&key, None, Some(progress)))
+        },
+        step.token(),
     )
 }
 
@@ -1927,9 +2022,9 @@ fn cancel_by_id(control: &RunControl, id: u64) {
 }
 
 /// The close guard's wrapper: apply `on_close` to the live runs and the builds being started or
-/// launched. A confirm first stops the build host, so no change launches anything more, then cancels every
+/// launched. A confirm first stops the build host, so no change launches anything more, then stops every long step and cancels every
 /// run the table holds, as `cancel_run` does, including one a launch under way adds later; it waits up to
-/// ten seconds in total for the table to empty and the launches to settle, then destroys the window (a
+/// ten seconds in total for the table to empty, the launches to settle and the step table to empty, then destroys the window (a
 /// plain `close` would ask again). No lock is held across the wait.
 fn close_window(app: &AppHandle, answer: close_guard::CloseAnswer) {
     let host = app
@@ -1937,17 +2032,22 @@ fn close_window(app: &AppHandle, answer: close_guard::CloseAnswer) {
         .map(|h| h.inner().clone());
     let launching = host.as_ref().map(|h| h.launching()).unwrap_or_default();
     let live = app.state::<RunControl>().state.lock().unwrap().live();
-    match close_guard::on_close(&live, &launching, answer) {
+    let step_table = app.state::<steps::StepTable>().inner().clone();
+    let running_steps = step_table.running();
+    match close_guard::on_close(&live, &launching, &running_steps, answer) {
         close_guard::CloseOutcome::Close => destroy_main(app),
         ask @ close_guard::CloseOutcome::Ask { .. } => {
             let _ = app.emit(close_guard::CLOSE_ASKED_EVENT, ask);
         }
         close_guard::CloseOutcome::Stay => {}
-        close_guard::CloseOutcome::CancelThenClose { .. } => {
+        close_guard::CloseOutcome::CancelThenClose { steps: to_stop, .. } => {
             let app = app.clone();
             std::thread::spawn(move || {
                 if let Some(host) = &host {
                     host.stop_all();
+                }
+                for change in &to_stop {
+                    step_table.stop(change);
                 }
                 let control = app.state::<RunControl>();
                 let deadline = std::time::Instant::now()
@@ -1956,7 +2056,7 @@ fn close_window(app: &AppHandle, answer: close_guard::CloseAnswer) {
                 loop {
                     let live = control.state.lock().unwrap().live();
                     let launching = host.as_ref().map(|h| h.launching()).unwrap_or_default();
-                    if live.is_empty() && launching.is_empty() {
+                    if live.is_empty() && launching.is_empty() && step_table.running().is_empty() {
                         break;
                     }
                     for run in &live {
@@ -2253,12 +2353,22 @@ pub fn run() {
         .manage(Arc::new(history::RunHistory::default()))
         .manage(Arc::new(running::OpenedMarks::default()))
         .setup(|app| {
+            let handle = app.handle().clone();
+            let ended = app.handle().clone();
+            let step_table = steps::StepTable::new(Arc::new(move |event| {
+                let _ = handle.emit(steps::STEP_EVENT, event);
+            }))
+            .with_end(Arc::new(move |change| {
+                let _ = ended.emit(steps::STEP_END_EVENT, change);
+            }));
+            app.manage(step_table.clone());
             app.manage(build_host::BuildHost::new(
                 Arc::new(PluginTools),
                 Arc::new(AppLauncher {
                     app: app.handle().clone(),
                 }),
                 sdlc::store::workbench_dir().unwrap_or_default(),
+                step_table,
             ));
             // Open at the remembered zoom; a failure leaves the window at 100%.
             let saved = zoom::load();
@@ -2273,6 +2383,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            steps::sdlc_stop_step,
+            steps::sdlc_steps,
             catalog,
             app_versions,
             sdlc_current_workspace,
@@ -2617,13 +2729,13 @@ mod tests {
     fn ready_with(version: Option<&str>) -> Result<(), String> {
         let _guard = CLAUDE_ENV.lock().unwrap_or_else(|e| e.into_inner());
         let exe = std::env::current_exe().unwrap();
-        let fake = exe
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("fake-claude{}", std::env::consts::EXE_SUFFIX));
-        assert!(fake.exists(), "build fake-claude first: {}", fake.display());
+        let name = format!("fake-claude{}", std::env::consts::EXE_SUFFIX);
+        let fake = kata_core::find_upward(exe.parent().unwrap(), &name).unwrap_or_else(|| {
+            panic!(
+                "build fake-claude first (cargo build -p kata-core --bin fake-claude); none found above {}",
+                exe.display()
+            )
+        });
         std::env::set_var("KATA_CLAUDE_BIN", &fake);
         match version {
             Some(v) => std::env::set_var("KATA_FAKE_CLAUDE_VERSION", v),
@@ -3271,5 +3383,367 @@ name: build
             "{:?}",
             item.lock
         );
+    }
+}
+
+/// Every long-step command takes part in the step table: it begins a step of its kind, a stop ends the call
+/// with its stopped answer, and the entry is gone afterwards. The commands themselves are Tauri commands, so
+/// the tests call the functions they delegate to, with a program whose one long call waits to be stopped.
+#[cfg(test)]
+mod steps_commands {
+    use super::*;
+    use crate::steps::{StepEvent, StepKind, StepTable};
+    use sdlc::accept::{AcceptOutcome, ChangeDocument, RejectOutcome};
+    use sdlc::ai_sdlc::{Place, Program};
+    use sdlc::copy_removal::RemoveOutcome;
+    use sdlc::done::DeclareView;
+    use sdlc::plugin::{GhPresence, Plugin, Readiness};
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::time::Duration;
+
+    const SYSTEM: &str = "demo";
+    const CHANGE: &str = "2026-11-01-password-reset";
+    const MARKER: &str = r#"{"version":1,"systems":{"demo":{"repos":["app"]}}}"#;
+
+    fn real_program() -> Program {
+        Program {
+            node: "node".into(),
+            entry: Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../crates/kata-sdlc/tests/ai-sdlc-tools/ai-sdlc.ts"),
+        }
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    }
+
+    /// A workspace with a master, a product repository and a change the plugin started in its own copy, with
+    /// an intent in it.
+    struct Fx {
+        _dir: tempfile::TempDir,
+        change: build_host::ChangeRef,
+    }
+
+    fn fixture() -> Fx {
+        fixture_with("")
+    }
+
+    /// The fixture's change, with `extra` lines in its intent's front matter (`track: fix` for the light track).
+    fn fixture_with(extra: &str) -> Fx {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_path_buf();
+        for name in ["ai-sdlc", "app"] {
+            let repo = ws.join(name);
+            std::fs::create_dir_all(&repo).unwrap();
+            git(&repo, &["init", "-q", "-b", "main"]);
+            git(&repo, &["config", "user.name", "Test"]);
+            git(&repo, &["config", "user.email", "test@example.com"]);
+            git(&repo, &["config", "commit.gpgsign", "false"]);
+        }
+        let master = ws.join("ai-sdlc");
+        std::fs::write(master.join(".ai-sdlc.json"), MARKER).unwrap();
+        git(&master, &["add", "."]);
+        git(&master, &["commit", "-q", "-m", "marker"]);
+        std::fs::write(ws.join("app").join("a.txt"), "a").unwrap();
+        git(&ws.join("app"), &["add", "."]);
+        git(&ws.join("app"), &["commit", "-q", "-m", "init"]);
+        let place = Place {
+            master,
+            workspace: ws.clone(),
+        };
+        let no_steps = StepTable::new(Arc::new(|_| {}));
+        let started = start_change::start_change(
+            &real_program(),
+            &place,
+            "2026-11-01",
+            &start_change::StartRequest {
+                system: SYSTEM,
+                title: "Password reset",
+                work_type: "feat",
+                scope: "X-1",
+                branch: None,
+            },
+            &no_steps,
+            &ws,
+        )
+        .unwrap();
+        let start_change::ChangeStart::Started { copy, .. } = started else {
+            panic!("{started:?}");
+        };
+        let copy = PathBuf::from(copy);
+        let folder = copy.join("intent").join(SYSTEM).join(CHANGE);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("intent.md"),
+            format!("---\ntitle: Reset\nsystem: demo\nauthor: t\ndate: 2026-11-01\nstatus: draft\nscope: demo\n{extra}---\n\n# Intent: Reset\n"),
+        )
+        .unwrap();
+        // Rejecting is refused while the intent has uncommitted changes.
+        git(&copy, &["add", "."]);
+        git(&copy, &["commit", "-q", "-m", "intent"]);
+        Fx {
+            _dir: dir,
+            change: build_host::ChangeRef {
+                workspace: ws.display().to_string(),
+                system: SYSTEM.into(),
+                change: CHANGE.into(),
+            },
+        }
+    }
+
+    /// The real program for every call except the one `trigger` (a JS condition on `args`) names: that call
+    /// writes a marker and waits to be stopped, and ends itself after 60 s so a red test fails, not hangs.
+    fn stopping_program(dir: &Path, trigger: &str) -> (Program, PathBuf) {
+        let marker = dir.join("stopping.marker");
+        let real = real_program().entry;
+        let script = format!(
+            "import {{ spawnSync }} from 'node:child_process';
+import {{ writeFileSync }} from 'node:fs';
+const args = process.argv.slice(2);
+if ({trigger}) {{
+  if (args.includes('--stream')) console.log(JSON.stringify({{ type: 'hook-start', id: 'docs-lint' }}));
+  writeFileSync({marker:?}, 'x');
+  setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3); }}, 60000);
+}} else {{
+  const r = spawnSync(process.execPath, [{real:?}, ...args], {{ stdio: 'inherit' }});
+  process.exit(r.status ?? 2);
+}}
+",
+            marker = marker.display().to_string(),
+            real = real.display().to_string(),
+        );
+        let entry = dir.join("fake-ai-sdlc.mjs");
+        std::fs::write(&entry, script).unwrap();
+        (
+            Program {
+                node: "node".into(),
+                entry,
+            },
+            marker,
+        )
+    }
+
+    fn capturing_steps() -> (StepTable, Arc<Mutex<Vec<StepEvent>>>) {
+        let seen: Arc<Mutex<Vec<StepEvent>>> = Arc::default();
+        let sink = seen.clone();
+        (
+            StepTable::new(Arc::new(move |e| sink.lock().unwrap().push(e))),
+            seen,
+        )
+    }
+
+    fn ready() -> Readiness {
+        Readiness::Ready {
+            plugin: Plugin {
+                dir: PathBuf::new(),
+                version: "1.1.0".into(),
+                layouts: vec![2],
+            },
+            gh: GhPresence::Present,
+        }
+    }
+
+    /// Runs `call` with the step table and the fake; once the fake's long call is reached the change's step is
+    /// stopped through the table, as the page's Stop does. Returns the call's answer, whether the stop found
+    /// a step, and the table.
+    fn stopped_during<T>(
+        fx: &Fx,
+        trigger: &str,
+        call: impl FnOnce(&StepTable, &Program, &Arc<Mutex<Vec<StepEvent>>>) -> T,
+    ) -> (T, bool, StepTable) {
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, marker) = stopping_program(dir.path(), trigger);
+        let (steps, seen) = capturing_steps();
+        let key = build_host::key_of(&fx.change);
+        let watcher = {
+            let steps = steps.clone();
+            std::thread::spawn(move || {
+                for _ in 0..1200 {
+                    if marker.exists() {
+                        return steps.stop(&key);
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                false
+            })
+        };
+        let answer = call(&steps, &fake, &seen);
+        (answer, watcher.join().unwrap(), steps)
+    }
+
+    #[test]
+    fn a_stop_gives_the_stopped_outcome_and_leaves_no_entry() {
+        let commit = "args[0] === 'commit'";
+        let remove = "args[0] === 'change' && args[1] === 'remove'";
+        let done = "args[0] === 'run' && args[1] === 'change.done'";
+
+        let fx = fixture();
+        let (outcome, stopped, steps) = stopped_during(&fx, commit, |steps, fake, _| {
+            accept_in(steps, fake, &fx.change, ChangeDocument::Intent).unwrap()
+        });
+        assert!(stopped, "accept: the step was not in the table");
+        assert!(
+            matches!(outcome, AcceptOutcome::Stopped { .. }),
+            "{outcome:?}"
+        );
+        assert!(steps.running().is_empty(), "accept");
+
+        let fx = fixture();
+        let control = RunControl::default();
+        let (outcome, stopped, steps) = stopped_during(&fx, commit, |steps, fake, _| {
+            reject_in(&control, steps, fake, &fx.change).unwrap()
+        });
+        assert!(
+            stopped,
+            "reject: the step was not in the table: {outcome:?}"
+        );
+        assert!(
+            matches!(outcome, RejectOutcome::Stopped { .. }),
+            "{outcome:?}"
+        );
+        assert!(steps.running().is_empty(), "reject");
+
+        let fx = fixture();
+        let control = RunControl::default();
+        let (outcome, stopped, steps) = stopped_during(&fx, remove, |steps, fake, _| {
+            remove_copy_in(&control, steps, fake, &fx.change).unwrap()
+        });
+        assert!(stopped, "remove: the step was not in the table");
+        assert!(
+            matches!(outcome, RemoveOutcome::Stopped { .. }),
+            "{outcome:?}"
+        );
+        assert!(steps.running().is_empty(), "remove");
+
+        let fx = fixture();
+        let (view, stopped, steps) = stopped_during(&fx, done, |steps, fake, seen| {
+            let view = declare_in(steps, fake, &ready(), &fx.change);
+            // Declare done reports through the step table, under its own kind.
+            let seen = seen.lock().unwrap();
+            assert!(
+                seen.iter().any(|e| e.kind == StepKind::DeclaringDone),
+                "{seen:?}"
+            );
+            view
+        });
+        assert!(stopped, "declare: the step was not in the table");
+        assert!(matches!(view, DeclareView::Stopped { .. }), "{view:?}");
+        assert!(steps.running().is_empty(), "declare");
+    }
+
+    /// The words the close question uses for the step while the reject call waits on its commit.
+    fn rejecting_words(extra: &str) -> String {
+        let fx = fixture_with(extra);
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, marker) = stopping_program(dir.path(), "args[0] === 'commit'");
+        let (steps, _) = capturing_steps();
+        let key = build_host::key_of(&fx.change);
+        let watcher = {
+            let steps = steps.clone();
+            std::thread::spawn(move || {
+                for _ in 0..1200 {
+                    if marker.exists() {
+                        let doing = steps.running().first().map(|s| s.doing.clone());
+                        steps.stop(&key);
+                        return doing.unwrap_or_default();
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                String::new()
+            })
+        };
+        let control = RunControl::default();
+        reject_in(&control, &steps, &fake, &fx.change).unwrap();
+        watcher.join().unwrap()
+    }
+
+    /// Rejecting a fix names the fix, not the intent, in the step's words; the full track keeps "intent".
+    #[test]
+    fn the_rejecting_step_names_what_is_rejected() {
+        assert_eq!(rejecting_words("track: fix\n"), "rejecting its fix");
+        assert_eq!(rejecting_words(""), "rejecting its intent");
+    }
+
+    /// R15.1 "accepts the spec | running a check after acceptance": the step table's label for the accepting
+    /// step names the check the plugin reports, replacing the generic first label.
+    #[test]
+    fn the_accepting_step_names_the_check_the_plugin_reports() {
+        let fx = fixture();
+        let accept = "args[0] === 'run' && args[1] === 'doc.accept'";
+        let (_, stopped, steps) = stopped_during(&fx, accept, |steps, fake, seen| {
+            let outcome = accept_in(steps, fake, &fx.change, ChangeDocument::Intent).unwrap();
+            let seen = seen.lock().unwrap();
+            assert!(
+                seen.iter()
+                    .any(|e| e.kind == StepKind::Accepting(ChangeDocument::Intent)
+                        && e.progress.check.as_deref() == Some("docs-lint")),
+                "{seen:?}"
+            );
+            // The line names the step and the check, not the check alone.
+            assert!(
+                seen.iter()
+                    .any(|e| e.progress.label == "Accepting the intent: running docs-lint"),
+                "{seen:?}"
+            );
+            outcome
+        });
+        assert!(stopped, "the step was not in the table");
+        assert!(steps.running().is_empty());
+    }
+
+    /// Declaring done says the step first, then names the check the plugin reports under the step's words.
+    #[test]
+    fn the_declaring_step_names_itself_and_the_check_the_plugin_reports() {
+        let fx = fixture();
+        let done = "args[0] === 'run' && args[1] === 'change.done'";
+        let (_, stopped, _) = stopped_during(&fx, done, |steps, fake, seen| {
+            let view = declare_in(steps, fake, &ready(), &fx.change);
+            let labels: Vec<String> = seen
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|e| e.progress.label.clone())
+                .collect();
+            assert_eq!(
+                labels,
+                [
+                    "Declaring the change done",
+                    "Declaring the change done: running docs-lint"
+                ]
+            );
+            view
+        });
+        assert!(stopped, "the step was not in the table");
+    }
+
+    /// A change that already has a long step is refused by every command, and the program is not asked.
+    #[test]
+    fn a_busy_change_is_refused_by_every_command() {
+        let fx = fixture();
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, marker) = stopping_program(
+            dir.path(),
+            "args[0] === 'commit' || args[0] === 'change' || args[0] === 'run'",
+        );
+        let (steps, _) = capturing_steps();
+        let _running = steps
+            .begin(build_host::key_of(&fx.change), StepKind::Starting)
+            .unwrap();
+        let control = RunControl::default();
+        assert!(accept_in(&steps, &fake, &fx.change, ChangeDocument::Intent).is_err());
+        assert!(reject_in(&control, &steps, &fake, &fx.change).is_err());
+        assert!(remove_copy_in(&control, &steps, &fake, &fx.change).is_err());
+        assert!(matches!(
+            declare_in(&steps, &fake, &ready(), &fx.change),
+            DeclareView::CouldNotRun { .. }
+        ));
+        assert!(!marker.exists(), "the program was asked");
     }
 }

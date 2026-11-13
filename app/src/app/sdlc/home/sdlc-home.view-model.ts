@@ -28,6 +28,9 @@ import { VersionsStore } from '../../core/versions/versions.store';
 import { defaultWorkType, namingRefusal, orderedWorkTypes, type WorkType } from '../../lib/sdlc-naming';
 import { inTauri } from '../../lib/mock';
 import type { ProgressStepId } from '../../lib/progress-steps';
+import { HOME_STEPS, isStep, removalStopped, startStopped, stepOf, stepRef, stopWords, type ChangeStep, type StepView } from '../../lib/sdlc-steps';
+import { StepStore } from '../../core/step/step.store';
+import type { ChangeRef } from '@bindings/ChangeRef';
 import { shownChangeList } from '../../lib/doc-notice';
 import { hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
 import { DEMO_SETUP_FOLDER, DEMO_START_IDEA, DEMO_START_SYSTEM } from '../../lib/demo';
@@ -85,6 +88,7 @@ export class SdlcHomeViewModel {
   private readonly toasts = inject(ToastStore);
   private readonly router = inject(Router);
   private readonly progress = inject(ProgressStore);
+  private readonly steps = inject(StepStore);
   private readonly versions = inject(VersionsStore);
 
   // --- workspaces
@@ -393,6 +397,8 @@ export class SdlcHomeViewModel {
 
   /** `demo` is the `?demo=` query value: `sdlc-setup` opens the add-workspace flow on a folder that needs setup, and `start` triages a described change with a scripted run. Browser only. `context` is the `?context=` query value, a repo the context screen handed over to run or refresh its context. */
   async init(demo: string | null = null, context: string | null = null): Promise<void> {
+    // Seed the running steps from the backend and follow them, so a start or a removal left running when the engineer left this page shows.
+    void this.steps.follow().then(() => this.leftRunning.set(new Set(this.steps.running().map((s) => `${s.change.system}/${s.change.change}`))));
     try {
       await this.modes.load();
     } catch (e) {
@@ -603,6 +609,7 @@ export class SdlcHomeViewModel {
     const picked: PickedNaming | null = answer?.kind === 'setting' ? { workType: this.workType(), scope: this.scope().trim() } : null;
     this.newChangeOpen.set(false);
     this.triageNotice.set(null);
+    this.stepStopped.set(null);
     this.branchProblems.set([]);
     const workspace = this.current();
     const scan = this.scan();
@@ -615,9 +622,12 @@ export class SdlcHomeViewModel {
       const target = { workspace, master };
       const confirm = (spec: RunSpec) => this.confirm(spec);
       const more: [PickedNaming?, string?] = branch ? [picked ?? undefined, branch] : picked ? [picked] : [];
-      const outcome = await this.runner.newChange(target, system, idea, track, confirm, ...more);
+      const run = () => this.runner.newChange(target, system, idea, track, confirm, ...more);
+      // The start is a step of the change the form names; the triage of the light track makes its change later, in a run.
+      const outcome = track === 'full' ? await this.inStep(this.transport.sdlcChangeName(idea).then((change) => ({ workspace: workspace.folder, system, change })), run) : await run();
       if (outcome.kind === 'none' && track === 'decide') this.triageNotice.set({ idea: outcome.idea, runId: outcome.runId });
       if (outcome.kind === 'retry') this.askAgain(system, idea, track, outcome);
+      if (outcome.kind === 'startStopped') this.stepStopped.set(startStopped(outcome.answer));
     } catch (e) {
       this.toasts.error(`Could not start the change: ${message(e)}`);
     }
@@ -703,6 +713,73 @@ export class SdlcHomeViewModel {
     this.runner.closeLeftovers();
   }
 
+  // --- long steps: the label the backend reports and Stop
+  /** How the last stopped start or removal is worded; null while there is none. */
+  readonly stepStopped = signal<string | null>(null);
+
+  /** The change whose step this page started and waits for: null before its name is known and after the step is over. */
+  private readonly ownRef = signal<ChangeRef | null>(null);
+  /** The steps (system and change) that were already running when this page opened: the ones the engineer left running. */
+  private readonly leftRunning = signal<ReadonlySet<string>>(new Set());
+  /** A start or a removal this page runs is on its way; until its change is named, no other step is shown in its place. */
+  private readonly ownPending = signal(false);
+
+  /**
+   * The backend's running step this page shows, with the call that stops it: the page's own change while it runs one, else a start or a
+   * removal that was already running for a system of this workspace when the page opened (one the engineer left the page during). Null while none runs.
+   */
+  private readonly shownStep = computed<{ step: ChangeStep; ref: ChangeRef } | null>(() => {
+    const workspace = this.current();
+    if (workspace === null) return null;
+    const own = this.ownRef();
+    if (own !== null) {
+      const step = stepOf(this.steps.running(), own, HOME_STEPS);
+      return step === null ? null : { step, ref: stepRef(step, workspace.folder) };
+    }
+    if (this.ownPending()) return null;
+    const systems = this.systems();
+    const step = this.steps.running().find((s) => systems.includes(s.change.system) && this.leftRunning().has(`${s.change.system}/${s.change.change}`) && HOME_STEPS.some((w) => isStep(s.kind, w))) ?? null;
+    return step === null ? null : { step, ref: stepRef(step, workspace.folder) };
+  });
+
+  /** The long step of a change that runs from this page now or was left running (a start, a removal); null while none does. */
+  readonly step = computed<StepView | null>(() => {
+    const shown = this.shownStep();
+    return shown === null ? null : { label: shown.step.label, stop: stopWords(shown.step.kind) };
+  });
+
+  /** Stop the step the page shows: the step's own change. */
+  async stopStep(): Promise<void> {
+    const shown = this.shownStep();
+    if (shown === null) return;
+    try {
+      await this.transport.stopStep(shown.ref);
+    } catch (e) {
+      this.toasts.error(`Could not stop the step: ${message(e)}`);
+    }
+  }
+
+  /**
+   * Run a long step of the change `ref` names. What the page shows of it is the backend's step of that change, which the page follows through
+   * the step store. `ref` may still be on its way (the name of a change about to start comes from the backend): until it is known nothing is shown.
+   */
+  private async inStep<T>(ref: ChangeRef | Promise<ChangeRef>, call: () => Promise<T>): Promise<T> {
+    this.ownRef.set(null);
+    this.ownPending.set(true);
+    void Promise.resolve(ref).then(
+      (named) => this.ownRef.set(named),
+      () => undefined,
+    );
+    try {
+      return await call();
+    } finally {
+      const own = this.ownRef();
+      if (own !== null) this.steps.ended(own);
+      this.ownRef.set(null);
+      this.ownPending.set(false);
+    }
+  }
+
   // --- removing a merged change's copy
 
   /** The change the engineer is being asked about, or null. */
@@ -714,16 +791,21 @@ export class SdlcHomeViewModel {
   declineRemoveCopy(): void {
     this.removeAsked.set(null);
   }
-  /** The engineer confirmed. The change page's removal runs; every outcome is a toast, then the home reads again. */
+  /** The engineer confirmed. The change page's removal runs; every outcome is a toast but a stopped one, which is a note, then the home reads again. */
   async confirmRemoveCopy(): Promise<void> {
     const change = this.removeAsked();
     this.removeAsked.set(null);
+    this.stepStopped.set(null);
     const workspace = this.current()?.folder;
     const system = this.rows().find((r) => r.change === change)?.system;
     if (change === null || !workspace || !system) return;
     try {
-      const out = await this.transport.sdlcRemoveCopy({ workspace, system, change });
+      const ref = { workspace, system, change };
+      const out = await this.inStep(ref, () => this.transport.sdlcRemoveCopy(ref));
       switch (out.outcome) {
+        case 'stopped':
+          this.stepStopped.set(removalStopped(out.kept));
+          break;
         case 'removed':
           this.toasts.info('The copy is removed. The change branch and its commits stay in the master repository.');
           break;

@@ -5,4 +5,4 @@ import type { StartRefusal } from "./StartRefusal";
 /**
  * What starting a change came to.
  */
-export type ChangeStart = { "outcome": "started", change: string, branch: string, copy: string, } | { "outcome": "refused", kind: StartRefusal, problems: Array<string>, } | { "outcome": "failed", problems: Array<string>, hook: HookFailure | null, made: Array<string>, } | { "outcome": "couldNotRun", reason: string, hook: HookFailure | null, };
+export type ChangeStart = { "outcome": "started", change: string, branch: string, copy: string, } | { "outcome": "refused", kind: StartRefusal, problems: Array<string>, } | { "outcome": "failed", problems: Array<string>, hook: HookFailure | null, made: Array<string>, } | { "outcome": "couldNotRun", reason: string, hook: HookFailure | null, } | { "outcome": "stopped", answer: Array<string>, };

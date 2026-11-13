@@ -1,41 +1,16 @@
 //! Declaring a change done is the plugin's step: `run change.done` verifies the change, pushes every
 //! touched repository, opens one pull request each (the master's last) and records them in the change.
 //! Kata runs it, relays its progress and shows its answer; it adds no check of its own.
-use crate::ai_sdlc::{Answer, Place, Program, StepOutcome};
+use crate::ai_sdlc::{progress_of, Answer, Place, Program, StepOutcome, StepProgress};
 use crate::plugin::{GhPresence, Readiness};
-use crate::pull_requests::{PullRequestSource, RecordedPullRequest};
-use kata_core::proc::LineSink;
+use crate::pull_requests::{recorded, PullRequestSource, RecordedPullRequest};
+use kata_core::proc::{CancelToken, LineSink};
 use serde::Serialize;
 use serde_json::Value;
-use std::sync::Arc;
-
-/// What a progress line is about.
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
-pub enum DoneStepKind {
-    /// The plugin is verifying the change.
-    Verifying,
-    /// A team hook is running or has ended.
-    Hook,
-    /// A repository is being pushed.
-    Push,
-    /// A pull request is being opened.
-    PullRequest,
-}
-
-/// A progress line: what the plugin is doing, named for the engineer.
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
-pub struct DoneStep {
-    pub kind: DoneStepKind,
-    pub label: String,
-}
+use std::sync::{Arc, Mutex};
 
 /// Where each progress line goes.
-pub type StepSink = Arc<dyn Fn(DoneStep) + Send + Sync>;
+pub type StepSink = Arc<dyn Fn(StepProgress) + Send + Sync>;
 
 /// What declaring a change done came to.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -63,6 +38,10 @@ pub enum DeclareView {
     },
     /// This machine could not run the step; nothing is claimed as pushed.
     CouldNotRun { message: String },
+    /// The engineer stopped it; the pull requests the stream reported as opened before the stop stay open.
+    Stopped {
+        pull_requests: Vec<RecordedPullRequest>,
+    },
 }
 
 /// The refusal when `gh` is not installed.
@@ -117,6 +96,9 @@ pub fn outcome(answer: &Answer) -> DeclareView {
                 _ => reason.clone(),
             },
         },
+        StepOutcome::Stopped => DeclareView::Stopped {
+            pull_requests: vec![],
+        },
     }
 }
 
@@ -139,34 +121,6 @@ fn pull_requests(event: &Value) -> Vec<RecordedPullRequest> {
         .unwrap_or_default()
 }
 
-/// The progress line a `--stream` line stands for, if it stands for a step: a team hook starting or ending,
-/// a repository being pushed, a pull request being opened.
-pub fn step_of(line: &str) -> Option<DoneStep> {
-    let line: Value = serde_json::from_str(line).ok()?;
-    let text = |key: &str| line[key].as_str();
-    let (kind, label) = match text("type")? {
-        "hook-start" => (
-            DoneStepKind::Hook,
-            format!(
-                "Running the team's hook {} ({})",
-                text("id")?,
-                text("when")?
-            ),
-        ),
-        "hook-end" => (
-            DoneStepKind::Hook,
-            format!("The team's hook {} {}", text("id")?, text("outcome")?),
-        ),
-        "push" => (DoneStepKind::Push, format!("Pushing {}", text("repo")?)),
-        "pull-request" => (
-            DoneStepKind::PullRequest,
-            format!("Opening a pull request in {}", text("repo")?),
-        ),
-        _ => return None,
-    };
-    Some(DoneStep { kind, label })
-}
-
 /// Declares the change done where the plugin has it (`place`), relaying progress to `on_step`.
 ///
 /// | # | readiness | result |
@@ -183,6 +137,7 @@ pub fn declare(
     system: &str,
     change: &str,
     on_step: StepSink,
+    cancel: &CancelToken,
 ) -> DeclareView {
     match readiness {
         Readiness::Blocked { message, .. } => {
@@ -200,14 +155,15 @@ pub fn declare(
         }
         Readiness::Ready { .. } => {}
     }
-    on_step(DoneStep {
-        kind: DoneStepKind::Verifying,
-        label: "Declaring done: the plugin is verifying the change".to_string(),
-    });
+    let opened: Arc<Mutex<Vec<RecordedPullRequest>>> = Arc::default();
     let relay: LineSink = {
         let on_step = Arc::clone(&on_step);
+        let opened = Arc::clone(&opened);
         Arc::new(move |line: &str| {
-            if let Some(step) = step_of(line) {
+            if let Some(pr) = opened_pull_request(line) {
+                opened.lock().unwrap().push(pr);
+            }
+            if let Some(step) = progress_of(line) {
                 on_step(step);
             }
         })
@@ -222,7 +178,37 @@ pub fn declare(
         "--change",
         change,
     ];
-    outcome(&program.step_streaming(&command, place, relay))
+    let answer = program.step_long(&command, place, cancel, Some(relay));
+    if answer.outcome == StepOutcome::Stopped {
+        // The plugin's record in `change.yml` is the truth about what was opened; the stream (which the real
+        // plugin prints no pull request lines on) is the fallback when the record cannot be read or is empty.
+        let from_record = program
+            .change_show(place, change, false)
+            .map(|show| recorded(&show, &[]))
+            .unwrap_or_default();
+        let pull_requests = if from_record.is_empty() {
+            opened.lock().unwrap().clone()
+        } else {
+            from_record
+        };
+        return DeclareView::Stopped { pull_requests };
+    }
+    outcome(&answer)
+}
+
+/// The pull request a `pull-request` stream line reports as opened: only a line that carries the pull
+/// request's `url` and `number` does, since those are what the page links to.
+fn opened_pull_request(line: &str) -> Option<RecordedPullRequest> {
+    let line: Value = serde_json::from_str(line).ok()?;
+    if line["type"].as_str()? != "pull-request" {
+        return None;
+    }
+    Some(RecordedPullRequest {
+        repo: line["repo"].as_str()?.to_string(),
+        url: line["url"].as_str()?.to_string(),
+        number: line["number"].as_u64()?,
+        source: PullRequestSource::Plugin,
+    })
 }
 
 #[cfg(test)]
@@ -398,6 +384,7 @@ mod tests {
             "demo",
             CHANGE,
             Arc::new(|_| {}),
+            &CancelToken::new(),
         );
         assert_eq!(
             view,
@@ -432,6 +419,7 @@ mod tests {
             "demo",
             CHANGE,
             Arc::new(|_| {}),
+            &CancelToken::new(),
         );
         assert_eq!(
             view,
@@ -472,7 +460,7 @@ say({ type: 'outcome', outcome: 'passed', problems: [], hooks: [], failed: null,
         let sink = {
             let steps = Arc::clone(&steps);
             let seen = dir.path().join("seen");
-            Arc::new(move |step: DoneStep| {
+            Arc::new(move |step: StepProgress| {
                 steps.lock().unwrap().push(step.label);
                 std::fs::write(&seen, "x").unwrap();
             })
@@ -484,13 +472,13 @@ say({ type: 'outcome', outcome: 'passed', problems: [], hooks: [], failed: null,
             "demo",
             CHANGE,
             sink,
+            &CancelToken::new(),
         );
         assert_eq!(
             *steps.lock().unwrap(),
             [
-                "Declaring done: the plugin is verifying the change",
-                "Running the team's hook audit (before)",
-                "The team's hook audit passed",
+                "Running audit",
+                "audit passed",
                 "Pushing app",
                 "Opening a pull request in app",
                 "Pushing master",
@@ -500,12 +488,90 @@ say({ type: 'outcome', outcome: 'passed', problems: [], hooks: [], failed: null,
         assert!(matches!(view, DeclareView::Done { .. }), "{view:?}");
     }
 
-    /// Whatever else the program prints is not a step.
+    /// R16.1: the engineer stops declaring done after one pull request was reported open: the answer is
+    /// Stopped, and it names that pull request.
     #[test]
-    fn only_steps_are_progress_lines() {
-        assert_eq!(step_of("not json"), None);
-        assert_eq!(step_of(r#"{"type":"outcome","outcome":"passed"}"#), None);
-        assert_eq!(step_of(r#"{"type":"something-new"}"#), None);
+    fn stopped_outcomes() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = r#"const fs = require('fs');
+const say = (o) => fs.writeSync(1, JSON.stringify(o) + '\n');
+if (process.argv[2] === 'change') process.exit(2);
+say({ type: 'push', repo: 'app' });
+say({ type: 'pull-request', repo: 'app', url: 'https://github.com/example/app/pull/1', number: 1 });
+say({ type: 'push', repo: 'master' });
+setTimeout(() => {}, 60000);
+"#;
+        let program = scripted(dir.path(), body);
+        let token = CancelToken::new();
+        let sink = {
+            let token = token.clone();
+            Arc::new(move |step: StepProgress| {
+                if step.label == "Pushing master" {
+                    token.cancel();
+                }
+            })
+        };
+        let started = std::time::Instant::now();
+        let view = declare(
+            &program,
+            &here(),
+            &ready(GhPresence::Present),
+            "demo",
+            CHANGE,
+            sink,
+            &token,
+        );
+        assert_eq!(
+            view,
+            DeclareView::Stopped {
+                pull_requests: vec![pr("app", 1)]
+            }
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(30));
+    }
+
+    /// R17.1: the stream of the real plugin prints no pull request lines, so a stop after a pull request was
+    /// opened names it from the plugin's own record in `change.yml`, not from the stream.
+    #[test]
+    fn a_stop_names_the_pull_request_the_record_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = r#"const fs = require('fs');
+const say = (o) => fs.writeSync(1, JSON.stringify(o) + '\n');
+const a = process.argv.slice(2);
+if (a[0] === 'change' && a[1] === 'show') {
+  say({ change: 'c', system: 'demo', branch: 'change/c', repos: {},
+    record: { branch: 'change/c', type: 'feat', scope: 'demo', base: 'main',
+      pullRequests: [{ repo: 'app', url: 'https://github.com/example/app/pull/1', number: 1, pushed: 'abc' }] } });
+} else {
+  say({ type: 'push', repo: 'master' });
+  setTimeout(() => { console.error('the fake was never stopped'); process.exit(3); }, 60000);
+}
+"#;
+        let program = scripted(dir.path(), body);
+        let token = CancelToken::new();
+        let sink = {
+            let token = token.clone();
+            Arc::new(move |step: StepProgress| {
+                if step.label == "Pushing master" {
+                    token.cancel();
+                }
+            })
+        };
+        let view = declare(
+            &program,
+            &here(),
+            &ready(GhPresence::Present),
+            "demo",
+            CHANGE,
+            sink,
+            &token,
+        );
+        assert_eq!(
+            view,
+            DeclareView::Stopped {
+                pull_requests: vec![pr("app", 1)]
+            }
+        );
     }
 
     /// The fake `gh`: a copy of Node.js named `gh`, which a preloaded script turns into a GitHub that keeps its
@@ -706,6 +772,7 @@ say({ type: 'outcome', outcome: 'passed', problems: [], hooks: [], failed: null,
                 "demo",
                 CHANGE,
                 Arc::new(|_| {}),
+                &CancelToken::new(),
             )
         }
 
@@ -812,6 +879,7 @@ say({ type: 'outcome', outcome: 'passed', problems: [], hooks: [], failed: null,
             "demo",
             CHANGE,
             sink(),
+            &CancelToken::new(),
         ) else {
             panic!("expected could-not-run")
         };
@@ -827,6 +895,7 @@ say({ type: 'outcome', outcome: 'passed', problems: [], hooks: [], failed: null,
             "demo",
             CHANGE,
             sink(),
+            &CancelToken::new(),
         );
         assert!(matches!(view, DeclareView::CouldNotRun { .. }), "{view:?}");
         // The program is not asked at all when the mode cannot run.
@@ -835,7 +904,15 @@ say({ type: 'outcome', outcome: 'passed', problems: [], hooks: [], failed: null,
             message: "The AI-SDLC mode needs git.".into(),
         };
         assert_eq!(
-            declare(&program(), &here(), &blocked, "demo", CHANGE, sink()),
+            declare(
+                &program(),
+                &here(),
+                &blocked,
+                "demo",
+                CHANGE,
+                sink(),
+                &CancelToken::new()
+            ),
             DeclareView::CouldNotRun {
                 message: "The AI-SDLC mode needs git.".into()
             }
@@ -898,6 +975,7 @@ say({ type: 'outcome', outcome: 'passed', problems: [], hooks: [], failed: null,
             "demo",
             CHANGE,
             Arc::new(|_| {}),
+            &CancelToken::new(),
         );
         assert_eq!(
             view,

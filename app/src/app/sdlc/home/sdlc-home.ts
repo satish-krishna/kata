@@ -1,7 +1,7 @@
 import { Component, inject } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideFolderPlus, lucidePlus } from '@ng-icons/lucide';
+import { lucideFolderPlus, lucidePlus, lucideSquare } from '@ng-icons/lucide';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { AddWorkspaceDialog } from '../../ui/add-workspace-dialog';
 import { ChangesTable } from '../../ui/changes-table';
@@ -16,6 +16,7 @@ import { InstructionsRow } from '../../ui/instructions-row';
 import { ReposTable } from '../../ui/repos-table';
 import { SdlcSettingsDialog } from '../../ui/sdlc-settings-dialog';
 import { ProgressLine } from '../../ui/progress-line';
+import { StoppedNote } from '../../ui/stopped-note';
 import { SdlcToolbar } from '../../ui/sdlc-toolbar';
 import { RunningChanges } from '../running-changes';
 import { RunPreviewDialog } from '../../ui/run-preview-dialog';
@@ -24,7 +25,7 @@ import { SdlcHomeViewModel } from './sdlc-home.view-model';
 
 @Component({
   selector: 'app-sdlc-home',
-  providers: [SdlcHomeViewModel, RunPreviewViewModel, provideIcons({ lucideFolderPlus, lucidePlus })],
+  providers: [SdlcHomeViewModel, RunPreviewViewModel, provideIcons({ lucideFolderPlus, lucidePlus, lucideSquare })],
   imports: [
     NgIcon,
     HlmButtonImports,
@@ -35,6 +36,7 @@ import { SdlcHomeViewModel } from './sdlc-home.view-model';
     FinishedChanges,
     Segmented,
     ProgressLine,
+    StoppedNote,
     InstructionsRow,
     ReposTable,
     AddWorkspaceDialog,
