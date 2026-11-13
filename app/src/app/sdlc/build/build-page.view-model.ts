@@ -37,7 +37,8 @@ import { RunLandingStore } from '../../core/run/run-landing.store';
 import { pendingKind, type AskRecord, type MessageRecord, type MessageRefusal, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
 import { activityFor, linksOfFollowedRuns, outcomeOf, recordOutcome, repoSessions, sessionsFor, tabOf, type Chosen, type LiveRun, type Pick, type SessionRef, type SessionTab } from '../../lib/build-sessions';
 import { sameChange } from '../../lib/build-host';
-import { sameStepChange } from '../../lib/sdlc-steps';
+import { sameStepChange, stepOf, stepRef } from '../../lib/sdlc-steps';
+import { StepStore } from '../../core/step/step.store';
 import { buildStage, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
 import { hms, ms, situationView, type Situation, type SituationView, type TaskState } from '../../lib/build-state';
 import { layoutStage as layoutStageOf, type LayoutStage } from '../../lib/build-layout-stage';
@@ -369,6 +370,7 @@ export class BuildPageViewModel {
   private readonly runs = inject(RunStore);
   private readonly toasts = inject(ToastStore);
   private readonly progress = inject(ProgressStore);
+  private readonly steps = inject(StepStore);
   private readonly destroyRef = inject(DestroyRef);
   private readonly drafts = inject(ChangeDraftStore);
   private readonly landing = inject(RunLandingStore);
@@ -467,15 +469,32 @@ export class BuildPageViewModel {
   readonly refusal = signal<StartRefusal | null>(null);
   /** How a stopped preparation is worded on the page; null while there is none. */
   readonly stoppedNote = signal<string | null>(null);
-  /** Whether this change's preparation is running now. */
-  readonly preparing = signal(false);
-
-  /** Stop the running preparation of this change. */
-  async stopPreparing(): Promise<void> {
+  /** The change whose preparation this page started and waits for; null while it waits for none. */
+  private readonly startedPreparing = signal<BuildContext | null>(null);
+  /** The change whose preparation owns the page's progress line, as `system/change`; null while none does. */
+  private lineFor: string | null = null;
+  /**
+   * The preparation of the change on screen, whoever started it: the backend's running step of that change, or the start this page made and
+   * has no report for yet. Carries the call that stops it. A preparation of another change is never picked.
+   */
+  private readonly shownPreparation = computed<{ ref: ChangeRef; label: string | null } | null>(() => {
     const ref = this.ref();
-    if (ref === null) return;
+    if (ref === null) return null;
+    const step = stepOf(this.steps.running(), ref, ['preparing']);
+    if (step !== null) return { ref: stepRef(step, ref.workspace), label: step.label };
+    const started = this.startedPreparing();
+    const ctx = this.ctxSig();
+    return started !== null && ctx !== null && sameCtx(started, ctx) ? { ref, label: null } : null;
+  });
+  /** Whether the preparation of the change on screen is running now. */
+  readonly preparing = computed(() => this.shownPreparation() !== null);
+
+  /** Stop the running preparation the page shows: that change's own, never the one that is current when the button is pressed. */
+  async stopPreparing(): Promise<void> {
+    const shown = this.shownPreparation();
+    if (shown === null) return;
     try {
-      await this.transport.stopStep(ref);
+      await this.transport.stopStep(shown.ref);
     } catch (e) {
       this.toasts.error(`Could not stop the preparation: ${message(e)}`);
     }
@@ -650,6 +669,13 @@ export class BuildPageViewModel {
   private readonly reading = computed(() => this.readingNow());
 
   constructor() {
+    // The progress line of a preparation follows the backend's step of the change on screen, so a preparation this page did not start has its line,
+    // and a line never outlives the change it belongs to.
+    effect(() => {
+      const shown = this.shownPreparation();
+      const ctx = this.ctxSig();
+      untracked(() => this.followLine(shown?.label ?? null, shown === null || ctx === null ? null : `${ctx.system}/${ctx.change}`));
+    });
     // What the engineer picks and writes in the round dialog is kept while it is open, so leaving the page does not lose it.
     effect(() => {
       const form = this.preview.buildForm();
@@ -858,6 +884,8 @@ export class BuildPageViewModel {
   async load(input: BuildPageInput): Promise<void> {
     if (this.taken === input) return;
     this.taken = input;
+    // Seed the running steps from the backend and follow them, so a preparation this page did not start shows too.
+    void this.steps.follow();
     const before = this.ctx;
     if (before !== null && !sameCtx(before, input.ctx)) this.forgetChange();
     this.loaded.set(input);
@@ -1480,23 +1508,25 @@ export class BuildPageViewModel {
    */
   private async begin(step: ProgressStepId, label: string, call: () => Promise<StartOutcome>): Promise<StartKind> {
     this.progress.begin(step, label, 'build');
-    this.preparing.set(true);
-    this.stoppedNote.set(null);
     const ctx = this.ctx;
+    this.startedPreparing.set(ctx);
+    this.lineFor = ctx === null ? null : `${ctx.system}/${ctx.change}`;
+    this.stoppedNote.set(null);
     const unlisten = await this.listenToSteps(ctx);
     let outcome: StartOutcome;
     try {
       outcome = await call();
     } catch (e) {
-      this.progress.fail('build');
+      this.endLine(ctx, true);
       this.refuse(ctx, { reason: message(e), problems: [] });
       return 'couldNotRun';
     } finally {
       unlisten();
-      this.preparing.set(false);
+      this.startedPreparing.set(null);
+      if (ctx !== null) this.steps.ended(ctx);
     }
-    if (outcome.kind === 'refused' || outcome.kind === 'failed' || outcome.kind === 'couldNotRun' || outcome.kind === 'stopped') this.progress.fail('build');
-    else this.progress.end('build');
+    if (outcome.kind === 'refused' || outcome.kind === 'failed' || outcome.kind === 'couldNotRun' || outcome.kind === 'stopped') this.endLine(ctx, true);
+    else this.endLine(ctx, false);
     if (this.shows(ctx)) return this.settle(outcome);
     // The page moved to another change while the start ran: what it came to is not shown on that change, it is said once.
     const held = outcome.kind === 'held' ? { reason: 'The build waits for other changes', problems: outcome.held.map((h) => `${h.repo}: ${h.holder.change}`) } : null;
@@ -1504,6 +1534,25 @@ export class BuildPageViewModel {
     if (refusal !== null) this.refuse(ctx, refusal);
     if (outcome.kind === 'stopped') this.toasts.info(`${ctx?.change ?? 'The build'}: ${stoppedMessage(outcome.prepared)}`);
     return outcome.kind;
+  }
+
+  private followLine(label: string | null, key: string | null): void {
+    if (key === null) {
+      if (this.lineFor !== null) this.progress.end('build');
+      this.lineFor = null;
+    } else if (label !== null) {
+      if (this.lineFor === key) this.progress.update(label, 'build');
+      else this.progress.begin('preparing-build', label, 'build');
+      this.lineFor = key;
+    }
+  }
+
+  /** End the progress line, when it is this change's: a line another change's preparation has taken over is left alone. */
+  private endLine(ctx: BuildContext | null, failed: boolean): void {
+    if (ctx === null || this.lineFor !== `${ctx.system}/${ctx.change}`) return;
+    this.lineFor = null;
+    if (failed) this.progress.fail('build');
+    else this.progress.end('build');
   }
 
   /** Feed the progress line the label of each step the backend reports for this change's preparation; the returned function stops listening. */
