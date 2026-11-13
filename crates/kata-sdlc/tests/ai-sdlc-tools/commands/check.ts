@@ -13,7 +13,8 @@ import { readDocument } from '../documents/read.ts';
 import { parseConfig } from '../events/config.ts';
 import { recordProblems } from '../changes/record.ts';
 import { parse } from '../vendor/yaml.mjs';
-import { findMarker } from '../workspace/marker.ts';
+import { baseBranch, baseRevision, listFiles, topLevel } from '../git/git.ts';
+import { findMarker, markerProblems, normalizeFolder } from '../workspace/marker.ts';
 
 /** The folder of the change a document belongs to: the folder of spec.md and plan.md, or the one above build/. */
 function changeFolder(file: string): string {
@@ -33,6 +34,38 @@ function changeProblems(docs: ChangeDoc[]): Problem[] {
 
 const isConfig = (file: string): boolean => basename(file) === '.ai-sdlc.json' || basename(file) === 'change.yml' || (basename(file) === 'hooks.json' && basename(dirname(dirname(resolve(file)))) === 'intent');
 
+/**
+ * The marker's layout and apps problems: those `markerProblems` finds in the text, and, for the `single-repo` layout, an
+ * app folder with no files on the base branch of the repository holding the marker (not checked outside a repository).
+ */
+function layoutProblems(file: string, text: string): string[] {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return []; // parseConfig reports it
+  }
+  const problems = markerProblems(raw);
+  const systems = (raw as { systems?: unknown } | null)?.systems;
+  if ((raw as { layout?: unknown } | null)?.layout !== 'single-repo' || systems === null || typeof systems !== 'object') return problems;
+  const dir = dirname(resolve(file));
+  const top = topLevel(dir);
+  const base = top === null ? null : baseBranch(top);
+  const revision = top === null || base === null ? null : baseRevision(top, base);
+  if (top === null || revision === null) return problems;
+  for (const system of Object.values(systems as Record<string, unknown>)) {
+    const apps = (system as { apps?: unknown } | null)?.apps;
+    if (apps === null || typeof apps !== 'object' || Array.isArray(apps)) continue;
+    for (const [app, folder] of Object.entries(apps as Record<string, unknown>)) {
+      const normal = normalizeFolder(folder);
+      if (normal !== null && normal !== '.' && listFiles(top, revision, normal).length === 0) {
+        problems.push(`app ${app}: the folder ${normal} does not exist on the base branch ${base}`);
+      }
+    }
+  }
+  return problems;
+}
+
 /** The hook configuration's problems, as the event runner would find them once the file is on the base branch. */
 function configProblems(file: string): Problem[] {
   const read = (path: string): string => readFileSync(path, 'utf8');
@@ -47,7 +80,9 @@ function configProblems(file: string): Problem[] {
     return recordProblems(raw).map((message) => ({ file, line: 1, message }));
   }
   if (basename(file) === '.ai-sdlc.json') {
-    return parseConfig(read(file), null, '').problems.map((p) => ({ file, line: 1, message: p.replace(/^\.ai-sdlc\.json: /, '') }));
+    const text = read(file);
+    const problems = [...parseConfig(text, null, '').problems.map((p) => p.replace(/^\.ai-sdlc\.json: /, '')), ...layoutProblems(file, text)];
+    return problems.map((message) => ({ file, line: 1, message }));
   }
   const system = basename(dirname(resolve(file)));
   const marker = join(dirname(dirname(dirname(resolve(file)))), '.ai-sdlc.json');

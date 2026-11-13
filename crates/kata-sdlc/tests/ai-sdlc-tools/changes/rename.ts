@@ -1,9 +1,9 @@
 // Renames a change's branch everywhere it exists: the master (and so the change's copy, which follows it) and every
-// product repository that has it. Every check runs before anything moves, and a failure undoes what moved. The
+// product repository that has it; in the single-repo layout there is only the one repository, so one branch moves. Every check runs before anything moves, and a failure undoes what moved. The
 // change's record is then updated and committed in the copy.
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { git, dirtyPaths, hasLocalBranch, checkedOutIn } from '../git/git.ts';
+import { productRepositories } from '../workspace/apps.ts';
 import { branchClashes, type Repository } from '../workspace/branches.ts';
 import { checkBranchName } from '../workspace/naming.ts';
 import { readRecord, writeRecord } from './record.ts';
@@ -18,7 +18,7 @@ export function renameBranch(input: RenameInput): { problems: string[]; renamed:
   const problems: string[] = [];
   if (input.to === from) problems.push(`the change's branch is already ${from}`);
   problems.push(...checkBranchName(input.to).map((p) => `${input.to}: ${p}`));
-  const products: Repository[] = input.repos.map((r) => ({ repo: r, path: join(input.workspace, r) })).filter((r) => existsSync(r.path));
+  const products: Repository[] = productRepositories(input.master, input.workspace, input.repos);
   const holders = products.filter((r) => hasLocalBranch(r.path, from));
   problems.push(...branchClashes(input.to, [{ repo: 'master', path: input.master }, ...products], from));
   if (dirtyPaths(input.master).length > 0) problems.push(`the change's copy ${input.master} has uncommitted files`);

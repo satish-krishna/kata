@@ -5,14 +5,18 @@
 // branch put back whatever happens. Either way the working tree must hold no uncommitted files, since a baseline is
 // shared by every change on that commit. Every check runs, whatever the others do. A check that could not run is a
 // fault of the machine: nothing is stored, and the next run takes the baseline again. The master repository, built
-// in a change's copy where other builds commit at the same time, gets no baseline.
+// in a change's copy where other builds commit at the same time, gets no baseline. In the single-repo layout the
+// checks of an app run in its folder, but the base is checked out in the copy as a whole (the one git repository),
+// restored to the change's branch afterwards, and only the app's own files count as uncommitted; the cleanup after a
+// baseline is scoped to the app's folder, so another app's untracked files stay.
 import { hooksFor, type Hook, type HookConfig } from '../events/config.ts';
-import type { EventContext } from '../events/context.ts';
+import { uncommittedOf, type EventContext } from '../events/context.ts';
 import { runHook } from '../events/runner.ts';
 import { exportScripts } from '../events/scripts.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { baseRevision, commitOf, currentBranch, git, gitOut, gitPath, mergeBase } from '../git/git.ts';
+import { baseRevision, commitOf, currentBranch, git, gitOut, gitPath, mergeBase, trackedChanges } from '../git/git.ts';
+import { appFolders, appPathspec, isSingleRepo, uncommittedInApp } from '../workspace/apps.ts';
 import { uncommittedFiles } from '../workspace/own-files.ts';
 import { dropEntry, findEntry, saveEntry, type BaselineEntry, type BaselineHook } from './store.ts';
 
@@ -40,11 +44,14 @@ export function signatureOf(config: HookConfig, master: string, system: string, 
  * Where the repository was before a detached baseline, kept in its git folder until it is back there, so a run that
  * was killed on the base commit (its own process ended, so no `finally` ran) is put back by the next one.
  */
-type Restore = { branch: string; head: string };
-const restoreFile = (repoPath: string): string => gitPath(repoPath, 'ai-sdlc/baseline-restore.json');
+type Restore = { branch: string; head: string; /** The app's folder in the single-repo layout: only its files are cleaned and counted. */ folder?: string };
+const restoreFile = (root: string): string => gitPath(root, 'ai-sdlc/baseline-restore.json');
 
-function writeRestore(repoPath: string, where: Restore): void {
-  const file = restoreFile(repoPath);
+/** The app folder a baseline of this event is scoped to, or null: the whole repository, as in the default layout. */
+const folderOf = (ctx: EventContext): string | null => (ctx.repo === 'master' || !isSingleRepo(ctx.master) ? null : appFolders(ctx.master, ctx.system)[ctx.repo] ?? null);
+
+function writeRestore(root: string, where: Restore): void {
+  const file = restoreFile(root);
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, JSON.stringify(where) + '\n');
 }
@@ -55,12 +62,24 @@ function writeRestore(repoPath: string, where: Restore): void {
  * clean of untracked files, both safe because the working tree was clean before the detach. Ignored files stay.
  * Returns why it is not back (branch, commit and a clean tree, all checked), or null when it is.
  */
-function restore(repoPath: string, where: Restore): string | null {
-  if (!git(repoPath, ['checkout', '--quiet', where.branch]).ok) git(repoPath, ['checkout', '--quiet', '--force', where.branch]);
-  if (currentBranch(repoPath) === where.branch) git(repoPath, ['clean', '-fdq']);
-  const back = currentBranch(repoPath) === where.branch && commitOf(repoPath, 'HEAD') === where.head && uncommittedFiles(repoPath).length === 0;
-  if (!back) return `${repoPath} could not be put back on ${where.branch} at ${where.head.slice(0, 7)} after its baseline: it is on ${currentBranch(repoPath) ?? 'a detached HEAD'} with ${uncommittedFiles(repoPath).join(', ') || 'no uncommitted files'}. Check out ${where.branch} there before going on; nothing was stored.`;
-  rmSync(restoreFile(repoPath), { force: true });
+function restore(root: string, where: Restore): string | null {
+  // In the single-repo layout a check that changed a tracked file anywhere in the copy (a root lockfile, say) leaves it
+  // modified on the branch, so those count too, not only the app folder's own files.
+  const dirty = (): string[] => (where.folder === undefined ? uncommittedFiles(root) : [...new Set([...uncommittedInApp(root, where.folder), ...trackedChanges(root)])]);
+  if (!git(root, ['checkout', '--quiet', where.branch]).ok) git(root, ['checkout', '--quiet', '--force', where.branch]);
+  if (currentBranch(root) === where.branch) git(root, ['clean', '-fdq', ...(where.folder === undefined ? [] : ['--', ...appPathspec(where.folder)])]);
+  const back = currentBranch(root) === where.branch && commitOf(root, 'HEAD') === where.head && dirty().length === 0;
+  if (!back) {
+    const now = currentBranch(root);
+    const files = dirty();
+    const lead = `${root} could not be put back on ${where.branch} at ${where.head.slice(0, 7)} after its baseline: it is on ${now ?? 'a detached HEAD'} with ${files.join(', ') || 'no uncommitted files'}.`;
+    // On the branch at its head, only the files are wrong: a checkout would change nothing.
+    const advice = now === where.branch && commitOf(root, 'HEAD') === where.head
+      ? 'The checks changed tracked files there; restore or discard them (git restore) before going on'
+      : `Check out ${where.branch} at ${where.head.slice(0, 7)} there before going on`;
+    return `${lead} ${advice}; nothing was stored.`;
+  }
+  rmSync(restoreFile(root), { force: true });
   return null;
 }
 
@@ -68,8 +87,8 @@ function restore(repoPath: string, where: Restore): string | null {
  * Puts back a repository that a killed baseline run left on the base commit, as its restore record says; null when
  * there is nothing to put back or it is back, otherwise why not.
  */
-export function recoverInterrupted(repoPath: string): string | null {
-  const file = restoreFile(repoPath);
+export function recoverInterrupted(root: string): string | null {
+  const file = restoreFile(root);
   if (!existsSync(file)) return null;
   let where: Restore;
   try {
@@ -78,18 +97,18 @@ export function recoverInterrupted(repoPath: string): string | null {
     rmSync(file, { force: true });
     return null;
   }
-  if (currentBranch(repoPath) === where.branch) {
+  if (currentBranch(root) === where.branch) {
     rmSync(file, { force: true });
     return null;
   }
-  return restore(repoPath, where);
+  return restore(root, where);
 }
 
 /** The merge-base of the repository's head and its base branch, or null. */
 export function baseCommitOf(ctx: EventContext): string | null {
   if (ctx.base === null) return null;
-  const revision = baseRevision(ctx.repoPath, ctx.base);
-  return revision === null ? null : mergeBase(ctx.repoPath, 'HEAD', revision);
+  const revision = baseRevision(ctx.root, ctx.base);
+  return revision === null ? null : mergeBase(ctx.root, 'HEAD', revision);
 }
 
 /** The stored baseline at the repository's base commit, without running anything. */
@@ -113,26 +132,33 @@ export async function takeBaseline(ctx: EventContext, config: HookConfig, option
   else if (stored.entry !== null) return stored;
 
   const none = (outcome: Taken['outcome'], problems: string[]): Taken => ({ base, entry: null, reused: false, outcome, problems });
-  const dirty = uncommittedFiles(ctx.repoPath);
+  const dirty = uncommittedOf(ctx);
   if (dirty.length > 0) return none('failed', [`${ctx.repo} has uncommitted files, so the baseline of its checks cannot be taken; commit, ignore or remove them: ${dirty.join(', ')}`]);
-  const head = commitOf(ctx.repoPath, 'HEAD');
+  const head = commitOf(ctx.root, 'HEAD');
   const atBase = head === base;
   if (!atBase && (ctx.branch === null || head === null)) return none('failed', [`${ctx.repo} is on a detached HEAD, so the baseline of its checks cannot be taken`]);
 
+  const folder = folderOf(ctx);
+  // Checking out the base moves the whole copy, so changes to tracked files anywhere in it (another app's, or
+  // ai-sdlc's own) would be carried along or lost; only untracked files of other apps may stay.
+  if (!atBase && folder !== null) {
+    const tracked = trackedChanges(ctx.root);
+    if (tracked.length > 0) return none('failed', [`${ctx.root} has uncommitted changes to tracked files, so the base commit cannot be checked out for the baseline of ${ctx.repo}'s checks; commit or put them away: ${tracked.join(', ')}`]);
+  }
   const scripts = exportScripts(ctx.master, config.revision, ctx.system);
   const records = [];
   let restored: string | null = null;
   try {
     if (!atBase) {
-      writeRestore(ctx.repoPath, { branch: ctx.branch as string, head: head as string });
-      const out = git(ctx.repoPath, ['checkout', '--quiet', '--detach', base]);
+      writeRestore(ctx.root, { branch: ctx.branch as string, head: head as string, ...(folder === null ? {} : { folder }) });
+      const out = git(ctx.root, ['checkout', '--quiet', '--detach', base]);
       if (!out.ok) return none('failed', [`git could not check out the base commit ${base.slice(0, 7)} of ${ctx.repo}: ${out.stderr.trim()}`]);
     }
     // On the base, the branch is not checked out: a check that looks it up must not find it.
     const asFinish: EventContext = { ...ctx, event: 'build.finish', head: base, branch: atBase ? ctx.branch : null };
     for (const check of checks) records.push(await runHook(check, asFinish, scripts, {}, { AI_SDLC_BASELINE: '1' }));
   } finally {
-    if (!atBase) restored = restore(ctx.repoPath, { branch: ctx.branch as string, head: head as string });
+    if (!atBase) restored = restore(ctx.root, { branch: ctx.branch as string, head: head as string, ...(folder === null ? {} : { folder }) });
     scripts.remove();
   }
   if (restored !== null) return none('could-not-run', [restored]);

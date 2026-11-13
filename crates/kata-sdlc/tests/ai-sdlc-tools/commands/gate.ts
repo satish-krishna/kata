@@ -25,6 +25,7 @@ import { readHookConfig } from '../events/config.ts';
 import { latest, ledgerFolder, readLedger, writeLedger } from '../events/ledger.ts';
 import { activeBuildFile, type ActiveBuild } from '../events/steps/build-start.ts';
 import { commitOf, currentBranch, topLevel } from '../git/git.ts';
+import { currentAppHead, isSingleRepo } from '../workspace/apps.ts';
 
 const TAIL_LINES = 60;
 
@@ -48,7 +49,8 @@ export function decide(cwd: string): { block: string } | { note: string } | null
   if (!existsSync(folder) || currentBranch(top) !== branchOf(folder)) return null;
   const missing = unloggedTasks(folder, active.repo);
   if (missing === null || missing.length > 0) return null;
-  const head = commitOf(top, 'HEAD');
+  // In the single-repo layout the build is held to its app's head, not the repository's HEAD.
+  const head = isSingleRepo(active.master) && active.repo !== 'master' ? currentAppHead(top, active.master, active.system, active.repo) : commitOf(top, 'HEAD');
   if (head === null) return null;
   const run = `node "${process.argv[1]}" run build.finish --json --change ${active.change} --repo ${active.repo} --master "${active.master}"`;
   const ledgers = ledgerFolder(active.master, active.system, active.change);

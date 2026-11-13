@@ -273,7 +273,9 @@ export function readPlan(text: string, file: string, marker: Marker | null): Rea
     return { kind: 'plan', layout, document: { tasks: readTasks1(doc, heads), shared_decisions: decisions1(doc) }, problems };
   }
   const system = typeof data['system'] === 'string' ? data['system'] : '';
-  const repos = marker?.systems[system]?.repos ?? null;
+  // In the single-repo layout a task's repository is an app.
+  const entry = marker?.systems[system];
+  const repos = entry === undefined ? null : marker?.layout === 'single-repo' ? Object.keys(entry.apps) : entry.repos;
   const claimed = new Set<number>();
   const tasks = readTasks2(doc, heads, file, problems, repos, system, claimed);
   const shared_decisions = decisions2(doc, file, problems, claimed);

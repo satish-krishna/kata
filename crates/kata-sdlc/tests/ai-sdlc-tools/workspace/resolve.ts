@@ -4,13 +4,19 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { CouldNotRun } from '../common/types.ts';
+import { isSingleRepo } from './apps.ts';
+import type { Layout } from './marker.ts';
 
-/** Where the workspace and the master repository are. `master` is null whenever `problems` is not empty. */
+/**
+ * Where the workspace and the master repository are. `master` is null whenever `problems` is not empty. `layout` is the
+ * master's layout: `workspace` unless its marker says single-repo (and for a refusal before a master was identified).
+ */
 export type Resolution = {
   workspace: string | null;
   master: string | null;
   masterIsCopy: boolean;
   problems: string[];
+  layout: Layout;
 };
 
 export type ResolveOptions = { master?: string; workspace?: string };
@@ -40,6 +46,15 @@ function isFolder(path: string): boolean {
 }
 
 const holdsMarker = (folder: string): boolean => existsSync(join(folder, '.ai-sdlc.json'));
+
+/** The layout a folder's marker names. A marker that cannot be read says nothing here: it counts as the default layout. */
+function layoutOf(folder: string): Layout {
+  try {
+    return isSingleRepo(folder) ? 'single-repo' : 'workspace';
+  } catch {
+    return 'workspace';
+  }
+}
 
 /** The root of the git repository `dir` is in, or null when it is in none. */
 function toplevel(dir: string): string | null {
@@ -93,11 +108,12 @@ const noMaster = (workspace: string) =>
 const severalMasters = (folders: string[]) =>
   `Found more than one master repository (${folders.map((f) => `\`${f}\``).join(', ')}). A workspace has exactly one. Remove the extra \`.ai-sdlc.json\` files.`;
 
-const refused = (workspace: string | null, problem: string): Resolution => ({
+const refused = (workspace: string | null, problem: string, layout: Layout = 'workspace'): Resolution => ({
   workspace,
   master: null,
   masterIsCopy: false,
   problems: [problem],
+  layout,
 });
 
 /**
@@ -107,6 +123,9 @@ const refused = (workspace: string | null, problem: string): Resolution => ({
  * workspace is the parent of the current repository's root (or `cwd` itself outside a repository), and the master is
  * its one child folder holding `.ai-sdlc.json`. A copy is a linked worktree of the master repository; when `cwd` is
  * inside one, or `--master` names one, the copy is the master and the workspace is found from the repository instead.
+ *
+ * In the single-repo layout the session's repository (or the one `--master` names) is the master itself, whatever else
+ * the workspace holds, and the workspace is the parent of its main checkout.
  */
 export function resolveWorkspace(cwd: string, options: ResolveOptions): Resolution {
   if (options.workspace !== undefined && !isFolder(options.workspace)) {
@@ -117,6 +136,7 @@ export function resolveWorkspace(cwd: string, options: ResolveOptions): Resoluti
 
   if (options.master !== undefined) return withMaster(options.master, workspaceOption, sessionTop);
   if (sessionTop !== null && holdsMarker(sessionTop)) {
+    if (layoutOf(sessionTop) === 'single-repo') return withMaster(sessionTop, workspaceOption, sessionTop);
     const dirs = gitDirs(sessionTop);
     if (dirs !== null && dirs.gitDir !== dirs.common) return withMaster(sessionTop, workspaceOption, sessionTop);
   }
@@ -129,7 +149,8 @@ export function resolveWorkspace(cwd: string, options: ResolveOptions): Resoluti
   const folders = masterFolders(workspace).map((m) => m.folder);
   if (folders.length === 0) return refused(workspace, noMaster(workspace));
   if (folders.length > 1) return refused(workspace, severalMasters(folders));
-  return { workspace, master: folders[0] as string, masterIsCopy: false, problems: [] };
+  const master = folders[0] as string;
+  return { workspace, master, masterIsCopy: false, problems: [], layout: layoutOf(master) };
 }
 
 /** The master named by `--master`, or the copy the session is in, checked against the workspace's master. */
@@ -140,6 +161,19 @@ function withMaster(path: string, workspaceOption: string | undefined, sessionTo
   if (dirs === null) return refused(workspaceOption ?? null, `\`${master}\` is not the root of a git repository.`);
   if (!holdsMarker(master)) {
     return refused(workspaceOption ?? null, `\`${master}\` holds no .ai-sdlc.json, so it is not a master repository or a copy of one.`);
+  }
+
+  // The repository is its own master: no other master is looked for among the workspace's children.
+  if (layoutOf(master) === 'single-repo') {
+    const workspace = workspaceOption ?? repositoryWorkspace(dirs.common);
+    if (workspace === null) {
+      return refused(
+        null,
+        `Cannot tell where the main checkout of \`${master}\` is: its git directory, \`${dirs.common}\`, is kept apart from any checkout. Pass --workspace <path>.`,
+        'single-repo',
+      );
+    }
+    return { workspace, master, masterIsCopy: dirs.gitDir !== dirs.common, problems: [], layout: 'single-repo' };
   }
 
   // A session in another repository (a product repository) is in the workspace already: its parent folder, as ever.
@@ -176,7 +210,7 @@ function withMaster(path: string, workspaceOption: string | undefined, sessionTo
   if (others.length > 0) {
     return refused(workspace, severalMasters([...same.map((f) => f.folder), ...others.map((f) => f.folder)]));
   }
-  return { workspace, master, masterIsCopy: dirs.gitDir !== dirs.common, problems: [] };
+  return { workspace, master, masterIsCopy: dirs.gitDir !== dirs.common, problems: [], layout: 'workspace' };
 }
 
 /**

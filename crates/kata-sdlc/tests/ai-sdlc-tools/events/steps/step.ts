@@ -33,6 +33,11 @@ export type Step = {
   key?(ctx: EventContext): string;
   /** What a result is about within its key: the document of doc.accept, the task of task.done. */
   subject?(ctx: EventContext): string | null;
+  /**
+   * Details when the event has nothing to do for this repository, checked after the preconditions: the event then passes at once,
+   * with no hook and no step work, and the result is recorded in the ledger as usual. Null when it has work.
+   */
+  idle?(ctx: EventContext): Record<string, unknown> | null;
   /** Whether a run that passed at the same key and subject is reused rather than run again. */
   reusePassed: boolean;
 };

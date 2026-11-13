@@ -1,6 +1,7 @@
 // instructions --json [--write] [--allow-home] [--master <path>] [--workspace <path>]
 // The workspace instructions (workspace/instructions.ts): `<master>/intent/workspace.md`, generated from
 // `.ai-sdlc.json` and the plugin's template, and its copy between the ai-sdlc markers in `<workspace>/CLAUDE.md`.
+// In the single-repo layout the copy is in the repository's own root `CLAUDE.md` and home-folder never applies.
 // Without --write it checks them; with --write it writes them, never committing. It prints one line:
 // `{ "workspaceMd", "claudeMd", "markerLines", "problems" }`.
 //   workspaceMd: missing, current or stale (check); written or current (write).

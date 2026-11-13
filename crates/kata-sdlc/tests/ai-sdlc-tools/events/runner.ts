@@ -47,6 +47,7 @@ function environment(ctx: EventContext, hook: Hook): Record<string, string> {
     AI_SDLC_CHANGE: ctx.change,
     AI_SDLC_REPO: ctx.repo,
     AI_SDLC_REPO_PATH: ctx.repoPath,
+    AI_SDLC_ROOT: ctx.root,
     AI_SDLC_MASTER: ctx.master,
     AI_SDLC_BRANCH: ctx.branch ?? '',
     AI_SDLC_BASE: ctx.base ?? '',
@@ -109,6 +110,9 @@ export async function runEvent(ctx: EventContext, options: RunOptions = {}): Pro
     return result('passed', { details: { checkOnly: true } });
   }
   if (preconditions.length > 0) return record(result('refused', { problems: preconditions }));
+
+  const idle = step.idle?.(ctx) ?? null;
+  if (idle !== null) return record(result('passed', { details: idle }));
 
   const previous = latest(ledger, ctx.event, key, subject);
   if (step.reusePassed && !options.again && previous?.outcome === 'passed') {

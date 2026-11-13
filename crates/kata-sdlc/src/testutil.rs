@@ -169,34 +169,40 @@ pub fn single_repo(dir: &Path, name: &str, apps: &[(&str, &str)]) -> PathBuf {
 /// format program, and its version is the first one that supports the light track. Made once per test process.
 pub fn plugin_dir() -> &'static Path {
     static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-    DIR.get_or_init(|| {
-        fn copy(from: &Path, to: &Path) {
-            std::fs::create_dir_all(to).unwrap();
-            for entry in std::fs::read_dir(from).unwrap().flatten() {
-                let target = to.join(entry.file_name());
-                if entry.path().is_dir() {
-                    copy(&entry.path(), &target);
-                } else {
-                    std::fs::copy(entry.path(), target).unwrap();
-                }
+    DIR.get_or_init(|| plugin_copy(crate::plugin::MIN_VERSION))
+        .path()
+}
+
+/// The same copy of the vendored program as [`plugin_dir`], declaring `version` in its manifest, for
+/// the tests of what a given plugin version allows. A new folder on every call, removed when dropped.
+#[allow(dead_code)]
+pub fn plugin_dir_at(version: &str) -> tempfile::TempDir {
+    plugin_copy(version)
+}
+
+fn plugin_copy(version: &str) -> tempfile::TempDir {
+    fn copy(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap().flatten() {
+            let target = to.join(entry.file_name());
+            if entry.path().is_dir() {
+                copy(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), target).unwrap();
             }
         }
-        let dir = tempfile::tempdir().unwrap();
-        let vendored = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools");
-        copy(&vendored, &dir.path().join("tools"));
-        let meta = dir.path().join(".claude-plugin");
-        std::fs::create_dir_all(&meta).unwrap();
-        std::fs::write(
-            meta.join("plugin.json"),
-            format!(
-                r#"{{"name":"ai-sdlc","version":"{}"}}"#,
-                crate::plugin::MIN_VERSION
-            ),
-        )
-        .unwrap();
-        dir
-    })
-    .path()
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let vendored = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools");
+    copy(&vendored, &dir.path().join("tools"));
+    let meta = dir.path().join(".claude-plugin");
+    std::fs::create_dir_all(&meta).unwrap();
+    std::fs::write(
+        meta.join("plugin.json"),
+        format!(r#"{{"name":"ai-sdlc","version":"{version}"}}"#),
+    )
+    .unwrap();
+    dir
 }
 
 /// A stand-in plugin at `dir` whose `tools/ai-sdlc.ts` answers `fix-state --json <folder>...` without

@@ -14,25 +14,31 @@
 // ai-sdlc trailer, so unrelated work under the same name is never built on. Otherwise the branch is created off
 // the base (or from the remote's copy, when the change was pushed from another machine). The master repository,
 // when it is one of the system's repositories, is built in the change's copy, which is already on the branch.
+// So is an app in the single-repo layout: the copy holds every app, so the step only checks that it is on the
+// change's branch (it switches nothing), refuses while another app of the change is being built in it and has not
+// finished at its head (one app at a time), and counts only the app's own uncommitted files.
 // Once the event's after hooks have run (so whatever they install is there), the step takes the baseline of the
 // repository's checks on its base commit, or reuses the stored one, and fails, asking the engineer, when a check
 // already fails there without saying what failed and has no approval for this change.
 import { approvalProblem, approvedHooks, ledgerOf, needsApproval } from '../../baseline/approvals.ts';
-import { storedBaseline, takeBaseline } from '../../baseline/take.ts';
+import { recoverInterrupted, storedBaseline, takeBaseline } from '../../baseline/take.ts';
+import { CouldNotRun } from '../../common/types.ts';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { branchOf } from '../../changes/record.ts';
 import { changeScope, commitRuleProblems } from '../../changes/scope.ts';
 import { latest, ledgerFolder, readLedger } from '../ledger.ts';
-import { baseRevision, checkedOutIn, commitOf, commitsBeyondBase, currentBranch, git, gitPath, hasLocalBranch, hasRemoteBranch, mainCheckout } from '../../git/git.ts';
+import { appFolders, appHead, isSingleRepo } from '../../workspace/apps.ts';
+import { baseRevision, checkedOutIn, commitsBeyondBase, currentBranch, git, gitPath, hasLocalBranch, hasRemoteBranch, mainCheckout } from '../../git/git.ts';
 import { uncommittedFiles } from '../../workspace/own-files.ts';
-import { copiesFolder, type EventContext } from '../context.ts';
+import { copiesFolder, headOf, uncommittedOf, type EventContext } from '../context.ts';
 import type { Step } from './step.ts';
 
 /** The record the Stop gate reads to know which change a session's repository is building. */
 export type ActiveBuild = { system: string; change: string; repo: string; master: string; workspace: string };
 
-export const activeBuildFile = (repoPath: string): string => gitPath(repoPath, 'ai-sdlc/active-build.json');
+/** Where the build in a git repository is recorded: its own git folder, which a worktree (a change's copy) has to itself. */
+export const activeBuildFile = (root: string): string => gitPath(root, 'ai-sdlc/active-build.json');
 
 function startingPoint(ctx: EventContext, branch: string): string | null {
   if (hasLocalBranch(ctx.repoPath, branch)) return `refs/heads/${branch}`;
@@ -40,8 +46,8 @@ function startingPoint(ctx: EventContext, branch: string): string | null {
   return null;
 }
 
-function activeBuild(repoPath: string): ActiveBuild | null {
-  const file = activeBuildFile(repoPath);
+function activeBuild(root: string): ActiveBuild | null {
+  const file = activeBuildFile(root);
   if (!existsSync(file)) return null;
   try {
     return JSON.parse(readFileSync(file, 'utf8')) as ActiveBuild;
@@ -76,16 +82,43 @@ function handOffRefusal(ctx: EventContext): string | null {
   if (ctx.branch === null) return '';
   const owner = changeOnBranch(ctx, ctx.branch);
   if (owner === null) return '';
-  const active = activeBuild(ctx.repoPath);
+  const active = activeBuild(ctx.root);
   if (active === null || active.change !== owner || active.system !== ctx.system) return null;
   const finished = ctx.head === null ? null : latest(readLedger(ledgerFolder(ctx.master, active.system, active.change), ctx.repo), 'build.finish', ctx.head);
   return finished?.outcome === 'passed' ? null : `; it is the branch of ${owner}, whose build is active here and has not finished at its head (its build.finish has not passed there)`;
+}
+
+/**
+ * In the single-repo layout, why this app cannot start: another app of the change is being built in the copy (its
+ * `active-build.json` names it) and its latest build.finish has not passed at that app's current head. Null when it can.
+ */
+function otherAppRefusal(ctx: EventContext): string | null {
+  const active = activeBuild(ctx.root);
+  if (active === null || active.system !== ctx.system || active.change !== ctx.change || active.repo === ctx.repo) return null;
+  const folder = appFolders(ctx.master, ctx.system)[active.repo];
+  if (folder === undefined || ctx.base === null) return null;
+  let head: string;
+  try {
+    head = appHead(ctx.root, 'HEAD', folder, ctx.base);
+  } catch (e) {
+    if (!(e instanceof CouldNotRun)) throw e;
+    return '`' + active.repo + '` is being built in this copy, and its head cannot be read; build one app at a time';
+  }
+  const finished = latest(readLedger(ledgerFolder(ctx.master, ctx.system, ctx.change), active.repo), 'build.finish', head);
+  return finished?.outcome === 'passed' ? null : '`' + active.repo + '` is being built in this copy; build one app at a time';
 }
 
 export const buildStart: Step = {
   reusePassed: false,
   check(ctx) {
     const branch = branchOf(ctx.folder);
+    if (isSingleRepo(ctx.master) && ctx.repo !== 'master') {
+      const stuck = recoverInterrupted(ctx.root);
+      if (stuck !== null) return [stuck];
+      if (currentBranch(ctx.root) !== branch) return [`${ctx.repo} is built in the change's copy, on ${branch}; ${ctx.root} is on ${currentBranch(ctx.root) ?? 'a detached HEAD'}`];
+      const other = otherAppRefusal(ctx);
+      return other === null ? [] : [other];
+    }
     if (ctx.repo === 'master') {
       return currentBranch(ctx.master) === branch ? [] : [`the master repository is built in the change's copy, on ${branch}; ${ctx.master} is on ${currentBranch(ctx.master) ?? 'a detached HEAD'}`];
     }
@@ -109,7 +142,7 @@ export const buildStart: Step = {
     const branch = branchOf(ctx.folder);
     const from = ctx.branch;
     let created = false;
-    if (ctx.repo !== 'master' && ctx.branch !== branch) {
+    if (ctx.repo !== 'master' && !isSingleRepo(ctx.master) && ctx.branch !== branch) {
       const start = startingPoint(ctx, branch);
       const args = start === null ? ['checkout', '--quiet', '-b', branch, baseRevision(ctx.repoPath, ctx.base as string) as string] : start.startsWith('refs/heads/') ? ['checkout', '--quiet', branch] : ['checkout', '--quiet', '-b', branch, '--track', start];
       const r = git(ctx.repoPath, args);
@@ -117,18 +150,18 @@ export const buildStart: Step = {
       created = start === null;
     }
     ctx.branch = currentBranch(ctx.repoPath);
-    ctx.head = commitOf(ctx.repoPath, 'HEAD');
+    ctx.head = headOf(ctx);
     const active: ActiveBuild = { system: ctx.system, change: ctx.change, repo: ctx.repo, master: ctx.master, workspace: ctx.workspace };
-    const file = activeBuildFile(ctx.repoPath);
+    const file = activeBuildFile(ctx.root);
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, JSON.stringify(active, null, 2) + '\n');
-    return { problems: [], details: { branch, created, uncommitted: uncommittedFiles(ctx.repoPath), from } };
+    return { problems: [], details: { branch, created, uncommitted: uncommittedOf(ctx), from } };
   },
   async finish(ctx, config) {
     // A build resumed mid-task may hold uncommitted files; with no stored baseline it cannot be taken now, so
     // build.finish takes it once everything is committed, rather than this run refusing to resume.
     const stored = storedBaseline(ctx, config);
-    if (stored.base !== null && stored.entry === null && uncommittedFiles(ctx.repoPath).length > 0) {
+    if (stored.base !== null && stored.entry === null && uncommittedOf(ctx).length > 0) {
       return { problems: [], details: { baseline: { base: stored.base, deferred: `${ctx.repo} has uncommitted files, so build.finish takes the baseline` } } };
     }
     const taken = await takeBaseline(ctx, config);

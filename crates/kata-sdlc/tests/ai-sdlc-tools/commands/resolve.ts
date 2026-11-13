@@ -1,6 +1,6 @@
 // resolve --json [--master <path>] [--workspace <path>]
 // Prints the workspace and the master repository this session works in, and whether the master is a change's own
-// copy: `{ "workspace", "master", "masterIsCopy", "problems" }`. Every skill starts with it; the rules are in
+// copy: `{ "workspace", "master", "masterIsCopy", "problems", "layout" }`. Every skill starts with it; the rules are in
 // workspace/resolve.ts and plugin/references/workspace.md. Exit 0 when resolved, 1 when refused.
 import { printJson, UsageError, type Command } from '../common/command.ts';
 import { EXIT } from '../common/types.ts';
