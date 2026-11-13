@@ -816,8 +816,16 @@ fn sdlc_missing_folders(folders: Vec<String>) -> Vec<String> {
 }
 
 #[tauri::command(async)]
-fn sdlc_branches(master: String) -> sdlc::branch::BranchInfo {
-    sdlc::branch::branch_info(Path::new(&master))
+fn sdlc_branches(master: String, layout: Option<sdlc::layout::Layout>) -> sdlc::branch::BranchInfo {
+    sdlc::branch::branch_info_in(Path::new(&master), layout.unwrap_or_default())
+}
+
+/// The apps of a single-repo folder with their context health, and its instructions state.
+#[tauri::command(async)]
+fn sdlc_app_rows(folder: String, system: String) -> Result<sdlc_home::AppRows, String> {
+    let (program, _) = state_inputs(&folder);
+    let program = program.ok_or("the ai-sdlc plugin is not ready")?;
+    sdlc_home::app_rows(&program, Path::new(&folder), &system)
 }
 
 #[tauri::command(async)]
@@ -1094,10 +1102,16 @@ fn sdlc_checkout(
     control: State<'_, RunControl>,
     master: String,
     branch: String,
+    layout: Option<sdlc::layout::Layout>,
 ) -> Result<(), String> {
+    let layout = layout.unwrap_or_default();
+    if !sdlc::branch::switchable(layout) {
+        return Err(sdlc::branch::BranchError::NotSwitchable.to_string());
+    }
     let table = control.state.lock().unwrap();
     table.may_switch(Path::new(&master))?;
-    let out = sdlc::branch::checkout(Path::new(&master), &branch).map_err(|e| e.to_string());
+    let out =
+        sdlc::branch::checkout_in(layout, Path::new(&master), &branch).map_err(|e| e.to_string());
     drop(table);
     out
 }
@@ -2371,6 +2385,7 @@ pub fn run() {
             sdlc_instructions,
             sdlc_missing_folders,
             sdlc_branches,
+            sdlc_app_rows,
             sdlc_read_doc,
             sdlc_read_document,
             sdlc_snapshot,

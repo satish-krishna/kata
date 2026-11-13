@@ -975,7 +975,7 @@ export class SdlcMock {
   patch(changeName: string, patch: Partial<ChangeInfo>): void {
     this.changes = this.changes.map((c) => (c.change === changeName ? { ...c, ...patch } : c));
   }
-  branches(): BranchInfo { return { current: this.current, others: this.others.map((change) => ({ branch: `change/${change}`, change })), default_base: MOCK_BASE }; }
+  branches(): BranchInfo { return { current: this.current, others: this.others.map((change) => ({ branch: `change/${change}`, change })), default_base: MOCK_BASE, switchable: true, base_refusal: null }; }
   /** Like the backend's `read_doc`: the document is named by its stem; anything else is a caller bug. */
   readDoc(changeName: string, docName: string): string | null {
     if (!DOC_STEMS.has(docName)) throw new Error(`read_doc takes a document stem (intent, spec or plan), not "${docName}"`);

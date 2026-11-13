@@ -166,10 +166,15 @@ pub struct AppRows {
 
 /// The app rows of `system` for the single-repo `folder`.
 pub fn app_rows(program: &Program, folder: &Path, system: &str) -> Result<AppRows, String> {
-    let _ = (program, folder, system);
+    let opened = kata_sdlc::layout::open(program, folder).map_err(|e| e.to_string())?;
+    let place = Place {
+        layout: opened.layout,
+        master: opened.root,
+        workspace: opened.workspace,
+    };
     Ok(AppRows {
-        apps: Vec::new(),
-        instructions: InstructionsState::Missing,
+        apps: kata_sdlc::layout::apps(program, &place, system).map_err(program_error)?,
+        instructions: kata_sdlc::layout::instructions(program, &place).map_err(program_error)?,
     })
 }
 

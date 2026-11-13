@@ -428,7 +428,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('asks to switch to the base branch first, and only then runs', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main', switchable: true, base_refusal: null });
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
     const done = vm.runContext('customer-portal');
     await flush();
@@ -444,7 +444,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('switches to the base the backend resolves, not a stored one', async () => {
     const { vm, transport } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'develop' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'develop', switchable: true, base_refusal: null });
     const done = vm.runContext('customer-portal');
     await flush();
     expect(vm.switchPrompt()).toBe(`Switch ${MOCK_MASTER} to develop first?`);
@@ -455,7 +455,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('runs nothing when the switch is declined', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main', switchable: true, base_refusal: null });
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
     const done = vm.runContext('customer-portal');
     await flush();
@@ -468,7 +468,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('shows git message and runs nothing when the switch is refused', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main', switchable: true, base_refusal: null });
     vi.spyOn(transport, 'sdlcCheckout').mockRejectedValue('the master repo has uncommitted changes: a.md');
     const done = vm.runContext('customer-portal');
     await flush();
@@ -490,7 +490,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('aborts context with an error when the master repo is not on a branch', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main', switchable: true, base_refusal: null });
     await vm.runContext('customer-portal');
     expect(toastText()).toContain(`${MOCK_MASTER} is not on a branch`);
     expect(runAgent).not.toHaveBeenCalled();
@@ -499,7 +499,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('aborts setup with an error when the master repo is not on a branch', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main', switchable: true, base_refusal: null });
     await vm.addSystem();
     expect(toastText()).toContain('is not on a branch');
     expect(runAgent).not.toHaveBeenCalled();
@@ -642,7 +642,7 @@ describe('SdlcHomeViewModel navigation', () => {
     const { vm, transport } = setup();
     vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({
       current: 'main',
-      default_base: 'main',
+      default_base: 'main', switchable: true, base_refusal: null,
       others: [
         { branch: 'feat/PROJ-123-password-reset', change: '2026-11-02-password-reset' },
         { branch: 'change/2026-10-17-product-notes', change: '2026-10-17-product-notes' },
@@ -1207,7 +1207,7 @@ describe('SdlcHomeViewModel naming at the start of a change', () => {
 
   it('a refusal names the base branch the backend resolves, not a stored one', async () => {
     const { vm, transport } = await opened({ kind: 'error', reason: 'unusable', message: 'no {slug}' });
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'main', others: [], default_base: 'develop' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'main', others: [], default_base: 'develop', switchable: true, base_refusal: null });
     await vm.selectWorkspace(vm.workspaces()[0].id);
     vm.openNewChange();
     await vi.waitFor(() => expect(vm.namingError()).toContain('committed to develop;'));

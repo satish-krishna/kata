@@ -77,8 +77,8 @@ pub struct BranchInfo {
 }
 
 /// Whether Kata may switch the engineer's checkout to a change's branch in a `layout`.
-pub fn switchable(_layout: Layout) -> bool {
-    true
+pub fn switchable(layout: Layout) -> bool {
+    layout == Layout::Workspace
 }
 
 /// The master's branch, the other local branches that hold a change, and the base branch.
@@ -88,12 +88,25 @@ pub fn branch_info(master: &Path) -> BranchInfo {
 
 /// [`branch_info`] for a repository in `layout`.
 pub fn branch_info_in(master: &Path, layout: Layout) -> BranchInfo {
+    let current = current_branch(master);
+    let default_base = diff::base_branch(master);
+    let can_switch = switchable(layout);
+    let base_refusal = match (&current, &default_base) {
+        (Some(on), Some(base)) if !can_switch && on != base => Some(format!(
+            "This repository is on `{on}`; switch it to `{base}` yourself, then run this again."
+        )),
+        _ => None,
+    };
     BranchInfo {
-        current: current_branch(master),
-        others: other_change_branches(master),
-        default_base: diff::base_branch(master),
-        switchable: switchable(layout),
-        base_refusal: None,
+        others: if can_switch {
+            other_change_branches(master)
+        } else {
+            Vec::new()
+        },
+        current,
+        default_base,
+        switchable: can_switch,
+        base_refusal,
     }
 }
 
@@ -232,7 +245,10 @@ pub fn checkout(master: &Path, branch: &str) -> Result<(), BranchError> {
 }
 
 /// [`checkout`] for a repository in `layout`: refused before anything is touched when the layout is not switchable.
-pub fn checkout_in(_layout: Layout, master: &Path, branch: &str) -> Result<(), BranchError> {
+pub fn checkout_in(layout: Layout, master: &Path, branch: &str) -> Result<(), BranchError> {
+    if !switchable(layout) {
+        return Err(BranchError::NotSwitchable);
+    }
     checkout(master, branch)
 }
 

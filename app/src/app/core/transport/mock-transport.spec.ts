@@ -124,7 +124,7 @@ describe('MockTransport', () => {
   it('checkout records the previous change branch without its prefix and drops the target', async () => {
     const t = new MockTransport();
     await t.sdlcCheckout('/m', 'change/2026-10-17-product-notes');
-    expect(await t.sdlcBranches('/m')).toEqual({ current: 'change/2026-10-17-product-notes', others: [], default_base: 'main' });
+    expect(await t.sdlcBranches('/m')).toEqual({ current: 'change/2026-10-17-product-notes', others: [], default_base: 'main', switchable: true, base_refusal: null });
     await t.sdlcCheckout('/m', 'main');
     expect((await t.sdlcBranches('/m')).others.map((o) => o.change)).toEqual(['2026-10-17-product-notes']);
   });

@@ -789,7 +789,7 @@ describe('ChangePageViewModel', () => {
 
     it('hides the branch chip when the master repository is on the change branch', async () => {
       const transport = new MockTransport();
-      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: `change/${PHOTOS_CHANGE}`, others: [], default_base: 'main' });
+      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: `change/${PHOTOS_CHANGE}`, others: [], default_base: 'main', switchable: true, base_refusal: null });
       const { vm } = setup(PHOTOS_CHANGE, transport);
       await ready(vm);
       expect(vm.masterBranch()).toBe(`change/${PHOTOS_CHANGE}`);
@@ -800,7 +800,7 @@ describe('ChangePageViewModel', () => {
       const RECORDED = 'feat/PROJ-123-password-reset';
       const recorded = (current: string) => {
         const transport = new MockTransport();
-        vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current, others: [], default_base: 'main' });
+        vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current, others: [], default_base: 'main', switchable: true, base_refusal: null });
         const real = transport.sdlcChangeRepos.bind(transport);
         vi.spyOn(transport, 'sdlcChangeRepos').mockImplementation(async (...args) => (await real(...args)).map((r) => ({ ...r, branch: RECORDED })));
         return transport;
