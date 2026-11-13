@@ -2756,6 +2756,43 @@ mod tests {
         assert_eq!(ready_with(None), Ok(()));
     }
 
+    /// Stub: the first folder at or above `start` that holds `name`. Not implemented yet.
+    fn find_upward(_start: &std::path::Path, _name: &str) -> Option<std::path::PathBuf> {
+        None
+    }
+
+    #[test]
+    fn fake_claude_is_found_above_a_deep_test_binary() {
+        let name = format!("fake-claude{}", std::env::consts::EXE_SUFFIX);
+        let root = tempfile::tempdir().unwrap();
+        let shallow = root.path().join("target").join("debug");
+        std::fs::create_dir_all(shallow.join("deps")).unwrap();
+        let fake = shallow.join(&name);
+        std::fs::write(&fake, b"").unwrap();
+
+        // The layout cargo 1.100 uses for test binaries.
+        let deep = shallow
+            .join("build")
+            .join("kata-app")
+            .join("abc123")
+            .join("deps");
+        std::fs::create_dir_all(&deep).unwrap();
+        assert_eq!(find_upward(&deep, &name), Some(fake.clone()));
+        // The older layout.
+        assert_eq!(find_upward(&shallow.join("deps"), &name), Some(fake));
+
+        // A tree with no fake-claude anywhere above it.
+        let empty = tempfile::tempdir().unwrap();
+        let empty_deep = empty
+            .path()
+            .join("target")
+            .join("debug")
+            .join("build")
+            .join("x");
+        std::fs::create_dir_all(&empty_deep).unwrap();
+        assert_eq!(find_upward(&empty_deep, &name), None);
+    }
+
     fn live(id: u64) -> LiveRun<()> {
         LiveRun {
             id,
