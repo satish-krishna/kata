@@ -1844,6 +1844,7 @@ fn sdlc_declare_done(app: AppHandle, change: build_host::ChangeRef) -> sdlc::don
     };
     // A change that lives in a copy is declared done from its copy.
     let at = sdlc::ai_sdlc::Place {
+        layout: kata_sdlc::layout::Layout::Workspace,
         master: std::path::PathBuf::from(&state.master),
         workspace: place.workspace,
     };
@@ -3041,6 +3042,7 @@ name: build
             let folder = fx.copy.join("intent").join(SYSTEM).join(CHANGE);
             ChangeHome {
                 place: sdlc::ai_sdlc::Place {
+                    layout: kata_sdlc::layout::Layout::Workspace,
                     master: fx.checkout.clone(),
                     workspace: fx.checkout.parent().unwrap().to_path_buf(),
                 },

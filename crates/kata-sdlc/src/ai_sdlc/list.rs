@@ -122,6 +122,7 @@ mod tests {
             "intent",
         );
         let place = Place {
+            layout: crate::layout::Layout::Workspace,
             master: master.clone(),
             workspace: ws.to_path_buf(),
         };

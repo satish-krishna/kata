@@ -296,6 +296,7 @@ mod tests {
         (
             dir,
             Place {
+                layout: kata_sdlc::layout::Layout::Workspace,
                 master,
                 workspace: ws,
             },

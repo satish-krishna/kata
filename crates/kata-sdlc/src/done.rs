@@ -371,6 +371,7 @@ mod tests {
 
     fn here() -> Place {
         Place {
+            layout: crate::layout::Layout::Workspace,
             master: PathBuf::from("."),
             workspace: PathBuf::from("."),
         }
@@ -693,6 +694,7 @@ say({ type: 'outcome', outcome: 'passed', problems: [], hooks: [], failed: null,
 
         fn place(&self) -> Place {
             Place {
+                layout: crate::layout::Layout::Workspace,
                 master: self.master.clone(),
                 workspace: self.ws.clone(),
             }

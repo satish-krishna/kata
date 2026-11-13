@@ -256,6 +256,7 @@ mod tests {
 
         fn place(&self) -> Place {
             Place {
+                layout: crate::layout::Layout::Workspace,
                 master: self.master.clone(),
                 workspace: self.ws.clone(),
             }

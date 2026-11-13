@@ -2236,6 +2236,7 @@ mod tests {
 
     fn fake_place() -> Place {
         Place {
+            layout: kata_sdlc::layout::Layout::Workspace,
             master: PathBuf::from("D:/ws/ai-sdlc"),
             workspace: PathBuf::from(WS),
         }

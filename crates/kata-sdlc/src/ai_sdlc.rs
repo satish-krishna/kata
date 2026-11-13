@@ -41,6 +41,8 @@ const PLACED: &[&str] = &[
 /// Where an ai-sdlc command works: the master repository and the workspace around it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Place {
+    /// The layout of the master repository: how the folders around it are read.
+    pub layout: crate::layout::Layout,
     pub master: PathBuf,
     pub workspace: PathBuf,
 }
@@ -432,7 +434,11 @@ impl Program {
                 .map(PathBuf::from)
         };
         match (path("master"), path("workspace")) {
-            (Some(master), Some(workspace)) => Ok(Place { master, workspace }),
+            (Some(master), Some(workspace)) => Ok(Place {
+                layout: crate::layout::Layout::Workspace,
+                master,
+                workspace,
+            }),
             _ => {
                 let problems: Vec<&str> = found["problems"]
                     .as_array()
@@ -562,6 +568,7 @@ mod tests {
         let master = testutil::repo(dir.path(), "ai-sdlc");
         testutil::commit_file(&master, ".ai-sdlc.json", "{}\n", "marker");
         let place = Place {
+            layout: crate::layout::Layout::Workspace,
             master,
             workspace: dir.path().to_path_buf(),
         };
@@ -588,6 +595,7 @@ mod tests {
         assert_eq!(found["problems"], serde_json::json!([]));
 
         let nowhere = Place {
+            layout: crate::layout::Layout::Workspace,
             master: place.workspace.join("missing"),
             workspace: place.workspace.clone(),
         };
@@ -642,6 +650,7 @@ mod tests {
         let entry = dir.join("scripted.js");
         std::fs::write(&entry, body).unwrap();
         let place = Place {
+            layout: crate::layout::Layout::Workspace,
             master: dir.to_path_buf(),
             workspace: dir.to_path_buf(),
         };
@@ -812,6 +821,7 @@ mod tests {
             "hooks": {"change.start": [{"id": "slow", "run": ["node", "-e", "setTimeout(() => {}, 6000)"], "timeout": 30}]}});
         testutil::commit_file(&master, ".ai-sdlc.json", &marker.to_string(), "marker");
         let place = Place {
+            layout: crate::layout::Layout::Workspace,
             master,
             workspace: dir.path().to_path_buf(),
         };

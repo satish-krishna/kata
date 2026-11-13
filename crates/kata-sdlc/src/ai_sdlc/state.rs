@@ -124,6 +124,17 @@ pub struct Ready {
     pub reject: ReadyGate,
 }
 
+/// One app of a single-repo system as a change stands in it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct AppFacts {
+    pub folder: String,
+    pub touched: bool,
+    pub head: Option<String>,
+}
+
 /// Where one change stands.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -147,6 +158,10 @@ pub struct ChangeState {
     #[serde(default)]
     #[cfg_attr(feature = "ts", ts(skip))]
     pub finished: Option<Finished>,
+    /// Single-repo layout only: each app of the system with its folder and whether the change touched
+    /// it. Absent in the workspace layout.
+    #[serde(default, skip_deserializing)]
+    pub apps: Option<BTreeMap<String, AppFacts>>,
 }
 
 /// Where every change of a system stands.
@@ -353,6 +368,7 @@ mod tests {
         );
         testutil::repo(ws, "app");
         let place = Place {
+            layout: crate::layout::Layout::Workspace,
             master: master.clone(),
             workspace: ws.to_path_buf(),
         };

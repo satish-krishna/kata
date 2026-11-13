@@ -266,6 +266,7 @@ mod tests {
                     "feat", "--scope", "X-1",
                 ],
                 &kata_sdlc::ai_sdlc::Place {
+                    layout: kata_sdlc::layout::Layout::Workspace,
                     master: master.clone(),
                     workspace: ws.clone(),
                 },

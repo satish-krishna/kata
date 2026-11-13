@@ -17,6 +17,7 @@ pub mod frontmatter;
 pub mod git;
 pub mod holds;
 pub mod home;
+pub mod layout;
 pub mod naming;
 pub mod offer;
 pub mod old_checks;
