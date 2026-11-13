@@ -9,6 +9,9 @@ pub const MIN_VERSION: &str = "1.1.0";
 /// The first plugin release that lists changes (`list`) and reads only the open ones (`state --open`).
 pub const LIST_MIN_VERSION: &str = "1.3.0";
 
+/// The first plugin release that understands the single-repo layout.
+pub const LAYOUT_MIN_VERSION: &str = "1.4.0";
+
 /// The oldest Node.js the plugin's program runs on.
 pub const MIN_NODE: &str = "22.18";
 
@@ -62,6 +65,7 @@ pub enum GhPresence {
 pub enum BlockReason {
     PluginMissing,
     PluginTooOld,
+    LayoutNeedsNewerPlugin,
     NodeMissing,
     NodeTooOld,
     GitMissing,
@@ -153,6 +157,12 @@ pub fn readiness(env: &Machine) -> Readiness {
             GhPresence::Missing
         },
     }
+}
+
+/// The readiness for a folder opened with `layout`: the machine's `readiness`, unless the folder is a
+/// single-repo repository and the plugin is not a release of [`LAYOUT_MIN_VERSION`] or later.
+pub fn for_layout(readiness: Readiness, _layout: crate::layout::Layout) -> Readiness {
+    readiness
 }
 
 /// Whether the installed plugin can list changes and read the open ones alone: a ready machine whose
@@ -360,6 +370,71 @@ mod tests {
         ];
         for (name, env, expected) in rows {
             assert_eq!(readiness(&env), expected, "{name}");
+        }
+    }
+
+    /// R2.1: the readiness of an opened folder, one case per row of the table, against a written list.
+    #[test]
+    fn layout_readiness_rows() {
+        use crate::layout::Layout::{SingleRepo, Workspace};
+        let needs = |version: &str| {
+            blocked_with(
+                BlockReason::LayoutNeedsNewerPlugin,
+                &format!(
+                    "The single-repo layout needs ai-sdlc 1.4.0 or later; this machine has {version}."
+                ),
+            )
+        };
+        let rows: Vec<(&str, Option<&str>, crate::layout::Layout, Readiness)> = vec![
+            (
+                "single-repo 1.4.0",
+                Some("1.4.0"),
+                SingleRepo,
+                ready("1.4.0", GhPresence::Present),
+            ),
+            (
+                "single-repo 1.5.2",
+                Some("1.5.2"),
+                SingleRepo,
+                ready("1.5.2", GhPresence::Present),
+            ),
+            (
+                "single-repo 1.3.1",
+                Some("1.3.1"),
+                SingleRepo,
+                needs("1.3.1"),
+            ),
+            (
+                "single-repo 1.4.0-beta.1",
+                Some("1.4.0-beta.1"),
+                SingleRepo,
+                needs("1.4.0-beta.1"),
+            ),
+            (
+                "single-repo, not installed",
+                None,
+                SingleRepo,
+                blocked_with(BlockReason::PluginMissing, "Install the ai-sdlc plugin"),
+            ),
+            (
+                "workspace 1.1.0",
+                Some("1.1.0"),
+                Workspace,
+                ready("1.1.0", GhPresence::Present),
+            ),
+            (
+                "workspace 1.0.4",
+                Some("1.0.4"),
+                Workspace,
+                blocked_with(
+                    BlockReason::PluginTooOld,
+                    "The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 1.0.4.",
+                ),
+            ),
+        ];
+        for (name, version, layout, expected) in rows {
+            let machine = machine(version, Some("v22.18.0"), true, true);
+            assert_eq!(for_layout(readiness(&machine), layout), expected, "{name}");
         }
     }
 

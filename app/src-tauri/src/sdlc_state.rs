@@ -394,4 +394,43 @@ mod tests {
             }
         }
     }
+
+    /// R2.2: a single-repo folder on a plugin below 1.4.0 offers nothing, setup included.
+    #[test]
+    fn a_blocked_single_repo_offers_nothing() {
+        let source = counting(2);
+        let readiness = kata_sdlc::plugin::for_layout(
+            Readiness::Ready {
+                plugin: Plugin {
+                    dir: PathBuf::from("plugin"),
+                    version: "1.3.1".into(),
+                    layouts: vec![],
+                },
+                gh: GhPresence::Present,
+            },
+            kata_sdlc::layout::Layout::SingleRepo,
+        );
+        let view = system_view(
+            Some(&source),
+            &readiness,
+            &no_live,
+            Path::new("/ws"),
+            "demo",
+        )
+        .unwrap();
+        assert!(!view.can_start_change);
+        assert!(view
+            .start_change_reason
+            .as_deref()
+            .unwrap()
+            .contains("1.3.1"));
+        assert_eq!(view.changes.len(), 2);
+        for c in &view.changes {
+            assert!(!c.offer.actions.is_empty());
+            for a in &c.offer.actions {
+                assert!(!a.enabled, "{:?}", a.action);
+                assert!(a.reason.as_deref().unwrap().contains("1.4.0"));
+            }
+        }
+    }
 }
