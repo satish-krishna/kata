@@ -706,6 +706,8 @@ impl BuildHost {
         let run_place = RunPlace {
             kind: run_kind,
             system: change.system.clone(),
+            layout: exec.place.layout,
+            apps: RunPlace::apps_of(&state),
             state,
             workspace: exec.place.workspace.clone(),
             checkout: exec.place.master.clone(),
@@ -1024,6 +1026,8 @@ impl BuildHost {
         let place = RunPlace {
             kind,
             system: exec.system.clone(),
+            layout: exec.place.layout,
+            apps: RunPlace::apps_of(&snapshot.state),
             state: snapshot.state.clone(),
             workspace: exec.place.workspace.clone(),
             checkout: exec.place.master.clone(),

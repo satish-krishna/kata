@@ -6,7 +6,7 @@ use kata_core::spec::{
 };
 use kata_core::RunSpec;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// What the engineer chose for this run.
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -97,6 +97,11 @@ pub fn given_for(off: &[String], workdir: &str) -> Given {
 
 const AI_SDLC: &str = "ai-sdlc";
 const GITHUB_TOKENS: [&str; 3] = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"];
+
+/// The folder a build run of `repo` works in.
+pub fn build_workdir(place: &RunPlace, repo: &str) -> PathBuf {
+    PathBuf::from(slashes(&place.master_path()))
+}
 
 /// The run-spec of a run of a change. It is never bare (R5.4): the empty room would drop the plugin's
 /// gate and guard. A build or review run is always auto, since bypass forbids the deny rules that keep an
@@ -280,6 +285,27 @@ mod tests {
             .ends_with(&format!("with --review --master {COPY_A}.")));
         assert_eq!(r.workdir, COPY_A);
         assert_eq!(r.name, "sdlc-commerce-2026-10-12-photos-review");
+    }
+
+    #[test]
+    fn an_app_runs_in_its_folder_in_the_copy() {
+        let mut p = place_in_copies(RunKind::Build {
+            repo: "engine".into(),
+        });
+        p.layout = crate::layout::Layout::SingleRepo;
+        p.apps = vec![
+            ("engine".into(), "engine".into()),
+            ("workbench".into(), "app".into()),
+        ];
+        let s = change_spec(&p, form(false));
+        assert_eq!(s.workdir, format!("{COPY_A}/engine"));
+        assert_eq!(
+            build_workdir(&p, "workbench"),
+            Path::new(COPY_A).join("app")
+        );
+        p.apps = vec![("engine".into(), ".".into())];
+        let s = change_spec(&p, form(false));
+        assert_eq!(s.workdir, COPY_A);
     }
 
     #[test]
