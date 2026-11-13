@@ -518,16 +518,44 @@ mod tests {
         let fake = debug.join(&name);
         std::fs::write(&fake, b"").unwrap();
 
-        // The layout cargo 1.100 uses for test binaries.
+        // cargo 1.100 builds test binaries under target/debug/build/<pkg>/<hash>/out/.
         let deep = debug
             .join("build")
             .join("kata-app")
             .join("abc123")
-            .join("deps");
+            .join("out");
         std::fs::create_dir_all(&deep).unwrap();
         assert_eq!(find_upward(&deep, &name), Some(fake.clone()));
         // The older layout.
         assert_eq!(find_upward(&debug.join("deps"), &name), Some(fake));
+    }
+
+    #[test]
+    fn find_upward_stops_at_the_target_folder() {
+        let name = format!("fake-claude{}", std::env::consts::EXE_SUFFIX);
+        let root = tempfile::tempdir().unwrap();
+        // A stray binary above the target folder must not be picked up.
+        std::fs::write(root.path().join(&name), b"").unwrap();
+        let out = root
+            .path()
+            .join("target")
+            .join("debug")
+            .join("build")
+            .join("kata-app")
+            .join("abc123")
+            .join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        assert_eq!(find_upward(&out, &name), None);
+    }
+
+    #[test]
+    fn find_upward_is_none_without_a_target_folder_above_start() {
+        let name = format!("fake-claude{}", std::env::consts::EXE_SUFFIX);
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join(&name), b"").unwrap();
+        let start = root.path().join("a").join("b");
+        std::fs::create_dir_all(&start).unwrap();
+        assert_eq!(find_upward(&start, &name), None);
     }
 
     #[test]
