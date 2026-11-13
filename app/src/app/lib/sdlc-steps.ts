@@ -14,7 +14,9 @@ export type StepWant = 'starting' | 'renaming' | 'removingCopy' | 'accepting' | 
 
 /** Whether a step report is about the kind of step `want` (the document of an accepting or rejecting step does not matter: a change runs one at a time). */
 export function isStep(kind: StepKind, want: StepWant): boolean {
-  return typeof kind === 'string' ? kind === want : want in kind;
+  // A rejected fix is its own kind of step, so the backend can say "fix" in its words; it is still a rejecting step.
+  if (typeof kind === 'string') return kind === want || (kind === 'rejectingFix' && want === 'rejecting');
+  return want in kind;
 }
 
 /**

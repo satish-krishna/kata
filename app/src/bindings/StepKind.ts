@@ -4,4 +4,4 @@ import type { ChangeDocument } from "./ChangeDocument";
 /**
  * What a long step of a change is.
  */
-export type StepKind = "preparingBuild" | "preparingReview" | "starting" | "renaming" | "removingCopy" | { "accepting": ChangeDocument } | { "rejecting": ChangeDocument } | "declaringDone";
+export type StepKind = "preparingBuild" | "preparingReview" | "starting" | "renaming" | "removingCopy" | { "accepting": ChangeDocument } | { "rejecting": ChangeDocument } | "rejectingFix" | "declaringDone";

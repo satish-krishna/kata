@@ -1432,16 +1432,18 @@ export class ChangePageViewModel {
   private async rejectChange(): Promise<void> {
     const ref = this.draftRef();
     if (ref === null) return;
+    // A light-track change is rejected as a fix, as the page's button says.
+    const doc = this.change()?.state.track === 'fix' ? 'fix' : 'intent';
     let out: RejectOutcome;
     try {
-      out = await this.inStep('rejecting', 'Rejecting the intent', 'Stop rejecting the intent', () => this.transport.sdlcReject(ref));
+      out = await this.inStep('rejecting', `Rejecting the ${doc}`, `Stop rejecting the ${doc}`, () => this.transport.sdlcReject(ref));
     } catch (e) {
       this.toasts.error(`Could not reject the change: ${message(e)}`);
       return;
     }
     switch (out.outcome) {
       case 'stopped':
-        this.stepStopped.set(rejectStopped(this.change()?.state.track === 'fix' ? 'fix' : 'intent', out.rejected));
+        this.stepStopped.set(rejectStopped(doc, out.rejected));
         break;
       case 'rejected':
         this.toasts.success(rejectedSaid(out.recordBranch));
