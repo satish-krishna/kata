@@ -15,6 +15,11 @@
 // is pushed, the master's pull request is opened with the others listed, and its own link is committed and pushed
 // too. A failure stops at once and says what was pushed and opened; running it again carries on from there. A
 // touched product repository is one whose change branch has commits beyond its base; the master is always touched.
+//
+// In the single-repo layout the same checks run with apps for repositories, over the one repository (the change's
+// copy): an app is touched when the branch changed a file in its folder, its head is the latest commit touching its
+// folder, build.finish runs only for touched apps, and the branch is pushed once with one pull request that is
+// recorded as `master`. A plan app that is not touched is listed in `details.untouched`, not refused.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { planRepos, unloggedTasks } from '../../changes/progress.ts';
@@ -26,6 +31,7 @@ import type { ParsedReview, ParsedReviewSection } from '../../common/types.ts';
 import { baseRevision, commitOf, commitPaths, commitsBeyondBase, currentBranch, dirtyPaths, git, gitOut, hasLocalBranch, isAncestor, showFile, baseBranch } from '../../git/git.ts';
 import { hostOf, openNew, openPullRequest, signInProblem } from '../../git/gh.ts';
 import { namingFromText, renderNaming } from '../../workspace/naming.ts';
+import { appFolders, appHead, isSingleRepo, repoPathOf, touchedApps } from '../../workspace/apps.ts';
 import type { EventContext } from '../context.ts';
 import { runEvent } from '../runner.ts';
 import type { Step } from './step.ts';
@@ -101,9 +107,97 @@ function remoteProblem(repo: string, path: string, branch: string, head: string)
   return `${branch} is already taken on ${repo}'s remote by work that is not on this machine's branch: pick a new name with change rename, and nothing is pushed`;
 }
 
+/** The single-repo layout: the one repository is the change's copy (`ctx.master`), and an app is a folder of it. */
+async function checkSingleRepo(ctx: EventContext): Promise<string[]> {
+  const record = recordOf(ctx);
+  const branch = record.branch;
+  const planApps = planRepos(ctx.folder);
+  if (planApps.length === 0) return [`${ctx.change} has no plan that reads cleanly, so there is nothing to declare done`];
+  const problems: string[] = [];
+  if (currentBranch(ctx.master) !== branch) problems.push(`the change's copy ${ctx.master} is on ${currentBranch(ctx.master) ?? 'a detached HEAD'}, not on ${branch}`);
+  const dirty = dirtyPaths(ctx.master);
+  if (dirty.length > 0) problems.push(`the change's copy has uncommitted files: ${dirty.join(', ')}`);
+  for (const app of planApps) {
+    const missing = unloggedTasks(ctx.folder, app) ?? [];
+    if (missing.length > 0) problems.push(`${app} still has tasks without a build log entry: ${missing.join(', ')}`);
+  }
+  const base = baseBranch(ctx.master);
+  if (base === null) problems.push(`the change's copy ${ctx.master} has no base branch to compare ${branch} with`);
+  if (problems.length > 0 || base === null) return problems;
+  const ref = `refs/heads/${branch}`;
+  const folders = appFolders(ctx.master, ctx.system);
+  const apps = touchedApps(ctx.master, ctx.system, ctx.master, base, ref);
+  const headOfApp = (app: string): string => appHead(ctx.master, ref, folders[app] as string, base);
+  const broken = commitRuleProblems(commitsBeyondBase(ctx.master, ref, base), changeScope(ctx.master, ctx.system, ctx.folder));
+  if (broken.length > 0) problems.push(`commits on ${branch} break the commit rules: ${broken.join('; ')}`);
+  const latest = latestReview(ctx.folder);
+  const reviewed = latest === null ? null : Object.fromEntries(Object.entries(latest.commits ?? {}).map(([k, v]) => [k, String(v)]));
+  if (latest === null || reviewed === null) problems.push(`${ctx.change} has no review yet: run the ai-sdlc review skill first`);
+  else {
+    const blocking = blockingFindings(latest);
+    if (blocking.length > 0) problems.push(`the latest review (review ${latest.number}) has unresolved high findings: ${blocking.join('; ')}. Fix them and review again; a later review that no longer finds them clears them`);
+    for (const app of apps) {
+      const at = reviewed[app];
+      const head = headOfApp(app);
+      if (!at || !head.startsWith(at)) problems.push(`the latest review covered ${app} at ${at ?? 'no commit'}, but its branch is now at ${head.slice(0, 7)}: run the review again`);
+    }
+  }
+  if (problems.length > 0) return problems;
+  for (const app of apps) {
+    const head = headOfApp(app);
+    const checks = await runEvent({ ...ctx, event: 'build.finish', repo: app, repoPath: repoPathOf(ctx.master, ctx.workspace, ctx.system, app), root: ctx.master, branch, base, head, extra: {} });
+    if (checks.outcome !== 'passed') problems.push(`${app}'s checks (build.finish) did not pass at ${head.slice(0, 7)}: ${[...checks.problems, checks.failed?.output ?? ''].filter(Boolean).join('\n')}`);
+  }
+  if (problems.length > 0) return problems;
+  const remote = remoteProblem('master', ctx.master, branch, commitOf(ctx.master, 'HEAD') as string);
+  if (remote) problems.push(remote);
+  const signIn = signInProblem(ctx.master, hostOf(gitOut(ctx.master, ['remote', 'get-url', 'origin']) ?? ''));
+  if (signIn) problems.push(signIn);
+  return problems;
+}
+
+/** The single-repo layout: push the one branch, open (or keep) the one pull request, record it, push again. */
+function actSingleRepo(ctx: EventContext) {
+  const record = recordOf(ctx);
+  const branch = record.branch;
+  const base = baseBranch(ctx.master) ?? record.base;
+  const touchedNames = touchedApps(ctx.master, ctx.system, ctx.master, base, `refs/heads/${branch}`);
+  const untouched = planRepos(ctx.folder).filter((a) => !touchedNames.includes(a));
+  const opened: PullRequest[] = [];
+  const pushed: string[] = [];
+  const fail = (why: string) => ({ problems: [why, pushed.length ? `pushed so far: ${pushed.join(', ')}; running done again carries on from there` : 'nothing was pushed'], details: { pushed, pullRequests: opened, untouched } });
+  const push = (): string | null => {
+    const r = git(ctx.master, ['push', '--quiet', '-u', 'origin', `refs/heads/${branch}:refs/heads/${branch}`]);
+    if (!r.ok) return `pushing ${branch} in master failed (a pre-push hook, or the remote refused it): ${(r.stderr || r.stdout).trim()}`;
+    if (!pushed.includes('master')) pushed.push('master');
+    return null;
+  };
+  const save = (header: string): string | null => {
+    const file = writeRecord(ctx.folder, { ...record, pullRequests: opened });
+    const r = commitPaths(ctx.master, [file], [header, 'Generated-By: ai-sdlc']);
+    return r.ok || /nothing to commit|no changes added/.test(r.output) ? null : `the commit "${header}" failed: ${r.error}`;
+  };
+  const header = `docs(${record.scope}): record pull requests ${ctx.change}`;
+  let failed = push();
+  if (failed) return fail(failed);
+  const names = touchedNames.map((a) => `\`${a}\``).join(', ');
+  const body = `Change \`${ctx.change}\` of system \`${ctx.system}\`, built with ai-sdlc. Its intent, spec, plan, build logs and review are in this pull request, under \`intent/${ctx.system}/${ctx.change}/\`.\n\nApps touched: ${names || 'none'}.`;
+  const pushedHead = commitOf(ctx.master, `refs/heads/${branch}`) as string;
+  const pr = openPullRequest(ctx.master, branch) ?? openNew(ctx.master, { base, head: branch, title: pullRequestTitle(ctx, record), body });
+  if (typeof pr === 'string') return fail(`opening the pull request in master failed: ${pr}`);
+  opened.push({ repo: 'master', url: pr.url, number: pr.number, pushed: pushedHead });
+  const saved = save(header);
+  if (saved) return fail(saved);
+  failed = push();
+  if (failed) return fail(failed);
+  ctx.head = commitOf(ctx.master, 'HEAD');
+  return { problems: [], details: { pushed, pullRequests: opened, untouched } };
+}
+
 export const changeDone: Step = {
   reusePassed: false,
   async check(ctx) {
+    if (isSingleRepo(ctx.master)) return checkSingleRepo(ctx);
     const record = recordOf(ctx);
     const branch = record.branch;
     const repos = planRepos(ctx.folder);
@@ -146,7 +240,7 @@ export const changeDone: Step = {
         problems.push(`${r.repo} is not on ${branch}, so its checks cannot run on the work being declared done`);
         continue;
       }
-      const checks = await runEvent({ ...ctx, event: 'build.finish', repo: r.repo, repoPath: r.path, branch, base: baseBranch(r.path), head: r.head, extra: {} });
+      const checks = await runEvent({ ...ctx, event: 'build.finish', repo: r.repo, repoPath: r.path, root: r.path, branch, base: baseBranch(r.path), head: r.head, extra: {} });
       if (checks.outcome !== 'passed') problems.push(`${r.repo}'s checks (build.finish) did not pass at ${r.head.slice(0, 7)}: ${[...checks.problems, checks.failed?.output ?? ''].filter(Boolean).join('\n')}`);
     }
     if (problems.length > 0) return problems;
@@ -164,6 +258,7 @@ export const changeDone: Step = {
     return problems;
   },
   act(ctx) {
+    if (isSingleRepo(ctx.master)) return actSingleRepo(ctx);
     const record = recordOf(ctx);
     const branch = record.branch;
     const title = pullRequestTitle(ctx, record);

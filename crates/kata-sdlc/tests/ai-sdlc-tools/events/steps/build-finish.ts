@@ -2,6 +2,7 @@
 // checks are the blocking before hooks of build.finish that name the repository; this step only adds what the
 // plugin owns, before any of them: every task logged, and every commit on the branch beyond the base carrying the
 // change's scope and the ai-sdlc trailer. A repository with no checks passes.
+// In the single-repo layout an app the change did not touch passes as a no-op (details `{ untouched: true }`, no hook, no baseline), recorded at the app's head. The repository is the change's copy: the commit rules are checked once over its whole range, and the checks judged are the app's own, run in its folder.
 //
 // Each check is judged against the baseline: how it did on the base commit (taken now when none is stored). A
 // failure that was already there does not block: one that says what failed (its IDs) passes when it has no ID the
@@ -13,25 +14,32 @@ import { recoverInterrupted, takeBaseline } from '../../baseline/take.ts';
 import { branchOf } from '../../changes/record.ts';
 import { unloggedTasks } from '../../changes/progress.ts';
 import { changeScope, commitRuleProblems } from '../../changes/scope.ts';
-import { commitOf, commitsBeyondBase, currentBranch } from '../../git/git.ts';
+import { commitsBeyondBase, currentBranch } from '../../git/git.ts';
+import { isSingleRepo, touchedApps } from '../../workspace/apps.ts';
+import { headOf } from '../context.ts';
 import type { Judge, Step } from './step.ts';
 
 export const buildFinish: Step = {
   reusePassed: true,
   check(ctx) {
     // A baseline run killed on the base commit left the repository there: put it back before anything else.
-    const stuck = recoverInterrupted(ctx.repoPath);
+    const stuck = recoverInterrupted(ctx.root);
     if (stuck !== null) return [stuck];
     ctx.branch = currentBranch(ctx.repoPath);
-    ctx.head = commitOf(ctx.repoPath, 'HEAD');
+    ctx.head = headOf(ctx);
     const missing = unloggedTasks(ctx.folder, ctx.repo);
     if (missing === null) return [`${ctx.change} has no plan that reads cleanly`];
     if (missing.length > 0) return [`${ctx.repo} still has tasks without a build log entry: ${missing.join(', ')}`];
     const branch = branchOf(ctx.folder);
     if (ctx.branch !== branch) return [`${ctx.repo} is on ${ctx.branch ?? 'a detached HEAD'}, not on the change's branch ${branch}`];
     if (ctx.base === null) return [`${ctx.repo} has no base branch on this machine`];
-    const broken = commitRuleProblems(commitsBeyondBase(ctx.repoPath, 'HEAD', ctx.base), changeScope(ctx.master, ctx.system, ctx.folder));
+    const broken = commitRuleProblems(commitsBeyondBase(ctx.root, 'HEAD', ctx.base), changeScope(ctx.master, ctx.system, ctx.folder));
     return broken.length > 0 ? [`commits on ${branch} break the commit rules (references/workspace.md, section 8): ${broken.join('; ')}`] : [];
+  },
+  // Single-repo layout: an app the change did not touch has no checks to run, so build.finish passes at its head as a no-op.
+  idle(ctx) {
+    if (!isSingleRepo(ctx.master) || ctx.repo === 'master' || ctx.base === null) return null;
+    return touchedApps(ctx.root, ctx.system, ctx.master, ctx.base, 'HEAD').includes(ctx.repo) ? null : { untouched: true };
   },
   async prepare(ctx, config) {
     const taken = await takeBaseline(ctx, config);

@@ -7,6 +7,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { COMMIT_TYPES, readRecord, writeRecord } from '../../changes/record.ts';
 import { baseRevision, commitOf, commitPaths, git, hasLocalBranch, showFile } from '../../git/git.ts';
+import { productRepositories } from '../../workspace/apps.ts';
 import { branchClashes } from '../../workspace/branches.ts';
 import { checkBranchName, checkNaming, checkScope, namingFromText, renderNaming } from '../../workspace/naming.ts';
 import { copiesFolder, type EventContext } from '../context.ts';
@@ -51,7 +52,7 @@ export const changeStart: Step = {
     if (name === null) return naming;
     const invalid = checkBranchName(name);
     if (invalid.length > 0) return invalid.map((p) => `${name}: ${p}`);
-    return branchClashes(name, [{ repo: 'master', path: ctx.master }, ...ctx.repos.map((r) => ({ repo: r, path: join(ctx.workspace, r) })).filter((r) => existsSync(r.path))]);
+    return branchClashes(name, [{ repo: 'master', path: ctx.master }, ...productRepositories(ctx.master, ctx.workspace, ctx.repos)]);
   },
   act(ctx) {
     const copy = copyOf(ctx);

@@ -9,6 +9,7 @@ import { checkFiles } from '../commands/check.ts';
 import { readReview } from '../documents/review.ts';
 import { findChange, systemRepos } from '../events/context.ts';
 import { changedPaths, commitPaths, currentBranch, existsAt, showFile } from '../git/git.ts';
+import { isSingleRepo } from '../workspace/apps.ts';
 import { readMarker } from '../workspace/marker.ts';
 import { real, resolveWorkspace, type ResolveOptions } from '../workspace/resolve.ts';
 import { entriesOf } from './progress.ts';
@@ -99,8 +100,10 @@ function target(req: CommitRequest, rule: KindRule): Target {
   const repo = need(req.repo, '--repo <repo>', req.kind);
   const repos = systemRepos(found.master, workspace, found.system);
   if (!repos.includes(repo)) throw new CouldNotRun(`${repo} is not a repository of system ${found.system} (${repos.join(', ') || 'none'})`);
-  const path = join(workspace, repo);
-  if (!existsSync(join(path, '.git'))) throw new CouldNotRun(`${repo} is not checked out in ${workspace}`);
+  // Single-repo layout: an app is a folder of the change's copy, so the commit goes in the copy.
+  const single = isSingleRepo(found.master);
+  const path = single ? found.master : join(workspace, repo);
+  if (!existsSync(join(path, '.git'))) throw new CouldNotRun(single ? `${found.master} is not a git repository` : `${repo} is not checked out in ${workspace}`);
   return { repository: real(path), system: found.system, scope, folder, change };
 }
 

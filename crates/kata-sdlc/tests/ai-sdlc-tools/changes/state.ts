@@ -7,6 +7,7 @@ import { CouldNotRun } from '../common/types.ts';
 import { readReview } from '../documents/review.ts';
 import { readSpec } from '../documents/spec.ts';
 import { baseBranch, baseRevision, commitOf, commitsWithTrailer, mergeBase } from '../git/git.ts';
+import { appFolders, appHead, appPathspec, isSingleRepo, touchedApps, uncommittedInApp } from '../workspace/apps.ts';
 import { uncommittedFiles } from '../workspace/own-files.ts';
 import { gitDirs, type ResolveOptions } from '../workspace/resolve.ts';
 import { DIFF_OPTIONS, differsFromHead, fieldOf, fixStateOf, git, readable, statusOf, type FixState } from './fix-state.ts';
@@ -39,10 +40,15 @@ export type ChangeState = {
   buildLogs: Record<string, BuildLogState>;
   review: { committed: number; draft: 'none' | 'next-section' | 'other' };
   fix: FixState | null;
+  /** Single-repo layout only (absent in the default layout): each app by name, in the marker's order. See GRAMMAR.md. */
+  apps?: Record<string, AppState>;
   ready: Record<Skill, Ready>;
   /** Null when open; see GRAMMAR.md ("Listing a system's changes"). */
   finished: Finished;
 };
+
+/** An app of a change in the single-repo layout: `touched` when the branch changed a file in its folder, `head` its latest commit touching the folder (the merge base when none), null without a base branch or a HEAD. */
+export type AppState = { folder: string; touched: boolean; head: string | null };
 
 export type TaskState = {
   all: string[];
@@ -184,7 +190,7 @@ function changeState(read: SystemRead, run: RunCache, workspace: string, change:
       entry.all.push(t.id);
       (logged.has(t.id) ? entry.logged : entry.unlogged).push(t.id);
     }
-    for (const [repo, entry] of Object.entries(tasks)) Object.assign(entry, repositoryWork(top, workspace, repo, entry.all, run));
+    for (const [repo, entry] of Object.entries(tasks)) Object.assign(entry, repositoryWork(top, workspace, system, repo, entry.all, run));
   }
 
   const workingLogs = isDir(join(folder, 'build')) ? readdirSync(join(folder, 'build')).filter(isLog) : [];
@@ -225,8 +231,24 @@ function changeState(read: SystemRead, run: RunCache, workspace: string, change:
     }
   }
 
-  const base: Omit<ChangeState, 'ready' | 'finished'> = { change, master: top, folder, inCopy, title, track, documents, scenarios, tasks, buildLogs, review: { committed, draft }, fix };
+  const base: Omit<ChangeState, 'ready' | 'finished'> = { change, master: top, folder, inCopy, title, track, documents, scenarios, tasks, buildLogs, review: { committed, draft }, fix, ...(isSingleRepo(top) ? { apps: appsOf(top, system, change, problems) } : {}) };
   return { ...base, ready: readiness(base) };
+}
+
+/** The apps of the system at `top` (the change's copy, or the master) against the repository's base branch. */
+function appsOf(top: string, system: string, change: string, problems: string[]): Record<string, AppState> {
+  const folders = appFolders(top, system);
+  const unknown = (): Record<string, AppState> => Object.fromEntries(Object.entries(folders).map(([app, folder]) => [app, { folder, touched: false, head: null }]));
+  const base = baseBranch(top);
+  if (base === null || commitOf(top, 'HEAD') === null) return unknown();
+  try {
+    const touched = touchedApps(top, system, top, base, 'HEAD');
+    return Object.fromEntries(Object.entries(folders).map(([app, folder]) => [app, { folder, touched: touched.includes(app), head: appHead(top, 'HEAD', folder, base) }]));
+  } catch (e) {
+    if (!(e instanceof CouldNotRun)) throw e;
+    problems.push(`${change}: the apps' heads could not be worked out: ${e.message}`);
+    return unknown();
+  }
 }
 
 /**
@@ -235,19 +257,24 @@ function changeState(read: SystemRead, run: RunCache, workspace: string, change:
  * `<workspace>/<repo>`, except the master listed as a product repository, which is read where the change is (its
  * copy, when it has one). Null when the repository is not checked out; `commits` and `untasked` null without a base.
  */
-function repositoryWork(top: string, workspace: string, repo: string, ids: string[], run: RunCache): Pick<TaskState, 'commits' | 'untasked' | 'uncommitted'> {
+function repositoryWork(top: string, workspace: string, system: string, repo: string, ids: string[], run: RunCache): Pick<TaskState, 'commits' | 'untasked' | 'uncommitted'> {
+  // Single-repo layout: the repo is an app, a folder of the change's holder (`top`); only what touches the folder is its work.
+  const single = isSingleRepo(top);
+  const folder = single ? (appFolders(top, system)[repo] ?? null) : null;
+  if (single && (folder === null || !existsSync(join(top, '.git')))) return { commits: null, untasked: null, uncommitted: null };
   const listed = join(workspace, repo);
-  if (!existsSync(join(listed, '.git'))) return { commits: null, untasked: null, uncommitted: null };
-  const common = dirsOf(run, listed)?.common;
-  const path = common !== undefined && common === dirsOf(run, top)?.common ? top : listed;
-  let facts = run.work.get(path);
+  if (!single && !existsSync(join(listed, '.git'))) return { commits: null, untasked: null, uncommitted: null };
+  const common = single ? undefined : dirsOf(run, listed)?.common;
+  const path = single || (common !== undefined && common === dirsOf(run, top)?.common) ? top : listed;
+  const key = folder === null ? path : `${path}\0${folder}`;
+  let facts = run.work.get(key);
   if (facts === undefined) {
-    const uncommitted = uncommittedFiles(path);
+    const uncommitted = folder === null ? uncommittedFiles(path) : uncommittedInApp(path, folder);
     const base = baseBranch(path);
     const baseRev = base === null ? null : baseRevision(path, base);
     const from = baseRev === null || commitOf(path, 'HEAD') === null ? null : mergeBase(path, baseRev, 'HEAD');
-    facts = { uncommitted, from, trailers: from === null ? [] : commitsWithTrailer(path, from, 'HEAD', 'Plan-Task') };
-    run.work.set(path, facts);
+    facts = { uncommitted, from, trailers: from === null ? [] : commitsWithTrailer(path, from, 'HEAD', 'Plan-Task', folder === null ? [] : appPathspec(folder)) };
+    run.work.set(key, facts);
   }
   if (facts.from === null) return { commits: null, untasked: null, uncommitted: facts.uncommitted };
   const commits: Record<string, string[]> = Object.fromEntries(ids.map((id) => [id, []]));

@@ -195,11 +195,34 @@ export function countCommits(dir: string, from: string, to: string, paths: strin
   return out === null || !/^\d+$/.test(out) ? null : Number(out);
 }
 
-/** The commits after `from` up to `to`, oldest first, each with the values of its `key` trailer. */
-export function commitsWithTrailer(dir: string, from: string, to: string, key: string): { sha: string; values: string[] }[] {
-  const out = gitMust(dir, ['log', '--reverse', `--format=%H%x1f%(trailers:key=${key},valueonly,separator=%x1d)%x1e`, `${from}..${to}`], 'git log');
+/** The commits after `from` up to `to`, oldest first, each with the values of its `key` trailer; with `paths`, only those touching them. */
+export function commitsWithTrailer(dir: string, from: string, to: string, key: string, paths: string[] = []): { sha: string; values: string[] }[] {
+  const out = gitMust(dir, ['log', '--reverse', `--format=%H%x1f%(trailers:key=${key},valueonly,separator=%x1d)%x1e`, `${from}..${to}`, ...(paths.length > 0 ? ['--', ...paths] : [])], 'git log');
   return out.split('\x1e').map((r) => r.trim()).filter(Boolean).map((record) => {
     const [sha = '', trailers = ''] = record.split('\x1f');
     return { sha, values: trailers.split('\x1d').map((t) => t.trim()).filter(Boolean) };
   });
+}
+
+/** The newest commit in `range` (`a..b`) that touches `pathspec`, or null when none does; a git failure stops the program. */
+export function lastCommitTouching(dir: string, range: string, pathspec: string[]): string | null {
+  const out = git(dir, ['log', '-1', '--format=%H', range, '--', ...pathspec]);
+  if (!out.ok) throw new CouldNotRun(`git log failed in ${dir}: ${(out.stderr || out.stdout).trim()}`);
+  const sha = out.stdout.trim();
+  return sha === '' ? null : sha;
+}
+
+/** The tracked files anywhere in the repository that have uncommitted changes (untracked files are left out). */
+export function trackedChanges(dir: string): string[] {
+  // Not trimmed: each line starts with its two status columns, the first of which may be a space.
+  const r = git(dir, ['status', '--porcelain', '--untracked-files=no']);
+  if (!r.ok) throw new CouldNotRun(`git status failed in ${dir}: ${(r.stderr || r.stdout).trim()}`);
+  return r.stdout.split('\n').filter((line) => line.length > 3).map((line) => line.slice(3));
+}
+
+/** The files that differ between two revisions among `pathspec`, in git's order. */
+export function changedFilesBetween(dir: string, from: string, to: string, pathspec: string[]): string[] {
+  const out = git(dir, ['diff', '--name-only', '-z', from, to, '--', ...pathspec]);
+  if (!out.ok) throw new CouldNotRun(`git diff failed in ${dir}: ${(out.stderr || out.stdout).trim()}`);
+  return out.stdout.split('\0').filter(Boolean);
 }

@@ -9,6 +9,7 @@ import { CouldNotRun } from '../common/types.ts';
 import { parseFrontMatter } from '../documents/front-matter.ts';
 import { systemRepos } from '../events/context.ts';
 import { commitOf, countCommits } from '../git/git.ts';
+import { appFolders, appPathspec, isSingleRepo } from './apps.ts';
 import { excludingOwnFiles } from './own-files.ts';
 import { resolveWorkspace, type ResolveOptions } from './resolve.ts';
 
@@ -43,19 +44,21 @@ function sourceCommitOf(file: string): string | null {
   }
 }
 
-function staleness(master: string, workspace: string, system: string, repo: string): RepoStaleness {
-  const path = join(workspace, repo);
+function staleness(master: string, workspace: string, system: string, repo: string, appFolder: string | null): RepoStaleness {
+  // Single-repo layout: the "repository" is an app, a folder of the master counted by that folder's commits.
+  const root = appFolder === null ? join(workspace, repo) : master;
+  const path = appFolder === null ? root : join(master, appFolder);
   const context = join(master, 'intent', system, 'context', `${repo}.md`);
-  const checkedOut = existsSync(join(path, '.git'));
+  const checkedOut = existsSync(join(root, '.git'));
   const exists = existsSync(context);
   const sourceCommit = exists ? sourceCommitOf(context) : null;
   const entry = (behind: number | null, stale: boolean, reason: StaleReason): RepoStaleness => ({ repo, path, checkedOut, context, exists, sourceCommit, behind, stale, reason });
   if (!exists) return entry(null, false, 'missing');
   if (!checkedOut) return entry(null, false, 'not-checked-out');
   if (sourceCommit === null) return entry(null, true, 'no-source-commit');
-  const commit = sourceCommit.startsWith('-') ? null : commitOf(path, sourceCommit);
+  const commit = sourceCommit.startsWith('-') ? null : commitOf(root, sourceCommit);
   if (commit === null) return entry(null, true, 'unknown-commit');
-  const behind = countCommits(path, commit, 'HEAD', ['.', ...excludingOwnFiles()]);
+  const behind = countCommits(root, commit, 'HEAD', appFolder === null ? ['.', ...excludingOwnFiles()] : appPathspec(appFolder));
   if (behind === null) return entry(null, true, 'unknown-commit');
   return behind > 0 ? entry(behind, true, 'behind') : entry(0, false, 'current');
 }
@@ -69,5 +72,6 @@ export function staleContexts(cwd: string, options: StaleOptions): StaleResult {
   const unknown = (options.repos ?? []).filter((r) => !all.includes(r));
   if (unknown.length > 0) throw new CouldNotRun(`${unknown.join(', ')} ${unknown.length === 1 ? 'is not a repository' : 'are not repositories'} of system ${options.system} (${all.join(', ') || 'none'})`);
   const repos = options.repos === undefined || options.repos.length === 0 ? all : all.filter((r) => options.repos?.includes(r));
-  return { system: options.system, repos: repos.map((repo) => staleness(master, workspace, options.system, repo)), problems: [] };
+  const folders = isSingleRepo(master) ? appFolders(master, options.system) : null;
+  return { system: options.system, repos: repos.map((repo) => staleness(master, workspace, options.system, repo, folders === null ? null : (folders[repo] ?? null))), problems: [] };
 }
