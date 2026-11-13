@@ -48,6 +48,7 @@ import { RunStore } from '../../core/run/run.store';
 import type { RunSnapshot } from '../../core/run/reduce';
 import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
+import { StepStore } from '../../core/step/step.store';
 import { ProgressStore } from '../../core/progress/progress.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { documentForm } from '../../lib/build-host';
@@ -73,7 +74,7 @@ import { shownBuild, shownDocument, type DocNotice, type ReadError, type Shown }
 import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy } from '../../lib/doc-rail';
 import { prNumber } from '../../lib/pull-request';
 import { DONE_PROGRESS_LINE, type DoneReport } from '../../lib/sdlc-done';
-import { acceptStopped, doneStopped, isStep, rejectStopped, removalStopped, sameStepChange, startStopped, type StepView, type StepWant } from '../../lib/sdlc-steps';
+import { acceptStopped, CHANGE_STEPS, doneStopped, isStep, rejectStopped, removalStopped, sameStepChange, startStopped, stepOf, stepRef, stopWords, type StepView, type StepWant } from '../../lib/sdlc-steps';
 import type { StepEvent } from '@bindings/StepEvent';
 import { section } from '../../lib/doc';
 import { fullPipelineIdea } from '../../lib/sdlc-fix';
@@ -218,6 +219,7 @@ export class ChangePageViewModel {
   private readonly toasts = inject(ToastStore);
   private readonly versions = inject(VersionsStore);
   private readonly progress = inject(ProgressStore);
+  private readonly steps = inject(StepStore);
   /** Reading the change, reading a picked document, preparing a build, and the lock's long step: one progress entry for each place on the page. */
   readonly readingChange = this.progress.view('page');
   readonly readingDoc = this.progress.view('doc');
@@ -314,7 +316,7 @@ export class ChangePageViewModel {
     if (ref === null) return;
     let out: RemoveOutcome;
     try {
-      out = await this.inStep('removingCopy', 'Stop removing the copy', () => this.transport.sdlcRemoveCopy(ref));
+      out = await this.inStep('removingCopy', () => this.transport.sdlcRemoveCopy(ref));
     } catch (e) {
       this.setCopyNote({ tone: 'warning', text: `The copy was not removed: ${message(e)}`, lines: [] });
       return;
@@ -737,44 +739,53 @@ export class ChangePageViewModel {
   }
 
   // --- long steps: the label the backend reports, Stop, and how a stopped step is worded
-  /** The long step of this change that runs on this page now; null while none does. */
-  readonly step = signal<StepView | null>(null);
+  /** The backend's running step of the change on screen, with the call that stops it; null while none runs. A step of another change is never picked. */
+  private readonly shownStep = computed(() => {
+    const workspace = this.current();
+    const step = workspace === null ? null : stepOf(this.steps.running(), { system: this.system(), change: this.changeName() }, CHANGE_STEPS);
+    return workspace === null || step === null ? null : { step, ref: stepRef(step, workspace.folder) };
+  });
+  /** What the page shows of the running step of this change, whoever started it; null while none runs. */
+  readonly step = computed<StepView | null>(() => {
+    const shown = this.shownStep();
+    return shown === null ? null : { label: shown.step.label, stop: stopWords(shown.step.kind) };
+  });
   /** How the last stopped step is worded; null while there is none. */
   readonly stepStopped = signal<string | null>(null);
 
-  /** Stop the running step of this change. */
+  /** Stop the running step the page shows: the step's own change, never whichever change is current when the button is pressed. */
   async stopStep(): Promise<void> {
-    const ref = this.changeRef();
-    if (ref === null) return;
+    const shown = this.shownStep();
+    if (shown === null) return;
     try {
-      await this.transport.stopStep(ref);
+      await this.transport.stopStep(shown.ref);
     } catch (e) {
       this.toasts.error(`Could not stop the step: ${message(e)}`);
     }
   }
 
   /**
-   * Run a long step of this change, showing the label the backend reports for it and Stop while it runs. The backend reports the step as it
-   * begins, so the page words nothing itself; `onReport` sees each report of this change's step.
+   * Run a long step of this change. What the page shows of it (label, Stop) is the backend's step of the change on screen, which the page
+   * follows through the step store; `onReport` sees each report of this change's step of kind `want`.
    */
-  private async inStep<T>(want: StepWant, stop: string, call: () => Promise<T>, onReport?: (event: StepEvent) => void): Promise<T> {
+  private async inStep<T>(want: StepWant, call: () => Promise<T>, onReport?: (event: StepEvent) => void): Promise<T> {
     const ref = { system: this.system(), change: this.changeName() };
     this.stepStopped.set(null);
     let unlisten = (): void => undefined;
-    try {
-      unlisten = await this.transport.onStep((event) => {
-        if (!sameStepChange(event.change, ref) || !isStep(event.kind, want)) return;
-        this.step.set({ label: event.progress.label, stop });
-        onReport?.(event);
-      });
-    } catch {
-      // The step still runs and Stop still works; only its label does not follow.
+    if (onReport !== undefined) {
+      try {
+        unlisten = await this.transport.onStep((event) => {
+          if (sameStepChange(event.change, ref) && isStep(event.kind, want)) onReport(event);
+        });
+      } catch {
+        // The step still runs and Stop still works; only the report does not follow.
+      }
     }
     try {
       return await call();
     } finally {
       unlisten();
-      this.step.set(null);
+      this.steps.ended(ref);
     }
   }
 
@@ -815,7 +826,6 @@ export class ChangePageViewModel {
     try {
       out = await this.inStep(
         'declaringDone',
-        'Stop declaring the change done',
         () =>
           this.lock.runSteps('Opening pull requests', [
             {
@@ -1000,7 +1010,7 @@ export class ChangePageViewModel {
   // --- renaming
 
   acceptName(name: string): void {
-    void this.inStep('renaming', 'Stop renaming the branch', () => this.runner.confirmName(name));
+    void this.inStep('renaming', () => this.runner.confirmName(name));
   }
 
   closeName(): void {
@@ -1397,7 +1407,7 @@ export class ChangePageViewModel {
     if (ref === null) return;
     let out: AcceptOutcome;
     try {
-      out = await this.inStep('accepting', `Stop accepting the ${doc}`, () => this.transport.sdlcAccept(ref, doc));
+      out = await this.inStep('accepting', () => this.transport.sdlcAccept(ref, doc));
     } catch (e) {
       this.toasts.error(`Could not accept the ${doc}: ${message(e)}`);
       return;
@@ -1434,7 +1444,7 @@ export class ChangePageViewModel {
     const doc = this.change()?.state.track === 'fix' ? 'fix' : 'intent';
     let out: RejectOutcome;
     try {
-      out = await this.inStep('rejecting', `Stop rejecting the ${doc}`, () => this.transport.sdlcReject(ref));
+      out = await this.inStep('rejecting', () => this.transport.sdlcReject(ref));
     } catch (e) {
       this.toasts.error(`Could not reject the change: ${message(e)}`);
       return;
@@ -1661,6 +1671,8 @@ export class ChangePageViewModel {
     const seq = ++this.loadSeq;
     const system = this.system();
     const name = this.changeName();
+    // Seed the running steps from the backend and follow them, so a step this page did not start shows too.
+    void this.steps.follow();
     this.progress.begin('reading-change', progressLabels.readingChange(), 'page');
     // A failed read clears its progress line before the error toast shows.
     const failRead = () => {

@@ -197,7 +197,9 @@ export class TauriTransport extends KataTransport {
   onStep(cb: (event: StepEvent) => void) {
     return this.ipc.listen<StepEvent>('sdlc://step', (e) => cb(e.payload));
   }
-  onStepEnd(_cb: (change: ChangeKey) => void) { return Promise.resolve(() => undefined); }
+  onStepEnd(cb: (change: ChangeKey) => void) {
+    return this.ipc.listen<ChangeKey>('sdlc://step-end', (e) => cb(e.payload));
+  }
   onBuildState(cb: (event: BuildEvent) => void) {
     return this.ipc.listen<BuildEvent>('sdlc://build', (e) => cb(e.payload));
   }

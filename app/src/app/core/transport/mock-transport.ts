@@ -131,6 +131,8 @@ export class MockTransport extends KataTransport {
   private readonly listeners = new Set<(runId: string, ev: KataEvent, seq?: number) => void>();
   /** Everything listening for what publishing is doing. */
   private readonly stepListeners = new Set<(event: StepEvent) => void>();
+  /** Everything listening for the end of a long step. */
+  private readonly stepEndListeners = new Set<(change: ChangeKey) => void>();
   /** The long steps held by `?demo=steps-hold`, by change name, each with what stops it. */
   private readonly heldSteps = new Map<string, { step: RunningStep; stop: () => void }>();
   private readonly runs = new Map<string, ScriptedRun>();
@@ -463,7 +465,14 @@ export class MockTransport extends KataTransport {
     }
     const { view, steps } = this.sdlc.declareDone(change.change);
     for (const progress of steps) this.announceStep(change, 'declaringDone', progress);
+    this.endStep(change);
     return view;
+  }
+
+  /** Tell the listeners that the change's step is over. */
+  private endStep(change: ChangeRef): void {
+    const key = mockChangeKey(change);
+    for (const listen of [...this.stepEndListeners]) listen(key);
   }
 
   private announceStep(change: ChangeRef, kind: StepKind, progress: StepProgress): void {
@@ -478,11 +487,11 @@ export class MockTransport extends KataTransport {
   private longStep<T>(change: ChangeRef, kind: StepKind, doing: string, run: () => T, stopped: T): Promise<T> {
     const progress: StepProgress = { kind: 'verifying', label: doing, repo: null, check: null };
     this.announceStep(change, kind, progress);
-    if (demoParam() !== 'steps-hold') return settled(run);
+    if (demoParam() !== 'steps-hold') return settled(run).finally(() => this.endStep(change));
     return new Promise<T>((resolve) => {
       const step: RunningStep = { change: mockChangeKey(change), kind, doing, progress };
       this.heldSteps.set(change.change, { step, stop: () => resolve(stopped) });
-    });
+    }).finally(() => this.endStep(change));
   }
   /** `?demo=pr-fail` makes the read fail, so the browser checks can see the "Could not check pull requests" note; `?demo=one-pr` keeps only the
    *  first pull request, so they can see the single inline link; `?demo=pr-states` gives each state GitHub can answer with and one it cannot;
@@ -517,7 +526,10 @@ export class MockTransport extends KataTransport {
     return () => { this.stepListeners.delete(cb); };
   }
 
-  async onStepEnd(_cb: (change: ChangeKey) => void): Promise<() => void> { return () => undefined; }
+  async onStepEnd(cb: (change: ChangeKey) => void): Promise<() => void> {
+    this.stepEndListeners.add(cb);
+    return () => { this.stepEndListeners.delete(cb); };
+  }
 
   async onRunEvent(cb: (runId: string, ev: KataEvent, seq?: number) => void): Promise<() => void> {
     this.listeners.add(cb);
