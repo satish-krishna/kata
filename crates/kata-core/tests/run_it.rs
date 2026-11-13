@@ -1829,12 +1829,13 @@ fn run_real_in(spec: &RunSpec, cwd: Option<&std::path::Path>) -> Vec<KataEvent> 
         .unwrap();
     assert!(st.success(), "building the kata binary failed");
     let exe = std::env::current_exe().unwrap();
-    let kata = exe
-        .parent()
-        .and_then(|p| p.parent())
-        .unwrap()
-        .join(format!("kata{}", std::env::consts::EXE_SUFFIX));
-    assert!(kata.exists(), "no kata binary at {}", kata.display());
+    let name = format!("kata{}", std::env::consts::EXE_SUFFIX);
+    let kata = kata_core::fsutil::find_upward(exe.parent().unwrap(), &name).unwrap_or_else(|| {
+        panic!(
+            "build kata first (cargo build -p kata-cli --bin kata); none found above {}",
+            exe.display()
+        )
+    });
 
     let dir = tempfile::tempdir().unwrap();
     let spec_path = dir.path().join("proof.kata.toml");

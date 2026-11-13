@@ -454,7 +454,17 @@ fn home_and_change_page_read_without_git() {
 /// The target folder the test binaries are built into: `kata` and `fake-claude` sit there too.
 fn target_dir() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
-    exe.parent().unwrap().parent().unwrap().to_path_buf()
+    let name = format!("fake-claude{}", std::env::consts::EXE_SUFFIX);
+    kata_core::fsutil::find_upward(exe.parent().unwrap(), &name)
+        .unwrap_or_else(|| {
+            panic!(
+                "build fake-claude first (cargo build -p kata-core --bin fake-claude); none found above {}",
+                exe.display()
+            )
+        })
+        .parent()
+        .unwrap()
+        .to_path_buf()
 }
 
 /// R9.2: a job composed and run in the Workbench mode, which the Workbench and CI both run through the
