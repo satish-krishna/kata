@@ -1178,6 +1178,8 @@ describe('the build page reads the backend\'s build and starts it through the ho
     const progress = { kind: 'repository' as const, label: 'Preparing kata: running base-tests', repo: 'kata', check: 'base-tests' };
     push({ change: keyOf('2026-01-01-other'), kind: 'preparingBuild', progress });
     expect(update).not.toHaveBeenCalled();
+    push({ change: { ...keyOf(MOCK_BUILD_CHANGE), system: 'other-system' }, kind: 'preparingBuild', progress });
+    expect(update).not.toHaveBeenCalled();
     push({ change: keyOf(MOCK_BUILD_CHANGE), kind: 'preparingBuild', progress });
     expect(update).toHaveBeenCalledWith('Preparing kata: running base-tests', 'build');
     await vm.stopPreparing();

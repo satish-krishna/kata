@@ -1,3 +1,4 @@
+import type { ChangeKey } from '@bindings/ChangeKey';
 import type { ChangeDocument } from '@bindings/ChangeDocument';
 import type { RecordedPullRequest } from '@bindings/RecordedPullRequest';
 import type { StepKind } from '@bindings/StepKind';
@@ -14,6 +15,11 @@ export type StepWant = 'starting' | 'renaming' | 'removingCopy' | 'accepting' | 
 /** Whether a step report is about the kind of step `want` (the document of an accepting or rejecting step does not matter: a change runs one at a time). */
 export function isStep(kind: StepKind, want: StepWant): boolean {
   return typeof kind === 'string' ? kind === want : want in kind;
+}
+
+/** Whether a step report's change key names the change `ref` names. */
+export function sameChange(key: ChangeKey, ref: { system: string; change: string }): boolean {
+  return key.change === ref.change;
 }
 
 /** The backend's answer, when it gave one, after a colon. */

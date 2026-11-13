@@ -1708,7 +1708,7 @@ describe('SdlcHomeViewModel removing a merged change\'s copy', () => {
 });
 
 describe('New change and copy removal can be stopped', () => {
-  const keyOf = (change: string): ChangeKey => ({ workspace: { key: MOCK_WORKSPACE_FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system: 'commerce', change });
+  const keyOf = (change: string, system = 'commerce'): ChangeKey => ({ workspace: { key: MOCK_WORKSPACE_FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system, change });
   const progress = (label: string): StepProgress => ({ kind: 'repository', label, repo: null, check: null });
 
   /** The backend's step reports, pushed by hand, and Stop as a spy. */
@@ -1719,7 +1719,7 @@ describe('New change and copy removal can be stopped', () => {
       return () => void listeners.delete(cb);
     });
     const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
-    const push = (change: string, kind: StepKind, label: string) => listeners.forEach((cb) => cb({ change: keyOf(change), kind, progress: progress(label) }));
+    const push = (change: string, kind: StepKind, label: string, system = 'commerce') => listeners.forEach((cb) => cb({ change: keyOf(change, system), kind, progress: progress(label) }));
     return { stop, push };
   }
 
@@ -1738,6 +1738,8 @@ describe('New change and copy removal can be stopped', () => {
     push(name, 'starting', 'Making the copy');
     expect(vm.step()).toEqual({ label: 'Making the copy', stop: 'Stop starting the change' });
     push('2026-01-01-other', 'starting', 'Not this change');
+    expect(vm.step()?.label).toBe('Making the copy');
+    push(name, 'starting', 'Not this system', 'other-system');
     expect(vm.step()?.label).toBe('Making the copy');
     await vm.stopStep();
     expect(stop).toHaveBeenCalledWith({ workspace: vm.current()!.folder, system: 'commerce', change: name });
@@ -1763,6 +1765,8 @@ describe('New change and copy removal can be stopped', () => {
     vm.askRemoveCopy(NAMES[0]);
     const running = vm.confirmRemoveCopy();
     await vi.waitFor(() => expect(vm.step()?.stop).toBe('Stop removing the copy'));
+    push(NAMES[0], 'removingCopy', 'Not this system', 'other-system');
+    expect(vm.step()?.label).not.toBe('Not this system');
     push(NAMES[0], 'removingCopy', 'Removing the copy folder');
     expect(vm.step()?.label).toBe('Removing the copy folder');
     await vm.stopStep();

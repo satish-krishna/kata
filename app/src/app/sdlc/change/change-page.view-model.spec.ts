@@ -1906,7 +1906,7 @@ describe('ChangePageViewModel: where the change lives', () => {
 
 describe('each long step shows Stop and says it was stopped', () => {
   const REF = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: PHOTOS_CHANGE };
-  const keyOf = (change: string): ChangeKey => ({ workspace: { key: MOCK_WORKSPACE_FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system: 'commerce', change });
+  const keyOf = (change: string, system = 'commerce'): ChangeKey => ({ workspace: { key: MOCK_WORKSPACE_FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system, change });
   const pr = (repo: string): RecordedPullRequest => ({ repo, url: `https://github.com/acme/${repo}/pull/1`, number: 1, source: 'plugin' });
   const progress = (label: string): StepProgress => ({ kind: 'repository', label, repo: null, check: null });
 
@@ -1920,7 +1920,7 @@ describe('each long step shows Stop and says it was stopped', () => {
     const stop = vi.spyOn(transport, 'stopStep').mockResolvedValue(true);
     let release!: (outcome: T) => void;
     const call = new Promise<T>((resolve) => (release = resolve));
-    const push = (change: string, kind: StepKind, label: string) => listeners.forEach((cb) => cb({ change: keyOf(change), kind, progress: progress(label) }));
+    const push = (change: string, kind: StepKind, label: string, system = 'commerce') => listeners.forEach((cb) => cb({ change: keyOf(change, system), kind, progress: progress(label) }));
     return { stop, call, release, push };
   }
 
@@ -1931,6 +1931,8 @@ describe('each long step shows Stop and says it was stopped', () => {
     h.push(PHOTOS_CHANGE, kind, 'Committing the document');
     expect(vm.step()?.label).toBe('Committing the document');
     h.push('2026-01-01-other', kind, 'Not this change');
+    expect(vm.step()?.label).toBe('Committing the document');
+    h.push(PHOTOS_CHANGE, kind, 'Not this system', 'other-system');
     expect(vm.step()?.label).toBe('Committing the document');
     await vm.stopStep();
     expect(h.stop).toHaveBeenCalledWith(REF);
@@ -2010,6 +2012,8 @@ describe('each long step shows Stop and says it was stopped', () => {
     vm.doneReport.set({ branch: null, repos: [], departures: [] });
     const running = vm.confirmDone();
     await vi.waitFor(() => expect(vm.step()?.stop).toBe('Stop declaring the change done'));
+    h.push(MOCK_BUILD_CHANGE, 'declaringDone', 'Pushing kata in another system', 'other-system');
+    expect(vm.step()?.label).not.toBe('Pushing kata in another system');
     h.push(MOCK_BUILD_CHANGE, 'declaringDone', 'Pushing kata');
     expect(vm.step()?.label).toBe('Pushing kata');
     await vm.stopStep();
