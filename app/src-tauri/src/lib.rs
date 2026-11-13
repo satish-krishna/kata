@@ -1162,14 +1162,19 @@ fn reject_in(
     change: &build_host::ChangeRef,
 ) -> Result<sdlc::accept::RejectOutcome, String> {
     let key = build_host::key_of(change);
+    // The track decides what the step says it rejects: a fix on the light track, else the intent.
+    let home = change_home(program, change);
+    let kind = match &home {
+        Ok(home) if home.state.track == sdlc::ai_sdlc::state::ChangeTrack::Fix => {
+            steps::StepKind::RejectingFix
+        }
+        _ => steps::StepKind::Rejecting(sdlc::accept::ChangeDocument::Intent),
+    };
     let step = steps
-        .begin(
-            key.clone(),
-            steps::StepKind::Rejecting(sdlc::accept::ChangeDocument::Intent),
-        )
+        .begin(key.clone(), kind)
         .map_err(|_| start_change::STEP_BUSY.to_string())?;
     control.state.lock().unwrap().begin_rejecting(&key)?;
-    let outcome = change_home(program, change).map(|home| {
+    let outcome = home.map(|home| {
         sdlc::accept::reject(
             program,
             &home.place,

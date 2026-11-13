@@ -46,7 +46,7 @@ impl StepKind {
             StepKind::RemovingCopy => "having its copy removed".into(),
             StepKind::Accepting(d) => format!("accepting its {}", doc(d)),
             StepKind::Rejecting(d) => format!("rejecting its {}", doc(d)),
-            StepKind::RejectingFix => String::new(),
+            StepKind::RejectingFix => "rejecting its fix".into(),
             StepKind::DeclaringDone => "being declared done".into(),
         }
     }
