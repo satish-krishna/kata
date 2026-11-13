@@ -389,7 +389,13 @@ mod tests {
         {
             let (_d, repo) = fresh();
             let exe = std::env::current_exe().unwrap();
-            let fake = exe.parent().unwrap().parent().unwrap().join("fake-claude");
+            let name = format!("fake-claude{}", std::env::consts::EXE_SUFFIX);
+            let fake = crate::fsutil::find_upward(exe.parent().unwrap(), &name).unwrap_or_else(|| {
+                panic!(
+                    "build fake-claude first (cargo build -p kata-core --bin fake-claude); none found above {}",
+                    exe.display()
+                )
+            });
             write_hook(&repo, Hook::PreCommit, &std::fs::read(fake).unwrap());
             assert_eq!(go(&repo, Hook::PreCommit, &|| None, LONG), Ok(()));
         }
@@ -532,12 +538,13 @@ mod tests {
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         let shell = real_shell().expect("needs Git for Windows' shell, as CI's runner has");
         let exe = std::env::current_exe().unwrap();
-        let fake = exe
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("fake-claude.exe");
+        let fake = crate::fsutil::find_upward(exe.parent().unwrap(), "fake-claude.exe")
+            .unwrap_or_else(|| {
+                panic!(
+                    "build fake-claude first (cargo build -p kata-core --bin fake-claude); none found above {}",
+                    exe.display()
+                )
+            });
 
         // The relay has no console of its own (DETACHED_PROCESS), so a console program it starts
         // without CREATE_NO_WINDOW gets a console window, whatever console this test has.

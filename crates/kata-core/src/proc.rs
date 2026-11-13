@@ -619,13 +619,13 @@ mod tests {
 
     #[cfg(windows)]
     fn fake_claude() -> std::path::PathBuf {
-        // The test binary lives in target/<profile>/deps; fake-claude one level up.
         let exe = std::env::current_exe().unwrap();
-        exe.parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("fake-claude.exe")
+        crate::fsutil::find_upward(exe.parent().unwrap(), "fake-claude.exe").unwrap_or_else(|| {
+            panic!(
+                "build fake-claude first (cargo build -p kata-core --bin fake-claude); none found above {}",
+                exe.display()
+            )
+        })
     }
 
     /// Starts `fake-claude` as a relay with no console of its own (DETACHED_PROCESS), so a child
