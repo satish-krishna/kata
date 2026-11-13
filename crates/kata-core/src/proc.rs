@@ -1,9 +1,11 @@
 //! How the Workbench and kata start a child process: hidden on Windows, and never `git` or `gh`:
 //! the ai-sdlc plugin starts those itself.
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::io::{Read, Write};
+use std::marker::PhantomData;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,46 +39,50 @@ pub fn hidden_command(program: impl AsRef<OsStr>) -> Result<Command, SpawnRefuse
     Ok(new_hidden(program))
 }
 
-/// The programs started while a [`SpawnLog`] is open; `None` when none is.
-static SPAWNS: Mutex<Option<Vec<String>>> = Mutex::new(None);
+thread_local! {
+    /// The programs this thread started while a [`SpawnLog`] is open on it; `None` when none is.
+    static SPAWNS: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+}
 
-/// A test hook: while it is held, every child process made through this module records its program,
-/// as the file name without its extension in lowercase (`C:\nodejs\node.exe` records `node`). Nothing is
-/// recorded while no log is open. One log at a time: opening one starts an empty record.
-pub struct SpawnLog(());
+/// A test hook: while it is held, every child process this thread makes through this module records its
+/// program, as the file name without its extension in lowercase (`C:\nodejs\node.exe` records `node`).
+/// Nothing is recorded while no log is open. The log belongs to the thread that opened it and sees only
+/// what that thread starts, so tests running in parallel do not land in each other's logs. A program
+/// started from another thread is not seen: every flow a log watches starts its programs on the calling
+/// thread (`run_limited` starts its child before it hands anything to a reader thread). One log per
+/// thread at a time: opening one starts an empty record.
+pub struct SpawnLog(PhantomData<*const ()>);
 
 impl SpawnLog {
     pub fn open() -> SpawnLog {
-        *SPAWNS.lock().unwrap_or_else(|e| e.into_inner()) = Some(Vec::new());
-        SpawnLog(())
+        SPAWNS.with(|log| *log.borrow_mut() = Some(Vec::new()));
+        SpawnLog(PhantomData)
     }
 
-    /// The programs started since the log opened, in the order they started.
+    /// The programs this thread started since the log opened, in the order they started.
     pub fn programs(&self) -> Vec<String> {
-        SPAWNS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-            .unwrap_or_default()
+        SPAWNS.with(|log| log.borrow().clone().unwrap_or_default())
     }
 }
 
 impl Drop for SpawnLog {
     fn drop(&mut self) {
-        *SPAWNS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        SPAWNS.with(|log| *log.borrow_mut() = None);
     }
 }
 
 /// The one place a child process is created: no console window on Windows. [`hidden_command`] refuses first.
 fn new_hidden(program: &OsStr) -> Command {
-    if let Some(log) = SPAWNS.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-        let name = Path::new(program)
-            .file_stem()
-            .unwrap_or(program)
-            .to_string_lossy()
-            .to_lowercase();
-        log.push(name);
-    }
+    SPAWNS.with(|log| {
+        if let Some(log) = log.borrow_mut().as_mut() {
+            let name = Path::new(program)
+                .file_stem()
+                .unwrap_or(program)
+                .to_string_lossy()
+                .to_lowercase();
+            log.push(name);
+        }
+    });
     #[allow(unused_mut)] // `creation_flags` needs it on Windows
     #[allow(clippy::disallowed_methods)] // the one place a child process is started
     let mut command = Command::new(program);
@@ -578,11 +584,7 @@ mod tests {
         let _ = hidden_command("/opt/tools/Node.EXE");
         let _ = hidden_command("/usr/bin/claude");
         let seen = log.programs();
-        // Other tests of this binary may make commands while the log is open, so only membership is certain.
-        assert!(
-            seen.contains(&"node".to_string()) && seen.contains(&"claude".to_string()),
-            "{seen:?}"
-        );
+        assert_eq!(seen, ["node", "claude"]);
         drop(log);
         assert!(SpawnLog::open().programs().is_empty());
     }
