@@ -3423,6 +3423,11 @@ mod steps_commands {
     }
 
     fn fixture() -> Fx {
+        fixture_with("")
+    }
+
+    /// The fixture's change, with `extra` lines in its intent's front matter (`track: fix` for the light track).
+    fn fixture_with(extra: &str) -> Fx {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path().to_path_buf();
         for name in ["ai-sdlc", "app"] {
@@ -3468,7 +3473,7 @@ mod steps_commands {
         std::fs::create_dir_all(&folder).unwrap();
         std::fs::write(
             folder.join("intent.md"),
-            "---\ntitle: Reset\nsystem: demo\nauthor: t\ndate: 2026-11-01\nstatus: draft\nscope: demo\n---\n\n# Intent: Reset\n",
+            format!("---\ntitle: Reset\nsystem: demo\nauthor: t\ndate: 2026-11-01\nstatus: draft\nscope: demo\n{extra}---\n\n# Intent: Reset\n"),
         )
         .unwrap();
         // Rejecting is refused while the intent has uncommitted changes.
@@ -3622,6 +3627,39 @@ if ({trigger}) {{
         assert!(stopped, "declare: the step was not in the table");
         assert!(matches!(view, DeclareView::Stopped { .. }), "{view:?}");
         assert!(steps.running().is_empty(), "declare");
+    }
+
+    /// The words the close question uses for the step while the reject call waits on its commit.
+    fn rejecting_words(extra: &str) -> String {
+        let fx = fixture_with(extra);
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, marker) = stopping_program(dir.path(), "args[0] === 'commit'");
+        let (steps, _) = capturing_steps();
+        let key = build_host::key_of(&fx.change);
+        let watcher = {
+            let steps = steps.clone();
+            std::thread::spawn(move || {
+                for _ in 0..1200 {
+                    if marker.exists() {
+                        let doing = steps.running().first().map(|s| s.doing.clone());
+                        steps.stop(&key);
+                        return doing.unwrap_or_default();
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                String::new()
+            })
+        };
+        let control = RunControl::default();
+        reject_in(&control, &steps, &fake, &fx.change).unwrap();
+        watcher.join().unwrap()
+    }
+
+    /// Rejecting a fix names the fix, not the intent, in the step's words; the full track keeps "intent".
+    #[test]
+    fn the_rejecting_step_names_what_is_rejected() {
+        assert_eq!(rejecting_words("track: fix\n"), "rejecting its fix");
+        assert_eq!(rejecting_words(""), "rejecting its intent");
     }
 
     /// R15.1 "accepts the spec | running a check after acceptance": the step table's label for the accepting

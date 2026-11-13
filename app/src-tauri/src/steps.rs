@@ -26,6 +26,7 @@ pub enum StepKind {
     RemovingCopy,
     Accepting(ChangeDocument),
     Rejecting(ChangeDocument),
+    RejectingFix,
     DeclaringDone,
 }
 
@@ -45,6 +46,7 @@ impl StepKind {
             StepKind::RemovingCopy => "having its copy removed".into(),
             StepKind::Accepting(d) => format!("accepting its {}", doc(d)),
             StepKind::Rejecting(d) => format!("rejecting its {}", doc(d)),
+            StepKind::RejectingFix => String::new(),
             StepKind::DeclaringDone => "being declared done".into(),
         }
     }
