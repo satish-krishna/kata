@@ -587,6 +587,19 @@ mod tests {
         assert!(SpawnLog::open().programs().is_empty());
     }
 
+    #[test]
+    fn a_spawn_log_does_not_record_what_another_thread_starts() {
+        let log = SpawnLog::open();
+        thread::spawn(|| {
+            let _ = hidden_command("node");
+        })
+        .join()
+        .unwrap();
+        assert!(log.programs().is_empty(), "{:?}", log.programs());
+        let _ = hidden_command("claude");
+        assert_eq!(log.programs(), ["claude"]);
+    }
+
     /// A program name that is `AsRef<OsStr>` but not `AsRef<Path>`.
     struct Name(&'static str);
 
