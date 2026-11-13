@@ -3,6 +3,7 @@
 //! are told apart at the moment they start. The table lives behind one `Mutex` in the backend.
 use crate::ai_sdlc::state::ChangeState;
 use crate::format::ParsedPlan;
+use crate::layout::Layout;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -162,6 +163,13 @@ impl HoldTable {
     pub fn holder(&self, repo: &RepoKey) -> Option<&ChangeKey> {
         self.holds.get(repo).map(|h| &h.change)
     }
+}
+
+/// The keys a build or review of a change takes. The workspace layout holds one key per product repository
+/// at `<workspace>/<repo>`; the single-repo layout holds exactly one, the root of the engineer's main checkout.
+pub fn keys_for(layout: Layout, root: &Path, workspace: &Path, repos: &[String]) -> Vec<RepoKey> {
+    let _ = (layout, root, workspace, repos);
+    Vec::new()
 }
 
 /// The product repositories a build needs: the plan's repositories in plan order that have an unlogged task in
@@ -406,6 +414,31 @@ mod tests {
         t.release(&key("A"), Purpose::Review);
         assert_eq!(t.holder(&repo("kata")), None);
         t.take(&key("B"), Purpose::Build, &[repo("kata")]).unwrap();
+    }
+
+    fn repo_in(ws: &Path, name: &str) -> RepoKey {
+        RepoKey::of(&ws.join(name))
+    }
+
+    #[test]
+    fn a_single_repo_change_holds_its_repository() {
+        let root = Path::new("/home/me/Kata");
+        let ws = Path::new("/home/me");
+        let ka = keys_for(Layout::SingleRepo, root, ws, &names(&["engine"]));
+        let kb = keys_for(Layout::SingleRepo, root, ws, &names(&["workbench"]));
+        assert_eq!(ka, vec![RepoKey::of(root)]);
+        assert_eq!(ka, kb);
+        assert_eq!(ka[0].name(), "Kata");
+
+        let mut t = HoldTable::default();
+        t.take(&key("a"), Purpose::Build, &ka).unwrap();
+        let err = t.take(&key("b"), Purpose::Build, &kb).unwrap_err();
+        assert_eq!(err.held, [("Kata".to_string(), key("a"))]);
+
+        // The workspace layout is unchanged: one key per repository.
+        let w = keys_for(Layout::Workspace, root, ws, &names(&["kata", "bob"]));
+        assert_eq!(w, vec![repo_in(ws, "kata"), repo_in(ws, "bob")]);
+        assert!(keys_for(Layout::Workspace, root, ws, &[]).is_empty());
     }
 
     #[test]
