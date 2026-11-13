@@ -11,8 +11,7 @@ use kata_core::spec::PermissionMode;
 use kata_core::RunSpec;
 use kata_sdlc::ai_sdlc::state::{self, read_state, ChangeState};
 use kata_sdlc::ai_sdlc::{
-    progress_of, Answer, HookFailure, Place, Program, ProgramError, StepOutcome, StepProgress,
-    StepProgressKind,
+    progress_of, Answer, HookFailure, Place, Program, ProgramError, StepOutcome, StepProgressKind,
 };
 use kata_sdlc::coordinator::{
     self, BuildChoices, BuildFacts, BuildPhase, BuildState, Command, Coordinator, Input,
@@ -1205,7 +1204,7 @@ impl BuildHost {
             (before, step)
         };
         // The step's entry ends when `step` drops, after the build has begun.
-        self.begin_marked(&place, change, &key, form, only, before, &step, kind)
+        self.begin_marked(&place, change, &key, form, only, before, &step)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1218,7 +1217,6 @@ impl BuildHost {
         only: Option<&str>,
         before: Before,
         step: &StepGuard,
-        kind: StepKind,
     ) -> StartOutcome {
         let Before {
             live_build,
@@ -1284,7 +1282,7 @@ impl BuildHost {
             }
             outcome
         };
-        let uncommitted = match self.prepare(place, change, &needed, step, kind) {
+        let uncommitted = match self.prepare(place, change, &needed, step) {
             Ok(u) => u,
             Err(outcome) => return release(outcome),
         };
@@ -1410,31 +1408,17 @@ impl BuildHost {
         })
     }
 
-    /// Tell the page what the preparation is doing, and a sink that does the same for each hook line the
-    /// plugin streams while it runs. `repo` is the repository of the call, which the lines never name.
-    fn announce(&self, key: &ChangeKey, kind: StepKind, repo: Option<&str>) -> LineSink {
-        let moment = match kind {
-            StepKind::PreparingReview => "the review",
-            _ => "building",
-        };
-        let (what, step_kind) = match repo {
-            Some(repo) => (format!("Preparing {repo}"), StepProgressKind::Repository),
-            None => (
-                format!("Checking every repository before {moment}"),
-                StepProgressKind::Verifying,
-            ),
-        };
-        let repo = repo.map(str::to_string);
-        self.steps.label(
-            key,
-            StepProgress {
-                kind: step_kind,
-                label: what.clone(),
-                repo: repo.clone(),
-                check: None,
-            },
-        );
+    /// Tell the page which repository the preparation is on, and give a sink that does the same for each hook
+    /// line the plugin streams while it runs. `repo` is the repository of the call, which the lines never name.
+    /// The step's own first label ("Checking every repository before building") went out when the step began, so
+    /// the call that is for no repository says nothing more until a line arrives. The words are the step
+    /// table's.
+    fn announce(&self, key: &ChangeKey, repo: Option<&str>) -> LineSink {
+        if repo.is_some() {
+            self.steps.report(key, repo, None);
+        }
         let (steps, key) = (self.steps.clone(), key.clone());
+        let repo = repo.map(str::to_string);
         Arc::new(move |line: &str| {
             let Some(progress) = progress_of(line) else {
                 return;
@@ -1442,20 +1426,7 @@ impl BuildHost {
             if progress.kind != StepProgressKind::Hook {
                 return;
             }
-            let mut words = progress.label.chars();
-            let label = match words.next() {
-                Some(first) => format!("{what}: {}{}", first.to_lowercase(), words.as_str()),
-                None => what.clone(),
-            };
-            steps.label(
-                &key,
-                StepProgress {
-                    kind: StepProgressKind::Hook,
-                    label,
-                    repo: repo.clone(),
-                    check: progress.check,
-                },
-            );
+            steps.report(&key, repo.as_deref(), Some(progress));
         })
     }
 
@@ -1465,7 +1436,6 @@ impl BuildHost {
         change: &ChangeRef,
         repos: &[String],
         step: &StepGuard,
-        kind: StepKind,
     ) -> Result<BTreeMap<String, Vec<String>>, StartOutcome> {
         let key = key_of(change);
         let token = step.token();
@@ -1493,7 +1463,7 @@ impl BuildHost {
         if token.is_cancelled() {
             return Err(stopped(&[]));
         }
-        let sink = self.announce(&key, kind, None);
+        let sink = self.announce(&key, None);
         let answer = self.tools.step_long(&check, place, token, Some(sink));
         if let Some(outcome) = failure(answer.outcome, &[]) {
             return Err(outcome);
@@ -1505,7 +1475,7 @@ impl BuildHost {
             }
             let mut command: Vec<&str> = base.to_vec();
             command.extend(["--repo", repo]);
-            let sink = self.announce(&key, kind, Some(repo));
+            let sink = self.announce(&key, Some(repo));
             let answer = self.tools.step_long(&command, place, token, Some(sink));
             if let Some(outcome) = failure(answer.outcome, &prepared) {
                 return Err(outcome);

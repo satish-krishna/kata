@@ -617,6 +617,9 @@ pub struct StepProgress {
 /// | `push` | `Push` | "Pushing <repo>" |
 /// | `pull-request` | `PullRequest` | "Opening a pull request in <repo>" |
 ///
+/// The label words the line alone. The words of the step the line belongs to are the Workbench's: its step
+/// table puts them in front, in `steps::progress_line`, the one owner of what the progress line says.
+///
 /// Any other line (the closing outcome, a type not known yet, text that is not JSON) is not progress.
 /// `Repository` and `Verifying` are never read from a line: the program prints no line for either.
 pub fn progress_of(line: &str) -> Option<StepProgress> {

@@ -25,7 +25,7 @@ pub fn relay(steps: &StepTable, key: &ChangeKey) -> (LineSink, Arc<Mutex<Vec<Str
         }
         kept.lock().unwrap().push(line.to_string());
         if let Some(progress) = progress_of(line) {
-            steps.label(&key, progress);
+            steps.report(&key, None, Some(progress));
         }
     });
     (sink, printed)
@@ -664,7 +664,8 @@ setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3)
             let (steps, seen, key) = (steps.clone(), seen.clone(), key.clone());
             std::thread::spawn(move || {
                 for _ in 0..1200 {
-                    if !seen.lock().unwrap().is_empty() {
+                    // The step's first label goes out as it begins; the line the stand-in prints is the second.
+                    if seen.lock().unwrap().len() >= 2 {
                         return steps.stop(&key);
                     }
                     std::thread::sleep(std::time::Duration::from_millis(50));
@@ -691,7 +692,8 @@ setTimeout(() => {{ console.error('the fake was never stopped'); process.exit(3)
         assert!(steps.running().is_empty());
         let seen = seen.lock().unwrap();
         assert_eq!(seen[0].kind, StepKind::Starting);
-        assert_eq!(seen[0].progress.label, "Pushing app");
+        assert_eq!(seen[0].progress.label, "Starting the change");
+        assert_eq!(seen[1].progress.label, "Starting the change: pushing app");
     }
 
     /// The real plugin's `change start` prints no stream line, so the page learns the step from the first label

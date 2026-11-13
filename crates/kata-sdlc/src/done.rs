@@ -1,9 +1,7 @@
 //! Declaring a change done is the plugin's step: `run change.done` verifies the change, pushes every
 //! touched repository, opens one pull request each (the master's last) and records them in the change.
 //! Kata runs it, relays its progress and shows its answer; it adds no check of its own.
-use crate::ai_sdlc::{
-    progress_of, Answer, Place, Program, StepOutcome, StepProgress, StepProgressKind,
-};
+use crate::ai_sdlc::{progress_of, Answer, Place, Program, StepOutcome, StepProgress};
 use crate::plugin::{GhPresence, Readiness};
 use crate::pull_requests::{recorded, PullRequestSource, RecordedPullRequest};
 use kata_core::proc::{CancelToken, LineSink};
@@ -157,12 +155,6 @@ pub fn declare(
         }
         Readiness::Ready { .. } => {}
     }
-    on_step(StepProgress {
-        kind: StepProgressKind::Verifying,
-        label: "Declaring done: the plugin is verifying the change".to_string(),
-        repo: None,
-        check: None,
-    });
     let opened: Arc<Mutex<Vec<RecordedPullRequest>>> = Arc::default();
     let relay: LineSink = {
         let on_step = Arc::clone(&on_step);
@@ -485,7 +477,6 @@ say({ type: 'outcome', outcome: 'passed', problems: [], hooks: [], failed: null,
         assert_eq!(
             *steps.lock().unwrap(),
             [
-                "Declaring done: the plugin is verifying the change",
                 "Running audit",
                 "audit passed",
                 "Pushing app",

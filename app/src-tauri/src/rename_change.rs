@@ -345,7 +345,8 @@ if (args[0] === 'change' && args[1] === 'rename') {{
             let (steps, seen, key) = (steps.clone(), seen.clone(), key.clone());
             std::thread::spawn(move || {
                 for _ in 0..1200 {
-                    if !seen.lock().unwrap().is_empty() {
+                    // The step's first label goes out as it begins; the line the stand-in prints is the second.
+                    if seen.lock().unwrap().len() >= 2 {
                         return steps.stop(&key);
                     }
                     std::thread::sleep(std::time::Duration::from_millis(50));

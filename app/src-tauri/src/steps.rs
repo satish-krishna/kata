@@ -54,24 +54,74 @@ impl StepKind {
 
 impl StepKind {
     /// The step's own words, the start of every progress line it shows: what the step is doing, or, for a
-    /// preparation, the repository it is preparing.
-    pub fn words(&self, _repo: Option<&str>) -> String {
-        String::new()
+    /// preparation of one repository, that repository.
+    pub fn words(&self, repo: Option<&str>) -> String {
+        let doc = |d: &ChangeDocument| match d {
+            ChangeDocument::Intent => "intent",
+            ChangeDocument::Spec => "spec",
+            ChangeDocument::Plan => "plan",
+        };
+        match (self, repo) {
+            (StepKind::PreparingBuild | StepKind::PreparingReview, Some(repo)) => {
+                format!("Preparing {repo}")
+            }
+            (StepKind::PreparingBuild, None) => "Checking every repository before building".into(),
+            (StepKind::PreparingReview, None) => {
+                "Checking every repository before the review".into()
+            }
+            (StepKind::Starting, _) => "Starting the change".into(),
+            (StepKind::Renaming, _) => "Renaming the change".into(),
+            (StepKind::RemovingCopy, _) => "Removing the change's copy".into(),
+            (StepKind::Accepting(d), _) => format!("Accepting the {}", doc(d)),
+            (StepKind::Rejecting(d), _) => format!("Rejecting the {}", doc(d)),
+            (StepKind::RejectingFix, _) => "Rejecting the fix".into(),
+            (StepKind::DeclaringDone, _) => "Declaring the change done".into(),
+        }
     }
 }
 
 /// The one owner of a progress line's text: `kind`'s words, then the latest line the plugin streamed for it,
-/// when there is one. `repo` is the repository the call is for, when it is for one.
+/// when there is one ("Accepting the spec: running docs-lint", "Preparing kata: base-tests passed"), else the
+/// words alone. `repo` is the repository the call is for, when it is for one. No caller words a step, lowercases
+/// or prefixes a line itself; `progress_of` only reads the line.
 pub fn progress_line(
-    _kind: StepKind,
-    _repo: Option<&str>,
-    _line: Option<&StepProgress>,
+    kind: StepKind,
+    repo: Option<&str>,
+    line: Option<&StepProgress>,
 ) -> StepProgress {
+    let words = kind.words(repo);
+    let Some(line) = line else {
+        return StepProgress {
+            kind: if repo.is_some() {
+                StepProgressKind::Repository
+            } else {
+                StepProgressKind::Verifying
+            },
+            label: words,
+            repo: repo.map(str::to_string),
+            check: None,
+        };
+    };
+    // A line that opens with a check's id keeps it as the check spelled it; the others open with a verb.
+    let said = match &line.check {
+        Some(check) if line.label.starts_with(check.as_str()) => line.label.clone(),
+        _ => {
+            let mut chars = line.label.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_lowercase(), chars.as_str()),
+                None => String::new(),
+            }
+        }
+    };
     StepProgress {
-        kind: StepProgressKind::Verifying,
-        label: String::new(),
-        repo: None,
-        check: None,
+        kind: line.kind,
+        label: if said.is_empty() {
+            words
+        } else {
+            format!("{words}: {said}")
+        },
+        repo: repo.map(str::to_string).or_else(|| line.repo.clone()),
+        check: line.check.clone(),
     }
 }
 
@@ -155,19 +205,28 @@ impl StepTable {
 
     /// Register a step of `change`, or `Busy` when it already has one.
     pub fn begin(&self, change: ChangeKey, kind: StepKind) -> Result<StepGuard, Busy> {
-        let mut entries = self.entries.lock().unwrap();
-        if entries.contains_key(&change) {
-            return Err(Busy);
-        }
+        let first = progress_line(kind, None, None);
         let token = CancelToken::new();
-        entries.insert(
-            change.clone(),
-            Entry {
-                kind,
-                token: token.clone(),
-                progress: None,
-            },
-        );
+        {
+            let mut entries = self.entries.lock().unwrap();
+            if entries.contains_key(&change) {
+                return Err(Busy);
+            }
+            entries.insert(
+                change.clone(),
+                Entry {
+                    kind,
+                    token: token.clone(),
+                    progress: Some(first.clone()),
+                },
+            );
+        }
+        // Every step says what it is as it begins: the real plugin streams nothing for some of them.
+        (self.emit)(StepEvent {
+            change: change.clone(),
+            kind,
+            progress: first,
+        });
         Ok(StepGuard {
             entries: self.entries.clone(),
             key: change,
@@ -175,15 +234,17 @@ impl StepTable {
         })
     }
 
-    /// Record the latest progress of the change's step and send it to the page.
-    pub fn label(&self, change: &ChangeKey, progress: StepProgress) {
-        let kind = {
+    /// Record and send the progress of the change's step: the step's words, then the plugin's latest line when
+    /// there is one, worded by [`progress_line`]. `repo` is the repository the call is for.
+    pub fn report(&self, change: &ChangeKey, repo: Option<&str>, line: Option<StepProgress>) {
+        let (kind, progress) = {
             let mut entries = self.entries.lock().unwrap();
             let Some(entry) = entries.get_mut(change) else {
                 return;
             };
+            let progress = progress_line(entry.kind, repo, line.as_ref());
             entry.progress = Some(progress.clone());
-            entry.kind
+            (entry.kind, progress)
         };
         (self.emit)(StepEvent {
             change: change.clone(),
@@ -191,9 +252,6 @@ impl StepTable {
             progress,
         });
     }
-
-    /// Record and send the progress of the change's step: the step's words and the plugin's latest line, if any.
-    pub fn report(&self, _change: &ChangeKey, _repo: Option<&str>, _line: Option<StepProgress>) {}
 
     /// Cancel the change's step; whether there was one.
     pub fn stop(&self, change: &ChangeKey) -> bool {
@@ -478,15 +536,22 @@ mod tests {
         let _g = t.begin(key("a"), StepKind::DeclaringDone).unwrap();
         let progress = StepProgress {
             kind: StepProgressKind::Push,
+            label: "Declaring the change done: pushing kata".into(),
+            repo: Some("kata".into()),
+            check: None,
+        };
+        let pushing = StepProgress {
+            kind: StepProgressKind::Push,
             label: "Pushing kata".into(),
             repo: Some("kata".into()),
             check: None,
         };
-        t.label(&key("a"), progress.clone());
+        t.report(&key("a"), None, Some(pushing));
         let events = seen.lock().unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].progress, progress);
-        assert_eq!(events[0].kind, StepKind::DeclaringDone);
+        // The first event is the step beginning; the second is the line, worded by the one owner.
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].progress, progress);
+        assert_eq!(events[1].kind, StepKind::DeclaringDone);
         let running = t.running();
         assert_eq!(running[0].progress.as_ref(), Some(&progress));
     }

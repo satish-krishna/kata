@@ -1129,7 +1129,7 @@ fn accept_in(
     let key = build_host::key_of(change);
     let on_step: sdlc::done::StepSink = {
         let steps = steps.clone();
-        Arc::new(move |progress| steps.label(&key, progress))
+        Arc::new(move |progress| steps.report(&key, None, Some(progress)))
     };
     Ok(sdlc::accept::apply(
         program,
@@ -1949,7 +1949,7 @@ fn declare_in(
         &change.change,
         {
             let steps = steps.clone();
-            Arc::new(move |progress| steps.label(&key, progress))
+            Arc::new(move |progress| steps.report(&key, None, Some(progress)))
         },
         step.token(),
     )
