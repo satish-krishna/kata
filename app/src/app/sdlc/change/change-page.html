@@ -185,7 +185,7 @@
         }
         @if (vm.stepStopped(); as note) {
           <div class="k-change__missing" data-testid="step-stopped" role="status">
-            <span class="k-status k-status--warning"><span class="k-status__dot"></span>{{ note }}</span>
+            <app-stopped-note [note]="note" />
           </div>
         }
         <main class="k-change">

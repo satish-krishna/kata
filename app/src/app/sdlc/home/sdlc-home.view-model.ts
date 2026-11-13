@@ -28,7 +28,7 @@ import { VersionsStore } from '../../core/versions/versions.store';
 import { defaultWorkType, namingRefusal, orderedWorkTypes, type WorkType } from '../../lib/sdlc-naming';
 import { inTauri } from '../../lib/mock';
 import type { ProgressStepId } from '../../lib/progress-steps';
-import { isStep, removalStopped, sameStepChange, type StepView, type StepWant } from '../../lib/sdlc-steps';
+import { isStep, removalStopped, sameStepChange, startStopped, type StepView, type StepWant } from '../../lib/sdlc-steps';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import { shownChangeList } from '../../lib/doc-notice';
 import { hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
@@ -605,6 +605,7 @@ export class SdlcHomeViewModel {
     const picked: PickedNaming | null = answer?.kind === 'setting' ? { workType: this.workType(), scope: this.scope().trim() } : null;
     this.newChangeOpen.set(false);
     this.triageNotice.set(null);
+    this.stepStopped.set(null);
     this.branchProblems.set([]);
     const workspace = this.current();
     const scan = this.scan();
@@ -622,6 +623,7 @@ export class SdlcHomeViewModel {
       const outcome = track === 'full' ? await this.inStep(this.transport.sdlcChangeName(idea).then((change) => ({ workspace: workspace.folder, system, change })), 'starting', null, 'Stop starting the change', run) : await run();
       if (outcome.kind === 'none' && track === 'decide') this.triageNotice.set({ idea: outcome.idea, runId: outcome.runId });
       if (outcome.kind === 'retry') this.askAgain(system, idea, track, outcome);
+      if (outcome.kind === 'startStopped') this.stepStopped.set(startStopped(outcome.answer));
     } catch (e) {
       this.toasts.error(`Could not start the change: ${message(e)}`);
     }
@@ -765,10 +767,11 @@ export class SdlcHomeViewModel {
   declineRemoveCopy(): void {
     this.removeAsked.set(null);
   }
-  /** The engineer confirmed. The change page's removal runs; every outcome is a toast, then the home reads again. */
+  /** The engineer confirmed. The change page's removal runs; every outcome is a toast but a stopped one, which is a note, then the home reads again. */
   async confirmRemoveCopy(): Promise<void> {
     const change = this.removeAsked();
     this.removeAsked.set(null);
+    this.stepStopped.set(null);
     const workspace = this.current()?.folder;
     const system = this.rows().find((r) => r.change === change)?.system;
     if (change === null || !workspace || !system) return;
@@ -777,7 +780,7 @@ export class SdlcHomeViewModel {
       const out = await this.inStep(ref, 'removingCopy', 'Removing the copy', 'Stop removing the copy', () => this.transport.sdlcRemoveCopy(ref));
       switch (out.outcome) {
         case 'stopped':
-          this.toasts.info(removalStopped(out.kept));
+          this.stepStopped.set(removalStopped(out.kept));
           break;
         case 'removed':
           this.toasts.info('The copy is removed. The change branch and its commits stay in the master repository.');

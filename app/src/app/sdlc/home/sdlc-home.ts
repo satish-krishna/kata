@@ -16,6 +16,7 @@ import { InstructionsRow } from '../../ui/instructions-row';
 import { ReposTable } from '../../ui/repos-table';
 import { SdlcSettingsDialog } from '../../ui/sdlc-settings-dialog';
 import { ProgressLine } from '../../ui/progress-line';
+import { StoppedNote } from '../../ui/stopped-note';
 import { SdlcToolbar } from '../../ui/sdlc-toolbar';
 import { RunningChanges } from '../running-changes';
 import { RunPreviewDialog } from '../../ui/run-preview-dialog';
@@ -35,6 +36,7 @@ import { SdlcHomeViewModel } from './sdlc-home.view-model';
     FinishedChanges,
     Segmented,
     ProgressLine,
+    StoppedNote,
     InstructionsRow,
     ReposTable,
     AddWorkspaceDialog,

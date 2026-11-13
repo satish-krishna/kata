@@ -73,7 +73,7 @@ import { shownBuild, shownDocument, type DocNotice, type ReadError, type Shown }
 import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy } from '../../lib/doc-rail';
 import { prNumber } from '../../lib/pull-request';
 import { DONE_PROGRESS_LINE, type DoneReport } from '../../lib/sdlc-done';
-import { acceptStopped, doneStopped, isStep, rejectStopped, removalStopped, sameStepChange, type StepView, type StepWant } from '../../lib/sdlc-steps';
+import { acceptStopped, doneStopped, isStep, rejectStopped, removalStopped, sameStepChange, startStopped, type StepView, type StepWant } from '../../lib/sdlc-steps';
 import type { StepEvent } from '@bindings/StepEvent';
 import { section } from '../../lib/doc';
 import { fullPipelineIdea } from '../../lib/sdlc-fix';
@@ -1139,6 +1139,7 @@ export class ChangePageViewModel {
       this.toasts.error(`Could not start the change: ${message(e)}`);
       return;
     }
+    if (outcome.kind === 'startStopped') this.toasts.info(startStopped(outcome.answer));
     if (outcome.kind !== 'opened') return;
     await this.closeFix(fixRef);
   }

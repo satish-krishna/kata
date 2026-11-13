@@ -156,6 +156,9 @@
                 </div>
               }
             </div>
+            @if (vm.stepStopped(); as note) {
+              <div class="wb-banner wb-banner--warn" data-testid="step-stopped" role="status"><app-stopped-note [note]="note" /></div>
+            }
             @if (vm.listNotice(); as notice) {
               <div class="wb-banner wb-banner--warn" data-testid="list-notice" role="status">
                 <span class="k-status k-status--warning"><span class="k-status__dot"></span>{{ notice.text }}</span>
