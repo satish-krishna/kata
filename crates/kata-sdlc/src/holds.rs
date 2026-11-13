@@ -168,8 +168,13 @@ impl HoldTable {
 /// The keys a build or review of a change takes. The workspace layout holds one key per product repository
 /// at `<workspace>/<repo>`; the single-repo layout holds exactly one, the root of the engineer's main checkout.
 pub fn keys_for(layout: Layout, root: &Path, workspace: &Path, repos: &[String]) -> Vec<RepoKey> {
-    let _ = (layout, root, workspace, repos);
-    Vec::new()
+    match layout {
+        Layout::SingleRepo => vec![RepoKey::of(root)],
+        Layout::Workspace => repos
+            .iter()
+            .map(|r| RepoKey::of(&workspace.join(r)))
+            .collect(),
+    }
 }
 
 /// The product repositories a build needs: the plan's repositories in plan order that have an unlogged task in
