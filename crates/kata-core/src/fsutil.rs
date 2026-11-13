@@ -111,6 +111,14 @@ pub fn slug(name: &str) -> String {
     }
 }
 
+/// The first file named `name` in `start` or any folder above it. Tests use it to find a binary
+/// cargo built beside them (`fake-claude`, `kata`), since the depth of a test binary under `target/`
+/// differs between cargo versions.
+pub fn find_upward(start: &Path, name: &str) -> Option<PathBuf> {
+    let _ = (start, name);
+    None
+}
+
 /// Recursively copy a directory tree from `src` into `dst` (created if absent).
 ///
 /// Symlinks are skipped, never followed: a vendoring copy must not traverse a
@@ -497,5 +505,40 @@ mod tests {
         assert_eq!(super::slug("triage-flaky_1"), "triage-flaky_1");
         assert_eq!(super::slug("型"), "bundle");
         assert_eq!(super::slug("..."), "bundle");
+    }
+
+    #[test]
+    fn find_upward_finds_a_binary_above_a_deep_test_binary() {
+        let name = format!("fake-claude{}", std::env::consts::EXE_SUFFIX);
+        let root = tempfile::tempdir().unwrap();
+        let debug = root.path().join("target").join("debug");
+        std::fs::create_dir_all(debug.join("deps")).unwrap();
+        let fake = debug.join(&name);
+        std::fs::write(&fake, b"").unwrap();
+
+        // The layout cargo 1.100 uses for test binaries.
+        let deep = debug
+            .join("build")
+            .join("kata-app")
+            .join("abc123")
+            .join("deps");
+        std::fs::create_dir_all(&deep).unwrap();
+        assert_eq!(find_upward(&deep, &name), Some(fake.clone()));
+        // The older layout.
+        assert_eq!(find_upward(&debug.join("deps"), &name), Some(fake));
+    }
+
+    #[test]
+    fn find_upward_is_none_when_no_folder_above_holds_the_binary() {
+        let name = format!("fake-claude{}", std::env::consts::EXE_SUFFIX);
+        let empty = tempfile::tempdir().unwrap();
+        let empty_deep = empty
+            .path()
+            .join("target")
+            .join("debug")
+            .join("build")
+            .join("x");
+        std::fs::create_dir_all(&empty_deep).unwrap();
+        assert_eq!(find_upward(&empty_deep, &name), None);
     }
 }
