@@ -2354,8 +2354,12 @@ pub fn run() {
         .manage(Arc::new(running::OpenedMarks::default()))
         .setup(|app| {
             let handle = app.handle().clone();
+            let ended = app.handle().clone();
             let step_table = steps::StepTable::new(Arc::new(move |event| {
                 let _ = handle.emit(steps::STEP_EVENT, event);
+            }))
+            .with_end(Arc::new(move |change| {
+                let _ = ended.emit(steps::STEP_END_EVENT, change);
             }));
             app.manage(step_table.clone());
             app.manage(build_host::BuildHost::new(

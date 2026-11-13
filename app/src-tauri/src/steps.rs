@@ -172,6 +172,7 @@ pub type EndEmitter = Arc<dyn Fn(ChangeKey) + Send + Sync>;
 pub struct StepTable {
     entries: Arc<Mutex<HashMap<ChangeKey, Entry>>>,
     emit: Emitter,
+    end: Option<EndEmitter>,
 }
 
 /// Holds a change's entry; dropping it removes the entry.
@@ -179,6 +180,7 @@ pub struct StepGuard {
     entries: Arc<Mutex<HashMap<ChangeKey, Entry>>>,
     key: ChangeKey,
     token: CancelToken,
+    end: Option<EndEmitter>,
 }
 
 impl std::fmt::Debug for StepGuard {
@@ -199,6 +201,9 @@ impl Drop for StepGuard {
         if let Ok(mut entries) = self.entries.lock() {
             entries.remove(&self.key);
         }
+        if let Some(end) = &self.end {
+            end(self.key.clone());
+        }
     }
 }
 
@@ -207,11 +212,13 @@ impl StepTable {
         Self {
             entries: Arc::default(),
             emit,
+            end: None,
         }
     }
 
     /// Also tell `end` with the change's key each time a step is over.
-    pub fn with_end(self, _end: EndEmitter) -> Self {
+    pub fn with_end(mut self, end: EndEmitter) -> Self {
+        self.end = Some(end);
         self
     }
 
@@ -243,6 +250,7 @@ impl StepTable {
             entries: self.entries.clone(),
             key: change,
             token,
+            end: self.end.clone(),
         })
     }
 
