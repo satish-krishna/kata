@@ -115,8 +115,10 @@ pub fn slug(name: &str) -> String {
 /// cargo built beside them (`fake-claude`, `kata`), since the depth of a test binary under `target/`
 /// differs between cargo versions.
 pub fn find_upward(start: &Path, name: &str) -> Option<PathBuf> {
-    let _ = (start, name);
-    None
+    start
+        .ancestors()
+        .map(|dir| dir.join(name))
+        .find(|p| p.is_file())
 }
 
 /// Recursively copy a directory tree from `src` into `dst` (created if absent).
