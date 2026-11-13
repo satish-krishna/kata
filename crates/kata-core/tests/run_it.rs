@@ -1830,7 +1830,7 @@ fn run_real_in(spec: &RunSpec, cwd: Option<&std::path::Path>) -> Vec<KataEvent> 
     assert!(st.success(), "building the kata binary failed");
     let exe = std::env::current_exe().unwrap();
     let name = format!("kata{}", std::env::consts::EXE_SUFFIX);
-    let kata = kata_core::fsutil::find_upward(exe.parent().unwrap(), &name).unwrap_or_else(|| {
+    let kata = kata_core::find_upward(exe.parent().unwrap(), &name).unwrap_or_else(|| {
         panic!(
             "build kata first (cargo build -p kata-cli --bin kata); none found above {}",
             exe.display()

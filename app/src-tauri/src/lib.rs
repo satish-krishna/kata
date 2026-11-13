@@ -2730,7 +2730,7 @@ mod tests {
         let _guard = CLAUDE_ENV.lock().unwrap_or_else(|e| e.into_inner());
         let exe = std::env::current_exe().unwrap();
         let name = format!("fake-claude{}", std::env::consts::EXE_SUFFIX);
-        let fake = kata_core::fsutil::find_upward(exe.parent().unwrap(), &name).unwrap_or_else(|| {
+        let fake = kata_core::find_upward(exe.parent().unwrap(), &name).unwrap_or_else(|| {
             panic!(
                 "build fake-claude first (cargo build -p kata-core --bin fake-claude); none found above {}",
                 exe.display()

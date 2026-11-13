@@ -455,7 +455,7 @@ fn home_and_change_page_read_without_git() {
 fn target_dir() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
     let name = format!("fake-claude{}", std::env::consts::EXE_SUFFIX);
-    kata_core::fsutil::find_upward(exe.parent().unwrap(), &name)
+    kata_core::find_upward(exe.parent().unwrap(), &name)
         .unwrap_or_else(|| {
             panic!(
                 "build fake-claude first (cargo build -p kata-core --bin fake-claude); none found above {}",

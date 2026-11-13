@@ -104,6 +104,10 @@ pub use run::{
 #[doc(hidden)]
 pub mod ask;
 
+// ---- test support for other crates: a binary cargo built beside a test binary ----
+#[doc(hidden)]
+pub use fsutil::find_upward;
+
 // ---- portable operations the GUI and CLI also build on ----
 pub mod bundle;
 pub mod changeset;
@@ -121,5 +125,5 @@ pub mod permission;
 pub(crate) mod assemble;
 pub(crate) mod builtin;
 pub(crate) mod command;
-pub mod fsutil;
+pub(crate) mod fsutil;
 pub use fsutil::pid_alive;
