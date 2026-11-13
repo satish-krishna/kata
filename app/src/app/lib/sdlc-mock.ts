@@ -627,6 +627,7 @@ export function changeViewOf(
       documents: { intent: stateDocument(c.intent), spec: stateDocument(c.spec), plan: stateDocument(c.plan) },
       scenarios: null, tasks, buildLogs: {}, review: { committed: 0, draft: 'none' },
       fix: shown.track === 'fix' && shown.fix_row !== null ? { row: shown.fix_row, facts: FIX_FACTS } : null,
+      apps: null,
       ready: { spec: GATE, plan: GATE, build: stop === null ? GATE : { candidate: false, stop, accept: [] }, review: GATE, done: GATE, reject: GATE },
     },
     offer: offerOf(shown, refused),
@@ -773,6 +774,7 @@ export class SdlcMock {
     if (folder === MOCK_SETUP_FOLDER) {
       return {
         folder,
+        layout: 'workspace',
         repos: MOCK_SETUP_REPOS,
         master: { kind: 'one', repo: 'billing-intent', committed: true },
         marker: this.setupDone ? { version: 1, systems: { billing: { repos: MOCK_SETUP_REPOS } } } : null,
@@ -781,6 +783,7 @@ export class SdlcMock {
     }
     return {
       folder,
+      layout: 'workspace',
       repos: MOCK_REPOS,
       master: { kind: 'one', repo: MOCK_MASTER, committed: true },
       marker: { version: 1, systems: { [MOCK_SYSTEM]: { repos: MOCK_REPOS }, ...(this.demo === 'finished-many' || this.threeSystems() ? { [MOCK_SECOND_SYSTEM]: { repos: ['commerce-core'] } } : {}), ...(this.threeSystems() ? { [MOCK_THIRD_SYSTEM]: { repos: ['commerce-core'] } } : {}) } },

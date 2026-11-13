@@ -63,6 +63,7 @@ const previewReady = (preview: RunPreviewViewModel) => vi.waitFor(() => expect(p
 
 const scanOf = (over: Partial<WorkspaceScan>): WorkspaceScan => ({
   folder: NEW_FOLDER,
+  layout: 'workspace',
   repos: ['commerce-docs', 'customer-portal'],
   master: { kind: 'one', repo: 'commerce-docs', committed: true },
   marker: { version: 1, systems: { commerce: { repos: ['customer-portal'] } } },
@@ -939,6 +940,7 @@ const stateOf = (change: string): ChangeState => ({
   buildLogs: {},
   review: { committed: 0, draft: 'none' },
   fix: null,
+  apps: null,
   ready: { spec: gate, plan: gate, build: gate, review: gate, done: gate, reject: gate },
 });
 const viewOf = (change: string, text: string, readiness: Readiness): ChangeView => ({

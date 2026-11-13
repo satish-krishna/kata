@@ -352,6 +352,7 @@ describe("triage and fix run-specs (T8)", () => {
   const restricted: Restricted = { workspaceFolder: WS, masterRepo: "intent-repo", systemRepos: ["kata", "api"] };
   const scan = (over: Partial<WorkspaceScan> = {}): WorkspaceScan => ({
     folder: WS,
+    layout: 'workspace',
     repos: ["intent-repo", "kata", "api"],
     master: { kind: "one", repo: "intent-repo", committed: true },
     marker: null,
