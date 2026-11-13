@@ -2730,7 +2730,7 @@ mod tests {
         let _guard = CLAUDE_ENV.lock().unwrap_or_else(|e| e.into_inner());
         let exe = std::env::current_exe().unwrap();
         let name = format!("fake-claude{}", std::env::consts::EXE_SUFFIX);
-        let fake = find_upward(exe.parent().unwrap(), &name).unwrap_or_else(|| {
+        let fake = kata_core::fsutil::find_upward(exe.parent().unwrap(), &name).unwrap_or_else(|| {
             panic!(
                 "build fake-claude first (cargo build -p kata-core --bin fake-claude); none found above {}",
                 exe.display()
@@ -2754,46 +2754,6 @@ mod tests {
         let err = ready_with(Some("garbage")).unwrap_err();
         assert!(err.contains("could not read"), "{err}");
         assert_eq!(ready_with(None), Ok(()));
-    }
-
-    /// The first folder at or above `start` that holds `name`, so the lookup works whatever depth cargo gives the test binary.
-    fn find_upward(start: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
-        start
-            .ancestors()
-            .map(|dir| dir.join(name))
-            .find(|p| p.is_file())
-    }
-
-    #[test]
-    fn fake_claude_is_found_above_a_deep_test_binary() {
-        let name = format!("fake-claude{}", std::env::consts::EXE_SUFFIX);
-        let root = tempfile::tempdir().unwrap();
-        let shallow = root.path().join("target").join("debug");
-        std::fs::create_dir_all(shallow.join("deps")).unwrap();
-        let fake = shallow.join(&name);
-        std::fs::write(&fake, b"").unwrap();
-
-        // The layout cargo 1.100 uses for test binaries.
-        let deep = shallow
-            .join("build")
-            .join("kata-app")
-            .join("abc123")
-            .join("deps");
-        std::fs::create_dir_all(&deep).unwrap();
-        assert_eq!(find_upward(&deep, &name), Some(fake.clone()));
-        // The older layout.
-        assert_eq!(find_upward(&shallow.join("deps"), &name), Some(fake));
-
-        // A tree with no fake-claude anywhere above it.
-        let empty = tempfile::tempdir().unwrap();
-        let empty_deep = empty
-            .path()
-            .join("target")
-            .join("debug")
-            .join("build")
-            .join("x");
-        std::fs::create_dir_all(&empty_deep).unwrap();
-        assert_eq!(find_upward(&empty_deep, &name), None);
     }
 
     fn live(id: u64) -> LiveRun<()> {
