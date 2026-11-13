@@ -6,12 +6,14 @@ use kata_sdlc::ai_sdlc::list::ChangeList;
 use kata_sdlc::ai_sdlc::state::{ChangeState, SystemState};
 use kata_sdlc::ai_sdlc::{Place, Program, ProgramError};
 use kata_sdlc::copy_removal::CopyRemoval;
+use kata_sdlc::layout::AppHealth;
 use kata_sdlc::offer::{home_reading, LiveFacts};
 use kata_sdlc::open_changes::{
     relist, shown_system, split, to_check, HomeChecked, HomeList, HomeOpen, HomeRow, Refresh,
 };
 use kata_sdlc::plugin::Readiness;
 use kata_sdlc::view::ChangeView;
+use kata_sdlc::workspace::InstructionsState;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -148,6 +150,26 @@ pub fn home_list(
         finished,
         can_start_change,
         start_change_reason,
+    })
+}
+
+/// What the home lists in place of repositories for a single-repo folder: the system's apps in the
+/// program's order with their context health, and the instructions in the repository's root file.
+#[derive(serde::Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct AppRows {
+    pub apps: Vec<AppHealth>,
+    pub instructions: InstructionsState,
+}
+
+/// The app rows of `system` for the single-repo `folder`.
+pub fn app_rows(program: &Program, folder: &Path, system: &str) -> Result<AppRows, String> {
+    let _ = (program, folder, system);
+    Ok(AppRows {
+        apps: Vec::new(),
+        instructions: InstructionsState::Missing,
     })
 }
 
@@ -976,5 +998,108 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
             || stage(&big_ws, 97),
         );
         assert!(misses.is_empty(), "speed targets missed: {misses:?}");
+    }
+
+    fn single_repo_change(name: &str) -> ChangeState {
+        let mut state = change(name, true);
+        state.apps = Some(BTreeMap::new());
+        state
+    }
+
+    #[test]
+    fn a_single_repo_done_change_reads_like_any_other() {
+        let memory = HomeMemory::default();
+        let mut fake = Fake {
+            open: vec![single_repo_change("a")],
+            declared: names(&["a"]),
+            ..Default::default()
+        };
+        let read = |fake: &Fake, trigger| {
+            home_open(
+                fake,
+                &ready("1.4.0"),
+                &no_live,
+                Path::new("/kata"),
+                "kata",
+                &names(&["a"]),
+                trigger,
+                &memory,
+            )
+            .unwrap()
+        };
+        // Pull requests open: the merge check has not run.
+        let answer = read(&fake, Refresh::Open);
+        assert_eq!(text(&answer, "a"), "Done · pull requests open");
+        for (check, reading) in [
+            (CopyRemoval::Offer, "Done · merged, remove the copy"),
+            (
+                CopyRemoval::Keep {
+                    uncommitted: vec!["engine/x.rs".into()],
+                },
+                "Done · merged, copy has changes",
+            ),
+        ] {
+            fake.merge.insert("a".into(), Ok(check));
+            let checked = home_pull_requests(
+                &fake,
+                &ready("1.4.0"),
+                Path::new("/kata"),
+                "kata",
+                &names(&["a"]),
+                &memory,
+            )
+            .unwrap();
+            assert_eq!(checked.rows[0].reading.label.text, reading);
+            assert_eq!(text(&read(&fake, Refresh::Focus), "a"), reading);
+        }
+    }
+
+    #[test]
+    fn app_rows_follow_the_program() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().join("ai-sdlc.ts");
+        let root = dir.path().display().to_string().replace("\\", "/");
+        let script = format!(
+            r#"const args = process.argv.slice(2);
+const command = args[0];
+if (command === 'resolve') {{
+  console.log(JSON.stringify({{ master: '{root}', workspace: '{root}', layout: 'single-repo', problems: [] }}));
+}} else if (command === 'stale') {{
+  console.log(JSON.stringify({{ repos: [
+    {{ repo: 'workbench', path: '{root}/app', reason: 'missing' }},
+    {{ repo: 'engine', path: '{root}/crates', reason: 'behind', behind: 3 }},
+  ] }}));
+}} else if (command === 'instructions') {{
+  console.log(JSON.stringify({{ workspaceMd: 'present', claudeMd: 'stale' }}));
+}} else {{
+  console.error('unexpected ' + command);
+  process.exit(2);
+}}
+"#
+        );
+        std::fs::write(&entry, script).unwrap();
+        let program = Program {
+            node: "node".into(),
+            entry,
+        };
+        let rows = app_rows(&program, dir.path(), "kata").unwrap();
+        assert_eq!(
+            rows,
+            AppRows {
+                apps: vec![
+                    AppHealth {
+                        name: "workbench".into(),
+                        folder: "app".into(),
+                        context: kata_sdlc::layout::ContextHealth::Missing,
+                    },
+                    AppHealth {
+                        name: "engine".into(),
+                        folder: "crates".into(),
+                        context: kata_sdlc::layout::ContextHealth::Behind { commits: 3 },
+                    },
+                ],
+                instructions: InstructionsState::OutOfDate,
+            }
+        );
     }
 }

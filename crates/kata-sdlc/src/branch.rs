@@ -3,6 +3,7 @@ use crate::changes::{is_change_name, is_safe_system};
 use crate::diff;
 use crate::frontmatter;
 use crate::git::{self, GitError};
+use crate::layout::Layout;
 use crate::snapshot::status_entries;
 use crate::workspace::{self, system_repos};
 use serde::{Deserialize, Serialize};
@@ -68,14 +69,31 @@ pub struct BranchInfo {
     pub current: Option<String>,
     pub others: Vec<OtherBranch>,
     pub default_base: Option<String>,
+    /// Whether the engineer's own checkout may be switched to a change's branch. Only the workspace layout
+    /// allows it.
+    pub switchable: bool,
+    /// Why the home cannot run something on the base branch in this checkout, when it cannot.
+    pub base_refusal: Option<String>,
+}
+
+/// Whether Kata may switch the engineer's checkout to a change's branch in a `layout`.
+pub fn switchable(_layout: Layout) -> bool {
+    true
 }
 
 /// The master's branch, the other local branches that hold a change, and the base branch.
 pub fn branch_info(master: &Path) -> BranchInfo {
+    branch_info_in(master, Layout::Workspace)
+}
+
+/// [`branch_info`] for a repository in `layout`.
+pub fn branch_info_in(master: &Path, layout: Layout) -> BranchInfo {
     BranchInfo {
         current: current_branch(master),
         others: other_change_branches(master),
         default_base: diff::base_branch(master),
+        switchable: switchable(layout),
+        base_refusal: None,
     }
 }
 
@@ -161,6 +179,8 @@ pub enum BranchError {
     InvalidName(String),
     #[error("`{branch}` is held by the copy of `{change}`; open that change instead.")]
     HeldByCopy { branch: String, change: String },
+    #[error("Single-repo changes are never switched into your checkout.")]
+    NotSwitchable,
     #[error(transparent)]
     Git(#[from] GitError),
 }
@@ -209,6 +229,11 @@ pub fn checkout(master: &Path, branch: &str) -> Result<(), BranchError> {
     ensure_clean(master)?;
     repo.checkout_branch(branch)?;
     Ok(())
+}
+
+/// [`checkout`] for a repository in `layout`: refused before anything is touched when the layout is not switchable.
+pub fn checkout_in(_layout: Layout, master: &Path, branch: &str) -> Result<(), BranchError> {
+    checkout(master, branch)
 }
 
 /// The commit each repository's recorded change branch points at. A repository without that
@@ -840,5 +865,43 @@ mod copy_tests {
         let (_tmp, master) = master_with_copy();
         checkout(&master, "change/b").unwrap();
         assert_eq!(current_branch(&master).as_deref(), Some("change/b"));
+    }
+
+    #[test]
+    fn single_repo_is_never_switchable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = testutil::single_repo(tmp.path(), "kata", &[("engine", "engine")]);
+        git::run(&root, &["branch", "change/a"]).unwrap();
+        let info = branch_info_in(&root, Layout::SingleRepo);
+        assert!(!info.switchable);
+        assert!(info.others.is_empty(), "{:?}", info.others);
+        let before = status_entries(&root).unwrap();
+        let err = checkout_in(Layout::SingleRepo, &root, "change/a").unwrap_err();
+        assert!(matches!(err, BranchError::NotSwitchable), "{err:?}");
+        assert_eq!(
+            err.to_string(),
+            "Single-repo changes are never switched into your checkout."
+        );
+        assert_eq!(current_branch(&root).as_deref(), Some("main"));
+        assert_eq!(status_entries(&root).unwrap().len(), before.len());
+        assert!(branch_info_in(&root, Layout::Workspace).switchable);
+        assert!(switchable(Layout::Workspace));
+        assert!(!switchable(Layout::SingleRepo));
+    }
+
+    #[test]
+    fn base_refusal_names_the_branch_and_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = testutil::single_repo(tmp.path(), "kata", &[("engine", "engine")]);
+        assert_eq!(branch_info_in(&root, Layout::SingleRepo).base_refusal, None);
+        git::run(&root, &["checkout", "-q", "-b", "feature/x"]).unwrap();
+        assert_eq!(
+            branch_info_in(&root, Layout::SingleRepo)
+                .base_refusal
+                .as_deref(),
+            Some("This repository is on `feature/x`; switch it to `main` yourself, then run this again.")
+        );
+        // A workspace checkout can be switched, so it is never refused for its branch.
+        assert_eq!(branch_info_in(&root, Layout::Workspace).base_refusal, None);
     }
 }
