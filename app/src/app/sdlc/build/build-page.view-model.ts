@@ -37,6 +37,7 @@ import { RunLandingStore } from '../../core/run/run-landing.store';
 import { pendingKind, type AskRecord, type MessageRecord, type MessageRefusal, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
 import { activityFor, linksOfFollowedRuns, outcomeOf, recordOutcome, repoSessions, sessionsFor, tabOf, type Chosen, type LiveRun, type Pick, type SessionRef, type SessionTab } from '../../lib/build-sessions';
 import { sameChange } from '../../lib/build-host';
+import { sameStepChange } from '../../lib/sdlc-steps';
 import { buildStage, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
 import { hms, ms, situationView, type Situation, type SituationView, type TaskState } from '../../lib/build-state';
 import { layoutStage as layoutStageOf, type LayoutStage } from '../../lib/build-layout-stage';
@@ -1510,7 +1511,7 @@ export class BuildPageViewModel {
     if (ctx === null) return () => undefined;
     try {
       return await this.transport.onStep((event) => {
-        if (event.change.change === ctx.change && (event.kind === 'preparingBuild' || event.kind === 'preparingReview')) this.progress.update(event.progress.label, 'build');
+        if (sameStepChange(event.change, ctx) && (event.kind === 'preparingBuild' || event.kind === 'preparingReview')) this.progress.update(event.progress.label, 'build');
       });
     } catch {
       return () => undefined;

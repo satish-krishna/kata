@@ -17,9 +17,12 @@ export function isStep(kind: StepKind, want: StepWant): boolean {
   return typeof kind === 'string' ? kind === want : want in kind;
 }
 
-/** Whether a step report's change key names the change `ref` names. */
-export function sameChange(key: ChangeKey, ref: { system: string; change: string }): boolean {
-  return key.change === ref.change;
+/**
+ * Whether a step report's change key names the change `ref` names. The key's workspace is a normalized path the backend computes and the
+ * page holds the raw folder, so the workspace is not compared here; system and change are.
+ */
+export function sameStepChange(key: ChangeKey, ref: { system: string; change: string }): boolean {
+  return key.system === ref.system && key.change === ref.change;
 }
 
 /** The backend's answer, when it gave one, after a colon. */

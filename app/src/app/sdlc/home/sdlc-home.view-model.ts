@@ -28,7 +28,7 @@ import { VersionsStore } from '../../core/versions/versions.store';
 import { defaultWorkType, namingRefusal, orderedWorkTypes, type WorkType } from '../../lib/sdlc-naming';
 import { inTauri } from '../../lib/mock';
 import type { ProgressStepId } from '../../lib/progress-steps';
-import { isStep, removalStopped, type StepView, type StepWant } from '../../lib/sdlc-steps';
+import { isStep, removalStopped, sameStepChange, type StepView, type StepWant } from '../../lib/sdlc-steps';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import { shownChangeList } from '../../lib/doc-notice';
 import { hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
@@ -738,7 +738,7 @@ export class SdlcHomeViewModel {
     );
     const listening = this.transport
       .onStep((event) => {
-        if (this.stepRef !== null && event.change.change === this.stepRef.change && isStep(event.kind, want)) this.step.set({ label: event.progress.label, stop });
+        if (this.stepRef !== null && sameStepChange(event.change, this.stepRef) && isStep(event.kind, want)) this.step.set({ label: event.progress.label, stop });
       })
       .catch(() => (): void => undefined);
     if (first !== null) this.step.set({ label: first, stop });

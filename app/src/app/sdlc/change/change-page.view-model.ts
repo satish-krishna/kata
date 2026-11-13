@@ -73,7 +73,7 @@ import { shownBuild, shownDocument, type DocNotice, type ReadError, type Shown }
 import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy } from '../../lib/doc-rail';
 import { prNumber } from '../../lib/pull-request';
 import { DONE_PROGRESS_LINE, type DoneReport } from '../../lib/sdlc-done';
-import { acceptStopped, doneStopped, isStep, rejectStopped, removalStopped, type StepView, type StepWant } from '../../lib/sdlc-steps';
+import { acceptStopped, doneStopped, isStep, rejectStopped, removalStopped, sameStepChange, type StepView, type StepWant } from '../../lib/sdlc-steps';
 import type { StepEvent } from '@bindings/StepEvent';
 import { section } from '../../lib/doc';
 import { fullPipelineIdea } from '../../lib/sdlc-fix';
@@ -758,12 +758,12 @@ export class ChangePageViewModel {
    * backend reports one; `onReport` sees each report of this change's step.
    */
   private async inStep<T>(want: StepWant, first: string, stop: string, call: () => Promise<T>, onReport?: (event: StepEvent) => void): Promise<T> {
-    const change = this.changeName();
+    const ref = { system: this.system(), change: this.changeName() };
     this.stepStopped.set(null);
     let unlisten = (): void => undefined;
     try {
       unlisten = await this.transport.onStep((event) => {
-        if (event.change.change !== change || !isStep(event.kind, want)) return;
+        if (!sameStepChange(event.change, ref) || !isStep(event.kind, want)) return;
         this.step.set({ label: event.progress.label, stop });
         onReport?.(event);
       });
