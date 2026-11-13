@@ -59,6 +59,7 @@ export type NewChangeOutcome =
   | { kind: 'retry'; ask: 'branch' | 'scope'; problems: string[] }
   | { kind: 'refused' }
   | { kind: 'stopped' }
+  | { kind: 'startStopped'; answer: string[] }
   | { kind: 'none'; idea: string; runId: string | null };
 
 /** The branch name dialog of one change: what it shows and the engineer may edit. */

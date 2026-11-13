@@ -708,6 +708,9 @@ export class SdlcHomeViewModel {
   }
 
   // --- long steps: the label the backend reports and Stop
+  /** How the last stopped start or removal is worded; null while there is none. */
+  readonly stepStopped = signal<string | null>(null);
+
   /** The long step of a change that runs from this page now (a start, a removal); null while none does. */
   readonly step = signal<StepView | null>(null);
 

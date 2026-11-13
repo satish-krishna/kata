@@ -1746,7 +1746,20 @@ describe('New change and copy removal can be stopped', () => {
     release({ outcome: 'stopped', answer });
     await running;
     expect(vm.step()).toBeNull();
-    expect(toastText()).toBe(message);
+    expect(vm.stepStopped()).toBe(message);
+    expect(toastText()).toBe('');
+  });
+
+  it('a new start clears the stopped note', async () => {
+    const { vm, transport } = setup();
+    steps(transport);
+    const start = vi.spyOn(transport, 'sdlcStartChange').mockResolvedValueOnce({ outcome: 'stopped', answer: [] });
+    await vm.init();
+    await vm.newChange('commerce', 'flag prices', 'full');
+    expect(vm.stepStopped()).toBe('Stopped. The start did not finish');
+    start.mockResolvedValueOnce({ outcome: 'refused', kind: 'branchTaken', problems: ['feat/x is taken'] });
+    await vm.newChange('commerce', 'flag prices', 'full');
+    expect(vm.stepStopped()).toBeNull();
   });
 
   it.each<[string, string[], string]>([
@@ -1774,7 +1787,26 @@ describe('New change and copy removal can be stopped', () => {
     release({ outcome: 'stopped', kept });
     await running;
     expect(vm.step()).toBeNull();
-    expect(toastText()).toBe(message);
+    expect(vm.stepStopped()).toBe(message);
+    expect(toastText()).toBe('');
+  });
+
+  it('a new removal clears the stopped note', async () => {
+    const ctx = setup({ home: 'listed' });
+    const { vm, transport } = ctx;
+    vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
+    vi.spyOn(transport, 'sdlcHomeOpen').mockResolvedValue(openOf(NAMES.map((n, i) => homeRowOf(n, 'Stage', i === 0 ? 'remove-copy' : 'workflow'))));
+    vi.spyOn(transport, 'sdlcHomePullRequests').mockResolvedValue({ rows: [], problems: [] });
+    steps(transport);
+    const remove = vi.spyOn(transport, 'sdlcRemoveCopy').mockResolvedValueOnce({ outcome: 'stopped', kept: [] });
+    await vm.init();
+    vm.askRemoveCopy(NAMES[0]);
+    await vm.confirmRemoveCopy();
+    expect(vm.stepStopped()).toBe('Stopped. The removal did not finish');
+    remove.mockResolvedValueOnce({ outcome: 'removed', kept: [] });
+    vm.askRemoveCopy(NAMES[0]);
+    await vm.confirmRemoveCopy();
+    expect(vm.stepStopped()).toBeNull();
   });
 });
 
