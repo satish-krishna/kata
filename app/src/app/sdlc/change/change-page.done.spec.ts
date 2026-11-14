@@ -303,6 +303,43 @@ describe('declaring done from the build page', () => {
     expect(ev.defaultPrevented).toBe(true);
   });
 
+  describe('the done result of a single-repo change', () => {
+    const one = (extra: Partial<Extract<DeclareView, { kind: 'done' }>>): DeclareView => ({
+      kind: 'done',
+      pullRequests: [{ repo: 'kata', url: 'https://github.com/acme/kata/pull/21', number: 21, source: 'plugin' }],
+      warnings: [],
+      apps: [],
+      untouched: [],
+      ...extra,
+    });
+    const shown = async (view: DeclareView) => {
+      const { fixture } = await mountPage(MOCK_DONE_CHANGE, new MockTransport());
+      fixture.debugElement.injector.get(ChangePageViewModel).declareView.set(view);
+      await settle();
+      return document.body.querySelector('[role="dialog"]')!.textContent!.replace(/\s+/g, ' ');
+    };
+
+    it('one pull request lists the touched apps', async () => {
+      const links = () => Array.from(document.body.querySelectorAll('[role="dialog"] a'));
+      const said = await shown(one({ apps: ['engine', 'workbench'] }));
+      expect(links().map((a) => a.getAttribute('href'))).toEqual(['https://github.com/acme/kata/pull/21']);
+      expect(said).toContain('Apps: engine, workbench');
+      expect(said).not.toContain('Planned but not touched');
+    });
+
+    it('a planned app not touched is noted', async () => {
+      const said = await shown(one({ apps: ['engine'], untouched: ['workbench'] }));
+      expect(said).toContain('Planned but not touched: workbench.');
+      expect(document.body.querySelectorAll('[role="dialog"] a').length).toBe(1);
+    });
+
+    it('a workspace change shows neither line', async () => {
+      const said = await shown(one({}));
+      expect(said).not.toContain('Apps:');
+      expect(said).not.toContain('Planned but not touched');
+    });
+  });
+
   it('a pull request link that fails to open shows an error toast naming the address and the cause', async () => {
     const transport = new MockTransport();
     const open = vi.spyOn(transport, 'openUrl').mockRejectedValue(new Error('no browser'));

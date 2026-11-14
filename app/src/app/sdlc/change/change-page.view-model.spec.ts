@@ -19,7 +19,7 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/given';
 import { safetyRules, type StageAction } from '../../lib/sdlc';
-import { MOCK_BUILD_CHANGE, MOCK_COPY_CHANGE, MOCK_COPY_FIX, MOCK_DONE_CHANGE, MOCK_NOT_LISTED, MOCK_REFUSED_CHANGE, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_COPY_CHANGE, MOCK_COPY_FIX, MOCK_DONE_CHANGE, MOCK_NOT_LISTED, MOCK_REFUSED_CHANGE, MOCK_SINGLE_CHANGE, MOCK_SINGLE_SYSTEM, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePageViewModel } from './change-page.view-model';
 
@@ -33,8 +33,8 @@ const NO_PLACE = 'Could not find where this change lives: the ai-sdlc program co
 const toastText = () => toastState.toasts().map((t) => String(t.title)).join(' | ');
 
 /** `confirm` (the default) lets the preview confirm every run at once, so a test about something else never meets it; `real` leaves it to the test. */
-function setup(change = PHOTOS_CHANGE, transport = new MockTransport(), preview: 'confirm' | 'real' = 'confirm') {
-  const params = new BehaviorSubject(convertToParamMap({ system: 'commerce', change }));
+function setup(change = PHOTOS_CHANGE, transport = new MockTransport(), preview: 'confirm' | 'real' = 'confirm', system = 'commerce') {
+  const params = new BehaviorSubject(convertToParamMap({ system, change }));
   TestBed.configureTestingModule({
     providers: [
       provideRouter([]),
@@ -1891,5 +1891,35 @@ describe('ChangePageViewModel: where the change lives', () => {
     await vm.showDoc('intent');
     expect(vm.resolutionError()).toBeNull();
     expect(vm.doc()).toContain('The copy holds this intent.');
+  });
+});
+
+describe('ChangePageViewModel of a single-repo repository', () => {
+  const demoAt = (query: string | null) => history.replaceState({}, '', query ? `/?${query}` : '/');
+  afterEach(() => demoAt(null));
+  const opened = async () => {
+    demoAt('demo=single-repo');
+    const transport = new MockTransport();
+    const branches = vi.spyOn(transport, 'sdlcBranches');
+    const checkout = vi.spyOn(transport, 'sdlcCheckout');
+    const open = vi.spyOn(transport, 'sdlcOpenCopyFolder');
+    const made = setup(MOCK_SINGLE_CHANGE, transport, 'confirm', MOCK_SINGLE_SYSTEM);
+    await ready(made.vm);
+    return { ...made, branches, checkout, open };
+  };
+
+  it('a single-repo change shows its copy folder and branch', async () => {
+    const { vm, open } = await opened();
+    await vi.waitFor(() => expect(vm.copy()).toEqual({ folder: `D:/.ai-sdlc/copies/${MOCK_SINGLE_CHANGE}`, branch: `change/${MOCK_SINGLE_CHANGE}` }));
+    await vm.openCopyFolder();
+    expect(open).toHaveBeenCalledWith({ workspace: 'D:/kata', system: MOCK_SINGLE_SYSTEM, change: MOCK_SINGLE_CHANGE });
+  });
+
+  it('no switch of the checkout is offered for a single-repo change (R6.1)', async () => {
+    const { vm, branches, checkout } = await opened();
+    expect(branches).toHaveBeenCalledWith('D:/kata', 'single-repo');
+    expect(branches.mock.calls.every(([, layout]) => layout === 'single-repo')).toBe(true);
+    expect(vm.state()).toBe('ready');
+    expect(checkout).not.toHaveBeenCalled();
   });
 });
