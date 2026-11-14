@@ -341,17 +341,27 @@ impl Program {
         self.call(&args, &place.workspace)
     }
 
-    /// Runs `command` for the saved `folder`: [`Program::resolve`] places the folder, then [`Program::run`] runs
-    /// the command there. For a command that finds its own place (`list`, `state`); the answer is read as `run`
-    /// reads it.
+    /// Runs `command` for the saved `folder` in one Node start, the program finding the master itself. The
+    /// saved entry's `layout` picks the form of the call, as [`Program::resolve_from`] does for a folder whose
+    /// layout is not known: a workspace gets `--workspace <folder>`, a single-repo repository runs from its folder
+    /// with no flag. For a command that finds its own place (`list`, `state`); the answer is read as `run` reads it.
     pub fn run_in(
         &self,
         command: &[&str],
         folder: &Path,
-        _layout: crate::layout::Layout,
+        layout: crate::layout::Layout,
     ) -> Result<Value, ProgramError> {
-        let place = self.resolve(folder)?;
-        self.run(command, &place)
+        if !self.entry.is_file() {
+            return Err(ProgramError::TooOld {
+                found: format!("{} does not exist", self.entry.display()),
+            });
+        }
+        let named = folder.display().to_string();
+        let mut args = command.to_vec();
+        if layout == crate::layout::Layout::Workspace {
+            args.extend(["--workspace", &named]);
+        }
+        self.call(&args, folder)
     }
 
     /// Runs a step (`command`) in `place` and reads its answer through [`answer_of`].

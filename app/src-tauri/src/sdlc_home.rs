@@ -76,25 +76,25 @@ fn in_place<T>(
 }
 
 impl HomeSource for Program {
-    // The list and the open read name only the folder: the program finds the master in the same Node start, as
-    // cheaply as when it is given, so they need no `resolve` and no cache.
-    fn list(&self, folder: &Path, _layout: Layout, system: &str) -> Result<ChangeList, String> {
+    // The list and the open read name only the folder and its saved layout: the program finds the master in the
+    // same Node start, as cheaply as when it is given, so they need no `resolve` and no cache.
+    fn list(&self, folder: &Path, layout: Layout, system: &str) -> Result<ChangeList, String> {
         let answer = self
-            .run_in(&["list", "--json", "--system", system], folder, _layout)
+            .run_in(&["list", "--json", "--system", system], folder, layout)
             .map_err(program_error)?;
         kata_sdlc::ai_sdlc::list::read_list(answer).map_err(program_error)
     }
     fn open_states(
         &self,
         folder: &Path,
-        _layout: Layout,
+        layout: Layout,
         system: &str,
     ) -> Result<SystemState, String> {
         let answer = self
             .run_in(
                 &["state", "--json", "--system", system, "--open"],
                 folder,
-                _layout,
+                layout,
             )
             .map_err(program_error)?;
         kata_sdlc::ai_sdlc::state::read_state(answer).map_err(program_error)
