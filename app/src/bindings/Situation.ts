@@ -3,4 +3,4 @@
 /**
  * Where a repository of the build stands.
  */
-export type Situation = { "kind": "working", task: string | null, } | { "kind": "waiting", task: string, onTask: string, onRepo: string, } | { "kind": "stopped", task: string, reason: string | null, } | { "kind": "not-started", task: string, } | { "kind": "finished" } | { "kind": "idle" };
+export type Situation = { "kind": "working", task: string | null, } | { "kind": "waiting", task: string, onTask: string, onRepo: string, } | { "kind": "stopped", task: string, reason: string | null, } | { "kind": "waiting-for-app", task: string | null, app: string, stopped: boolean, } | { "kind": "not-started", task: string, } | { "kind": "finished" } | { "kind": "idle" };

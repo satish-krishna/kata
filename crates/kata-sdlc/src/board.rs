@@ -87,7 +87,6 @@ pub fn situation(
     stopped: &BTreeMap<String, Stop>,
     app_turn: Option<&AppTurn>,
 ) -> Situation {
-    let _ = app_turn;
     if going.contains(repo) {
         let task = match now.map(|n| &n.state) {
             Some(RepoState::Ready { task }) => Some(task.clone()),
@@ -101,9 +100,19 @@ pub fn situation(
             reason: Some(stop.reason.clone()),
         };
     }
+    // Another app of a single-repo change has the turn: this one waits for it, unless a task dependency already says so.
+    let other_app = app_turn.filter(|t| t.app != repo);
     match now.map(|n| &n.state) {
-        None => Situation::Idle,
         Some(RepoState::Done) => Situation::Finished,
+        Some(RepoState::Ready { task }) if other_app.is_some() => {
+            let turn = other_app.expect("checked above");
+            Situation::WaitingForApp {
+                task: Some(task.clone()),
+                app: turn.app.clone(),
+                stopped: turn.stopped,
+            }
+        }
+        None => Situation::Idle,
         Some(RepoState::Waiting {
             task,
             on_task,

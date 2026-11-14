@@ -40,6 +40,11 @@ const headingOf = (s: Situation): { tone: Tone; label: string } => {
       return { tone: 'success', label: s.task === null ? 'Working' : `Working · ${s.task}` };
     case 'waiting':
       return { tone: 'idle', label: `Waiting for ${s.onTask} in ${s.onRepo}` };
+    case 'waiting-for-app':
+      return {
+        tone: 'idle',
+        label: s.stopped ? `Waiting for ${s.app} of this change, which stopped; continue it first` : `Waiting for ${s.app} of this change`,
+      };
     case 'stopped':
       return { tone: 'error', label: `Stopped at ${s.task}` };
     case 'not-started':
