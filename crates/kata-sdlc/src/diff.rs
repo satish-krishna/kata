@@ -503,6 +503,146 @@ pub fn change_repos(
     Ok(out)
 }
 
+/// Which group of the single-repo view a changed file belongs to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FileGroup {
+    /// The app whose folder is the longest that contains the file.
+    App(String),
+    /// A file outside every app's folder.
+    Root,
+}
+
+/// The label of the group of files outside every app.
+pub const ROOT_LABEL: &str = "repository root";
+
+/// One group of the single-repo view of what changed: an app, or the repository root.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct ChangeGroup {
+    /// The app's name, or `root` for the files outside every app.
+    pub group: String,
+    /// What the view shows: the app's name, or "repository root".
+    pub label: String,
+    /// The copy the files are read in.
+    pub path: String,
+    pub files: Vec<ChangedFile>,
+}
+
+/// The group a file belongs to, given the apps as (name, folder relative to the root).
+pub fn group_of(_path: &str, _apps: &[(String, String)]) -> FileGroup {
+    unimplemented!()
+}
+
+/// One diff of `copy` against its base, split into one group per app with a changed file, in the
+/// order of `apps`, then the repository root last. Empty groups are left out.
+pub fn change_groups(
+    _copy: &Path,
+    _apps: &[(String, String)],
+    _part: Part,
+) -> Result<Vec<ChangeGroup>, String> {
+    unimplemented!()
+}
+
+#[cfg(test)]
+mod change_groups_tests {
+    use super::*;
+    use crate::git;
+    use crate::testutil::{checkout, commit_file, repo};
+
+    fn apps() -> Vec<(String, String)> {
+        vec![
+            ("engine".into(), "engine".into()),
+            ("workbench".into(), "app".into()),
+        ]
+    }
+
+    fn summary(groups: &[ChangeGroup]) -> Vec<(String, Vec<String>)> {
+        groups
+            .iter()
+            .map(|g| {
+                (
+                    g.label.clone(),
+                    g.files.iter().map(|f| f.path.clone()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    fn copy_with_a_seed(d: &Path) -> std::path::PathBuf {
+        let r = repo(d, "copy");
+        git::run(&r, &["config", "core.autocrlf", "false"]).unwrap();
+        commit_file(&r, "seed.txt", "s\n", "seed");
+        checkout(&r, "change/x", true);
+        r
+    }
+
+    #[test]
+    fn groups_per_app_with_the_root_last() {
+        let d = tempfile::tempdir().unwrap();
+        let r = copy_with_a_seed(d.path());
+        commit_file(&r, "README.md", "r\n", "root");
+        commit_file(&r, "app/src/b.ts", "b\n", "workbench");
+        commit_file(&r, "engine/src/a.rs", "a\n", "engine");
+        let groups = change_groups(&r, &apps(), Part::Whole).unwrap();
+        assert_eq!(
+            summary(&groups),
+            vec![
+                ("engine".to_string(), vec!["engine/src/a.rs".to_string()]),
+                ("workbench".to_string(), vec!["app/src/b.ts".to_string()]),
+                (ROOT_LABEL.to_string(), vec!["README.md".to_string()]),
+            ]
+        );
+        assert_eq!(groups[0].path, r.to_string_lossy());
+        assert_eq!(groups[2].group, "root");
+    }
+
+    #[test]
+    fn an_app_with_nothing_changed_is_not_listed() {
+        let d = tempfile::tempdir().unwrap();
+        let r = copy_with_a_seed(d.path());
+        commit_file(&r, "engine/src/a.rs", "a\n", "engine");
+        let groups = change_groups(&r, &apps(), Part::Whole).unwrap();
+        assert_eq!(
+            summary(&groups),
+            vec![("engine".to_string(), vec!["engine/src/a.rs".to_string()])]
+        );
+    }
+}
+
+#[cfg(test)]
+mod group_of_tests {
+    use super::*;
+
+    fn app(n: &str) -> FileGroup {
+        FileGroup::App(n.to_string())
+    }
+
+    fn pairs(rows: &[(&str, &str)]) -> Vec<(String, String)> {
+        rows.iter()
+            .map(|(n, f)| (n.to_string(), f.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn group_of_rows() {
+        let nested = pairs(&[("outer", "app"), ("inner", "app/sub")]);
+        assert_eq!(group_of("app/sub/x.rs", &nested), app("inner"));
+        assert_eq!(group_of("app/x.rs", &nested), app("outer"));
+        assert_eq!(group_of("README.md", &nested), FileGroup::Root);
+        let at_root = pairs(&[("only", ".")]);
+        assert_eq!(group_of("README.md", &at_root), app("only"));
+        assert_eq!(group_of("a/b/c.rs", &at_root), app("only"));
+        let mixed = pairs(&[("all", "."), ("app", "app")]);
+        assert_eq!(group_of("app/x", &mixed), app("app"));
+        assert_eq!(group_of("other/x", &mixed), app("all"));
+        let one = pairs(&[("app", "app")]);
+        assert_eq!(group_of("application/x", &one), FileGroup::Root);
+        assert_eq!(group_of("app", &one), FileGroup::Root);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
