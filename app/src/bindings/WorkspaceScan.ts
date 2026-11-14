@@ -9,6 +9,7 @@ export type WorkspaceScan = {
  */
 layout: Layout, folder: string, repos: Array<string>, master: MasterState, 
 /**
- * The absolute folder of the master repository, when there is exactly one. Not implemented yet.
+ * The absolute folder of the master repository, when there is exactly one: the repository
+ * itself in a single-repo layout, the master's folder in the workspace otherwise. The frontend never joins a path.
  */
 master_folder: string | null, marker: Marker | null, marker_error: string | null, };

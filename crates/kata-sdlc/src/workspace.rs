@@ -63,7 +63,8 @@ pub struct WorkspaceScan {
     pub folder: String,
     pub repos: Vec<String>,
     pub master: MasterState,
-    /// The absolute folder of the master repository, when there is exactly one. Not implemented yet.
+    /// The absolute folder of the master repository, when there is exactly one: the repository
+    /// itself in a single-repo layout, the master's folder in the workspace otherwise. The frontend never joins a path.
     pub master_folder: Option<String>,
     pub marker: Option<Marker>,
     pub marker_error: Option<String>,
@@ -118,7 +119,7 @@ pub fn scan_single_repo(root: &Path) -> WorkspaceScan {
                 .unwrap_or_default(),
             committed: is_committed(root, MARKER),
         },
-        master_folder: None,
+        master_folder: Some(root.to_string_lossy().into_owned()),
         marker,
         marker_error,
     }
@@ -163,12 +164,16 @@ pub fn scan(folder: &Path) -> Result<WorkspaceScan, ScanError> {
         },
     };
 
+    let master_folder = match &master {
+        MasterState::One { repo, .. } => Some(folder.join(repo).to_string_lossy().into_owned()),
+        _ => None,
+    };
     Ok(WorkspaceScan {
         layout: crate::layout::Layout::Workspace,
         folder: folder.to_string_lossy().into_owned(),
         repos,
         master,
-        master_folder: None,
+        master_folder,
         marker,
         marker_error,
     })
