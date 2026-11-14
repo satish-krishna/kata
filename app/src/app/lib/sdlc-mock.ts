@@ -1370,6 +1370,14 @@ export class SdlcMock {
           };
         }
     }
+    if (this.singleRepo() !== null) {
+      // One pull request for the whole repository, naming the apps the change touched and the one the plan named but nothing touched.
+      this.published.add(MOCK_SINGLE_SYSTEM);
+      return {
+        view: { kind: 'done', pullRequests: [link(MOCK_SINGLE_SYSTEM, 7)], warnings: [], apps: ['engine'], untouched: ['workbench'] },
+        steps: stepsFor([MOCK_SINGLE_SYSTEM]),
+      };
+    }
     const all = [...this.repos, MOCK_MASTER];
     all.forEach((repo) => this.published.add(repo));
     const warnings = this.demo === 'done-warnings' ? ['after hook announce failed with exit code 1; nothing was undone'] : [];

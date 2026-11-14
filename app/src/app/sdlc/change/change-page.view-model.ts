@@ -76,7 +76,7 @@ import { section } from '../../lib/doc';
 import { fullPipelineIdea } from '../../lib/sdlc-fix';
 import { inTauri } from '../../lib/mock';
 import { taskRecord, withRows, type TaskView } from '../../lib/task-view';
-import { masterPath, masterRepo } from '../../lib/sdlc-workspace';
+import { masterFolder, masterRepo } from '../../lib/sdlc-workspace';
 import { namingRefusal } from '../../lib/sdlc-naming';
 
 export type ChangeState = 'loading' | 'ready' | 'not-found';
@@ -1048,7 +1048,7 @@ export class ChangePageViewModel {
     const fixRef: ChangeRef = { workspace: workspace.folder, system: this.system(), change: this.changeName() };
     let outcome;
     try {
-      const branches = await this.transport.sdlcBranches(master);
+      const branches = await this.transport.sdlcBranches(master, scan.layout);
       // A setting that cannot be used stops the start, as on the workspace home; there is no fall back to `change/` naming (R3.2).
       const repo = masterRepo(scan);
       let naming: NamingState = { kind: 'none' };
@@ -1313,7 +1313,7 @@ export class ChangePageViewModel {
     const w = this.current();
     const scan = this.scan();
     const repo = scan ? masterRepo(scan) : null;
-    return w && repo ? masterPath(w.folder, repo) : null;
+    return w && repo ? masterFolder(w.folder, repo, scan?.layout) : null;
   }
 
   /** Accept a document of the change the page shows: the plugin commits it and runs the team's accepting hooks. */
@@ -1630,10 +1630,10 @@ export class ChangePageViewModel {
         finish('not-found', null, null);
         return;
       }
-      const master = masterPath(w.folder, repo);
+      const master = masterFolder(w.folder, repo, scan.layout);
       const ref: ChangeRef = { workspace: w.folder, system, change: name };
       const [branches, opening, links, records, catalog, recorded] = await Promise.all([
-        this.transport.sdlcBranches(master),
+        this.transport.sdlcBranches(master, scan.layout),
         this.openChange(ref, this.openStem()),
         this.transport.sdlcRunLinks(),
         this.transport.listRuns(),
