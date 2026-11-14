@@ -19,6 +19,7 @@ import type { TaskLink } from '@bindings/TaskLink';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { ProgressStore } from '../../core/progress/progress.store';
+import { ToastStore } from '../../core/toast/toast.store';
 import { ChangeDraftStore } from '../../core/sdlc/change-draft.store';
 import { RunStore } from '../../core/run/run.store';
 import { KataTransport } from '../../core/transport/kata-transport';
@@ -1193,6 +1194,94 @@ describe('the build page reads the backend\'s build and starts it through the ho
     vm.cancelPreview();
     await advance(100);
     expect(TestBed.inject(ChangeDraftStore).round(REF)).toBeNull();
+  });
+});
+
+describe('opening the round and the preview', () => {
+  const offer: RoundOffer = { review: 1, repos: ['commerce-core'], findings: [] };
+  const view = { rows: { counts: [], total: 0, groups: [] }, groups: [] };
+  const picks: RoundPicks = { picked: [], assigned: {}, notes: {} };
+
+  /** A round offer that answers when told to, so the click can be watched while the page waits. */
+  function slowOffer(s: Awaited<ReturnType<typeof opened>>) {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const asked = vi.spyOn(s.transport, 'sdlcRoundOffer').mockImplementation(async () => {
+      await gate;
+      return [offer, picks];
+    });
+    vi.spyOn(s.transport, 'sdlcReviewView').mockResolvedValue(view);
+    return { release, asked };
+  }
+
+  it('Another round shows progress from the click until the dialog opens', async () => {
+    const s = await opened(setup());
+    await s.load();
+    const { release } = slowOffer(s);
+    let dialogOpened!: () => void;
+    const shown = new Promise<void>((resolve) => (dialogOpened = resolve));
+    vi.spyOn(s.preview, 'openBuild').mockImplementation(() => {
+      dialogOpened();
+      return new Promise(() => {});
+    });
+    const progress = TestBed.inject(ProgressStore);
+    void s.vm.openRound();
+    await advance(600);
+    expect(progress.view('build')()?.label).toBe('Preparing the round');
+    release();
+    await shown;
+    expect(progress.view('build')()).toBeNull();
+  });
+
+  it('a second click while the round is opening is ignored, and the first still opens', async () => {
+    const s = await opened(setup());
+    await s.load();
+    const { release, asked } = slowOffer(s);
+    const open = vi.spyOn(s.preview, 'openBuild').mockResolvedValue(null);
+    const first = s.vm.openRound();
+    const second = s.vm.openRound();
+    expect(await second).toBe(false);
+    release();
+    await first;
+    expect(asked).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it('a round that cannot be opened ends the progress and tells the engineer', async () => {
+    const s = await opened(setup());
+    await s.load();
+    vi.spyOn(s.transport, 'sdlcRoundOffer').mockRejectedValue(new Error('the review is unreadable'));
+    const error = vi.spyOn(TestBed.inject(ToastStore), 'error');
+    expect(await s.vm.openRound()).toBe(false);
+    expect(TestBed.inject(ProgressStore).view('build')()).toBeNull();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('the review is unreadable'));
+  });
+
+  it('a preview shows progress while it opens, ignores a second click, and ends the progress when it fails', async () => {
+    const s = await opened(setup());
+    await s.load();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const real = s.transport.sdlcPreviewBuild.bind(s.transport);
+    const previewed = vi.spyOn(s.transport, 'sdlcPreviewBuild').mockImplementation(async (...args) => {
+      await gate;
+      return real(...args);
+    });
+    vi.spyOn(s.preview, 'openBuild').mockResolvedValue(null);
+    const progress = TestBed.inject(ProgressStore);
+    const first = s.vm.openPreview('start');
+    void s.vm.openPreview('start');
+    await advance(600);
+    expect(progress.view('build')()?.label).toBe('Preparing the preview');
+    release();
+    await first;
+    expect(previewed).toHaveBeenCalledTimes(1);
+    expect(progress.view('build')()).toBeNull();
+    previewed.mockRejectedValue(new Error('no preview'));
+    const error = vi.spyOn(TestBed.inject(ToastStore), 'error');
+    expect(await s.vm.openPreview('start')).toBe(false);
+    expect(progress.view('build')()).toBeNull();
+    expect(error).toHaveBeenCalled();
   });
 });
 
