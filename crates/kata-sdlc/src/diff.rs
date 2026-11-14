@@ -459,6 +459,9 @@ pub struct ChangeRepo {
     pub path: String,
     pub branch: String,
     pub base: BaseInfo,
+    /// The files of this entry's group, in a single-repo change; `null` in a workspace change, where
+    /// the files are read from `path`.
+    pub files: Option<Vec<ChangedFile>>,
 }
 
 /// The master first, read at `master` (the change's copy, or the checkout for an older change), then every
@@ -484,6 +487,7 @@ pub fn change_repos(
             path: path.to_string_lossy().into_owned(),
             branch: branch.clone(),
             base: base_info(path).map_err(|e| e.to_string())?,
+            files: None,
         })
     };
     let mut out = vec![entry(master_repo, master)?];
@@ -588,6 +592,31 @@ pub fn change_groups(
     groups.push(root);
     groups.retain(|g| !g.files.is_empty());
     Ok(groups)
+}
+
+/// The Changes view's entries for a single-repo change: one per group of `change_groups`, each at the
+/// copy, on the change's branch, carrying its files.
+pub fn change_group_repos(
+    copy: &Path,
+    system: &str,
+    change: &str,
+    apps: &[(String, String)],
+) -> Result<Vec<ChangeRepo>, String> {
+    if !is_safe_system(system) || !is_change_name(change) {
+        return Err(format!("invalid system or change name: {system}, {change}"));
+    }
+    let branch = change_branch(copy, system, change)?;
+    let base = base_info(copy).map_err(|e| e.to_string())?;
+    Ok(change_groups(copy, apps, Part::Whole)?
+        .into_iter()
+        .map(|g| ChangeRepo {
+            repo: g.label,
+            path: g.path,
+            branch: branch.clone(),
+            base: base.clone(),
+            files: Some(g.files),
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -1358,6 +1387,19 @@ mod change_repos_tests {
         assert!(files.iter().any(|f| f.path == "pending.txt"), "{files:?}");
         assert_eq!(repos[1].repo, "app");
         assert_eq!(repos[1].path, fx.folder.join("app").to_string_lossy());
+    }
+
+    #[test]
+    fn change_group_repos_carries_each_groups_files_at_the_copy() {
+        let fx = fixture();
+        let apps = vec![("only".to_string(), ".".to_string())];
+        let repos = change_group_repos(&fx.copy, SYS, CHG, &apps).unwrap();
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].repo, "only");
+        assert_eq!(repos[0].path, fx.copy.to_string_lossy());
+        assert_eq!(repos[0].branch, "feat/x");
+        let files = repos[0].files.as_ref().unwrap();
+        assert!(files.iter().any(|f| f.path == "pending.txt"), "{files:?}");
     }
 
     #[test]

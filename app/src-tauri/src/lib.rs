@@ -1813,7 +1813,20 @@ fn sdlc_open_change(
 
 #[tauri::command(async)]
 fn sdlc_change_repos(change: build_host::ChangeRef) -> Result<Vec<sdlc::diff::ChangeRepo>, String> {
-    let (_, home) = resolved(&change)?;
+    let (plugin, home) = resolved(&change)?;
+    if home.place.layout == sdlc::layout::Layout::SingleRepo {
+        // The program's app order, not the state's map: the groups follow it.
+        let apps: Vec<(String, String)> = sdlc::layout::apps(
+            &sdlc::ai_sdlc::Program::locate(&plugin),
+            &home.place,
+            &change.system,
+        )
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|a| (a.name, a.folder))
+        .collect();
+        return sdlc::diff::change_group_repos(&home.master, &change.system, &change.change, &apps);
+    }
     sdlc::diff::change_repos(
         &home.place.workspace,
         &home.master,
