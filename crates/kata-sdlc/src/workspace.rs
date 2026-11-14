@@ -63,6 +63,8 @@ pub struct WorkspaceScan {
     pub folder: String,
     pub repos: Vec<String>,
     pub master: MasterState,
+    /// The absolute folder of the master repository, when there is exactly one. Not implemented yet.
+    pub master_folder: Option<String>,
     pub marker: Option<Marker>,
     pub marker_error: Option<String>,
 }
@@ -116,6 +118,7 @@ pub fn scan_single_repo(root: &Path) -> WorkspaceScan {
                 .unwrap_or_default(),
             committed: is_committed(root, MARKER),
         },
+        master_folder: None,
         marker,
         marker_error,
     }
@@ -165,6 +168,7 @@ pub fn scan(folder: &Path) -> Result<WorkspaceScan, ScanError> {
         folder: folder.to_string_lossy().into_owned(),
         repos,
         master,
+        master_folder: None,
         marker,
         marker_error,
     })
@@ -309,6 +313,7 @@ mod tests {
                 repo: "kata".into(),
                 committed: true,
             },
+            master_folder: None,
             marker: None,
             marker_error: None,
         };
@@ -446,6 +451,30 @@ mod tests {
         bare_repo(&tmp.path().join("c"), "deep");
         std::fs::create_dir(tmp.path().join("d")).unwrap();
         assert_eq!(scan(tmp.path()).unwrap().repos, vec!["a", "b"]);
+    }
+
+    fn same(a: &str, b: &Path) -> bool {
+        let norm = |p: &str| p.replace('\\', "/").to_lowercase();
+        norm(a) == norm(&b.display().to_string())
+    }
+
+    /// The scan carries the master's absolute folder: the repository itself for a single-repo folder, the
+    /// master's folder inside the workspace otherwise, and none while there is not exactly one master.
+    #[test]
+    fn a_scan_names_the_folder_of_its_master() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::testutil::single_repo(tmp.path(), "kata", &[("engine", "engine")]);
+        let single = scan_single_repo(&root);
+        assert!(same(single.master_folder.as_deref().unwrap(), &root));
+
+        let ws = tmp.path().join("ws");
+        std::fs::create_dir(&ws).unwrap();
+        let master = repo(&ws, "ai-sdlc");
+        repo(&ws, "app");
+        assert_eq!(scan(&ws).unwrap().master_folder, None);
+        commit_file(&master, MARKER, r#"{"version":1,"systems":{}}"#, "marker");
+        let found = scan(&ws).unwrap();
+        assert!(same(found.master_folder.as_deref().unwrap(), &master));
     }
 
     #[test]
