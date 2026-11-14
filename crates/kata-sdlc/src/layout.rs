@@ -94,15 +94,14 @@ pub enum OpenError {
     Program(#[from] ProgramError),
 }
 
-/// Opens `folder` as the program places it.
+/// Opens `folder` as the program places it, in the form of its saved layout ([`placed`]).
 ///
-/// [`Program::resolve_from`] decides how the program is asked, so the repository folder, a folder inside it
+/// A folder whose layout is not known is the program's to place, so the repository folder, a folder inside it
 /// and the parent of a single-repo repository all find the same master, and a workspace folder that is a git
-/// root opens as a workspace. A single-repo master is the root and
-/// the program's workspace is the folder around it; a workspace's root is its workspace. A program
-/// before 1.4.0 prints no layout; then, and only then, the marker's `layout` field says it.
+/// root opens as a workspace. A single-repo master is the root and the program's workspace is the folder
+/// around it; a workspace's root is its workspace.
 pub fn open(program: &Program, folder: &Path) -> Result<Opened, OpenError> {
-    let found = program.resolve_from(folder)?;
+    let (found, layout) = placed(program, folder)?;
     let path = |key: &str| {
         found[key]
             .as_str()
@@ -125,12 +124,6 @@ pub fn open(program: &Program, folder: &Path) -> Result<Opened, OpenError> {
             problems
         }));
     };
-    let layout = if found["layout"].is_null() {
-        marker_layout(&master).or_else(|| repository_root(folder).and_then(|r| marker_layout(&r)))
-    } else {
-        Some(read(&found["layout"])?)
-    }
-    .unwrap_or_default();
     Ok(match layout {
         Layout::SingleRepo => Opened {
             root: master,
@@ -145,9 +138,46 @@ pub fn open(program: &Program, folder: &Path) -> Result<Opened, OpenError> {
     })
 }
 
-/// The layout the program is called in for `folder`.
-pub fn for_folder(_program: &Program, _folder: &Path) -> Result<Layout, ProgramError> {
-    Ok(Layout::Workspace)
+/// The layout every program call for `folder` takes its form from: the saved entry's, read with no Node start;
+/// else, for a saved entry whose layout is not known yet or a folder that is not saved, the program's answer,
+/// which [`placed`] stores in the entry.
+pub fn for_folder(program: &Program, folder: &Path) -> Result<Layout, ProgramError> {
+    match saved(folder) {
+        Some(layout) => Ok(layout),
+        None => placed(program, folder).map(|(_, layout)| layout),
+    }
+}
+
+/// The saved entry's layout for `folder`; `None` when the folder is not saved or its layout is not known yet.
+fn saved(folder: &Path) -> Option<Layout> {
+    crate::store::saved_entry(folder).and_then(|w| w.layout)
+}
+
+/// The program's `resolve --json` answer for `folder` and the folder's layout: the one place the saved layout is
+/// read and one not known yet is filled. A saved layout is the answer, whatever the program says, and the
+/// program is asked in its form. Otherwise the program's answer names the layout (a program before 1.4.0 prints
+/// none; then, and only then, the marker's `layout` field says it), and a saved entry that has none stores it
+/// once, when the program placed the folder.
+pub(crate) fn placed(program: &Program, folder: &Path) -> Result<(Value, Layout), ProgramError> {
+    let saved = saved(folder);
+    let found = program.resolve_from(folder, saved)?;
+    if let Some(layout) = saved {
+        return Ok((found, layout));
+    }
+    let master = found["master"].as_str().filter(|s| !s.is_empty());
+    let layout = match master {
+        // A refusal places nothing, so its layout is never used.
+        None => Layout::default(),
+        Some(master) if found["layout"].is_null() => marker_layout(Path::new(master))
+            .or_else(|| repository_root(folder).and_then(|r| marker_layout(&r)))
+            .unwrap_or_default(),
+        Some(_) => read(&found["layout"])?,
+    };
+    if master.is_some() {
+        // The saved list cannot be written: the layout is asked again next time, and nothing else changes.
+        let _ = crate::store::fill_layout(folder, layout);
+    }
+    Ok((found, layout))
 }
 
 /// The `layout` field of the marker in `dir`, when there is a marker that has one.

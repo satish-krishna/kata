@@ -60,8 +60,56 @@ pub struct WorkspaceEntry {
     /// The system the home showed last; no screen reads it.
     #[cfg_attr(feature = "ts", ts(skip))]
     pub last_system: Option<String>,
-    /// How the saved folder is laid out; an entry saved before this field existed is a workspace.
+    /// How the saved folder is laid out, and so the form every program call for it takes (see
+    /// [`crate::ai_sdlc::Program::run_in`]). The saved entry is the one owner of it: it is written once, from the
+    /// program's first answer for the folder ([`crate::layout::for_folder`]), and never detected again, so a
+    /// folder whose layout changes (the ai-sdlc setup skill run on it) must be removed from the saved list and
+    /// added again. `None` (written as `null`) is a folder added while no program could answer, its layout not
+    /// known yet; an entry saved before this field existed reads as a workspace, as every entry then was.
+    #[serde(default = "saved_before_layouts")]
     pub layout: Option<crate::layout::Layout>,
+}
+
+/// The layout of an entry saved before entries had one: a workspace.
+fn saved_before_layouts() -> Option<crate::layout::Layout> {
+    Some(crate::layout::Layout::Workspace)
+}
+
+/// `folder` spelled the way two spellings of one saved folder compare equal.
+fn folder_key(folder: &str) -> String {
+    folder
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_ascii_lowercase()
+}
+
+/// The saved entry for `folder`, when it is saved.
+pub fn saved_entry(folder: &std::path::Path) -> Option<WorkspaceEntry> {
+    let wanted = folder_key(&folder.display().to_string());
+    load_workspaces()
+        .into_iter()
+        .find(|w| folder_key(&w.folder) == wanted)
+}
+
+/// Stores `layout` for the saved `folder` when its entry has none yet. A layout already saved is never replaced,
+/// and a folder that is not saved writes nothing.
+pub fn fill_layout(
+    folder: &std::path::Path,
+    layout: crate::layout::Layout,
+) -> Result<(), StoreError> {
+    if saved_entry(folder).is_none_or(|w| w.layout.is_some()) {
+        return Ok(());
+    }
+    let wanted = folder_key(&folder.display().to_string());
+    update_workspaces(|list| {
+        for entry in list.iter_mut() {
+            if folder_key(&entry.folder) == wanted && entry.layout.is_none() {
+                entry.layout = Some(layout);
+            }
+        }
+        Ok(())
+    })
+    .map(|_| ())
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -222,8 +270,9 @@ fn workspace_id(name: &str, list: &[WorkspaceEntry]) -> String {
     id
 }
 
-/// Save a new workspace called `name` for `folder`, laid out as `layout`, with an id made from the name and stamped as opened
-/// at `now`. Answers the saved list and the workspace now opened on.
+/// Save a new workspace called `name` for `folder`, laid out as `layout` (`None` when no program could say), with
+/// an id made from the name and stamped as opened at `now`. A folder already saved is picked, and takes `layout`
+/// only when it has none yet; a saved layout stays as it is. Answers the saved list and the workspace now opened on.
 pub fn add_workspace(
     name: &str,
     folder: &str,
@@ -240,6 +289,7 @@ pub fn add_workspace(
             let at = stamp(list, &id, now);
             if let Some(entry) = list.iter_mut().find(|w| w.id == id) {
                 entry.last_opened = at;
+                entry.layout = entry.layout.or(layout);
             }
             return Ok(());
         }

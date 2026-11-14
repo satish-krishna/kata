@@ -341,10 +341,9 @@ impl Program {
         self.call(&args, &place.workspace)
     }
 
-    /// Runs `command` for the saved `folder` in one Node start, the program finding the master itself. The
-    /// saved entry's `layout` picks the form of the call, as [`Program::resolve_from`] does for a folder whose
-    /// layout is not known: a workspace gets `--workspace <folder>`, a single-repo repository runs from its folder
-    /// with no flag. For a command that finds its own place (`list`, `state`); the answer is read as `run` reads it.
+    /// Runs `command` for the saved `folder` in one Node start, the program finding the master itself, in the
+    /// form of a call for `layout`, the folder's saved layout ([`crate::layout::for_folder`]). For a command that
+    /// finds its own place (`list`, `state`); the answer is read as `run` reads it.
     pub fn run_in(
         &self,
         command: &[&str],
@@ -357,11 +356,7 @@ impl Program {
             });
         }
         let named = folder.display().to_string();
-        let mut args = command.to_vec();
-        if layout == crate::layout::Layout::Workspace {
-            args.extend(["--workspace", &named]);
-        }
-        self.call(&args, folder)
+        self.call(&in_form(command, &named, layout), folder)
     }
 
     /// Runs a step (`command`) in `place` and reads its answer through [`answer_of`].
@@ -430,12 +425,13 @@ impl Program {
         }
     }
 
-    /// Finds the master repository and the workspace of a saved `folder` as the program's `resolve` does. This is
-    /// the one place a saved folder becomes a [`Place`]; [`crate::layout::open`] reads the same answer, so the
-    /// choice between the two forms of the call is made in [`Program::resolve_from`] alone. A folder with no
-    /// master, or with several, is `CouldNotRun` with the program's reason.
+    /// Finds the master repository and the workspace of a saved `folder` as the program's `resolve` does, asked in
+    /// the form of the folder's saved layout. This is the one place a saved folder becomes a [`Place`];
+    /// [`crate::layout::open`] reads the same answer through [`crate::layout::placed`], which reads the saved
+    /// layout and fills one not known yet. A folder with no master, or with several, is `CouldNotRun` with the
+    /// program's reason.
     pub fn resolve(&self, folder: &Path) -> Result<Place, ProgramError> {
-        let found = self.resolve_from(folder)?;
+        let (found, layout) = crate::layout::placed(self, folder)?;
         let path = |key: &str| {
             found[key]
                 .as_str()
@@ -444,7 +440,7 @@ impl Program {
         };
         match (path("master"), path("workspace")) {
             (Some(master), Some(workspace)) => Ok(Place {
-                layout: crate::layout::read(&found["layout"])?,
+                layout,
                 master,
                 workspace,
             }),
@@ -462,31 +458,36 @@ impl Program {
         }
     }
 
-    /// The program's own `resolve --json` answer for `folder`: the one owner of which form of the call a folder
-    /// gets. A workspace is placed with `--workspace <folder>`, since from its own folder the program would take
-    /// the parent of a workspace that is a git root as the workspace. A single-repo repository is placed from the
-    /// folder with no flag, since `--workspace` would name the repository itself as the workspace and the
-    /// program would find no changes. The layout of a folder is not known before it is placed, so the call with
-    /// `--workspace` goes first and its answer stands unless it says `single-repo` or finds no master; then the
-    /// call without the flag is made, and when neither finds a master the first, which names the folder, is
-    /// the refusal. A refusal is an answer too, left for the caller to read.
-    pub(crate) fn resolve_from(&self, folder: &Path) -> Result<Value, ProgramError> {
+    /// The program's own `resolve --json` answer for `folder`, asked in the form of `layout`, the folder's saved
+    /// layout, in one Node start. A layout not known yet (a folder being added, a saved one added while no program
+    /// could answer, or a folder that is not saved, such as a workspace's master) is the program's to say, and no
+    /// one form places every such folder: a workspace that is a git root needs `--workspace`, a workspace's master
+    /// or product repository needs none. So the workspace form is asked first and its answer stands unless it
+    /// names the single-repo layout or places nothing; then the form with no flag is asked, and when neither
+    /// places the folder the first, which names it, is the refusal. A refusal is an answer too, left for the
+    /// caller to read.
+    pub(crate) fn resolve_from(
+        &self,
+        folder: &Path,
+        layout: Option<crate::layout::Layout>,
+    ) -> Result<Value, ProgramError> {
+        use crate::layout::Layout;
         let named = folder.display().to_string();
-        let as_workspace = self.call(&["resolve", "--json", "--workspace", &named], folder)?;
+        let ask = |layout| self.call(&in_form(&["resolve", "--json"], &named, layout), folder);
+        if let Some(layout) = layout {
+            return ask(layout);
+        }
         let placed = |v: &Value| {
             ["master", "workspace"]
                 .iter()
                 .all(|k| v[k].as_str().is_some_and(|s| !s.is_empty()))
         };
-        if placed(&as_workspace) && as_workspace["layout"] != "single-repo" {
-            return Ok(as_workspace);
+        let first = ask(Layout::Workspace)?;
+        if placed(&first) && first["layout"] != "single-repo" {
+            return Ok(first);
         }
-        let from_folder = self.call(&["resolve", "--json"], folder)?;
-        Ok(if placed(&from_folder) {
-            from_folder
-        } else {
-            as_workspace
-        })
+        let second = ask(Layout::SingleRepo)?;
+        Ok(if placed(&second) { second } else { first })
     }
 
     /// Runs the program with `args` as given, in `cwd`, within [`TIMEOUT`], and reads the answer as
@@ -502,6 +503,19 @@ impl Program {
         };
         read_value(reply)
     }
+}
+
+/// `command` in the form of a call for a saved folder (`named`) of `layout`: the one owner of that mapping. A
+/// workspace gets `--workspace <folder>`, since from its own folder the program would take the parent of a
+/// workspace that is a git root as the workspace. A single-repo repository is called from its folder with no
+/// flag, since `--workspace` would name the repository itself as the workspace and the program would find no
+/// changes.
+fn in_form<'a>(command: &[&'a str], named: &'a str, layout: crate::layout::Layout) -> Vec<&'a str> {
+    let mut args = command.to_vec();
+    if layout == crate::layout::Layout::Workspace {
+        args.extend(["--workspace", named]);
+    }
+    args
 }
 
 impl Failure {

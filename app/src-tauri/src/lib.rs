@@ -754,13 +754,14 @@ fn sdlc_add_workspace(
 }
 
 /// The folder to save for an added `folder` and its layout: the program's root for it. Without a program
-/// (the mode is not ready) the folder is saved as it is, a workspace, as before.
+/// (the mode is not ready) the folder is saved as it is, with no layout: it may be a single-repo repository,
+/// and the program's first answer for it fills the layout in (`sdlc::layout::for_folder`).
 fn resolve_added(
     program: Option<&sdlc::ai_sdlc::Program>,
     folder: &str,
 ) -> Result<(String, Option<sdlc::layout::Layout>), String> {
     let Some(program) = program else {
-        return Ok((folder.to_string(), Some(sdlc::layout::Layout::Workspace)));
+        return Ok((folder.to_string(), None));
     };
     let opened = sdlc::layout::open(program, Path::new(folder)).map_err(|e| e.to_string())?;
     Ok((
@@ -1417,12 +1418,14 @@ fn sdlc_home_list(
     let Some(program) = program else {
         return Ok(sdlc::open_changes::HomeList::Legacy);
     };
+    let folder = Path::new(&entry.folder);
+    let layout = sdlc::layout::for_folder(&program, folder).map_err(|e| e.to_string())?;
     sdlc_home::home_list(
         &program,
         &readiness,
         entry.last_system.as_deref(),
-        Path::new(&entry.folder),
-        entry.layout.unwrap_or_default(),
+        folder,
+        layout,
         &systems,
     )
 }
@@ -1453,12 +1456,14 @@ fn sdlc_home_open(
 ) -> Result<sdlc::open_changes::HomeOpen, String> {
     let (program, readiness) = state_inputs(&folder);
     let program = program.ok_or_else(|| "the AI-SDLC mode cannot run here".to_string())?;
+    let layout =
+        sdlc::layout::for_folder(&program, Path::new(&folder)).map_err(|e| e.to_string())?;
     sdlc_home::home_open(
         &program,
         &readiness,
         &|s, c| live_facts(&control, s, c),
         Path::new(&folder),
-        build_host::layout_in_store(Path::new(&folder)),
+        layout,
         &system,
         &shown,
         trigger,
