@@ -1,5 +1,6 @@
 import type { RepoBoard } from '@bindings/RepoBoard';
 import type { ReviewStanding } from '@bindings/ReviewStanding';
+import type { AppTurn } from '@bindings/AppTurn';
 import type { Stop } from '@bindings/Stop';
 import type { ReviewScope } from '@bindings/ReviewScope';
 import type { RunSpec } from '@bindings/RunSpec';
@@ -228,7 +229,7 @@ export abstract class KataTransport {
   abstract sdlcWaitRunExit(runId: string, timeoutMs: number): Promise<boolean>;
   abstract sdlcBuildStatus(ref: ChangeRef): Promise<BuildStatus>;
   /** The tasks area for `repos`: where each stands and what each task's row shows, decided from the build log's status and the host's live runs and stops. */
-  abstract sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }): Promise<RepoBoard[]>;
+  abstract sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }, appTurn?: AppTurn | null): Promise<RepoBoard[]>;
   /** Whether the change's latest review covers its current work, decided from what the page read. */
   abstract sdlcReviewStanding(input: ReviewStandingInput): Promise<ReviewStanding>;
   /** The change's review document as committed, or null when it has none. */

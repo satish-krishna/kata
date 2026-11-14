@@ -1355,7 +1355,7 @@ export class BuildPageViewModel {
     const ctx = this.ctx;
     const seq = ++this.boardSeq;
     try {
-      const board = await this.transport.sdlcBuildBoard(repos, status, state?.going ?? [], state?.stopped ?? {});
+      const board = await this.transport.sdlcBuildBoard(repos, status, state?.going ?? [], state?.stopped ?? {}, state?.appTurn ?? null);
       if (seq === this.boardSeq && ctx !== null && this.shows(ctx)) this.board.set(board);
     } catch (e) {
       if (seq === this.boardSeq) this.toasts.error(`Could not read where the build stands: ${message(e)}`);

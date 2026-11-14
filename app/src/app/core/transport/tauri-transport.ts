@@ -4,6 +4,7 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 import type { Versions } from '@bindings/Versions';
 import type { RepoBoard } from '@bindings/RepoBoard';
 import type { ReviewStanding } from '@bindings/ReviewStanding';
+import type { AppTurn } from '@bindings/AppTurn';
 import type { Stop } from '@bindings/Stop';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
@@ -166,7 +167,7 @@ export class TauriTransport extends KataTransport {
   sdlcTaskLinks() { return this.ipc.invoke<TaskLink[]>('sdlc_task_links'); }
   sdlcWaitRunExit(runId: string, timeoutMs: number) { return this.ipc.invoke<boolean>('sdlc_wait_run_exit', { runId, timeoutMs }); }
   sdlcBuildStatus(change: ChangeRef) { return this.ipc.invoke<BuildStatus>('sdlc_build_status', { change }); }
-  sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }) { return this.ipc.invoke<RepoBoard[]>('sdlc_build_board', { repos, status, going, stopped }); }
+  sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }, appTurn?: AppTurn | null) { return this.ipc.invoke<RepoBoard[]>('sdlc_build_board', { repos, status, going, stopped, ...(appTurn ? { appTurn } : {}) }); }
   sdlcReviewStanding(input: ReviewStandingInput) { return this.ipc.invoke<ReviewStanding>('sdlc_review_standing', { ...input }); }
   sdlcReviewRecord(change: ChangeRef) { return this.ipc.invoke<ReviewRecord | null>('sdlc_review_record', { change }); }
   sdlcBuildHeads(change: ChangeRef, repos: string[]) { return this.ipc.invoke<Record<string, string>>('sdlc_build_heads', { change, repos }); }

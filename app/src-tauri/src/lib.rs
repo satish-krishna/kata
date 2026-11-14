@@ -1244,8 +1244,9 @@ fn sdlc_build_board(
     status: sdlc::build::BuildStatus,
     going: std::collections::BTreeSet<String>,
     stopped: std::collections::BTreeMap<String, sdlc::coordinator::Stop>,
+    app_turn: Option<sdlc::coordinator::AppTurn>,
 ) -> Vec<sdlc::board::RepoBoard> {
-    sdlc::board::board(&repos, &status, &going, &stopped)
+    sdlc::board::board(&repos, &status, &going, &stopped, app_turn.as_ref())
 }
 
 /// Whether the change's latest review covers its current work, from the inputs the page read: the run links, the run

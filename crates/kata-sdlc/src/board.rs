@@ -156,12 +156,13 @@ pub fn board(
     status: &BuildStatus,
     going: &BTreeSet<String>,
     stopped: &BTreeMap<String, Stop>,
+    app_turn: Option<&AppTurn>,
 ) -> Vec<RepoBoard> {
     repos
         .iter()
         .map(|repo| {
             let now = status.repos.iter().find(|r| &r.repo == repo);
-            let situation = situation(repo, now, going, stopped, None);
+            let situation = situation(repo, now, going, stopped, app_turn);
             let tasks = status
                 .tasks
                 .iter()
@@ -533,6 +534,32 @@ mod tests {
         );
     }
 
+    /// R4.3: the app whose turn it is reaches the board, so an app waiting for it reads as waiting.
+    #[test]
+    fn the_board_carries_whose_turn_it_is() {
+        let status = BuildStatus {
+            tasks: vec![task("T1", "engine", None), task("T2", "workbench", None)],
+            repos: vec![
+                repo_status("engine", ready("T1")),
+                repo_status("workbench", ready("T2")),
+            ],
+            departures: vec![],
+            has_tasks: true,
+            problems: vec![],
+            log_layouts: vec![],
+        };
+        let repos: Vec<String> = ["engine", "workbench"].map(String::from).to_vec();
+        let turn = turn("engine", false);
+        let got = board(
+            &repos,
+            &status,
+            &going(&["engine"]),
+            &BTreeMap::new(),
+            Some(&turn),
+        );
+        assert_eq!(got[1].situation, waiting_for("T2", "engine", false));
+    }
+
     /// The tasks area: one entry per repository asked for, in that order, each with its own tasks in plan order.
     #[test]
     fn the_board_covers_every_repository_asked_for() {
@@ -552,7 +579,7 @@ mod tests {
             log_layouts: vec![],
         };
         let repos: Vec<String> = ["b", "a", "master"].map(String::from).to_vec();
-        let got = board(&repos, &status, &going(&["a"]), &BTreeMap::new());
+        let got = board(&repos, &status, &going(&["a"]), &BTreeMap::new(), None);
         assert_eq!(
             got,
             vec![
