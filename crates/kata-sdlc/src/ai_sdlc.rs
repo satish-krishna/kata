@@ -341,19 +341,18 @@ impl Program {
         self.call(&args, &place.workspace)
     }
 
-    /// Runs `command` in `workspace` with no master given, so the program finds the master in process as
-    /// `resolve` does: one Node start where [`Program::resolve`] then [`Program::run`] takes two. For a command
-    /// that takes `--workspace` (`list`, `state`); the answer is read as `run` reads it.
-    pub fn run_in(&self, command: &[&str], workspace: &Path) -> Result<Value, ProgramError> {
+    /// Runs `command` from `folder` with no master and no `--workspace` given, so the program places the folder
+    /// itself in the same Node start, as [`Program::resolve`] does: the folder may be a workspace, a single-repo
+    /// repository, a folder inside it or the parent of one, and each finds the same master and workspace. One
+    /// Node start where `resolve` then [`Program::run`] takes two. For a command that finds its own place
+    /// (`list`, `state`); the answer is read as `run` reads it.
+    pub fn run_in(&self, command: &[&str], folder: &Path) -> Result<Value, ProgramError> {
         if !self.entry.is_file() {
             return Err(ProgramError::TooOld {
                 found: format!("{} does not exist", self.entry.display()),
             });
         }
-        let ws = workspace.display().to_string();
-        let mut args = command.to_vec();
-        args.extend(["--workspace", &ws]);
-        self.call(&args, workspace)
+        self.call(command, folder)
     }
 
     /// Runs a step (`command`) in `place` and reads its answer through [`answer_of`].
@@ -422,11 +421,12 @@ impl Program {
         }
     }
 
-    /// Finds the master repository of `workspace` as the program's `resolve` does, with no master given.
-    /// A workspace with no master, or with several, is `CouldNotRun` with the program's reason.
-    pub fn resolve(&self, workspace: &Path) -> Result<Place, ProgramError> {
-        let ws = workspace.display().to_string();
-        let found = self.call(&["resolve", "--json", "--workspace", &ws], workspace)?;
+    /// Finds the master repository and the workspace of a saved `folder` as the program's `resolve` does, run
+    /// from the folder with no `--workspace`, so a single-repo root, a folder inside it and a workspace root
+    /// all place correctly. This is the one place a saved folder becomes a [`Place`]; [`crate::layout::open`]
+    /// reads the same answer. A folder with no master, or with several, is `CouldNotRun` with the program's reason.
+    pub fn resolve(&self, folder: &Path) -> Result<Place, ProgramError> {
+        let found = self.resolve_from(folder)?;
         let path = |key: &str| {
             found[key]
                 .as_str()

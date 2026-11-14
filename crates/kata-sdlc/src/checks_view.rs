@@ -176,26 +176,6 @@ pub fn summary(view: &CheckView) -> String {
     }
 }
 
-/// Where `change` stands, read from the program in `place`.
-fn state_of(
-    program: &Program,
-    place: &Place,
-    system: &str,
-    change: &str,
-) -> Result<crate::ai_sdlc::state::ChangeState, ProgramError> {
-    let answer = program.run(
-        &["state", "--json", "--system", system, "--change", change],
-        place,
-    )?;
-    let mut state = crate::ai_sdlc::state::read_state(answer)?;
-    state
-        .changes
-        .pop()
-        .ok_or_else(|| ProgramError::CouldNotRun {
-            message: format!("the state answer has no change {change}"),
-        })
-}
-
 /// The checks of each of `repos` in `change`, read from the plugin: its ledger of what ran on this machine
 /// and the hooks the team committed to the master's base branch. Nothing here depends on this machine's
 /// Kata settings, so two machines with the same master and the same runs show the same view.
@@ -210,7 +190,13 @@ pub fn for_change(
     let hooks = program.hooks(place, system, Some(EVENT))?;
     // In the single-repo layout an app's head is the one the change's `apps` give.
     let app_heads = match place.layout {
-        Layout::SingleRepo => state_of(program, place, system, change)?.apps,
+        Layout::SingleRepo => {
+            crate::ai_sdlc::state::one(program, place, system, change)?
+                .ok_or_else(|| ProgramError::CouldNotRun {
+                    message: format!("the state answer has no change {change}"),
+                })?
+                .apps
+        }
         Layout::Workspace => None,
     };
     Ok(repos
@@ -571,7 +557,9 @@ mod tests {
             .join(CHANGE);
         std::fs::create_dir_all(&doc).unwrap();
         std::fs::write(doc.join("intent.md"), "# Greeting\n").unwrap();
-        let state = state_of(&program(), &place, "kata", CHANGE).unwrap();
+        let state = crate::ai_sdlc::state::one(&program(), &place, "kata", CHANGE)
+            .unwrap()
+            .unwrap();
         let head_of = |app: &str| state.apps.as_ref().unwrap()[app].head.clone().unwrap();
         let write = |app: &str, key: &str, outcome: &str, extra: Value| {
             let mut entry = run("build.finish", key, outcome, json!([]), Value::Null);
