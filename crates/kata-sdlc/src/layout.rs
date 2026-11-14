@@ -60,12 +60,17 @@ pub enum AppContextAction {
 impl AppHealth {
     /// An app with the action and the view its context health calls for.
     pub fn new(name: String, folder: String, context: ContextHealth) -> Self {
+        let missing = context == ContextHealth::Missing;
         AppHealth {
             name,
             folder,
             context,
-            action: AppContextAction::Refresh,
-            can_view: true,
+            action: if missing {
+                AppContextAction::Build
+            } else {
+                AppContextAction::Refresh
+            },
+            can_view: !missing,
         }
     }
 }

@@ -18,11 +18,13 @@
               </span>
             </td>
             <td hlmTableCell class="k-cell-end">
-              @if (appState(a).view) {
+              @if (a.canView) {
                 <button hlmBtn variant="ghost" size="sm" type="button" [attr.aria-label]="'View context of ' + a.name" (click)="viewContext.emit(a.name)">View context</button>
+              }
+              @if (a.action === 'refresh') {
                 <button hlmBtn variant="secondary" size="sm" type="button" [attr.aria-label]="'Refresh context for ' + a.name" [disabled]="disabled()" (click)="runContext.emit(a.name)">Refresh context</button>
               }
-              @if (appState(a).build) {
+              @if (a.action === 'build') {
                 <button hlmBtn variant="secondary" size="sm" type="button" [attr.aria-label]="'Build context for ' + a.name" [disabled]="disabled()" (click)="runContext.emit(a.name)">Build context</button>
               }
             </td>

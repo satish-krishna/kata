@@ -850,11 +850,11 @@ export class SdlcMock {
 
   /** Like the backend's `sdlc_app_rows`: the apps in the program's order with their context health, and the instructions in the root file. */
   appRows(): AppRows {
-    if (this.singleRepo() === 'root') return { apps: [{ name: MOCK_SINGLE_SYSTEM, folder: '.', context: { kind: 'current' } }], instructions: 'current' };
+    if (this.singleRepo() === 'root') return { apps: [{ name: MOCK_SINGLE_SYSTEM, folder: '.', context: { kind: 'current' }, action: 'refresh', canView: true }], instructions: 'current' };
     return {
       apps: [
-        { name: 'engine', folder: 'crates/kata-core', context: { kind: 'behind', commits: 12 } },
-        { name: 'workbench', folder: 'app', context: { kind: 'missing' } },
+        { name: 'engine', folder: 'crates/kata-core', context: { kind: 'behind', commits: 12 }, action: 'refresh', canView: true },
+        { name: 'workbench', folder: 'app', context: { kind: 'missing' }, action: 'build', canView: false },
       ],
       instructions: 'current',
     };

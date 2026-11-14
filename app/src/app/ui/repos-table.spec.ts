@@ -1,3 +1,4 @@
+import type { AppHealth } from '@bindings/AppHealth';
 import type { RepoRow } from '../lib/sdlc-workspace';
 import { render } from '../../testing/render';
 import { ReposTable } from './repos-table';
@@ -68,5 +69,17 @@ describe('ReposTable', () => {
     fixture.componentInstance.viewContext.subscribe((n) => got.push(n));
     views[1].click();
     expect(got).toEqual(['customer-portal']);
+  });
+});
+
+describe('ReposTable apps', () => {
+  it('offers the action and the view the backend decided for each app', async () => {
+    const apps: AppHealth[] = [
+      { name: 'engine', folder: 'crates', context: { kind: 'behind', commits: 2 }, action: 'refresh', canView: true },
+      { name: 'workbench', folder: 'app', context: { kind: 'missing' }, action: 'build', canView: false },
+    ];
+    const { container } = await render(ReposTable, { rows: [], apps, marker: '' });
+    const labels = Array.from(container.querySelectorAll('button')).map((b) => b.getAttribute('aria-label'));
+    expect(labels).toEqual(['View context of engine', 'Refresh context for engine', 'Build context for workbench']);
   });
 });

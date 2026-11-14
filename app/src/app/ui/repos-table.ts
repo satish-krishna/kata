@@ -4,19 +4,19 @@ import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmTableImports } from '@spartan-ng/helm/table';
 import { contextAction, contextLabel, type RepoRole, type RepoRow, type Tone } from '../lib/sdlc-workspace';
 
-/** How an app's context file reads on the home: the words, the tone, and the action it offers. */
-function appContext(h: AppHealth['context']): { text: string; tone: Tone; build: boolean; view: boolean } {
+/** How an app's context file reads on the home: the words and the tone. The action it offers is the backend's. */
+function appContext(h: AppHealth['context']): { text: string; tone: Tone } {
   switch (h.kind) {
     case 'current':
-      return { text: 'current', tone: 'success', build: false, view: true };
+      return { text: 'current', tone: 'success' };
     case 'behind':
-      return { text: `out of date · ${h.commits} ${h.commits === 1 ? 'commit' : 'commits'}`, tone: 'warning', build: false, view: true };
+      return { text: `out of date · ${h.commits} ${h.commits === 1 ? 'commit' : 'commits'}`, tone: 'warning' };
     case 'missing':
-      return { text: 'missing', tone: 'error', build: true, view: false };
+      return { text: 'missing', tone: 'error' };
     case 'noSourceCommit':
-      return { text: 'no source commit', tone: 'warning', build: false, view: true };
+      return { text: 'no source commit', tone: 'warning' };
     case 'unknownCommit':
-      return { text: 'unknown commit', tone: 'warning', build: false, view: true };
+      return { text: 'unknown commit', tone: 'warning' };
   }
 }
 
