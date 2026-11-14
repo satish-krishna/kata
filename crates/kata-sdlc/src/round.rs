@@ -626,6 +626,18 @@ mod tests {
         p.picked.iter().map(String::as_str).collect()
     }
 
+    #[test]
+    fn a_pick_on_a_repository_the_round_does_not_offer_blocks_and_names_the_finding() {
+        let o = offer_review();
+        let key = o.findings[0].key.clone();
+        let p = assign(picks(&[&key]), &key, "ghost");
+        let plan = plan(&o, &p);
+        let reason = plan.blocked.expect("blocked, not dropped");
+        assert!(reason.contains(&key), "{reason}");
+        assert!(reason.contains("ghost"), "{reason}");
+        assert!(plan.requests.is_empty());
+    }
+
     // build-round.spec.ts
 
     #[test]

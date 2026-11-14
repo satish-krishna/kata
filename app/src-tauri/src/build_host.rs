@@ -3904,6 +3904,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_single_repo_round_offers_only_the_apps() {
+        let r = single_rig();
+        r.two_apps("A");
+        let offer = r.host.round_offer(&cref("A")).unwrap();
+        assert_eq!(offer.repos, strs(&["engine", "workbench"]));
+        let view = r.host.review_view(&cref("A")).unwrap();
+        assert!(
+            view.rows
+                .groups
+                .iter()
+                .all(|g| g.repo.as_deref() != Some("")),
+            "{:?}",
+            view.rows.groups
+        );
+        assert!(view.groups.iter().all(|g| g.repo.as_deref() != Some("")));
+    }
+
     // The tests below run the vendored 1.1.0 program against temp git repositories.
 
     fn git(dir: &Path, args: &[&str]) -> String {
