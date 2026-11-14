@@ -1308,6 +1308,8 @@ impl BuildHost {
                 place.layout == Layout::SingleRepo,
             ))
         };
+        // The build a continue found stopped, kept so a refused continue can put it back.
+        let mut replaced: Option<Build> = None;
         let generation = {
             let mut guard = self.inner.lock().unwrap();
             if live_build {
@@ -1324,7 +1326,7 @@ impl BuildHost {
                 };
                 guard.next_generation += 1;
                 let generation = guard.next_generation;
-                guard.builds.insert(
+                replaced = guard.builds.insert(
                     key.clone(),
                     Build {
                         generation,
@@ -1376,7 +1378,15 @@ impl BuildHost {
             let mut guard = self.inner.lock().unwrap();
             if guard.builds.get(key).is_none_or(|b| b.live.is_empty()) {
                 if !live_build {
-                    guard.builds.remove(key);
+                    // A refused first start leaves no build; a refused continue leaves the stopped one.
+                    match replaced.take().filter(|_| only.is_some()) {
+                        Some(stopped) => {
+                            guard.builds.insert(key.clone(), stopped);
+                        }
+                        None => {
+                            guard.builds.remove(key);
+                        }
+                    }
                 }
                 guard.holds.release(key, Purpose::Build);
             }
