@@ -88,7 +88,7 @@ async function drive(vm: BuildPageViewModel, runs: RunStore, done: () => boolean
 const group = (vm: BuildPageViewModel, repo: string) => vm.view().groups.find((g) => g.repo === repo)!;
 const finished = (vm: BuildPageViewModel) => () => vm.phase() === 'finished' && vm.findings().length > 0;
 const keyOf = (change: string): ChangeKey => ({ workspace: { key: FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system: 'commerce', change });
-const state = (over: Partial<BuildState> = {}): BuildState => ({ phase: 'building', going: ['commerce-core'], stopped: {}, rounds: {}, waiting: [], report: null, ...over });
+const state = (over: Partial<BuildState> = {}): BuildState => ({ phase: 'building', going: ['commerce-core'], stopped: {}, rounds: {}, waiting: [], report: null, appTurn: null, ...over });
 
 /** The page opened on the mock build change, as the change page would give it. */
 async function opened(s: ReturnType<typeof setup>, over: { stage?: OfferStage; built?: boolean; review?: ReviewRecord | null; done?: boolean } = {}) {
@@ -1027,7 +1027,7 @@ describe('the tasks area folds, filters and shows a departure with its task', ()
 describe('the build page reads the backend\'s build and starts it through the host\'s commands', () => {
   const REF = { workspace: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE };
   const keyOf = (change: string): ChangeKey => ({ workspace: { key: FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system: 'commerce', change });
-  const state = (over: Partial<BuildState> = {}): BuildState => ({ phase: 'building', going: ['commerce-core'], stopped: {}, rounds: {}, waiting: [], report: null, ...over });
+  const state = (over: Partial<BuildState> = {}): BuildState => ({ phase: 'building', going: ['commerce-core'], stopped: {}, rounds: {}, waiting: [], report: null, appTurn: null, ...over });
   const heldBy = (change: string) => [{ repo: 'commerce-core', holder: keyOf(change) }];
 
   /** A page opened on the mock build change, with nothing hosted by the backend yet. */

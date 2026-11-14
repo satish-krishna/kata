@@ -825,18 +825,15 @@ impl Coordinator {
             }
         }
 
-        let launched = !ready.is_empty();
-        for (repo, task) in ready {
-            let instructions = if self.is_round_launch(&repo) {
-                self.state.rounds.get(&repo).cloned()
-            } else {
-                None
-            };
-            if instructions.is_some() {
-                self.rounds_started.insert(repo.clone());
+        let launched = if self.one_at_a_time {
+            self.pick_one_app(status, ready, out)
+        } else {
+            let any = !ready.is_empty();
+            for (repo, task) in ready {
+                self.launch_ready(&repo, &task, out);
             }
-            self.launch(&repo, &task, instructions, out);
-        }
+            any
+        };
         if launched {
             self.state.phase = BuildPhase::Building;
             return;
@@ -855,6 +852,67 @@ impl Coordinator {
         }
         self.busy = Some(Busy::HeadsForReview);
         out.push(Command::ReadHeads);
+    }
+
+    /// Launches a ready repository, carrying its pending round's instructions when this is the round's launch.
+    fn launch_ready(&mut self, repo: &str, task: &str, out: &mut Vec<Command>) {
+        let instructions = if self.is_round_launch(repo) {
+            self.state.rounds.get(repo).cloned()
+        } else {
+            None
+        };
+        if instructions.is_some() {
+            self.rounds_started.insert(repo.to_string());
+        }
+        self.launch(repo, task, instructions, out);
+    }
+
+    /// One app at a time: launches the first launchable app in plan order, unless an app is going or
+    /// stopped short of finished, and records in `app_turn` the app the others wait for. Returns whether
+    /// an app launched.
+    fn pick_one_app(
+        &mut self,
+        status: &BuildFacts,
+        mut ready: Vec<(String, String)>,
+        out: &mut Vec<Command>,
+    ) -> bool {
+        if ready.is_empty() {
+            return false;
+        }
+        // Plan order: the place of each app's first unfinished task; a round on a finished app, or on an app
+        // the plan names no task for, goes by the app's first task, then last.
+        let place = |repo: &str, task: &str| {
+            let at = |pred: &dyn Fn(&TaskFact) -> bool| status.tasks.iter().position(pred);
+            at(&|t| !task.is_empty() && t.id == task)
+                .or_else(|| at(&|t| t.repo == repo))
+                .unwrap_or(usize::MAX)
+        };
+        ready.sort_by_key(|(repo, task)| place(repo, task));
+        if let Some(going) = self.state.going.iter().next() {
+            self.state.app_turn = Some(AppTurn {
+                app: going.clone(),
+                stopped: false,
+            });
+            return false;
+        }
+        let stopped = self
+            .state
+            .stopped
+            .iter()
+            .filter(|(k, _)| k.as_str() != REVIEW)
+            .min_by_key(|(k, s)| place(k, &s.task))
+            .map(|(k, _)| k.clone());
+        if let Some(app) = stopped {
+            self.state.app_turn = Some(AppTurn { app, stopped: true });
+            return false;
+        }
+        let (repo, task) = ready.remove(0);
+        self.state.app_turn = (!ready.is_empty()).then(|| AppTurn {
+            app: repo.clone(),
+            stopped: false,
+        });
+        self.launch_ready(&repo, &task, out);
+        true
     }
 
     fn launch(

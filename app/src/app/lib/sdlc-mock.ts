@@ -1593,6 +1593,7 @@ export class MockBuildHost {
       rounds: Object.fromEntries(build.rounds),
       waiting: build.waiting,
       report: build.report,
+      appTurn: null,
     };
   }
 
