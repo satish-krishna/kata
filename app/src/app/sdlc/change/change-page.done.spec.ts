@@ -282,7 +282,7 @@ describe('declaring done from the build page', () => {
     const { container, fixture } = await mountPage(MOCK_DONE_CHANGE, transport);
     const vm = fixture.debugElement.injector.get(ChangePageViewModel);
     vm.pullRequests.set(PRS.slice(0, shown));
-    if (place === 'dialog') vm.declareView.set({ kind: 'done', pullRequests: PRS.map(({ repo, url }, i) => ({ repo, url, number: 11 + i, source: 'plugin' as const })), warnings: [] });
+    if (place === 'dialog') vm.declareView.set({ kind: 'done', pullRequests: PRS.map(({ repo, url }, i) => ({ repo, url, number: 11 + i, source: 'plugin' as const })), warnings: [], apps: [], untouched: [] });
     await settle();
 
     let link: Element;

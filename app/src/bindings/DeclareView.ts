@@ -8,4 +8,12 @@ export type DeclareView = { "kind": "done", pullRequests: Array<RecordedPullRequ
 /**
  * The plugin's warnings, such as an after hook that failed (nothing was undone).
  */
-warnings: Array<string>, } | { "kind": "notReady", problems: Array<string>, } | { "kind": "partial", pushed: Array<string>, opened: Array<RecordedPullRequest>, failed: Array<string>, } | { "kind": "couldNotRun", message: string, };
+warnings: Array<string>, 
+/**
+ * The apps the change touched, in the program's order; empty in the workspace layout.
+ */
+apps: Array<string>, 
+/**
+ * The apps the plan named that the change did not touch; empty when the answer has none.
+ */
+untouched: Array<string>, } | { "kind": "notReady", problems: Array<string>, } | { "kind": "partial", pushed: Array<string>, opened: Array<RecordedPullRequest>, failed: Array<string>, } | { "kind": "couldNotRun", message: string, };

@@ -26,7 +26,7 @@ describe("PrListDialog, the plugin's answer to declaring done", () => {
   };
 
   it('done lists every pull request with its link, the master last (R7.1 passes)', async () => {
-    await show({ kind: 'done', pullRequests: [recorded('commerce-core', 1), recorded('customer-portal', 2), recorded('commerce-docs', 3)], warnings: [] });
+    await show({ kind: 'done', pullRequests: [recorded('commerce-core', 1), recorded('customer-portal', 2), recorded('commerce-docs', 3)], warnings: [], apps: [], untouched: [] });
     const rows = Array.from(dialog().querySelectorAll('li'));
     expect(rows.map((r) => r.querySelector('.k-mono')!.textContent!.trim())).toEqual(['commerce-core', 'customer-portal', 'commerce-docs']);
     expect(Array.from(dialog().querySelectorAll<HTMLAnchorElement>('a')).map((a) => a.getAttribute('href'))).toEqual([url('commerce-core'), url('customer-portal'), url('commerce-docs')]);
@@ -36,7 +36,7 @@ describe("PrListDialog, the plugin's answer to declaring done", () => {
 
   it("done shows the plugin's warnings, such as an after hook that failed, with the pull requests (F22)", async () => {
     const warning = 'after hook announce failed with exit code 1; nothing was undone';
-    await show({ kind: 'done', pullRequests: [recorded('commerce-core', 1)], warnings: [warning] });
+    await show({ kind: 'done', pullRequests: [recorded('commerce-core', 1)], warnings: [warning], apps: [], untouched: [] });
     const warned = dialog().querySelector('.k-status--warning');
     expect(warned).not.toBeNull();
     expect(warned!.textContent!.trim()).toBe(warning);

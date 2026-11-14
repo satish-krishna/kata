@@ -1322,7 +1322,7 @@ export class SdlcMock {
     const all = [...this.repos, MOCK_MASTER];
     all.forEach((repo) => this.published.add(repo));
     const warnings = this.demo === 'done-warnings' ? ['after hook announce failed with exit code 1; nothing was undone'] : [];
-    return { view: { kind: 'done', pullRequests: all.map((repo, i) => link(repo, 7 + i)), warnings }, steps: stepsFor(all) };
+    return { view: { kind: 'done', pullRequests: all.map((repo, i) => link(repo, 7 + i)), warnings, apps: [], untouched: [] }, steps: stepsFor(all) };
   }
 
   /**

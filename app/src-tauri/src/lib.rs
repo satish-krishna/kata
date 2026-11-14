@@ -1918,7 +1918,7 @@ fn sdlc_declare_done(app: AppHandle, change: build_host::ChangeRef) -> sdlc::don
         workspace: place.workspace,
     };
     let readiness = ai_sdlc_readiness(Some(&change.workspace));
-    sdlc::done::declare(
+    let view = sdlc::done::declare(
         &program,
         &at,
         &readiness,
@@ -1927,7 +1927,19 @@ fn sdlc_declare_done(app: AppHandle, change: build_host::ChangeRef) -> sdlc::don
         Arc::new(move |step| {
             let _ = app.emit(DONE_STEP_EVENT, step);
         }),
-    )
+    );
+    if !matches!(view, sdlc::done::DeclareView::Done { .. }) {
+        return view;
+    }
+    // The state after the event says which apps the change touched; the program's order is the app order.
+    let facts = sdlc::ai_sdlc::state::one(&program, &at, &change.system, &change.change)
+        .ok()
+        .flatten()
+        .and_then(|state| state.apps);
+    let order: Vec<String> = sdlc::layout::apps(&program, &at, &change.system)
+        .map(|apps| apps.into_iter().map(|app| app.name).collect())
+        .unwrap_or_default();
+    view.with_apps(sdlc::done::touched_apps(facts.as_ref(), &order))
 }
 
 /// The change's pull requests as the page shows them: the plugin's record in `change.yml` first, else what an

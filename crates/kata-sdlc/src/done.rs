@@ -89,7 +89,7 @@ pub fn outcome(answer: &Answer) -> DeclareView {
             pull_requests: pull_requests(event),
             warnings: problems.clone(),
             apps: Vec::new(),
-            untouched: Vec::new(),
+            untouched: strings(&event["details"]["untouched"]),
         },
         StepOutcome::Refused { problems } => DeclareView::NotReady {
             problems: problems.clone(),
@@ -130,14 +130,46 @@ pub fn outcome(answer: &Answer) -> DeclareView {
 
 impl DeclareView {
     /// A `Done` view naming the apps the change touched; any other view is returned as it is.
-    pub fn with_apps(self, _touched: Vec<String>) -> DeclareView {
-        self
+    pub fn with_apps(self, touched: Vec<String>) -> DeclareView {
+        match self {
+            DeclareView::Done {
+                pull_requests,
+                warnings,
+                untouched,
+                ..
+            } => DeclareView::Done {
+                pull_requests,
+                warnings,
+                apps: touched,
+                untouched,
+            },
+            other => other,
+        }
     }
 }
 
 /// The apps of `order` that `facts` (a single-repo change's `apps`) marks as touched, in `order`.
-pub fn touched_apps(_facts: Option<&BTreeMap<String, AppFacts>>, _order: &[String]) -> Vec<String> {
-    Vec::new()
+pub fn touched_apps(facts: Option<&BTreeMap<String, AppFacts>>, order: &[String]) -> Vec<String> {
+    let Some(facts) = facts else {
+        return Vec::new();
+    };
+    order
+        .iter()
+        .filter(|name| facts.get(*name).is_some_and(|f| f.touched))
+        .cloned()
+        .collect()
+}
+
+/// The strings of a JSON array; empty when it is absent.
+fn strings(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The pull requests `details` records, in the order the plugin gave them.
