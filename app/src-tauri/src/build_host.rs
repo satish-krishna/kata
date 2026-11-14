@@ -3923,6 +3923,54 @@ mod tests {
         assert_eq!(r.root_holder(), None, "nothing is held");
     }
 
+    // T13: a refused fresh start leaves the earlier build in place, as in the workspace layout.
+    #[test]
+    fn a_refused_fresh_start_leaves_the_earlier_build_in_place() {
+        let text = "`engine` is being built in this copy; build one app at a time";
+        let refusal = json!({"event": "build.start", "repo": "workbench", "outcome": "refused",
+            "problems": [text], "details": {}});
+        let r = single_rig();
+        r.two_apps("B");
+        r.tools.start_answer("workbench", refusal);
+        assert!(matches!(
+            r.host.start(&cref("B"), form()),
+            StartOutcome::Started { .. }
+        ));
+        r.tools.log("B", "engine", "T1");
+        r.launcher.finish(r.launcher.launched("engine")[0], 0);
+        let stopped = r.host.state(&cref("B")).unwrap().stopped;
+        assert!(stopped["workbench"].reason.contains(text), "{stopped:?}");
+        // Starting again with nothing live begins afresh; the plugin refuses again.
+        assert_eq!(
+            r.host.start(&cref("B"), form()),
+            StartOutcome::Refused {
+                problems: strs(&[text])
+            }
+        );
+        let after = r.host.state(&cref("B")).unwrap();
+        assert_eq!(after.stopped, stopped, "the earlier build is still shown");
+        assert_eq!(r.root_holder(), None, "nothing is held");
+    }
+
+    // T13: a refused first start leaves no build.
+    #[test]
+    fn a_refused_first_start_leaves_no_build() {
+        let text = "`engine` is being built in this copy; build one app at a time";
+        let refusal = json!({"event": "build.start", "repo": "engine", "outcome": "refused",
+            "problems": [text], "details": {}});
+        let r = single_rig();
+        r.two_apps("B");
+        r.tools.start_answer("engine", refusal);
+        assert_eq!(
+            r.host.start(&cref("B"), form()),
+            StartOutcome::Refused {
+                problems: strs(&[text])
+            }
+        );
+        assert!(r.host.state(&cref("B")).is_none(), "no build remains");
+        assert_eq!(r.root_holder(), None, "nothing is held");
+    }
+
     // R4.2
     #[test]
     fn single_repo_prepares_each_app_just_before_it_launches() {
