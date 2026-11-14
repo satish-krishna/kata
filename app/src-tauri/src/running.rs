@@ -473,6 +473,44 @@ mod tests {
         strip.all.into_iter().next().unwrap()
     }
 
+    // R4.4
+    #[test]
+    fn waiting_for_an_app_is_not_held() {
+        use kata_sdlc::coordinator::AppTurn;
+        // workbench waits for engine, which is going: the change shows engine working, held by no one.
+        let mut s = state(BuildPhase::Building);
+        s.going.insert("engine".into());
+        s.app_turn = Some(AppTurn {
+            app: "engine".into(),
+            stopped: false,
+        });
+        let e = only(strip(
+            &[run(1, "A", RunKind::Build, Some("engine"))],
+            &[view("A", Some(s.clone()))],
+            &RunHistory::default(),
+        ));
+        assert!(matches!(e.state, EntryState::Working { .. }), "{e:?}");
+        // Between two apps nothing is live and nothing is held: no entry names another change.
+        let none = strip(&[], &[view("A", Some(s))], &RunHistory::default());
+        assert!(
+            none.all.iter().all(|e| !matches!(
+                e.state,
+                EntryState::Held { .. } | EntryState::ReviewWaiting { .. }
+            )),
+            "{:?}",
+            none.all
+        );
+        // The engine stopped: the entry is the stop, not a hold.
+        let mut s = state(BuildPhase::Stopped);
+        s.stopped.insert("engine".into(), stop("tests fail"));
+        s.app_turn = Some(AppTurn {
+            app: "engine".into(),
+            stopped: true,
+        });
+        let e = only(strip(&[], &[view("A", Some(s))], &RunHistory::default()));
+        assert!(matches!(e.state, EntryState::Stopped { .. }), "{e:?}");
+    }
+
     #[test]
     fn each_run_state_shows_as_its_entry() {
         // kata and bob: working, naming the stage and the repository.

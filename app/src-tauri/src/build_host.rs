@@ -3616,6 +3616,190 @@ mod tests {
         assert_eq!(r.launcher.task_of(run), "T3");
     }
 
+    const ROOT: &str = "D:/ws/kata";
+
+    fn single_place() -> Place {
+        Place {
+            layout: kata_sdlc::layout::Layout::SingleRepo,
+            master: PathBuf::from(ROOT),
+            workspace: PathBuf::from(WS),
+        }
+    }
+
+    fn single_rig() -> Rig {
+        rig_with(FakeTools::new(single_place()))
+    }
+
+    impl Rig {
+        /// A change of the single-repo layout with the apps `engine` and `workbench`, in its own copy or in
+        /// the engineer's checkout; `tasks` and `rows` as for `change`.
+        fn app_change(
+            &self,
+            change: &str,
+            in_copy: bool,
+            tasks: &[(&str, &[&str], &[&str])],
+            rows: &[(&str, &str, &[&str])],
+        ) {
+            let master = if in_copy {
+                copy_of(change)
+            } else {
+                ROOT.to_string()
+            };
+            self.tools.add_change(change, &master, in_copy, tasks, rows);
+            let mut states = self.tools.states.lock().unwrap();
+            let state = states.iter_mut().find(|s| s.change == change).unwrap();
+            state.apps = Some(
+                ["engine", "workbench"]
+                    .iter()
+                    .map(|a| {
+                        (
+                            a.to_string(),
+                            kata_sdlc::ai_sdlc::state::AppFacts {
+                                folder: a.to_string(),
+                                touched: true,
+                                head: Some(format!("head-of-{a}")),
+                            },
+                        )
+                    })
+                    .collect(),
+            );
+        }
+
+        /// The change builds engine first, then workbench.
+        fn two_apps(&self, change: &str) {
+            self.app_change(
+                change,
+                true,
+                &[("engine", &["T1"], &[]), ("workbench", &["T2"], &[])],
+                &[("T1", "engine", &[]), ("T2", "workbench", &[])],
+            );
+        }
+
+        fn root_holder(&self) -> Option<ChangeKey> {
+            self.host
+                .inner
+                .lock()
+                .unwrap()
+                .holds
+                .holder(&RepoKey::of(Path::new(ROOT)))
+                .cloned()
+        }
+    }
+
+    // R4.6
+    #[test]
+    fn a_second_change_of_the_same_repository_is_held() {
+        let r = single_rig();
+        r.two_apps("A");
+        r.two_apps("B");
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        let StartOutcome::Held { held } = r.host.start(&cref("B"), form()) else {
+            panic!("B should be held");
+        };
+        assert_eq!(held.len(), 1);
+        assert_eq!(held[0].holder, key("A"));
+        assert_eq!(held[0].repo, "kata", "the repository, not an app");
+        assert_eq!(r.launcher.count(), 1, "nothing of B starts");
+        assert!(r.tools.calls_for("B").is_empty(), "nothing prepared for B");
+        // A ends; B does not start by itself.
+        r.launcher.finish(r.launcher.launched("engine")[0], 1);
+        assert!(r.host.state(&cref("B")).is_none());
+        assert_eq!(r.launcher.count(), 1);
+    }
+
+    // R6.3
+    #[test]
+    fn a_single_repo_change_in_the_checkout_is_not_built() {
+        let r = single_rig();
+        r.app_change(
+            "A",
+            false,
+            &[("engine", &["T1"], &[])],
+            &[("T1", "engine", &[])],
+        );
+        assert_eq!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Refused {
+                problems: strs(&["Single-repo changes are built only in their own copy"])
+            }
+        );
+        assert!(r.tools.calls_for("A").is_empty(), "nothing prepared");
+        assert_eq!(r.launcher.count(), 0, "nothing launched");
+        assert_eq!(r.root_holder(), None, "nothing taken");
+        assert!(r.host.state(&cref("A")).is_none());
+    }
+
+    // R9.2
+    #[test]
+    fn a_refusal_to_build_one_app_is_shown_as_it_is() {
+        let text = "`engine` is being built in this copy; build one app at a time";
+        let refusal = json!({"event": "build.start", "repo": "workbench", "outcome": "refused",
+            "problems": [text], "details": {}});
+        // The first app to launch is refused: the start gives the program's text.
+        let r = single_rig();
+        r.app_change(
+            "A",
+            true,
+            &[("engine", &["T1"], &["T1"]), ("workbench", &["T2"], &[])],
+            &[("T1", "engine", &[]), ("T2", "workbench", &[])],
+        );
+        r.tools.start_answer("workbench", refusal.clone());
+        assert_eq!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Refused {
+                problems: strs(&[text])
+            }
+        );
+        assert_eq!(r.launcher.count(), 0);
+        assert_eq!(r.root_holder(), None);
+        // A later app is refused when its turn comes: the build stops with the program's text.
+        let r = single_rig();
+        r.two_apps("B");
+        r.tools.start_answer("workbench", refusal);
+        assert!(matches!(
+            r.host.start(&cref("B"), form()),
+            StartOutcome::Started { .. }
+        ));
+        r.tools.log("B", "engine", "T1");
+        r.launcher.finish(r.launcher.launched("engine")[0], 0);
+        let state = r.host.state(&cref("B")).unwrap();
+        assert!(
+            state.stopped["workbench"].reason.contains(text),
+            "{:?}",
+            state.stopped
+        );
+    }
+
+    // R4.2
+    #[test]
+    fn single_repo_prepares_each_app_just_before_it_launches() {
+        let r = single_rig();
+        r.two_apps("A");
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        assert_eq!(r.tools.checks("A").len(), 1, "one check for the change");
+        assert_eq!(r.tools.real_starts("A"), strs(&["engine"]));
+        assert_eq!(
+            r.launcher.live_dirs(),
+            BTreeSet::from([format!("{}/engine", copy_of("A"))])
+        );
+        assert!(r.launcher.launched("workbench").is_empty());
+        r.tools.log("A", "engine", "T1");
+        r.launcher.finish(r.launcher.launched("engine")[0], 0);
+        assert_eq!(r.tools.real_starts("A"), strs(&["engine", "workbench"]));
+        assert_eq!(r.tools.checks("A").len(), 1, "no second check");
+        assert_eq!(r.launcher.launched("workbench").len(), 1);
+        assert_eq!(
+            r.launcher.live_dirs(),
+            BTreeSet::from([format!("{}/workbench", copy_of("A"))])
+        );
+    }
+
     // The tests below run the vendored 1.1.0 program against temp git repositories.
 
     fn git(dir: &Path, args: &[&str]) -> String {
