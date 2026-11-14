@@ -5,6 +5,8 @@ mod history;
 mod rename_change;
 mod running;
 mod runs;
+#[cfg(test)]
+mod saved_folder_e2e;
 mod sdlc_home;
 mod sdlc_state;
 mod start_change;
