@@ -41,6 +41,33 @@ pub struct AppHealth {
     pub name: String,
     pub folder: String,
     pub context: ContextHealth,
+    /// The context action the row offers: build a missing file, refresh any other.
+    pub action: AppContextAction,
+    /// Whether there is a context file to read.
+    pub can_view: bool,
+}
+
+/// The context action an app's row offers.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum AppContextAction {
+    Build,
+    Refresh,
+}
+
+impl AppHealth {
+    /// An app with the action and the view its context health calls for.
+    pub fn new(name: String, folder: String, context: ContextHealth) -> Self {
+        AppHealth {
+            name,
+            folder,
+            context,
+            action: AppContextAction::Refresh,
+            can_view: true,
+        }
+    }
 }
 
 /// The folder the Workbench works from once a folder is opened: the repository or workspace root, the
@@ -172,11 +199,11 @@ fn app_of(entry: &Value, root: &Path) -> Result<AppHealth, ProgramError> {
         Some("unknown-commit") => ContextHealth::UnknownCommit,
         _ => return Err(bad("a reason this version does not read")),
     };
-    Ok(AppHealth {
-        name: name.to_string(),
-        folder: folder_in(root, path),
+    Ok(AppHealth::new(
+        name.to_string(),
+        folder_in(root, path),
         context,
-    })
+    ))
 }
 
 /// `path` relative to `root` with `/` separators; `.` for the root itself.
@@ -298,6 +325,24 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_context_offers_build_and_no_view_and_every_other_state_offers_refresh_and_view() {
+        let of = |context| AppHealth::new("a".into(), "a".into(), context);
+        let missing = of(ContextHealth::Missing);
+        assert_eq!(missing.action, AppContextAction::Build);
+        assert!(!missing.can_view);
+        for context in [
+            ContextHealth::Current,
+            ContextHealth::Behind { commits: 2 },
+            ContextHealth::NoSourceCommit,
+            ContextHealth::UnknownCommit,
+        ] {
+            let app = of(context);
+            assert_eq!(app.action, AppContextAction::Refresh, "{context:?}");
+            assert!(app.can_view, "{context:?}");
+        }
+    }
+
+    #[test]
     fn layout_facts_come_from_the_program() {
         let tmp = tempfile::tempdir().unwrap();
         let root = testutil::single_repo(
@@ -312,10 +357,8 @@ mod tests {
         assert_eq!(place.layout, Layout::SingleRepo);
 
         // Which apps the system has and their folders; neither has a context file yet.
-        let app = |name: &str, folder: &str, context: ContextHealth| AppHealth {
-            name: name.into(),
-            folder: folder.into(),
-            context,
+        let app = |name: &str, folder: &str, context: ContextHealth| {
+            AppHealth::new(name.into(), folder.into(), context)
         };
         assert_eq!(
             apps(&program, &place, "kata").unwrap(),

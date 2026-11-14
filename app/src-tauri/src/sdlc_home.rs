@@ -1093,16 +1093,16 @@ if (command === 'resolve') {{
             rows,
             AppRows {
                 apps: vec![
-                    AppHealth {
-                        name: "workbench".into(),
-                        folder: "app".into(),
-                        context: kata_sdlc::layout::ContextHealth::Missing,
-                    },
-                    AppHealth {
-                        name: "engine".into(),
-                        folder: "crates".into(),
-                        context: kata_sdlc::layout::ContextHealth::Behind { commits: 3 },
-                    },
+                    AppHealth::new(
+                        "workbench".into(),
+                        "app".into(),
+                        kata_sdlc::layout::ContextHealth::Missing,
+                    ),
+                    AppHealth::new(
+                        "engine".into(),
+                        "crates".into(),
+                        kata_sdlc::layout::ContextHealth::Behind { commits: 3 },
+                    ),
                 ],
                 instructions: InstructionsState::OutOfDate,
             }
