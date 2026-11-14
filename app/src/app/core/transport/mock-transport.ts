@@ -56,7 +56,7 @@ import type { OpenRun } from '@bindings/OpenRun';
 import type { Opens } from '@bindings/Opens';
 import type { RunningEntry } from '@bindings/RunningEntry';
 import type { RunRef } from '@bindings/RunRef';
-import { MOCK_BUILD_CHANGE, MOCK_LAYOUTS, MOCK_MASTER, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_LAYOUTS, MOCK_MASTER, MOCK_NOT_SWITCHABLE, MOCK_PLUGIN_VERSION, MOCK_SINGLE_FOLDER, MOCK_SINGLE_WORKSPACE, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import type { BuildState } from '@bindings/BuildState';
 import type { RoundOffer } from '@bindings/RoundOffer';
@@ -283,7 +283,7 @@ export class MockTransport extends KataTransport {
   }
 
   catalog(workdir: string | null): Promise<CatalogEntry[]> {
-    return Promise.resolve(workdir === MOCK_WORKSPACE_FOLDER ? [...seedCatalog, ...MOCK_SDLC_CATALOG] : seedCatalog);
+    return Promise.resolve(workdir === MOCK_WORKSPACE_FOLDER || workdir === MOCK_SINGLE_FOLDER || workdir === MOCK_SINGLE_WORKSPACE ? [...seedCatalog, ...MOCK_SDLC_CATALOG] : seedCatalog);
   }
   listRuns(): Promise<RunRecord[]> { return Promise.resolve([...history, ...this.sdlc.sessionRecords()]); }
   loadRun(id: string): Promise<RunDetail> {
@@ -353,8 +353,8 @@ export class MockTransport extends KataTransport {
   async sdlcHomePullRequests(folder: string, system: string, changes: string[]): Promise<HomeChecked> { return this.sdlc.homePullRequests(system, changes, await this.sdlcPluginReadiness(folder)); }
   /** Every demo folder is there. */
   sdlcMissingFolders(_folders: string[]): Promise<string[]> { return Promise.resolve([]); }
-  sdlcBranches(_master: string, _layout?: Layout): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches()); }
-  sdlcAppRows(_folder: string, _system: string): Promise<AppRows> { return Promise.reject(new Error('not implemented')); }
+  sdlcBranches(_master: string, layout?: Layout): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches(layout)); }
+  sdlcAppRows(_folder: string, _system: string): Promise<AppRows> { return Promise.resolve(this.sdlc.appRows()); }
   /** Everything the change page opens with, from the fixture the change's home picks; rejects for a change the workspace does not list. */
   async sdlcOpenChange(ref: ChangeRef, doc: string): Promise<OpenedChange> {
     const view = await this.sdlcChangeState(ref.workspace, ref.system, ref.change);
@@ -402,7 +402,8 @@ export class MockTransport extends KataTransport {
   sdlcCheckScope(_folder: string, scope: string): Promise<string[]> { return Promise.resolve(scope.includes(' ') ? ['a scope cannot contain a space'] : []); }
   sdlcRenameBranch(_folder: string, _workspaceId: string, _system: string, change: string, to: string): Promise<RenameOutcome> { return Promise.resolve(this.sdlc.renameBranch(change, to)); }
   /** Refused, as the backend refuses it, while a change's document run is live. */
-  sdlcCheckout(master: string, branch: string, _layout?: Layout): Promise<void> {
+  sdlcCheckout(master: string, branch: string, layout?: Layout): Promise<void> {
+    if (layout === 'single-repo') return Promise.reject(MOCK_NOT_SWITCHABLE);
     const busy = [...this.changeRunsLive].find(([id]) => this.runs.get(id)?.ended !== true);
     if (busy !== undefined) return Promise.reject(`The change ${busy[1]} has a run working in ${master}. Switch the branch after the run ends.`);
     this.sdlc.checkout(branch);
@@ -433,7 +434,16 @@ export class MockTransport extends KataTransport {
   sdlcReadParsed(ref: ChangeRef, doc: string): Promise<ParsedRead | null> { return settled(() => this.sdlc.readParsed(ref.change, doc)); }
   sdlcReviewRecord(ref: ChangeRef): Promise<ReviewRecord | null> { return settled(() => { this.sdlc.homeOf(ref.change); return this.sdlc.reviewRecord(); }); }
   sdlcBuildHeads(ref: ChangeRef, repos: string[]): Promise<Record<string, string>> { return settled(() => { this.sdlc.homeOf(ref.change); return this.sdlc.heads(repos); }); }
-  sdlcPluginReadiness(_workdir: string | null): Promise<Readiness> { return Promise.resolve({ kind: 'ready', plugin: { dir: '~/.claude/plugins/ai-sdlc', version: MOCK_PLUGIN_VERSION, layouts: MOCK_LAYOUTS }, gh: 'present' }); }
+  /** `?demo=single-repo&plugin=<version>` gives the readiness of a machine whose plugin is older than the single-repo layout; the single-repo demos otherwise run on 1.4.0. */
+  sdlcPluginReadiness(_workdir: string | null): Promise<Readiness> {
+    const demo = demoParam();
+    const single = demo === 'single-repo' || demo === 'single-repo-root';
+    const asked = single && typeof location !== 'undefined' ? new URLSearchParams(location.search).get('plugin') : null;
+    if (asked !== null && asked < '1.4.0') {
+      return Promise.resolve({ kind: 'blocked', reason: 'layoutNeedsNewerPlugin', message: `The single-repo layout needs ai-sdlc 1.4.0 or later; this machine has ${asked}.` });
+    }
+    return Promise.resolve({ kind: 'ready', plugin: { dir: '~/.claude/plugins/ai-sdlc', version: single ? '1.4.0' : MOCK_PLUGIN_VERSION, layouts: MOCK_LAYOUTS }, gh: 'present' });
+  }
   sdlcChangeRepos(ref: ChangeRef): Promise<ChangeRepo[]> { return settled(() => this.sdlc.changeRepos(ref.workspace, ref.change)); }
   sdlcMissingChangeBranches(ref: ChangeRef): Promise<string[]> { return settled(() => { this.sdlc.homeOf(ref.change); return []; }); }
   sdlcDiffFiles(_repoPath: string, part: Part): Promise<DiffListing> { return Promise.resolve(this.sdlc.diffFiles(part)); }

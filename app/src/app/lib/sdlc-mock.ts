@@ -9,7 +9,9 @@ import type { Stop } from '@bindings/Stop';
 import type { TaskState } from '@bindings/TaskState';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
+import type { AppRows } from '@bindings/AppRows';
 import type { BaseInfo } from '@bindings/BaseInfo';
+import type { Layout } from '@bindings/Layout';
 import type { BuildState } from '@bindings/BuildState';
 import type { BuildPhase } from '@bindings/BuildPhase';
 import type { StopReport } from '@bindings/StopReport';
@@ -103,6 +105,14 @@ export const MOCK_WORKSPACE_FOLDER = DEMO_WORKSPACE_FOLDER;
 /** A folder the demo can add that has repos but no committed `.ai-sdlc.json`, so adding it runs setup. */
 export const MOCK_SETUP_FOLDER = DEMO_SETUP_FOLDER;
 export const MOCK_MASTER = 'commerce-docs';
+/** The single-repo repository of `?demo=single-repo` and `?demo=single-repo-root`: its folder, its one system and the change it has open in a copy. */
+export const MOCK_SINGLE_FOLDER = 'D:/kata';
+export const MOCK_SINGLE_SYSTEM = 'kata';
+export const MOCK_SINGLE_CHANGE = '2026-11-12-single-repo-workbench';
+/** The workspace the single-repo demos list beside the repository. */
+export const MOCK_SINGLE_WORKSPACE = 'D:/workspaces';
+/** The error the backend gives for switching the engineer's checkout in a single-repo repository. */
+export const MOCK_NOT_SWITCHABLE = 'Single-repo changes are never switched into your checkout.';
 /** The engineer's checkout of the master repository, which a change started before copies existed lives in. */
 export const MOCK_CHECKOUT = `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`;
 /** What the plugin no longer lists: the message the backend gives for a change it cannot place. */
@@ -674,6 +684,12 @@ export class SdlcMock {
 
   constructor(long = false, demo: string | null = null, earlier = 0) {
     this.demo = demo;
+    if (this.singleRepo() !== null) {
+      this.workspaces = [
+        { id: 'workspaces', name: 'workspaces', folder: MOCK_SINGLE_WORKSPACE, last_opened: 1792281500, layout: 'workspace' },
+        { id: 'kata', name: 'kata', folder: MOCK_SINGLE_FOLDER, last_opened: 1792281600, layout: 'single-repo' },
+      ];
+    }
     if (demo === 'sessions') {
       // `?demo=sessions&earlier=<n>` (browser only): the demo build runs in one repository, which has `earlier` sessions behind it.
       this.links = earlierSessions(earlier).map((r) => ({
@@ -701,9 +717,11 @@ export class SdlcMock {
   oldChecksSeen(systems: string[]): void { for (const s of systems) this.oldChecksTold.add(s); }
 
   private settings: Settings = { mode: 'workbench', remember: true, permission_mode: 'auto' };
-  private workspaces: WorkspaceEntry[] = [{
-    id: 'acme-commerce', name: 'acme-commerce', folder: MOCK_WORKSPACE_FOLDER, last_opened: 1792281600, layout: 'workspace',
-  }];
+  /** `?demo=single-repo` (apps engine and workbench) and `?demo=single-repo-root` (one app at the repository root): the saved list holds a workspace and the single-repo repository. */
+  private singleRepo(): 'apps' | 'root' | null {
+    return this.demo === 'single-repo' ? 'apps' : this.demo === 'single-repo-root' ? 'root' : null;
+  }
+  private workspaces: WorkspaceEntry[] = [{ id: 'acme-commerce', name: 'acme-commerce', folder: MOCK_WORKSPACE_FOLDER, last_opened: 1792281600, layout: 'workspace' }];
   private links: RunLink[] = [];
   /** The first demo task is linked to its run; the others are not, so both the known and the unknown session show in the browser. */
   private taskLinksList: TaskLink[] = [{
@@ -771,6 +789,16 @@ export class SdlcMock {
   }
 
   scan(folder: string): WorkspaceScan {
+    if (folder === MOCK_SINGLE_FOLDER) {
+      return {
+        folder,
+        layout: 'single-repo',
+        repos: [],
+        master: { kind: 'one', repo: MOCK_SINGLE_SYSTEM, committed: true },
+        marker: { version: 2, systems: { [MOCK_SINGLE_SYSTEM]: { repos: [] } } },
+        marker_error: null,
+      };
+    }
     if (folder === MOCK_SETUP_FOLDER) {
       return {
         folder,
@@ -796,6 +824,18 @@ export class SdlcMock {
     return this.demo === 'slow-read' && typeof location !== 'undefined' && new URLSearchParams(location.search).get('systems') === '3';
   }
 
+  /** Like the backend's `sdlc_app_rows`: the apps in the program's order with their context health, and the instructions in the root file. */
+  appRows(): AppRows {
+    if (this.singleRepo() === 'root') return { apps: [{ name: MOCK_SINGLE_SYSTEM, folder: '.', context: { kind: 'current' } }], instructions: 'current' };
+    return {
+      apps: [
+        { name: 'engine', folder: 'crates/kata-core', context: { kind: 'behind', commits: 12 } },
+        { name: 'workbench', folder: 'app', context: { kind: 'missing' } },
+      ],
+      instructions: 'current',
+    };
+  }
+
   contextHealth(repo: string): ContextState {
     switch (repo) {
       case 'customer-portal': return { kind: 'stale', commits: 14 };
@@ -810,6 +850,7 @@ export class SdlcMock {
   }
 
   listChanges(): ChangeInfo[] {
+    if (this.singleRepo() !== null) return [change(MOCK_SINGLE_CHANGE, doc('accepted'), doc('accepted'), doc('accepted'), 'build-ready')];
     return this.changes.map((c) => {
       // Like the backend, a change whose every task is in the build log has finished its build.
       if (c.change === MOCK_BUILD_CHANGE) return { ...c, stage: this.rows.size >= this.plan.length ? 'build-finished' : c.stage, build: { tasks: this.plan.length, finished: this.rows.size, repos: this.repos.length } };
@@ -865,6 +906,8 @@ export class SdlcMock {
   }
   // ---- the home (open changes alone) ----
 
+  /** The system whose open changes the home lists. */
+  private homeSystem(): string { return this.singleRepo() === null ? MOCK_SYSTEM : MOCK_SINGLE_SYSTEM; }
   /** The system the engineer picked last, like the saved workspace's `last_system`. */
   private rememberedSystem: string | null = null;
   /** The open changes whose merge check has answered, like the backend's memory of the last check. */
@@ -887,7 +930,7 @@ export class SdlcMock {
   homeList(systems: string[], readiness: Readiness): HomeList {
     if (this.demo === 'old-plugin') return { kind: 'legacy' };
     const system = this.shownSystem(systems);
-    const open = system === MOCK_SYSTEM ? this.stagePass().map((c) => ({ change: c.change, title: null })) : [];
+    const open = system === this.homeSystem() ? this.stagePass().map((c) => ({ change: c.change, title: null })) : [];
     const finished = system === null ? [] : this.finishedChanges(system);
     const blocked = readiness.kind === 'blocked';
     return { kind: 'listed', system, systems, open, finished, finishedCount: finished.length, canStartChange: !blocked, startChangeReason: blocked ? readiness.message : null };
@@ -907,7 +950,7 @@ export class SdlcMock {
     return { label: { step: 'done', text: 'Done · pull requests open', tone: 'success' }, action: 'open' };
   }
   private homeRows(system: string, readiness: Readiness): HomeRow[] {
-    if (system !== MOCK_SYSTEM) return [];
+    if (system !== this.homeSystem()) return [];
     return this.systemView(system, readiness).changes.map((view) => ({ view, reading: this.homeReading(view) }));
   }
   /** Like `sdlc_home_open`: every open change as a row. The merge check is asked about the declared ones, except on a focus refresh; the light list is read again when the names on screen differ. */
@@ -931,6 +974,7 @@ export class SdlcMock {
 
   /** The copy folder of a change that has one, else null. */
   private copyOf(changeName: string): string | null {
+    if (this.singleRepo() !== null) return changeName === MOCK_SINGLE_CHANGE ? `D:/.ai-sdlc/copies/${changeName}` : null;
     if (changeName === MOCK_COPY_CHANGE) return COPY_ONLY_PATH;
     if (changeName === MOCK_COPY_FIX) return COPY_FIX_PATH;
     return this.copies.has(changeName) ? `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${changeName}` : null;
@@ -975,7 +1019,14 @@ export class SdlcMock {
   patch(changeName: string, patch: Partial<ChangeInfo>): void {
     this.changes = this.changes.map((c) => (c.change === changeName ? { ...c, ...patch } : c));
   }
-  branches(): BranchInfo { return { current: this.current, others: this.others.map((change) => ({ branch: `change/${change}`, change })), default_base: MOCK_BASE, switchable: true, base_refusal: null }; }
+  /** Like `branch_info_in`: a single-repo repository is never switched, lists no other branches and says why the base is out of reach when the checkout is off it. */
+  branches(layout: Layout = 'workspace'): BranchInfo {
+    if (layout === 'single-repo') {
+      const refusal = this.current === MOCK_BASE ? null : `Your checkout is on ${this.current}. Kata never switches it; check out ${MOCK_BASE} yourself and run this again.`;
+      return { current: this.current, others: [], default_base: MOCK_BASE, switchable: false, base_refusal: refusal };
+    }
+    return { current: this.current, others: this.others.map((change) => ({ branch: `change/${change}`, change })), default_base: MOCK_BASE, switchable: true, base_refusal: null };
+  }
   /** Like the backend's `read_doc`: the document is named by its stem; anything else is a caller bug. */
   readDoc(changeName: string, docName: string): string | null {
     if (!DOC_STEMS.has(docName)) throw new Error(`read_doc takes a document stem (intent, spec or plan), not "${docName}"`);

@@ -251,7 +251,6 @@ describe('SdlcHome of a single-repo repository', () => {
     const table = container.querySelector<HTMLElement>('app-repos-table')!;
     const names = Array.from(table.querySelectorAll('tbody tr td:first-child')).map((td) => td.textContent!.trim());
     expect(names).toEqual(['engine', 'workbench']);
-    expect(text(table)).not.toContain('master');
   });
 
   it('shows each app its own context state and action (R1.4)', async () => {

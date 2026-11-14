@@ -1,7 +1,24 @@
 import { Component, input, output } from '@angular/core';
+import type { AppHealth } from '@bindings/AppHealth';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmTableImports } from '@spartan-ng/helm/table';
-import { contextAction, contextLabel, type RepoRole, type RepoRow } from '../lib/sdlc-workspace';
+import { contextAction, contextLabel, type RepoRole, type RepoRow, type Tone } from '../lib/sdlc-workspace';
+
+/** How an app's context file reads on the home: the words, the tone, and the action it offers. */
+function appContext(h: AppHealth['context']): { text: string; tone: Tone; build: boolean; view: boolean } {
+  switch (h.kind) {
+    case 'current':
+      return { text: 'current', tone: 'success', build: false, view: true };
+    case 'behind':
+      return { text: `out of date · ${h.commits} ${h.commits === 1 ? 'commit' : 'commits'}`, tone: 'warning', build: false, view: true };
+    case 'missing':
+      return { text: 'missing', tone: 'error', build: true, view: false };
+    case 'noSourceCommit':
+      return { text: 'no source commit', tone: 'warning', build: false, view: true };
+    case 'unknownCommit':
+      return { text: 'unknown commit', tone: 'warning', build: false, view: true };
+  }
+}
 
 const ROLE: Record<RepoRole, string> = { master: 'master', product: 'product', 'not-checked-out': 'product' };
 
@@ -14,6 +31,8 @@ const ROLE: Record<RepoRole, string> = { master: 'master', product: 'product', '
 })
 export class ReposTable {
   readonly rows = input.required<RepoRow[]>();
+  /** The apps of a single-repo system, one row each with no master row; null lists the repositories of a workspace instead. */
+  readonly apps = input<AppHealth[] | null>(null);
   /** One line about the master repo's marker file. */
   readonly marker = input('');
   readonly disabled = input(false);
@@ -21,6 +40,10 @@ export class ReposTable {
   readonly runContext = output<string>();
   /** Open the context viewer on a repo. */
   readonly viewContext = output<string>();
+
+  protected appState(a: AppHealth) {
+    return appContext(a.context);
+  }
 
   protected role(role: RepoRole): string {
     return role === 'not-checked-out' ? 'product' : ROLE[role];

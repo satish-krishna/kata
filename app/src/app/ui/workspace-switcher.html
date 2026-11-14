@@ -19,6 +19,9 @@
         <button hlmDropdownMenuRadio type="button" [checked]="w.id === current()?.id" [keepOpen]="false" (triggered)="onPick(w.id)">
           <span class="k-wsitem">
             <span class="k-wsitem__name">{{ w.name }}</span>
+            @if (w.layout === 'single-repo') {
+              <span class="k-wsitem__note k-mono">single-repo</span>
+            }
             <span class="k-wsitem__folder">{{ w.folder }}</span>
             @if (missing().includes(w.id)) {
               <span class="k-wsitem__note k-wsitem__note--warn">folder missing</span>
