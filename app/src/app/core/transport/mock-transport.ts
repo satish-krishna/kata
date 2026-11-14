@@ -56,8 +56,9 @@ import type { OpenRun } from '@bindings/OpenRun';
 import type { Opens } from '@bindings/Opens';
 import type { RunningEntry } from '@bindings/RunningEntry';
 import type { RunRef } from '@bindings/RunRef';
-import { MOCK_BUILD_CHANGE, MOCK_LAYOUTS, MOCK_MASTER, MOCK_NOT_SWITCHABLE, MOCK_PLUGIN_VERSION, MOCK_SINGLE_FOLDER, MOCK_SINGLE_WORKSPACE, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import { MOCK_LAYOUTS, MOCK_MASTER, MOCK_NOT_SWITCHABLE, MOCK_PLUGIN_VERSION, MOCK_SINGLE_FOLDER, MOCK_SINGLE_WORKSPACE, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
+import type { AppTurn } from '@bindings/AppTurn';
 import type { BuildState } from '@bindings/BuildState';
 import type { RoundOffer } from '@bindings/RoundOffer';
 import type { RoundPicks } from '@bindings/RoundPicks';
@@ -151,13 +152,14 @@ export class MockTransport extends KataTransport {
   private readonly host = new MockBuildHost({
     launch: (change, repo, onEnd, instructions) => this.launchBuildRun(change, repo, onEnd, instructions),
     cancel: (runId) => void this.cancelRun(runId),
-    status: (change) => (change.change === MOCK_BUILD_CHANGE ? this.sdlc.buildStatus(change.change) : null),
+    status: (change) => (this.sdlc.hasBuildLog(change.change) ? this.sdlc.buildStatus(change.change) : null),
     announce: (event) => {
       for (const listen of [...this.buildListeners]) listen(event);
       this.announceRunning();
     },
     now: () => Date.now(),
     repos: (change) => this.sdlc.buildRepos(change.change),
+    oneAtATime: () => this.sdlc.oneAtATime(),
   });
 
   private emit(runId: string, ev: KataEvent): void {
@@ -428,7 +430,7 @@ export class MockTransport extends KataTransport {
   /** The scripted run has no process to wait for. */
   sdlcWaitRunExit(_runId: string, _timeoutMs: number): Promise<boolean> { return Promise.resolve(true); }
   sdlcBuildStatus(ref: ChangeRef): Promise<BuildStatus> { return settled(() => this.sdlc.buildStatus(ref.change)); }
-  sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }): Promise<RepoBoard[]> { return Promise.resolve(mockBoard(repos, status, going, stopped)); }
+  sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }, appTurn?: AppTurn | null): Promise<RepoBoard[]> { return Promise.resolve(mockBoard(repos, status, going, stopped, appTurn ?? null)); }
   sdlcReviewStanding(input: ReviewStandingInput): Promise<ReviewStanding> { return Promise.resolve(mockStanding(input)); }
   /** The fixture's parsed read; only the transport's own reads call it. */
   sdlcReadParsed(ref: ChangeRef, doc: string): Promise<ParsedRead | null> { return settled(() => this.sdlc.readParsed(ref.change, doc)); }
@@ -565,7 +567,8 @@ export class MockTransport extends KataTransport {
   async sdlcReviewWaiting(change: ChangeRef): Promise<HeldRepo[]> { return this.host.reviewWaiting(change); }
   /** The repositories a round may go to: the change's own, then the master. */
   private reviewRepos(change: ChangeRef): string[] {
-    return [...this.sdlc.buildStatus(change.change).repos.map((r) => r.repo), MOCK_MASTER];
+    const apps = this.sdlc.buildStatus(change.change).repos.map((r) => r.repo);
+    return this.sdlc.oneAtATime() ? apps : [...apps, MOCK_MASTER];
   }
   async sdlcRoundOffer(change: ChangeRef): Promise<[RoundOffer, RoundPicks]> {
     const offer = mockRoundOffer(this.sdlc.reviewRecord(), this.reviewRepos(change));

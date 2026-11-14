@@ -4,6 +4,7 @@
 import type { RepoBoard } from '@bindings/RepoBoard';
 import type { ReviewScope } from '@bindings/ReviewScope';
 import type { ReviewStanding } from '@bindings/ReviewStanding';
+import type { AppTurn } from '@bindings/AppTurn';
 import type { Situation } from '@bindings/Situation';
 import type { Stop } from '@bindings/Stop';
 import type { TaskState } from '@bindings/TaskState';
@@ -382,14 +383,13 @@ const TASK_SECTIONS: Record<string, ParsedSection[]> = {
 };
 const dependsBody = (t: PlanTask): string => (t.dependsOn.length ? t.dependsOn.join(', ') : 'none');
 /** One demo task's section of the plan: its heading, then Depends on and the field bullets. */
-function taskText(t: PlanTask): string {
+function taskText(t: PlanTask, sections: ParsedSection[] = TASK_SECTIONS[t.id] ?? []): string {
   const field = (title: string, body: string) =>
     body.includes('\n') ? `- **${title}:**\n${body.split('\n').map((l) => `  ${l}`).join('\n')}` : `- **${title}:** ${body}`;
-  const sections = TASK_SECTIONS[t.id] ?? [];
   return [`### ${t.id}: ${t.name} (\`${t.repo}\`)`, '', field('Depends on', dependsBody(t)), ...sections.map((x) => field(x.title, x.body))].join('\n');
 }
 /** The demo plan as the format program reads it (layout 1: the field bullets are the sections). */
-const parsedTasks = (plan: PlanTask[]): ParsedTask[] => plan.map((t, i) => ({
+const parsedTasks = (plan: PlanTask[], plain = false): ParsedTask[] => plan.map((t, i) => ({
   id: t.id,
   name: t.name,
   repo: t.repo,
@@ -398,8 +398,8 @@ const parsedTasks = (plan: PlanTask[]): ParsedTask[] => plan.map((t, i) => ({
   files: [],
   covers: [],
   supports: [],
-  sections: [{ title: 'Depends on', body: dependsBody(t) }, ...(TASK_SECTIONS[t.id] ?? [])],
-  text: taskText(t),
+  sections: [{ title: 'Depends on', body: dependsBody(t) }, ...(plain ? [] : (TASK_SECTIONS[t.id] ?? []))],
+  text: plain ? taskText(t, []) : taskText(t),
   line: 10 + i * 10,
 }));
 const BUILD_TASKS: ParsedTask[] = parsedTasks(BUILD_PLAN);
@@ -444,6 +444,18 @@ function gherkinOf(reqs: ParsedRequirement[]): string {
   return [...lines, '```', ''].join('\n');
 }
 const BUILD_REPOS = ['commerce-core', 'customer-portal'];
+/** The plan of `?demo=single-repo`: three tasks in the app engine, then two in the app workbench, whose tasks change no file. */
+const SINGLE_PLAN: PlanTask[] = [
+  { id: 'T1', name: 'Parse the app layout', repo: 'engine', dependsOn: [] },
+  { id: 'T2', name: 'Order the apps', repo: 'engine', dependsOn: [] },
+  { id: 'T3', name: 'Expose the app order', repo: 'engine', dependsOn: [] },
+  { id: 'T4', name: 'Confirm the app rows read the new order', repo: 'workbench', dependsOn: [] },
+  { id: 'T5', name: 'Confirm the app lanes read the new order', repo: 'workbench', dependsOn: [] },
+];
+/** The plan of `?demo=single-repo-root`: one task in the one app, which sits at the repository root. */
+const SINGLE_ROOT_PLAN: PlanTask[] = [{ id: 'T1', name: 'Add the flag', repo: MOCK_SINGLE_SYSTEM, dependsOn: [] }];
+/** The findings of the single-repo review: with the severities in turn, engine gets a high and a medium one, workbench a medium and a low one. */
+const SINGLE_REVIEW_FINDINGS = ['The app order is read twice.', 'The app lane has no test.', 'The app order is not checked for duplicates.', 'The lane name is not trimmed.'];
 /** The tasks whose rows record a departure from the plan. */
 const DEPARTED_TASKS = ['T2'];
 /** The long demo's departures: enough, with its findings, to overflow the findings area. */
@@ -698,14 +710,22 @@ export class SdlcMock {
       this.earlierRecords = earlierSessions(earlier);
     }
     this.unreadable = long ? '2026-10-09-merchant-reassign' : null;
-    this.plan = long ? [...BUILD_PLAN, ...LONG_PLAN] : BUILD_PLAN;
-    this.repos = demo === 'sessions' ? ['commerce-core'] : long ? [...BUILD_REPOS, 'billing-api'] : BUILD_REPOS;
-    this.planTasks = long ? parsedTasks(this.plan) : BUILD_TASKS;
+    const single = this.singleRepo();
+    this.plan = single === 'apps' ? SINGLE_PLAN : single === 'root' ? SINGLE_ROOT_PLAN : long ? [...BUILD_PLAN, ...LONG_PLAN] : BUILD_PLAN;
+    this.repos = single !== null ? [...new Set(this.plan.map((t) => t.repo))] : demo === 'sessions' ? ['commerce-core'] : long ? [...BUILD_REPOS, 'billing-api'] : BUILD_REPOS;
+    this.planTasks = long || single !== null ? parsedTasks(this.plan, single !== null) : BUILD_TASKS;
     this.departed = new Set(long ? LONG_DEPARTED_TASKS : DEPARTED_TASKS);
     this.diff = long ? [...DIFF_FILES, ...LONG_DIFF_FILES] : DIFF_FILES;
     this.pairs = long ? LONG_DIFF_PAIRS : DIFF_PAIRS;
-    this.reviewFindings = long ? LONG_REVIEW_FINDINGS : REVIEW_FINDINGS;
+    this.reviewFindings = single !== null ? SINGLE_REVIEW_FINDINGS : long ? LONG_REVIEW_FINDINGS : REVIEW_FINDINGS;
   }
+
+  /** The change the demo builds: the one open change of a single-repo repository, else the build demo's. */
+  private buildChange(): string { return this.singleRepo() !== null ? MOCK_SINGLE_CHANGE : MOCK_BUILD_CHANGE; }
+  /** True for the change the scripted build sequences by its build log. */
+  hasBuildLog(changeName: string): boolean { return changeName === this.buildChange(); }
+  /** True in a single-repo repository, whose apps build one after another. */
+  oneAtATime(): boolean { return this.singleRepo() !== null; }
 
   /** Systems whose old checks file the mock engineer has been told about. */
   private readonly oldChecksTold = new Set<string>();
@@ -997,7 +1017,7 @@ export class SdlcMock {
 
   /** What the plugin reports for the build and the finished change: each repository's tasks, the commits that name each, and the commits that name none. Other changes have no plan to report. */
   private tasksOf(c: ChangeInfo): ChangeState['tasks'] {
-    if (c.change !== MOCK_BUILD_CHANGE && c.change !== MOCK_DONE_CHANGE) return null;
+    if (!this.hasBuildLog(c.change) && c.change !== MOCK_DONE_CHANGE) return null;
     const done = c.change === MOCK_DONE_CHANGE;
     const sha = (id: string) => `${id.toLowerCase()}c0ffee`.padEnd(40, '0');
     const out: NonNullable<ChangeState['tasks']> = {};
@@ -1151,15 +1171,15 @@ export class SdlcMock {
   // ---- the build ----
 
   /** The repositories `change` builds in; `?demo=sessions` narrows the demo build to the one it has sessions in, on this mock only. */
-  buildRepos(change: string): string[] { return this.demo === 'sessions' && change === MOCK_BUILD_CHANGE ? [...this.repos] : (BUILD_REPOS_OF[change] ?? []); }
+  buildRepos(change: string): string[] { return (this.demo === 'sessions' || this.singleRepo() !== null) && this.hasBuildLog(change) ? [...this.repos] : (BUILD_REPOS_OF[change] ?? []); }
 
   buildStatus(changeName: string): BuildStatus {
     this.homeOf(changeName);
-    if (changeName !== MOCK_BUILD_CHANGE && changeName !== MOCK_DONE_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] };
+    if (!this.hasBuildLog(changeName) && changeName !== MOCK_DONE_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] };
     // The finished change has every task built; the demo build commits its rows one run at a time.
     const rowOf = (t: PlanTask): BuildRow | null =>
       changeName === MOCK_DONE_CHANGE ? { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } : (this.rows.get(t.id) ?? null);
-    const tasks: TaskStatus[] = this.plan.map((t) => ({ ...t, dependsOn: [...t.dependsOn], text: taskText(t), row: rowOf(t) }));
+    const tasks: TaskStatus[] = this.plan.map((t) => ({ ...t, dependsOn: [...t.dependsOn], text: this.singleRepo() !== null ? taskText(t, []) : taskText(t), row: rowOf(t) }));
     const departures = tasks.flatMap((t) => (t.row?.departure ? [{ task: t.id, repo: t.repo, planText: t.name, departure: t.row.departure }] : []));
     return { tasks, repos: this.repos.map((r) => (changeName === MOCK_DONE_CHANGE ? this.doneRepoStatus(r) : this.repoStatus(r))), departures, hasTasks: true, problems: [], logLayouts: [] };
   }
@@ -1200,7 +1220,7 @@ export class SdlcMock {
   /** Like the backend's `review::record`: null until a review run has finished, then one review for each run. */
   reviewRecord(): ReviewRecord | null {
     if (this.reviewRuns === 0) return null;
-    const commits = this.heads([MOCK_MASTER, ...this.repos]);
+    const commits = this.heads(this.singleRepo() !== null ? this.repos : [MOCK_MASTER, ...this.repos]);
     // Each finding names its repository and what it concerns; a convention finding names the rule it breaks.
     const findings = this.reviewFindings.map((text, i): ParsedFinding => {
       const concern = CONCERNS[i % CONCERNS.length];
@@ -1322,6 +1342,14 @@ export class SdlcMock {
           return `${v.id} could not run on this machine. That is a fault of the machine, not of the code.`;
       }
     };
+    if (this.singleRepo() !== null) {
+      // Each app's checks ran when its own tasks were recorded; workbench's tasks change no file, so there is nothing to check there.
+      return this.repos.map((repo): RepoCheckView => {
+        const recorded = this.plan.filter((t) => t.repo === repo).every((t) => this.rows.has(t.id));
+        const v: CheckView = !recorded ? { kind: 'notRunYet' } : repo === 'workbench' ? { kind: 'noChanges' } : { kind: 'passed', hooks: [{ id: 'unit', outcome: 'passed' }] };
+        return { repo, view: v, summary: summary(v) };
+      });
+    }
     return this.repos.map((repo): RepoCheckView => {
       const id = repo === 'billing-api' ? 'integration' : 'unit';
       const v: CheckView = repo === 'customer-portal' ? { kind: 'noChecks' } : view(repo, id);
@@ -1625,6 +1653,8 @@ interface MockBuild {
   waiting: WaitingRepo[];
   report: StopReport | null;
   changedMs: number;
+  /** The app a one-at-a-time build is waiting for before the next app launches; null when nothing waits. */
+  appTurn: AppTurn | null;
   /** The form the build started with, for a start again. */
   form: StartForm;
 }
@@ -1641,6 +1671,8 @@ export interface MockBuildIo {
   now(): number;
   /** The repositories a change builds in. */
   repos(change: ChangeRef): string[];
+  /** True when the change's apps build one after another, as in a single-repo repository. */
+  oneAtATime(change: ChangeRef): boolean;
 }
 
 const NO_FORM: StartForm = { timeoutSecs: 7200 };
@@ -1671,7 +1703,7 @@ export class MockBuildHost {
       rounds: Object.fromEntries(build.rounds),
       waiting: build.waiting,
       report: build.report,
-      appTurn: null,
+      appTurn: build.appTurn,
     };
   }
 
@@ -1731,6 +1763,28 @@ export class MockBuildHost {
     return state?.kind === 'done' || state === undefined ? '' : state.task;
   }
 
+  /**
+   * The coordinator's one-app-at-a-time rule: nothing launches while an app goes or one has stopped, else the first ready app in
+   * plan order launches. `appTurn` names the app whose turn it is while another app is waiting for it.
+   */
+  private oneApp(build: MockBuild, status: BuildStatus, ready: string[]): string[] {
+    const apps = status.repos.map((r) => r.repo);
+    const going = apps.find((a) => build.going.has(a));
+    const stopped = apps.find((a) => build.stopped.has(a) && status.repos.find((r) => r.repo === a)?.state.kind !== 'done');
+    const another = (app: string) => apps.some((a) => a !== app && (ready.includes(a) || build.stopped.has(a)));
+    if (going !== undefined) {
+      build.appTurn = { app: going, stopped: false };
+      return [];
+    }
+    if (stopped !== undefined) {
+      build.appTurn = { app: stopped, stopped: true };
+      return [];
+    }
+    const next = apps.find((a) => ready.includes(a));
+    build.appTurn = next !== undefined && another(next) ? { app: next, stopped: false } : null;
+    return next === undefined ? [] : [next];
+  }
+
   /** Start what is ready, or settle the build: the coordinator's loop in miniature. */
   private look(build: MockBuild, status: BuildStatus): void {
     if (build.cancelledAll) {
@@ -1753,8 +1807,9 @@ export class MockBuildHost {
       ready.push(r.repo);
     }
     build.waiting = waiting;
-    for (const repo of ready) this.launch(build, repo);
-    if (ready.length > 0) {
+    const launching = this.io.oneAtATime(build.ref) ? this.oneApp(build, status, ready) : ready;
+    for (const repo of launching) this.launch(build, repo);
+    if (launching.length > 0) {
       build.phase = 'building';
       this.announce(build);
       return;
@@ -1792,7 +1847,7 @@ export class MockBuildHost {
     const rounds = new Map((form.rounds ?? []).map((r) => [r.repo, r.instructions]));
     return {
       key, ref, going: new Map(), stopped: new Map(), rounds, phase: 'building', reviewing: false, cancelling: new Set(), cancelledAll: false,
-      reviewedRows: null, changed: false, waiting: [], report: null, changedMs: this.io.now(), form,
+      reviewedRows: null, changed: false, waiting: [], report: null, appTurn: null, changedMs: this.io.now(), form,
     };
   }
 
@@ -1976,9 +2031,9 @@ export function mockRoundPlan(offer: RoundOffer, picks: RoundPicks): RoundPlan {
 
 /**
  * Like the backend's `sdlc_build_board` (`kata_sdlc::board::board`), for the browser fixtures: a live run first, then a stop the
- * host recorded, then the build log. The backend's tests own the table; this stands in for it where no backend runs.
+ * host recorded, then the build log, then another app's turn. The backend's tests own the table; this stands in for it where no backend runs.
  */
-export function mockBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }): RepoBoard[] {
+export function mockBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }, appTurn: AppTurn | null = null): RepoBoard[] {
   return repos.map((repo) => {
     const state = status.repos.find((r) => r.repo === repo)?.state;
     const stop = stopped[repo];
@@ -1992,7 +2047,9 @@ export function mockBoard(repos: string[], status: BuildStatus, going: string[],
             ? { kind: 'finished' }
             : state.kind === 'waiting'
               ? { kind: 'waiting', task: state.task, onTask: state.onTask, onRepo: state.onRepo }
-              : { kind: 'not-started', task: state.task };
+              : appTurn !== null && appTurn.app !== repo
+                ? { kind: 'waiting-for-app', task: state.task, app: appTurn.app, stopped: appTurn.stopped }
+                : { kind: 'not-started', task: state.task };
     const tasks = status.tasks.filter((t) => t.repo === repo).map((t) => ({ id: t.id, state: mockTaskState(t, situation) }));
     return { repo, situation, tasks };
   });

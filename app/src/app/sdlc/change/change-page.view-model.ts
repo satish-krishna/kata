@@ -711,7 +711,7 @@ export class ChangePageViewModel {
     const master = scan ? masterRepo(scan) : null;
     const system = this.system();
     const systemRepos = (scan?.marker?.systems[system]?.repos ?? []).filter((r) => r !== master);
-    return { workspaceId: w.id, folder: w.folder, system, change: this.changeName(), systemRepos };
+    return { workspaceId: w.id, folder: w.folder, system, change: this.changeName(), systemRepos, ...(scan?.layout === 'single-repo' ? { layout: scan.layout } : {}) };
   });
   /**
    * Pick a new name for the change's branch, from a refusal or from the done dialog. The rename covers every repository that has the

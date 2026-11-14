@@ -558,7 +558,7 @@ export class BuildPageViewModel {
   /** What the Changes view reads, once the page is loaded. */
   readonly changesContext = this.changes.asReadonly();
   /** True when the change is in a single-repo repository: its apps build one after another. */
-  readonly oneAtATime = computed(() => false);
+  readonly oneAtATime = computed(() => this.loaded()?.ctx.layout === 'single-repo');
   /** Turns taken by every run of the build, so the Changes view reads again as the agents work. */
   readonly turns = computed(() => this.log().reduce((n, e) => n + this.snapOf(e.id).events.filter((ev) => ev.type === 'turn').length, 0));
   /** Bash calls finished by every run of the build; each one may have committed a build log row. */

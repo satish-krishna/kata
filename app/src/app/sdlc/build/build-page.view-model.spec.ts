@@ -1,4 +1,4 @@
-import { Component, effect, signal } from '@angular/core';
+import { Component, Injector, effect, signal } from '@angular/core';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type { BuildEvent } from '@bindings/BuildEvent';
@@ -1541,8 +1541,7 @@ describe('the build page of a single-repo change', () => {
     const s = await openedSingle('demo=single-repo-root');
     await s.load();
     expect(s.vm.view().groups.map((g) => g.repo)).toEqual(['kata']);
-    TestBed.configureTestingModule({ providers: [ChangesViewModel] });
-    const changes = TestBed.inject(ChangesViewModel);
+    const changes = Injector.create({ providers: [ChangesViewModel], parent: TestBed.inject(Injector) }).get(ChangesViewModel);
     await changes.open(s.vm.changesContext()!);
     expect(changes.repos().map((r) => r.repo)).toEqual(['kata']);
     expect(changes.groups()[0].files.map((f) => f.path)).toEqual(['src/main.rs', 'README.md']);

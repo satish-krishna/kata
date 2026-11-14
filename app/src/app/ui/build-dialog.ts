@@ -124,6 +124,11 @@ export class BuildDialog {
     this.state().model.update((m) => ({ ...m, assigned: { ...m.assigned, [key]: repo } }));
   }
 
+  /** The apps of a one-at-a-time round in the order the plan gives them, "then" between them. */
+  protected orderOf(requests: { summary: string }[]): string {
+    return requests.map((r) => r.summary).join(' then ');
+  }
+
   protected summaryOf(text: string): string {
     return summaryOf(text);
   }
