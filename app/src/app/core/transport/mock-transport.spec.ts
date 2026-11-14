@@ -548,6 +548,20 @@ describe('MockTransport previewRun', () => {
       await expect(t.sdlcChangeState(MOCK_WORKSPACE_FOLDER, 'commerce', 'no-such-change')).rejects.toThrow();
     });
 
+    it('lists the apps of a single-repo system with the action the backend decided for each', async () => {
+      window.history.replaceState({}, '', '/?demo=single-repo');
+      try {
+        const rows = await new MockTransport().sdlcAppRows(MOCK_WORKSPACE_FOLDER, 'kata');
+        expect(rows.apps.map((a) => [a.name, a.action, a.canView])).toEqual([
+          ['engine', 'refresh', true],
+          ['workbench', 'build', false],
+        ]);
+        expect(rows.instructions).toBe('current');
+      } finally {
+        window.history.replaceState({}, '', '/');
+      }
+    });
+
     it('reports no folder missing', async () => {
       expect(await new MockTransport().sdlcMissingFolders(['/a', '/b'])).toEqual([]);
     });
