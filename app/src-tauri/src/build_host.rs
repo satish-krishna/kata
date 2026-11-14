@@ -428,6 +428,17 @@ fn live_runs(build: &Build) -> Vec<BuildRunRef> {
         .collect()
 }
 
+/// The repositories a round may go to: the change's product repositories, and in the workspace layout the
+/// master. The single-repo layout has only its apps.
+fn offered_repos(place: &Place, state: &ChangeState) -> Vec<String> {
+    let master = master_name(place);
+    let mut repos = review_repos(state, &master);
+    if place.layout == Layout::Workspace {
+        repos.push(master);
+    }
+    repos
+}
+
 fn master_name(place: &Place) -> String {
     // The single-repo layout has no product repositories beside the master: its tasks belong to apps, and
     // no app is the master.
@@ -847,9 +858,7 @@ impl BuildHost {
         let record = self
             .tools
             .review_record(&place, &change.system, &snapshot.state)?;
-        let master = master_name(&place);
-        let mut repos = review_repos(&snapshot.state, &master);
-        repos.push(master);
+        let repos = offered_repos(&place, &snapshot.state);
         Ok(round::offer(record.as_ref(), &repos))
     }
 
@@ -1075,9 +1084,7 @@ impl BuildHost {
         let record = self
             .tools
             .review_record(&place, &change.system, &snapshot.state)?;
-        let master = master_name(&place);
-        let mut repos = review_repos(&snapshot.state, &master);
-        repos.push(master);
+        let repos = offered_repos(&place, &snapshot.state);
         let rows = match &record {
             Some(r) => round::review_rows_in(r, &repos),
             None => round::rows_of(&[], &repos),
