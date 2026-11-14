@@ -14,6 +14,7 @@ const VERB: Record<ProgressStepId, string> = {
   'running-checks': 'running',
   'pushing': 'pushing',
   'opening-prs': 'opening',
+  'opening-preview': 'opening',
 };
 
 describe('ProgressStore', () => {
