@@ -817,6 +817,23 @@ fn sdlc_missing_folders(folders: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+/// The layout of `master` as the program places it, and the refusal when that layout may not be switched.
+/// Not implemented yet.
+fn switch_layout(
+    _program: Option<&sdlc::ai_sdlc::Program>,
+    _master: &str,
+) -> Result<sdlc::layout::Layout, String> {
+    Ok(sdlc::layout::Layout::Workspace)
+}
+
+/// The branches of `master` in the layout the program places it in. Not implemented yet.
+fn branches_in(
+    _program: Option<&sdlc::ai_sdlc::Program>,
+    _master: &str,
+) -> sdlc::branch::BranchInfo {
+    sdlc::branch::BranchInfo::default()
+}
+
 #[tauri::command(async)]
 fn sdlc_branches(master: String, layout: Option<sdlc::layout::Layout>) -> sdlc::branch::BranchInfo {
     sdlc::branch::branch_info_in(Path::new(&master), layout.unwrap_or_default())

@@ -186,3 +186,45 @@ fn a_workspace_change_is_found_from_the_folder_saved_for_it() {
 
     found_again(&program, &saved);
 }
+
+/// R6.1: the backend works out the layout of the master it is given; the caller says nothing, and a
+/// single-repo checkout is never switched.
+#[test]
+fn the_backend_refuses_to_switch_a_single_repo_checkout_whatever_the_caller_says() {
+    let program = vendored();
+    let tmp = tempfile::tempdir().unwrap();
+    let parent = tmp.path().canonicalize().unwrap();
+    let root = single_repo(&parent);
+    let master = root.to_str().unwrap();
+
+    let refused = crate::switch_layout(Some(&program), master).unwrap_err();
+    assert_eq!(
+        refused,
+        kata_sdlc::branch::BranchError::NotSwitchable.to_string()
+    );
+    let info = crate::branches_in(Some(&program), master);
+    assert!(!info.switchable);
+    assert!(info.others.is_empty());
+}
+
+#[test]
+fn the_backend_lets_a_workspace_master_be_switched() {
+    let program = vendored();
+    let tmp = tempfile::tempdir().unwrap();
+    let parent = tmp.path().canonicalize().unwrap();
+    let ws = workspace(&parent);
+    let master = ws.join("ai-sdlc");
+    let master = master.to_str().unwrap();
+
+    assert_eq!(
+        crate::switch_layout(Some(&program), master).unwrap(),
+        Layout::Workspace
+    );
+    assert!(crate::branches_in(Some(&program), master).switchable);
+}
+
+#[test]
+fn the_backend_refuses_a_switch_it_cannot_place() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(crate::switch_layout(None, tmp.path().to_str().unwrap()).is_err());
+}
