@@ -16,7 +16,10 @@ use kata_sdlc::coordinator::{
 };
 use kata_sdlc::format::{self, ParsedPlan, ReadResult};
 use kata_sdlc::git;
-use kata_sdlc::holds::{needed_repos, review_repos, ChangeKey, HoldTable, Purpose, RepoKey};
+use kata_sdlc::holds::{
+    keys_for, needed_repos, review_repos, ChangeKey, HoldTable, Purpose, RepoKey,
+};
+use kata_sdlc::layout::Layout;
 use kata_sdlc::permissions::{RunKind, RunPlace};
 use kata_sdlc::review::{self, ReviewCurrency, ReviewRecord};
 use kata_sdlc::round::{self, RoundOffer, RoundPicks, RoundPlan, RoundRequest};
@@ -426,6 +429,11 @@ fn live_runs(build: &Build) -> Vec<BuildRunRef> {
 }
 
 fn master_name(place: &Place) -> String {
+    // The single-repo layout has no product repositories beside the master: its tasks belong to apps, and
+    // no app is the master.
+    if place.layout == Layout::SingleRepo {
+        return String::new();
+    }
     place
         .master
         .file_name()
@@ -504,10 +512,12 @@ fn strings(value: &Value) -> Vec<String> {
 
 /// The folders of the product repositories a change's review reads.
 fn review_folders(place: &Place, state: &ChangeState) -> Vec<RepoKey> {
-    review_repos(state, &master_name(place))
-        .iter()
-        .map(|r| RepoKey::of(&place.workspace.join(r)))
-        .collect()
+    keys_for(
+        place.layout,
+        &place.master,
+        &place.workspace,
+        &review_repos(state, &master_name(place)),
+    )
 }
 
 fn now_ms() -> u64 {
@@ -1224,6 +1234,12 @@ impl BuildHost {
             Ok(s) => s,
             Err(output) => return StartOutcome::CouldNotRun { output, repo: None },
         };
+        // A change that lives in the engineer's checkout is never built there (R6.3): nothing is taken.
+        if place.layout == Layout::SingleRepo && !snapshot.state.in_copy {
+            return StartOutcome::Refused {
+                problems: vec!["Single-repo changes are built only in their own copy".into()],
+            };
+        }
         let master = master_name(place);
         let rounds: Vec<String> = form.rounds.iter().map(|r| r.repo.clone()).collect();
         let needed: Vec<String> = match only {
@@ -1236,10 +1252,7 @@ impl BuildHost {
             }
             _ => needed_repos(&plan, &snapshot.state, &rounds, &master),
         };
-        let folders: Vec<RepoKey> = needed
-            .iter()
-            .map(|r| RepoKey::of(&place.workspace.join(r)))
-            .collect();
+        let folders = keys_for(place.layout, &place.master, &place.workspace, &needed);
         // The one step that must be atomic: the first change to ask for a repository gets it.
         let taken = {
             let mut guard = self.inner.lock().unwrap();
@@ -1282,7 +1295,11 @@ impl BuildHost {
                 Ok(Some(record)) => review::currency(&record, &heads),
                 _ => ReviewCurrency::None,
             };
-            Some(Coordinator::new(currency, heads, false))
+            Some(Coordinator::new(
+                currency,
+                heads,
+                place.layout == Layout::SingleRepo,
+            ))
         };
         let generation = {
             let mut guard = self.inner.lock().unwrap();
@@ -1346,7 +1363,20 @@ impl BuildHost {
         if let Some(build) = self.inner.lock().unwrap().builds.get_mut(key) {
             build.form = form;
         }
-        self.drive(key, Some(generation), input);
+        let driven = self.drive(key, Some(generation), input);
+        if let Some(outcome) = driven.refusal {
+            // Nothing launched for the start: it is refused as the program said, and takes nothing.
+            let mut guard = self.inner.lock().unwrap();
+            if guard.builds.get(key).is_none_or(|b| b.live.is_empty()) {
+                if !live_build {
+                    guard.builds.remove(key);
+                }
+                guard.holds.release(key, Purpose::Build);
+            }
+            return outcome;
+        }
+        let mut uncommitted = uncommitted;
+        uncommitted.extend(driven.uncommitted);
         StartOutcome::Started { uncommitted }
     }
 
@@ -1372,6 +1402,15 @@ impl BuildHost {
 
     /// The commit each product repository of the change is on; one that cannot be read is left out.
     fn heads(&self, place: &Place, state: &ChangeState) -> BTreeMap<String, String> {
+        if place.layout == Layout::SingleRepo {
+            // An app's head is the workflow's answer; nothing is read from the checkout.
+            return state
+                .apps
+                .iter()
+                .flatten()
+                .filter_map(|(app, facts)| Some((app.clone(), facts.head.clone()?)))
+                .collect();
+        }
         review_repos(state, &master_name(place))
             .into_iter()
             .filter_map(|repo| {
@@ -1412,6 +1451,10 @@ impl BuildHost {
         if let Some(outcome) = failure(answer.outcome) {
             return Err(outcome);
         }
+        if place.layout == Layout::SingleRepo {
+            // One app is built at a time: each app is started just before it launches.
+            return Ok(uncommitted);
+        }
         for repo in repos {
             let mut command: Vec<&str> = base.to_vec();
             command.extend(["--repo", repo]);
@@ -1431,7 +1474,8 @@ impl BuildHost {
     /// is taken under the lock; the commands (reading the plugin and the repositories, starting runs) run
     /// with the lock released, and what they found is applied at the next step. A step of a coordinator
     /// that has been replaced since `generation` is dropped.
-    fn drive(self: &Arc<Self>, key: &ChangeKey, generation: Option<u64>, first: Input) {
+    fn drive(self: &Arc<Self>, key: &ChangeKey, generation: Option<u64>, first: Input) -> Driven {
+        let mut driven = Driven::default();
         let mut inputs = VecDeque::from([first]);
         let mut update = Update::default();
         let mut generation = generation;
@@ -1446,10 +1490,10 @@ impl BuildHost {
                     ..
                 } = &mut *guard;
                 let Some(build) = builds.get_mut(key) else {
-                    return;
+                    return driven;
                 };
                 if generation.is_some_and(|g| g != build.generation) {
-                    return;
+                    return driven;
                 }
                 generation = Some(build.generation);
                 let mut cancels: Vec<u64> = Vec::new();
@@ -1558,7 +1602,7 @@ impl BuildHost {
                 self.launcher.announce_running();
             }
             if commands.is_empty() && cancels.is_empty() {
-                return;
+                return driven;
             }
             for run_id in cancels {
                 self.launcher.cancel(run_id);
@@ -1613,6 +1657,23 @@ impl BuildHost {
                                 }
                             }
                         }
+                        if launch_key != REVIEW && exec.place.layout == Layout::SingleRepo {
+                            // One app at a time: the program starts the app just before it launches.
+                            match self.start_app(&exec, &launch_key) {
+                                Ok(files) => {
+                                    if !files.is_empty() {
+                                        driven.uncommitted.insert(launch_key.clone(), files);
+                                    }
+                                }
+                                Err(outcome) => {
+                                    update
+                                        .launched
+                                        .push((instance, Err(outcome_text(&outcome))));
+                                    driven.refusal.get_or_insert(outcome);
+                                    continue;
+                                }
+                            }
+                        }
                         if exec.system_repos.is_none() {
                             let repos = self.system_repos(&exec);
                             exec.system_repos = Some(repos.clone());
@@ -1635,6 +1696,27 @@ impl BuildHost {
                     Command::CancelRun { .. } => {}
                 }
             }
+        }
+    }
+
+    /// `build.start --repo <app>` for the app about to launch in a single-repo build: the uncommitted
+    /// files the program named, or the outcome to give when it did not pass.
+    fn start_app(&self, exec: &Exec, app: &str) -> Result<Vec<String>, StartOutcome> {
+        let command = [
+            "run",
+            "build.start",
+            "--json",
+            "--system",
+            &exec.system,
+            "--change",
+            &exec.change,
+            "--repo",
+            app,
+        ];
+        let answer = answer_of(self.tools.exec(&command, &exec.place));
+        match failure(answer.outcome) {
+            Some(outcome) => Err(outcome),
+            None => Ok(strings(&answer.json["details"]["uncommitted"])),
         }
     }
 
@@ -1732,8 +1814,30 @@ impl BuildHost {
             .ok()
             .and_then(|v| v["repos"].as_object().map(|o| o.keys().cloned().collect()))
             .unwrap_or_default();
-        repos.push(master_name(&exec.place));
+        if exec.place.layout == Layout::Workspace {
+            repos.push(master_name(&exec.place));
+        }
         repos
+    }
+}
+
+/// What a drive of the coordinator found out for the start that began it.
+#[derive(Default)]
+struct Driven {
+    /// Why an app could not be started, as the program said it.
+    refusal: Option<StartOutcome>,
+    /// The uncommitted files the program named for each app it started.
+    uncommitted: BTreeMap<String, Vec<String>>,
+}
+
+/// The text of a start that did not pass, for the stop it leaves in the build.
+fn outcome_text(outcome: &StartOutcome) -> String {
+    match outcome {
+        StartOutcome::Refused { problems } | StartOutcome::Failed { problems, .. } => {
+            problems.join(" ")
+        }
+        StartOutcome::CouldNotRun { output, .. } => output.clone(),
+        other => format!("{other:?}"),
     }
 }
 
