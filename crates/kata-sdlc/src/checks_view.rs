@@ -4,6 +4,7 @@
 //! names the state the page shows, in the words it shows.
 use crate::ai_sdlc::status::{Hooks, OnFailure, Status};
 use crate::ai_sdlc::{Place, Program, ProgramError};
+use crate::layout::Layout;
 use serde::Serialize;
 
 /// The event whose hooks are a repository's checks.
@@ -68,13 +69,14 @@ pub struct RepoCheckView {
 /// | 2 | some | none | `NotRunYet` |
 /// | 3 | some | at an earlier head | `Stale` |
 /// | 4 | some | at the head, passed | `Passed` |
+/// | 4b | some | at the head, passed as a no-op for an untouched app | `NoChanges` |
 /// | 5 | some | at the head, failed on a check marked to be fixed | `FailedFix` |
 /// | 6 | some | at the head, failed on a check marked to stop | `FailedStop` |
 /// | 7 | some | at the head, could not run | `CouldNotRun` |
 ///
 /// A run the plugin refused checked nothing, and a failure that names no check has nothing to show; both
 /// read as `NotRunYet`.
-pub fn of(status: &Status, repo: &str, head: &str, hooks: &Hooks) -> CheckView {
+pub fn of(status: &Status, repo: &str, head: &str, hooks: &Hooks, layout: Layout) -> CheckView {
     if !hooks.problems.is_empty() {
         return CheckView::ConfigBroken {
             output: hooks.problems.join(
@@ -83,11 +85,17 @@ pub fn of(status: &Status, repo: &str, head: &str, hooks: &Hooks) -> CheckView {
             ),
         };
     }
+    // A hook applies to a repository by its `repos` list in the workspace layout and to an app by its
+    // `apps` list in the single-repo layout; no list means every one.
     let configured = hooks.hooks.iter().any(|h| {
+        let names = match layout {
+            Layout::Workspace => &h.repos,
+            Layout::SingleRepo => &h.apps,
+        };
         h.event == EVENT
-            && h.repos
+            && names
                 .as_ref()
-                .is_none_or(|repos| repos.iter().any(|r| r == repo))
+                .is_none_or(|names| names.iter().any(|n| n == repo))
     });
     if !configured {
         return CheckView::NoChecks;
@@ -120,6 +128,9 @@ pub fn of(status: &Status, repo: &str, head: &str, hooks: &Hooks) -> CheckView {
             })
     };
     match (run.outcome.as_str(), &run.failed) {
+        ("passed", _) if run.details.as_ref().is_some_and(|d| d["untouched"] == true) => {
+            CheckView::NoChanges
+        }
         ("passed", _) => CheckView::Passed {
             hooks: run
                 .hooks
@@ -197,16 +208,24 @@ pub fn for_change(
 ) -> Result<Vec<RepoCheckView>, ProgramError> {
     let status = program.status(place, change)?;
     let hooks = program.hooks(place, system, Some(EVENT))?;
+    // In the single-repo layout an app's head is the one the change's `apps` give.
+    let app_heads = match place.layout {
+        Layout::SingleRepo => state_of(program, place, system, change)?.apps,
+        Layout::Workspace => None,
+    };
     Ok(repos
         .iter()
         .map(|repo| {
-            let head = status
-                .repos
-                .iter()
-                .find(|r| &r.repo == repo)
-                .and_then(|r| r.head.clone())
-                .unwrap_or_default();
-            let view = of(&status, repo, &head, &hooks);
+            let head = match &app_heads {
+                Some(apps) => apps.get(repo).and_then(|a| a.head.clone()),
+                None => status
+                    .repos
+                    .iter()
+                    .find(|r| &r.repo == repo)
+                    .and_then(|r| r.head.clone()),
+            }
+            .unwrap_or_default();
+            let view = of(&status, repo, &head, &hooks, place.layout);
             RepoCheckView {
                 repo: repo.clone(),
                 summary: summary(&view),

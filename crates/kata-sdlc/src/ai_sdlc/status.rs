@@ -54,6 +54,9 @@ pub struct RunRecord {
     /// When the run was recorded, as an ISO 8601 time, which orders runs across repositories.
     #[serde(default)]
     pub at: Option<String>,
+    /// What the event reported besides its hooks; `{ "untouched": true }` for an app a change did not touch.
+    #[serde(default)]
+    pub details: Option<serde_json::Value>,
 }
 
 /// One repository's ledger, oldest run first.
@@ -85,6 +88,9 @@ pub struct ConfiguredHook {
     /// The repositories it runs in; none means every one the event runs in.
     #[serde(default)]
     pub repos: Option<Vec<String>>,
+    /// The apps it runs for in the single-repo layout; none means every app.
+    #[serde(default)]
+    pub apps: Option<Vec<String>>,
     pub blocking: bool,
     pub on_failure: OnFailure,
     /// Its time limit in seconds; the plugin's default is 600.

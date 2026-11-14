@@ -1254,6 +1254,8 @@ export class SdlcMock {
           return 'The checks have not run yet.';
         case 'stale':
           return `Checks last ran at ${v.head}.`;
+        case 'noChanges':
+          return 'No changes to check';
         case 'passed':
           return 'The checks passed.';
         case 'failedFix':
