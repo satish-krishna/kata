@@ -1378,8 +1378,8 @@ impl BuildHost {
             let mut guard = self.inner.lock().unwrap();
             if guard.builds.get(key).is_none_or(|b| b.live.is_empty()) {
                 if !live_build {
-                    // A refused first start leaves no build; a refused continue leaves the stopped one.
-                    match replaced.take().filter(|_| only.is_some()) {
+                    // A refused first start leaves no build; a refused start leaves the earlier one.
+                    match replaced.take() {
                         Some(stopped) => {
                             guard.builds.insert(key.clone(), stopped);
                         }
