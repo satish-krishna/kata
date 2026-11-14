@@ -96,8 +96,9 @@ pub enum OpenError {
 
 /// Opens `folder` as the program places it.
 ///
-/// The program runs `resolve` from the folder, so the repository folder, a folder inside it and the
-/// parent of a single-repo repository all find the same master. A single-repo master is the root and
+/// [`Program::resolve_from`] decides how the program is asked, so the repository folder, a folder inside it
+/// and the parent of a single-repo repository all find the same master, and a workspace folder that is a git
+/// root opens as a workspace. A single-repo master is the root and
 /// the program's workspace is the folder around it; a workspace's root is its workspace. A program
 /// before 1.4.0 prints no layout; then, and only then, the marker's `layout` field says it.
 pub fn open(program: &Program, folder: &Path) -> Result<Opened, OpenError> {

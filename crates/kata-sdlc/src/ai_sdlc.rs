@@ -341,18 +341,12 @@ impl Program {
         self.call(&args, &place.workspace)
     }
 
-    /// Runs `command` from `folder` with no master and no `--workspace` given, so the program places the folder
-    /// itself in the same Node start, as [`Program::resolve`] does: the folder may be a workspace, a single-repo
-    /// repository, a folder inside it or the parent of one, and each finds the same master and workspace. One
-    /// Node start where `resolve` then [`Program::run`] takes two. For a command that finds its own place
-    /// (`list`, `state`); the answer is read as `run` reads it.
+    /// Runs `command` for the saved `folder`: [`Program::resolve`] places the folder, then [`Program::run`] runs
+    /// the command there. For a command that finds its own place (`list`, `state`); the answer is read as `run`
+    /// reads it.
     pub fn run_in(&self, command: &[&str], folder: &Path) -> Result<Value, ProgramError> {
-        if !self.entry.is_file() {
-            return Err(ProgramError::TooOld {
-                found: format!("{} does not exist", self.entry.display()),
-            });
-        }
-        self.call(command, folder)
+        let place = self.resolve(folder)?;
+        self.run(command, &place)
     }
 
     /// Runs a step (`command`) in `place` and reads its answer through [`answer_of`].
@@ -421,10 +415,10 @@ impl Program {
         }
     }
 
-    /// Finds the master repository and the workspace of a saved `folder` as the program's `resolve` does, run
-    /// from the folder with no `--workspace`, so a single-repo root, a folder inside it and a workspace root
-    /// all place correctly. This is the one place a saved folder becomes a [`Place`]; [`crate::layout::open`]
-    /// reads the same answer. A folder with no master, or with several, is `CouldNotRun` with the program's reason.
+    /// Finds the master repository and the workspace of a saved `folder` as the program's `resolve` does. This is
+    /// the one place a saved folder becomes a [`Place`]; [`crate::layout::open`] reads the same answer, so the
+    /// choice between the two forms of the call is made in [`Program::resolve_from`] alone. A folder with no
+    /// master, or with several, is `CouldNotRun` with the program's reason.
     pub fn resolve(&self, folder: &Path) -> Result<Place, ProgramError> {
         let found = self.resolve_from(folder)?;
         let path = |key: &str| {
@@ -453,11 +447,31 @@ impl Program {
         }
     }
 
-    /// The program's own `resolve --json` answer for `folder`, run from there with no `--workspace`, so the
-    /// program finds the master and the workspace from the folder: the folder itself, a folder inside it
-    /// or the parent of a single-repo repository. A refusal is an answer too, left for the caller to read.
+    /// The program's own `resolve --json` answer for `folder`: the one owner of which form of the call a folder
+    /// gets. A workspace is placed with `--workspace <folder>`, since from its own folder the program would take
+    /// the parent of a workspace that is a git root as the workspace. A single-repo repository is placed from the
+    /// folder with no flag, since `--workspace` would name the repository itself as the workspace and the
+    /// program would find no changes. The layout of a folder is not known before it is placed, so the call with
+    /// `--workspace` goes first and its answer stands unless it says `single-repo` or finds no master; then the
+    /// call without the flag is made, and when neither finds a master the first, which names the folder, is
+    /// the refusal. A refusal is an answer too, left for the caller to read.
     pub(crate) fn resolve_from(&self, folder: &Path) -> Result<Value, ProgramError> {
-        self.call(&["resolve", "--json"], folder)
+        let named = folder.display().to_string();
+        let as_workspace = self.call(&["resolve", "--json", "--workspace", &named], folder)?;
+        let placed = |v: &Value| {
+            ["master", "workspace"]
+                .iter()
+                .all(|k| v[k].as_str().is_some_and(|s| !s.is_empty()))
+        };
+        if placed(&as_workspace) && as_workspace["layout"] != "single-repo" {
+            return Ok(as_workspace);
+        }
+        let from_folder = self.call(&["resolve", "--json"], folder)?;
+        Ok(if placed(&from_folder) {
+            from_folder
+        } else {
+            as_workspace
+        })
     }
 
     /// Runs the program with `args` as given, in `cwd`, within [`TIMEOUT`], and reads the answer as
