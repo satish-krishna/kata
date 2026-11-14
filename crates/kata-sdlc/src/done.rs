@@ -1,12 +1,14 @@
 //! Declaring a change done is the plugin's step: `run change.done` verifies the change, pushes every
 //! touched repository, opens one pull request each (the master's last) and records them in the change.
 //! Kata runs it, relays its progress and shows its answer; it adds no check of its own.
+use crate::ai_sdlc::state::AppFacts;
 use crate::ai_sdlc::{Answer, Place, Program, StepOutcome};
 use crate::plugin::{GhPresence, Readiness};
 use crate::pull_requests::{PullRequestSource, RecordedPullRequest};
 use kata_core::proc::LineSink;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// What a progress line is about.
@@ -52,6 +54,10 @@ pub enum DeclareView {
         pull_requests: Vec<RecordedPullRequest>,
         /// The plugin's warnings, such as an after hook that failed (nothing was undone).
         warnings: Vec<String>,
+        /// The apps the change touched, in the program's order; empty in the workspace layout.
+        apps: Vec<String>,
+        /// The apps the plan named that the change did not touch; empty when the answer has none.
+        untouched: Vec<String>,
     },
     /// The plugin refused before pushing anything; each problem is its own sentence.
     NotReady { problems: Vec<String> },
@@ -82,6 +88,8 @@ pub fn outcome(answer: &Answer) -> DeclareView {
         StepOutcome::Passed { problems } => DeclareView::Done {
             pull_requests: pull_requests(event),
             warnings: problems.clone(),
+            apps: Vec::new(),
+            untouched: Vec::new(),
         },
         StepOutcome::Refused { problems } => DeclareView::NotReady {
             problems: problems.clone(),
@@ -118,6 +126,18 @@ pub fn outcome(answer: &Answer) -> DeclareView {
             },
         },
     }
+}
+
+impl DeclareView {
+    /// A `Done` view naming the apps the change touched; any other view is returned as it is.
+    pub fn with_apps(self, _touched: Vec<String>) -> DeclareView {
+        self
+    }
+}
+
+/// The apps of `order` that `facts` (a single-repo change's `apps`) marks as touched, in `order`.
+pub fn touched_apps(_facts: Option<&BTreeMap<String, AppFacts>>, _order: &[String]) -> Vec<String> {
+    Vec::new()
 }
 
 /// The pull requests `details` records, in the order the plugin gave them.
@@ -275,6 +295,44 @@ mod tests {
         json!({ "repo": repo, "url": format!("https://github.com/example/{repo}/pull/{number}"), "number": number, "pushed": "3f2a9c1" })
     }
 
+    /// R7.1, R7.2: the view lists the apps the change touched and the planned apps it did not.
+    #[test]
+    fn done_lists_touched_and_untouched_apps() {
+        let facts = |touched: bool| AppFacts {
+            folder: "x".into(),
+            touched,
+            head: None,
+        };
+        let state: BTreeMap<String, AppFacts> = [
+            ("engine".to_string(), facts(true)),
+            ("workbench".to_string(), facts(false)),
+        ]
+        .into();
+        let order = vec!["workbench".to_string(), "engine".to_string()];
+        let single = json!({ "event": "change.done", "outcome": "passed", "problems": [], "hooks": [], "failed": null,
+            "details": { "pushed": ["master"], "pullRequests": [line("master", 7)], "untouched": ["workbench"] } });
+        assert_eq!(
+            outcome(&single).with_apps(touched_apps(Some(&state), &order)),
+            DeclareView::Done {
+                pull_requests: vec![pr("master", 7)],
+                warnings: vec![],
+                apps: vec!["engine".into()],
+                untouched: vec!["workbench".into()]
+            }
+        );
+        let workspace = json!({ "event": "change.done", "outcome": "passed", "problems": [], "hooks": [], "failed": null,
+            "details": { "pushed": ["app"], "pullRequests": [line("app", 1)] } });
+        assert_eq!(
+            outcome(&workspace).with_apps(touched_apps(None, &order)),
+            DeclareView::Done {
+                pull_requests: vec![pr("app", 1)],
+                warnings: vec![],
+                apps: vec![],
+                untouched: vec![]
+            }
+        );
+    }
+
     /// R7.1 and its decision table: each outcome line, written as GRAMMAR.md gives it, has one view.
     #[test]
     fn declaring_done_rows() {
@@ -284,7 +342,9 @@ mod tests {
             outcome(&passed),
             DeclareView::Done {
                 pull_requests: vec![pr("app", 1), pr("master", 2)],
-                warnings: vec![]
+                warnings: vec![],
+                apps: vec![],
+                untouched: vec![]
             },
             "1 passed: the master's pull request is last"
         );
@@ -406,7 +466,9 @@ mod tests {
                 pull_requests: vec![pr("app", 1), pr("master", 2)],
                 warnings: vec![
                     "after hook announce failed with exit code 1; nothing was undone".into()
-                ]
+                ],
+                apps: vec![],
+                untouched: vec![]
             }
         );
     }
