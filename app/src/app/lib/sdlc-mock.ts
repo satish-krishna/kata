@@ -1237,6 +1237,11 @@ export class SdlcMock {
     const base = this.diffBase();
     // The copy is the master repository's own worktree: the master's entry carries the copy's folder when the change lives in one.
     const copy = this.copyOf(changeName);
+    const single = this.singleRepo();
+    if (single !== null && copy !== null) {
+      const groups = single === 'root' ? { [MOCK_SINGLE_SYSTEM]: SINGLE_ROOT_APP_FILES } : SINGLE_GROUP_FILES;
+      return Object.entries(groups).map(([repo, files]) => ({ repo, path: copy, branch: `change/${changeName}`, base, files }));
+    }
     return [MOCK_MASTER, ...this.repos].map((repo) => ({ repo, path: repo === MOCK_MASTER && copy !== null ? copy : `${folder}/${repo}`, branch: `change/${changeName}`, base, files: null }));
   }
 
@@ -1416,6 +1421,18 @@ const COMMIT_FILES: Record<string, string[]> = {
   T2: ['assets/sample.png'],
   T3: ['src/store.rs'],
 };
+
+/** What `?demo=single-repo` changed, by the group the backend puts each file in: apps in their order, then the repository root. */
+const SINGLE_GROUP_FILES: Record<string, ChangedFile[]> = {
+  engine: [{ path: 'crates/engine/src/run.rs', oldPath: null, status: 'modified', binary: false, added: 12, removed: 4, uncommitted: false }],
+  workbench: [{ path: 'app/src/app/changes.ts', oldPath: null, status: 'added', binary: false, added: 30, removed: 0, uncommitted: false }],
+  'repository root': [{ path: 'README.md', oldPath: null, status: 'modified', binary: false, added: 5, removed: 1, uncommitted: false }],
+};
+/** What `?demo=single-repo-root` changed: its one app sits at the repository root, so every file is the app's. */
+const SINGLE_ROOT_APP_FILES: ChangedFile[] = [
+  { path: 'src/main.rs', oldPath: null, status: 'modified', binary: false, added: 8, removed: 2, uncommitted: false },
+  { path: 'README.md', oldPath: null, status: 'modified', binary: false, added: 5, removed: 1, uncommitted: false },
+];
 
 /** The canned diff: one file of each kind the Changes view tells apart. */
 const DIFF_FILES: ChangedFile[] = [
