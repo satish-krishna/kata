@@ -531,18 +531,63 @@ pub struct ChangeGroup {
 }
 
 /// The group a file belongs to, given the apps as (name, folder relative to the root).
-pub fn group_of(_path: &str, _apps: &[(String, String)]) -> FileGroup {
-    unimplemented!()
+pub fn group_of(path: &str, apps: &[(String, String)]) -> FileGroup {
+    let path = path.trim_start_matches("./");
+    apps.iter()
+        .filter_map(|(name, folder)| {
+            let folder = folder.trim_start_matches("./").trim_end_matches('/');
+            let depth = if folder.is_empty() || folder == "." {
+                0
+            } else if path
+                .strip_prefix(folder)
+                .is_some_and(|r| r.starts_with('/'))
+            {
+                folder.split('/').count()
+            } else {
+                return None;
+            };
+            Some((depth, name))
+        })
+        .max_by_key(|(depth, _)| *depth)
+        .map_or(FileGroup::Root, |(_, name)| FileGroup::App(name.clone()))
 }
 
 /// One diff of `copy` against its base, split into one group per app with a changed file, in the
 /// order of `apps`, then the repository root last. Empty groups are left out.
 pub fn change_groups(
-    _copy: &Path,
-    _apps: &[(String, String)],
-    _part: Part,
+    copy: &Path,
+    apps: &[(String, String)],
+    part: Part,
 ) -> Result<Vec<ChangeGroup>, String> {
-    unimplemented!()
+    let files = changed_files(copy, part).map_err(|e| e.to_string())?;
+    let path = copy.to_string_lossy().into_owned();
+    let mut groups: Vec<ChangeGroup> = apps
+        .iter()
+        .map(|(name, _)| ChangeGroup {
+            group: name.clone(),
+            label: name.clone(),
+            path: path.clone(),
+            files: Vec::new(),
+        })
+        .collect();
+    let mut root = ChangeGroup {
+        group: "root".to_string(),
+        label: ROOT_LABEL.to_string(),
+        path,
+        files: Vec::new(),
+    };
+    for file in files {
+        match group_of(&file.path, apps) {
+            FileGroup::App(name) => match groups.iter_mut().find(|g| g.group == name) {
+                Some(g) => g.files.push(file),
+                None => root.files.push(file),
+            },
+            FileGroup::Root => root.files.push(file),
+        }
+    }
+    groups.push(root);
+    groups.retain(|g| !g.files.is_empty());
+    Ok(groups)
 }
 
 #[cfg(test)]
