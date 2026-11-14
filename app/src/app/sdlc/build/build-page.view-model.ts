@@ -10,6 +10,7 @@ import type { ReviewStanding } from '@bindings/ReviewStanding';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import type { ChangeView } from '@bindings/ChangeView';
+import type { Layout } from '@bindings/Layout';
 import type { HeldRepo } from '@bindings/HeldRepo';
 import type { Readiness } from '@bindings/Readiness';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
@@ -60,6 +61,8 @@ export type BuildContext = {
   change: string;
   /** Every product repository the system names, whether or not the plan does. */
   systemRepos: string[];
+  /** The layout of the repository the change is in; a single-repo repository builds one app at a time. */
+  layout?: Layout;
 };
 
 /** One run of the selected repository, as the observe pane shows it. */
@@ -554,6 +557,8 @@ export class BuildPageViewModel {
 
   /** What the Changes view reads, once the page is loaded. */
   readonly changesContext = this.changes.asReadonly();
+  /** True when the change is in a single-repo repository: its apps build one after another. */
+  readonly oneAtATime = computed(() => false);
   /** Turns taken by every run of the build, so the Changes view reads again as the agents work. */
   readonly turns = computed(() => this.log().reduce((n, e) => n + this.snapOf(e.id).events.filter((ev) => ev.type === 'turn').length, 0));
   /** Bash calls finished by every run of the build; each one may have committed a build log row. */

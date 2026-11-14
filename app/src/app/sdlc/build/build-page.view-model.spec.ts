@@ -24,7 +24,8 @@ import { RunStore } from '../../core/run/run.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { GivenStore } from '../../core/given/given.store';
-import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_MASTER, MOCK_SINGLE_CHANGE, MOCK_SINGLE_FOLDER, MOCK_SINGLE_SYSTEM, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
+import { ChangesViewModel } from '../changes/changes-view.view-model';
 import { IDLE, type RunSnapshot } from '../../core/run/reduce';
 import { BuildLayoutViewModel } from './build-layout.view-model';
 import { BuildPageViewModel, findingsAreaOf, type BuildContext, type Departure, type FindingsView, type ReviewEntry } from './build-page.view-model';
@@ -1427,5 +1428,131 @@ describe('the shown session follows the decision table', () => {
   it('with no sessions nothing is in view', async () => {
     const s = setup();
     expect(s.vm.shownSessions()).toEqual([]);
+  });
+});
+
+describe('the build page of a single-repo change', () => {
+  const demoAt = (query: string | null) => history.replaceState({}, '', query ? `/?${query}` : '/');
+  afterEach(() => demoAt(null));
+  const SINGLE_REF = { workspace: MOCK_SINGLE_FOLDER, system: MOCK_SINGLE_SYSTEM, change: MOCK_SINGLE_CHANGE };
+  const SINGLE_CTX: BuildContext = { workspaceId: 'kata', folder: MOCK_SINGLE_FOLDER, system: MOCK_SINGLE_SYSTEM, change: MOCK_SINGLE_CHANGE, systemRepos: [] };
+
+  /** The page opened on the single-repo change of the demo, as the change page would give it. */
+  async function openedSingle(query = 'demo=single-repo') {
+    demoAt(query);
+    const s = setup();
+    const status = await s.transport.sdlcBuildStatus(SINGLE_REF);
+    const [change] = (await readAllChanges(s.transport, MOCK_SINGLE_FOLDER, MOCK_SINGLE_SYSTEM)).filter((c) => c.state.change === MOCK_SINGLE_CHANGE);
+    const load = (ctx: BuildContext = SINGLE_CTX) => s.vm.load({ ctx, masterRepo: MOCK_SINGLE_SYSTEM, change, status, done: false, review: null });
+    return { ...s, load, status, change };
+  }
+  const label = (vm: BuildPageViewModel, repo: string) => group(vm, repo).status.label;
+
+  it('one lane per planned app and none for the master (R4.1)', async () => {
+    const s = await openedSingle();
+    await s.load();
+    expect(s.vm.view().groups.map((g) => g.repo)).toEqual(['engine', 'workbench']);
+    expect(s.vm.view().groups.map((g) => g.tasks.map((t) => t.id))).toEqual([['T1', 'T2', 'T3'], ['T4', 'T5']]);
+    expect(s.vm.view().groups.some((g) => g.repo === MOCK_SINGLE_SYSTEM)).toBe(false);
+  });
+
+  describe('what a waiting app says (R4.3)', () => {
+    it('engine working on its tasks: workbench reads waiting for "engine" of this change', async () => {
+      const s = await openedSingle();
+      await s.load();
+      expect(await s.vm.startBuild({ timeoutSecs: 5400 })).toBe('started');
+      await advance(500);
+      expect(label(s.vm, 'engine')).toBe('Working · T1');
+      expect(label(s.vm, 'workbench')).toBe('Waiting for engine of this change');
+    });
+
+    it('engine stopped because its run ran out of time: workbench reads waiting for "engine" of this change, which stopped; continue it first', async () => {
+      const s = await openedSingle();
+      await s.load();
+      await s.vm.startBuild({ timeoutSecs: 5400 });
+      await advance(500);
+      s.vm.repoAction({ repo: 'engine', action: 'cancel' });
+      await advance(500);
+      expect(label(s.vm, 'engine')).toBe('Stopped at T1');
+      expect(label(s.vm, 'workbench')).toBe('Waiting for engine of this change, which stopped; continue it first');
+      expect(group(s.vm, 'workbench').action).toBeNull();
+    });
+
+    it('engine finished, with team checks passed: workbench reads working', async () => {
+      const s = await openedSingle();
+      await s.load();
+      await s.vm.startBuild({ timeoutSecs: 5400 });
+      await drive(s.vm, s.runs, () => label(s.vm, 'workbench').startsWith('Working'));
+      expect(label(s.vm, 'engine')).toBe('Finished');
+      expect(group(s.vm, 'engine').checks?.view.kind).toBe('passed');
+      expect(label(s.vm, 'workbench')).toBe('Working · T4');
+    });
+
+    it('engine finished, with team checks sending it back: workbench reads waiting for "engine" of this change', async () => {
+      const s = await openedSingle();
+      const real = s.transport.sdlcChecksView.bind(s.transport);
+      vi.spyOn(s.transport, 'sdlcChecksView').mockImplementation(async (ref) =>
+        (await real(ref)).map((v) => (v.repo === 'engine' ? { repo: 'engine', view: { kind: 'failedFix' as const, id: 'unit', output: '1 failed' }, summary: "unit failed. The agent is sent back to fix it, up to the team's retry limit." } : v)),
+      );
+      await s.load();
+      await s.vm.startBuild({ timeoutSecs: 5400 });
+      await advance(500);
+      expect(group(s.vm, 'engine').checks?.view.kind).toBe('failedFix');
+      expect(label(s.vm, 'engine')).toBe('Working · T1');
+      expect(label(s.vm, 'workbench')).toBe('Waiting for engine of this change');
+    });
+  });
+
+  it('a task dependency on another app wins over the app turn (R4.5)', async () => {
+    const s = await openedSingle();
+    const real = s.transport.sdlcBuildStatus.bind(s.transport);
+    vi.spyOn(s.transport, 'sdlcBuildStatus').mockImplementation(async (ref) => {
+      const status = await real(ref);
+      return { ...status, repos: status.repos.map((r) => (r.repo === 'workbench' ? { ...r, state: { kind: 'waiting' as const, task: 'T4', onTask: 'T3', onRepo: 'engine' } } : r)) };
+    });
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
+    await advance(500);
+    expect(label(s.vm, 'workbench')).toBe('Waiting for T3 in engine');
+  });
+
+  it('findings group per app, most serious first (R5.1)', async () => {
+    const s = await openedSingle();
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
+    await drive(s.vm, s.runs, finished(s.vm));
+    const groups = s.vm.findingGroups();
+    expect(groups.map((g) => g.repo)).toEqual(['engine', 'workbench']);
+    expect(groups.map((g) => g.findings.map((f) => f.severity))).toEqual([['high', 'medium'], ['medium', 'low']]);
+  });
+
+  it('checks show per app, and an app with nothing to check says so (R5.2)', async () => {
+    const s = await openedSingle();
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
+    await drive(s.vm, s.runs, finished(s.vm));
+    expect(s.vm.view().groups.map((g) => [g.repo, g.checks?.view.kind, g.checks?.summary])).toEqual([
+      ['engine', 'passed', 'The checks passed.'],
+      ['workbench', 'noChanges', 'No changes to check'],
+    ]);
+  });
+
+  it('a repository with one app at its root has one lane and one group (R9.3)', async () => {
+    const s = await openedSingle('demo=single-repo-root');
+    await s.load();
+    expect(s.vm.view().groups.map((g) => g.repo)).toEqual(['kata']);
+    TestBed.configureTestingModule({ providers: [ChangesViewModel] });
+    const changes = TestBed.inject(ChangesViewModel);
+    await changes.open(s.vm.changesContext()!);
+    expect(changes.repos().map((r) => r.repo)).toEqual(['kata']);
+    expect(changes.groups()[0].files.map((f) => f.path)).toEqual(['src/main.rs', 'README.md']);
+  });
+
+  it('knows its apps run one after another from the layout of the repository', async () => {
+    const s = await openedSingle();
+    await s.load();
+    expect(s.vm.oneAtATime()).toBe(false);
+    await s.load({ ...SINGLE_CTX, layout: 'single-repo' });
+    expect(s.vm.oneAtATime()).toBe(true);
   });
 });

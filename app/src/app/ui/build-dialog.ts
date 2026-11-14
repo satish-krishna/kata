@@ -91,6 +91,8 @@ export class BuildDialog {
   /** What the round would start for the picks now made, as the backend answers; null until it has. */
   readonly plan = input<RoundPlan | null>(null);
   readonly state = input.required<BuildFormState>();
+  /** The apps of a single-repo change build one after another, so the preview says so. */
+  readonly oneAtATime = input(false);
 
   protected readonly round = computed(() => this.mode() === 'round');
   private readonly seen = computed(() => this.offer() ?? NO_OFFER);
