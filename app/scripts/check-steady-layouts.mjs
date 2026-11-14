@@ -362,7 +362,19 @@ function measureTasks() {
 async function openedTaskRows(page) {
   await page.locator('[data-area="tasks"] [data-fold], [data-area="tasks"] [data-task]').first().waitFor({ timeout: 8000 });
   const closed = page.locator('[data-area="tasks"] [data-fold][aria-expanded="false"]');
-  while ((await closed.count()) > 0) await closed.first().click();
+  // A running build re-renders this area on its timeline, so a fold can vanish or flip between the count and the click:
+  // click with a short timeout, count again on a miss, and give up loudly after a bounded number of attempts.
+  const ATTEMPTS = 40;
+  let left = await closed.count();
+  for (let attempt = 0; left > 0 && attempt < ATTEMPTS; attempt++) {
+    try {
+      await closed.first().click({ timeout: 1000 });
+    } catch {
+      // The fold went away or changed under the click; the count below decides whether any is left.
+    }
+    left = await closed.count();
+  }
+  if (left > 0) throw new Error(`openedTaskRows: ${left} fold(s) of the Tasks area stayed closed after ${ATTEMPTS} attempts`);
   await page.waitForTimeout(300);
   return page.evaluate(measureTasks);
 }
