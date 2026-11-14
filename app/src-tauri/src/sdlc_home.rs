@@ -703,7 +703,8 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
         let started = calls(dir.path());
         assert_eq!(started.len(), 1, "the cold list is one start: {started:?}");
         assert!(started[0].starts_with("list "), "{started:?}");
-        assert!(started[0].contains(" --workspace "), "{started:?}");
+        // The program places the folder itself, from where it runs: no `--workspace` is passed.
+        assert!(!started[0].contains("--workspace"), "{started:?}");
         assert!(!started[0].contains(" --master "), "{started:?}");
         home_open(
             &program,
