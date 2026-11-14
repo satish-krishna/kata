@@ -303,7 +303,7 @@ describe('SdlcRunner.run', () => {
       fake.calls.push('snapshot');
       return (a[0] as { master: string }).master === '/ws/a-intent' ? before.a : before.b;
     });
-    fake.scan = { folder: '/ws', repos: ['a-intent', 'a-core'], master: { kind: 'one', repo: 'a-intent', committed: false }, marker: null, marker_error: null };
+    fake.scan = { folder: '/ws', repos: ['a-intent', 'a-core'], master: { kind: 'one', repo: 'a-intent', committed: false }, master_folder: null, marker: null, marker_error: null };
     fake.leftovers = { ...EMPTY, discardable: ['.ai-sdlc.json'] };
     await runner.run('Running setup', seedSpec(), {
       ...TARGET, target: null, link: null, firstSetup: { folder: '/ws', repos: ['a-intent', 'a-core'] },
@@ -318,7 +318,7 @@ describe('SdlcRunner.run', () => {
 
   it('first setup that created no master keeps the plain toast', async () => {
     const { runner, fake, toasts } = setup(() => 'error');
-    fake.scan = { folder: '/ws', repos: ['a-intent', 'a-core'], master: { kind: 'none' }, marker: null, marker_error: null };
+    fake.scan = { folder: '/ws', repos: ['a-intent', 'a-core'], master: { kind: 'none' }, master_folder: null, marker: null, marker_error: null };
     await runner.run('Running setup', seedSpec(), {
       ...TARGET, target: null, link: null, firstSetup: { folder: '/ws', repos: ['a-intent', 'a-core'] },
     });
@@ -405,7 +405,7 @@ describe('SdlcRunner.newChange', () => {
 
   it('passes the picked scope to the triage task (R4.2)', async () => {
     const { runner, fake, lock } = setup();
-    fake.scan = { folder: '/ws', repos: [], master: { kind: 'one', repo: 'commerce-docs', committed: true }, marker: null, marker_error: null };
+    fake.scan = { folder: '/ws', repos: [], master: { kind: 'one', repo: 'commerce-docs', committed: true }, master_folder: null, marker: null, marker_error: null };
     await runner.newChange(target, 'commerce', 'flag prices', 'decide', undefined, { workType: 'fix', scope: 'PROJ-123' });
     const task: string = lock.runAgent.mock.calls[0][1].task;
     expect(task).toContain('The change: flag prices scope:PROJ-123\nThe person');
@@ -577,6 +577,7 @@ describe('SdlcRunner.newChange track', () => {
     repos: ['commerce-docs', 'commerce-core'],
     master: { kind: 'one', repo: 'commerce-docs', committed: true },
     marker: { version: 1, systems: { commerce: { repos: ['commerce-core'] } } },
+    master_folder: null,
     marker_error: null,
   };
   /** A triage whose skill starts the change itself (the plugin's `change start --type fix`) while the run goes on. */
@@ -774,6 +775,7 @@ describe("SdlcRunner shows a run's leftovers and settling only where it was star
     repos: ['commerce-docs', 'commerce-core'],
     master: { kind: 'one', repo: 'commerce-docs', committed: true },
     marker: { version: 1, systems: { commerce: { repos: ['commerce-core'] } } },
+    master_folder: null,
     marker_error: null,
   };
   const keyA = changeRunKey({ workspace: '/ws', system: 'commerce', change: '2026-10-12-photos' });

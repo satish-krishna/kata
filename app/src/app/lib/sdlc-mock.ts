@@ -101,6 +101,7 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { DEMO_SETUP_FOLDER, DEMO_WORKSPACE_FOLDER } from './demo';
 import { PENDING_PERMISSION, type ScriptStep } from './mock';
+import { masterPath } from './sdlc-workspace';
 
 export const MOCK_WORKSPACE_FOLDER = DEMO_WORKSPACE_FOLDER;
 /** A folder the demo can add that has repos but no committed `.ai-sdlc.json`, so adding it runs setup. */
@@ -815,6 +816,7 @@ export class SdlcMock {
         layout: 'single-repo',
         repos: [],
         master: { kind: 'one', repo: MOCK_SINGLE_SYSTEM, committed: true },
+        master_folder: folder,
         marker: { version: 2, systems: { [MOCK_SINGLE_SYSTEM]: { repos: [] } } },
         marker_error: null,
       };
@@ -825,6 +827,7 @@ export class SdlcMock {
         layout: 'workspace',
         repos: MOCK_SETUP_REPOS,
         master: { kind: 'one', repo: 'billing-intent', committed: true },
+        master_folder: masterPath(folder, 'billing-intent'),
         marker: this.setupDone ? { version: 1, systems: { billing: { repos: MOCK_SETUP_REPOS } } } : null,
         marker_error: null,
       };
@@ -834,6 +837,7 @@ export class SdlcMock {
       layout: 'workspace',
       repos: MOCK_REPOS,
       master: { kind: 'one', repo: MOCK_MASTER, committed: true },
+      master_folder: masterPath(folder, MOCK_MASTER),
       marker: { version: 1, systems: { [MOCK_SYSTEM]: { repos: MOCK_REPOS }, ...(this.demo === 'finished-many' || this.threeSystems() ? { [MOCK_SECOND_SYSTEM]: { repos: ['commerce-core'] } } : {}), ...(this.threeSystems() ? { [MOCK_THIRD_SYSTEM]: { repos: ['commerce-core'] } } : {}) } },
       marker_error: null,
     };

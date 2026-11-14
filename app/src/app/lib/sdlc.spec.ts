@@ -356,6 +356,7 @@ describe("triage and fix run-specs (T8)", () => {
     repos: ["intent-repo", "kata", "api"],
     master: { kind: "one", repo: "intent-repo", committed: true },
     marker: null,
+    master_folder: null,
     marker_error: null,
     ...over,
   });

@@ -1923,3 +1923,17 @@ describe('ChangePageViewModel of a single-repo repository', () => {
     expect(checkout).not.toHaveBeenCalled();
   });
 });
+
+describe('ChangePageViewModel master folder', () => {
+  it('reads the master at the folder the scan names, not at the workspace folder joined with its name', async () => {
+    const ELSEWHERE = 'E:/elsewhere/the-master';
+    const transport = new MockTransport();
+    const real = transport.sdlcScan.bind(transport);
+    vi.spyOn(transport, 'sdlcScan').mockImplementation(async (folder) => ({ ...(await real(folder)), master_folder: ELSEWHERE }));
+    const branches = vi.spyOn(transport, 'sdlcBranches');
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    await ready(vm);
+    expect(branches).toHaveBeenCalledWith(ELSEWHERE);
+    expect(branches.mock.calls.every(([master]) => master === ELSEWHERE)).toBe(true);
+  });
+});

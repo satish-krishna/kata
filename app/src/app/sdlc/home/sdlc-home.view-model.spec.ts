@@ -67,6 +67,7 @@ const scanOf = (over: Partial<WorkspaceScan>): WorkspaceScan => ({
   repos: ['commerce-docs', 'customer-portal'],
   master: { kind: 'one', repo: 'commerce-docs', committed: true },
   marker: { version: 1, systems: { commerce: { repos: ['customer-portal'] } } },
+  master_folder: `${NEW_FOLDER}/commerce-docs`,
   marker_error: null,
   ...over,
 });
@@ -1770,5 +1771,24 @@ describe('SdlcHomeViewModel single-repo repository', () => {
     expect(vm.switchPrompt()).toBeNull();
     expect(checkout).not.toHaveBeenCalled();
     expect(runAgent).not.toHaveBeenCalled();
+  });
+});
+
+describe('SdlcHomeViewModel master folder', () => {
+  const ELSEWHERE = 'E:/elsewhere/the-master';
+  /** The scan names the master's folder; the view model never joins the master's name onto the workspace folder. */
+  const withMasterFolder = (transport: MockTransport) => {
+    const real = transport.sdlcScan.bind(transport);
+    vi.spyOn(transport, 'sdlcScan').mockImplementation(async (folder) => ({ ...(await real(folder)), master_folder: ELSEWHERE }));
+  };
+
+  it('reads and switches the master at the folder the scan names', async () => {
+    const { vm, transport } = setup({ home: 'listed' });
+    withMasterFolder(transport);
+    const branches = vi.spyOn(transport, 'sdlcBranches');
+    await vm.init();
+    await flush();
+    expect(branches).toHaveBeenCalledWith(ELSEWHERE);
+    expect(branches.mock.calls.every(([master]) => master === ELSEWHERE)).toBe(true);
   });
 });

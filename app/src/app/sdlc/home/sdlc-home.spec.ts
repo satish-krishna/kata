@@ -116,7 +116,7 @@ describe('SdlcHome', () => {
   it('lists every master when there is more than one', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcScan').mockResolvedValue({
-      folder: 'D:/Work/acme-commerce', layout: 'workspace', repos: ['a', 'b'], master: { kind: 'many', repos: ['a', 'b'] }, marker: null, marker_error: null,
+      folder: 'D:/Work/acme-commerce', layout: 'workspace', repos: ['a', 'b'], master: { kind: 'many', repos: ['a', 'b'] }, master_folder: null, marker: null, marker_error: null,
     });
     const { container } = await mount(transport);
     expect(container.textContent).toContain('More than one master repo');
@@ -127,7 +127,7 @@ describe('SdlcHome', () => {
   it('says the master repo is gone when no repo holds the marker', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcScan').mockResolvedValue({
-      folder: 'D:/Work/acme-commerce', layout: 'workspace', repos: ['a'], master: { kind: 'none' }, marker: null, marker_error: null,
+      folder: 'D:/Work/acme-commerce', layout: 'workspace', repos: ['a'], master: { kind: 'none' }, master_folder: null, marker: null, marker_error: null,
     });
     const { container } = await mount(transport);
     expect(container.textContent).toContain('No master repo found');

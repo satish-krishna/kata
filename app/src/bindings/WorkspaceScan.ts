@@ -7,4 +7,8 @@ export type WorkspaceScan = {
 /**
  * How the folder holds its system. A single-repo scan has no sibling repositories to list.
  */
-layout: Layout, folder: string, repos: Array<string>, master: MasterState, marker: Marker | null, marker_error: string | null, };
+layout: Layout, folder: string, repos: Array<string>, master: MasterState, 
+/**
+ * The absolute folder of the master repository, when there is exactly one. Not implemented yet.
+ */
+master_folder: string | null, marker: Marker | null, marker_error: string | null, };
