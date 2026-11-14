@@ -7,6 +7,7 @@
 use crate::branch::{branch_exists, change_branch};
 use crate::changes::{is_change_name, is_safe_system};
 use crate::git::{GitError, Repo};
+use crate::layout::Layout;
 use crate::workspace::{self, system_repos};
 use git2::{Delta, DiffFindOptions, DiffOptions};
 use serde::{Deserialize, Serialize};
@@ -459,9 +460,22 @@ pub struct ChangeRepo {
     pub path: String,
     pub branch: String,
     pub base: BaseInfo,
-    /// The files of this entry's group, in a single-repo change; `null` in a workspace change, where
+    /// How the change's repository is laid out: a single-repo entry is a group of one copy.
+    pub layout: Layout,
+    /// The group's files for each part, in a single-repo change; `null` in a workspace change, where
     /// the files are read from `path`.
-    pub files: Option<Vec<ChangedFile>>,
+    pub parts: Option<PartListings>,
+}
+
+/// The listing of each part of a change for one group of a single-repo change.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct PartListings {
+    pub whole: DiffListing,
+    pub committed: DiffListing,
+    pub uncommitted: DiffListing,
 }
 
 /// The master first, read at `master` (the change's copy, or the checkout for an older change), then every
@@ -487,7 +501,8 @@ pub fn change_repos(
             path: path.to_string_lossy().into_owned(),
             branch: branch.clone(),
             base: base_info(path).map_err(|e| e.to_string())?,
-            files: None,
+            layout: Layout::Workspace,
+            parts: None,
         })
     };
     let mut out = vec![entry(master_repo, master)?];
@@ -614,7 +629,21 @@ pub fn change_group_repos(
             path: g.path,
             branch: branch.clone(),
             base: base.clone(),
-            files: Some(g.files),
+            layout: Layout::SingleRepo,
+            parts: Some(PartListings {
+                whole: DiffListing {
+                    loc: loc_by_file_type(&g.files),
+                    files: g.files,
+                },
+                committed: DiffListing {
+                    files: Vec::new(),
+                    loc: Vec::new(),
+                },
+                uncommitted: DiffListing {
+                    files: Vec::new(),
+                    loc: Vec::new(),
+                },
+            }),
         })
         .collect())
 }
@@ -1398,8 +1427,26 @@ mod change_repos_tests {
         assert_eq!(repos[0].repo, "only");
         assert_eq!(repos[0].path, fx.copy.to_string_lossy());
         assert_eq!(repos[0].branch, "feat/x");
-        let files = repos[0].files.as_ref().unwrap();
-        assert!(files.iter().any(|f| f.path == "pending.txt"), "{files:?}");
+        assert_eq!(repos[0].layout, Layout::SingleRepo);
+        let parts = repos[0].parts.as_ref().unwrap();
+        let paths = |l: &DiffListing| l.files.iter().map(|f| f.path.clone()).collect::<Vec<_>>();
+        let record = format!("intent/{SYS}/{CHG}/change.yml");
+        assert_eq!(paths(&parts.whole), vec![record.clone(), "pending.txt".to_string()]);
+        assert_eq!(paths(&parts.committed), vec![record]);
+        assert_eq!(paths(&parts.uncommitted), vec!["pending.txt".to_string()]);
+        // The line counts by file type are the backend's, for each part.
+        assert_eq!(parts.uncommitted.loc, loc_by_file_type(&parts.uncommitted.files));
+        assert_eq!(parts.uncommitted.loc.len(), 1);
+        assert_eq!(parts.uncommitted.loc[0].extension, "txt");
+    }
+
+    #[test]
+    fn a_workspace_entry_has_the_workspace_layout_and_no_parts() {
+        let fx = fixture();
+        let repos = change_repos(&fx.folder, &fx.copy, "m", SYS, CHG).unwrap();
+        assert!(repos
+            .iter()
+            .all(|r| r.layout == Layout::Workspace && r.parts.is_none()));
     }
 
     #[test]
