@@ -1419,6 +1419,7 @@ fn sdlc_home_list(
         &readiness,
         entry.last_system.as_deref(),
         Path::new(&entry.folder),
+        entry.layout,
         &systems,
     )
 }
@@ -1454,6 +1455,7 @@ fn sdlc_home_open(
         &readiness,
         &|s, c| live_facts(&control, s, c),
         Path::new(&folder),
+        build_host::layout_in_store(Path::new(&folder)),
         &system,
         &shown,
         trigger,

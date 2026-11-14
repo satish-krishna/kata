@@ -57,6 +57,7 @@ impl Program {
 mod tests {
     use super::*;
     use crate::ai_sdlc::state;
+    use crate::layout::Layout;
     use crate::testutil;
     use std::path::Path;
 
@@ -158,7 +159,11 @@ mod tests {
 
         let only_open = state::read_state(
             program()
-                .run_in(&["state", "--json", "--system", "demo", "--open"], ws)
+                .run_in(
+                    &["state", "--json", "--system", "demo", "--open"],
+                    ws,
+                    Layout::Workspace,
+                )
                 .unwrap(),
         )
         .unwrap();

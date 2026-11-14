@@ -198,8 +198,8 @@ pub struct RunEnd {
     pub history_id: Option<String>,
 }
 
-/// The id the Workbench's workspace list keeps `folder` under.
-pub fn workspace_id_in_store(folder: &Path) -> Option<String> {
+/// The saved entry of the Workbench's workspace list for `folder`.
+fn saved_entry(folder: &Path) -> Option<kata_sdlc::store::WorkspaceEntry> {
     let norm = |t: &str| {
         t.replace('\\', "/")
             .trim_end_matches('/')
@@ -209,7 +209,17 @@ pub fn workspace_id_in_store(folder: &Path) -> Option<String> {
     kata_sdlc::store::load_workspaces()
         .into_iter()
         .find(|w| norm(&w.folder) == wanted)
-        .map(|w| w.id)
+}
+
+/// The id the Workbench's workspace list keeps `folder` under.
+pub fn workspace_id_in_store(folder: &Path) -> Option<String> {
+    saved_entry(folder).map(|w| w.id)
+}
+
+/// The layout the Workbench's workspace list keeps `folder` under; a folder that is not saved reads as a
+/// workspace, the default.
+pub fn layout_in_store(folder: &Path) -> kata_sdlc::layout::Layout {
+    saved_entry(folder).map(|w| w.layout).unwrap_or_default()
 }
 
 /// The id of a run's transcript: the stem of the path in its first `transcript: <path>` log event.

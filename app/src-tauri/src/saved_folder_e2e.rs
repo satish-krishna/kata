@@ -102,11 +102,11 @@ fn start(program: &Program, place: &Place) {
 }
 
 /// What the app does with `saved`, the folder it saved when the engineer added the workspace.
-fn found_again(program: &Program, saved: &str) {
+fn found_again(program: &Program, saved: &str, layout: Layout) {
     let folder = Path::new(saved);
 
     // (a) The home lists the change, in the light list and in the open read.
-    let listed = HomeSource::list(program, folder, SYSTEM).unwrap();
+    let listed = HomeSource::list(program, folder, layout, SYSTEM).unwrap();
     assert_eq!(
         listed
             .changes
@@ -116,7 +116,7 @@ fn found_again(program: &Program, saved: &str) {
         [CHANGE],
         "list from {saved}"
     );
-    let open = HomeSource::open_states(program, folder, SYSTEM).unwrap();
+    let open = HomeSource::open_states(program, folder, layout, SYSTEM).unwrap();
     assert_eq!(
         open.changes
             .iter()
@@ -162,7 +162,7 @@ fn a_single_repo_change_is_found_from_the_folder_saved_for_it() {
         },
     );
 
-    found_again(&program, &saved);
+    found_again(&program, &saved, layout);
 }
 
 #[test]
@@ -184,7 +184,7 @@ fn a_workspace_change_is_found_from_the_folder_saved_for_it() {
         },
     );
 
-    found_again(&program, &saved);
+    found_again(&program, &saved, layout);
 }
 
 /// R6.1: the backend works out the layout of the master it is given; the caller says nothing, and a
@@ -251,5 +251,5 @@ fn a_workspace_that_is_a_git_root_is_found_from_the_folder_saved_for_it() {
         },
     );
 
-    found_again(&program, &saved);
+    found_again(&program, &saved, layout);
 }

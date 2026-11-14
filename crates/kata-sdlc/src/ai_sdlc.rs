@@ -344,7 +344,12 @@ impl Program {
     /// Runs `command` for the saved `folder`: [`Program::resolve`] places the folder, then [`Program::run`] runs
     /// the command there. For a command that finds its own place (`list`, `state`); the answer is read as `run`
     /// reads it.
-    pub fn run_in(&self, command: &[&str], folder: &Path) -> Result<Value, ProgramError> {
+    pub fn run_in(
+        &self,
+        command: &[&str],
+        folder: &Path,
+        _layout: crate::layout::Layout,
+    ) -> Result<Value, ProgramError> {
         let place = self.resolve(folder)?;
         self.run(command, &place)
     }
