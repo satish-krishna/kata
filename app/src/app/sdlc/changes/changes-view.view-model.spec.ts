@@ -147,6 +147,21 @@ describe('the Changes view of a single-repo change (R5.3, R5.4)', () => {
     expect(vm.mark()?.line).toBe(3);
   });
 
+  it("shows the backend's listing of the part on show and never reads a group's files itself", async () => {
+    const { vm, transport } = await opened();
+    const read = vi.spyOn(transport, 'sdlcDiffFiles');
+    const listing = (path: string) => ({ files: [{ path, oldPath: null, status: 'modified' as const, binary: false, added: 7, removed: 1, uncommitted: false }], loc: [{ extension: 'zz', files: 9, added: 7, removed: 1 }] });
+    const [first, ...rest] = vm.repos();
+    vi.spyOn(transport, 'sdlcChangeRepos').mockResolvedValue([
+      { ...first, parts: { whole: listing('whole.rs'), committed: listing('committed.rs'), uncommitted: listing('uncommitted.rs') } },
+      ...rest,
+    ]);
+    await vm.setPart('uncommitted');
+    expect(vm.groups().find((g) => g.repo === first.repo)!.files.map((f) => f.path)).toEqual(['uncommitted.rs']);
+    expect(vm.loc()).toContainEqual({ extension: 'zz', files: 9, added: 7, removed: 1 });
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it('a single app at the repository root lists its files under that app', async () => {
     const { vm } = await opened('demo=single-repo-root');
     expect(vm.repos().map((r) => r.repo)).toEqual(['kata']);

@@ -39,6 +39,7 @@ import type { BuildStatus } from '@bindings/BuildStatus';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { ChangedFile } from '@bindings/ChangedFile';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
+import type { PartListings } from '@bindings/PartListings';
 import type { CheckView } from '@bindings/CheckView';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
@@ -1264,9 +1265,9 @@ export class SdlcMock {
     const single = this.singleRepo();
     if (single !== null && copy !== null) {
       const groups = single === 'root' ? { [MOCK_SINGLE_SYSTEM]: SINGLE_ROOT_APP_FILES } : SINGLE_GROUP_FILES;
-      return Object.entries(groups).map(([repo, files]) => ({ repo, path: copy, branch: `change/${changeName}`, base, files }));
+      return Object.entries(groups).map(([repo, files]) => ({ repo, path: copy, branch: `change/${changeName}`, base, layout: 'single-repo' as const, parts: groupParts(files) }));
     }
-    return [MOCK_MASTER, ...this.repos].map((repo) => ({ repo, path: repo === MOCK_MASTER && copy !== null ? copy : `${folder}/${repo}`, branch: `change/${changeName}`, base, files: null }));
+    return [MOCK_MASTER, ...this.repos].map((repo) => ({ repo, path: repo === MOCK_MASTER && copy !== null ? copy : `${folder}/${repo}`, branch: `change/${changeName}`, base, layout: 'workspace' as const, parts: null }));
   }
 
   diffFiles(part: Part): DiffListing {
@@ -1453,6 +1454,20 @@ const COMMIT_FILES: Record<string, string[]> = {
   T2: ['assets/sample.png'],
   T3: ['src/store.rs'],
 };
+
+/** Like the backend's `PartListings`: a group's files for each part, with the line counts by file type. */
+function groupParts(files: ChangedFile[]): PartListings {
+  const listing = (of: ChangedFile[]): DiffListing => {
+    const byType = new Map<string, { extension: string; files: number; added: number; removed: number }>();
+    for (const f of of.filter((x) => !x.binary)) {
+      const extension = f.path.includes('.') ? f.path.slice(f.path.lastIndexOf('.') + 1) : '(none)';
+      const t = byType.get(extension) ?? { extension, files: 0, added: 0, removed: 0 };
+      byType.set(extension, { extension, files: t.files + 1, added: t.added + f.added, removed: t.removed + f.removed });
+    }
+    return { files: of, loc: [...byType.values()] };
+  };
+  return { whole: listing(files), committed: listing(files.filter((f) => !f.uncommitted)), uncommitted: listing(files.filter((f) => f.uncommitted)) };
+}
 
 /** What `?demo=single-repo` changed, by the group the backend puts each file in: apps in their order, then the repository root. */
 const SINGLE_GROUP_FILES: Record<string, ChangedFile[]> = {

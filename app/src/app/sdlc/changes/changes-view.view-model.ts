@@ -276,17 +276,9 @@ export class ChangesViewModel {
     await this.present(run, repo, choice.path, choice.line, choice.text, switchToWhole);
   }
 
-  /** One entry's files for a part: a single-repo group carries its own files, a workspace repository is read from its folder. */
+  /** One entry's files for a part: a single-repo group carries each part from the backend, a workspace repository is read from its folder. */
   private async listing(r: ChangeRepo, part: Part): Promise<DiffListing> {
-    if (r.files === null) return this.transport.sdlcDiffFiles(r.path, part);
-    const files = r.files.filter((f) => part === 'whole' || (part === 'uncommitted') === f.uncommitted);
-    const byType = new Map<string, FileTypeStats>();
-    for (const f of files.filter((x) => !x.binary)) {
-      const extension = f.path.includes('.') ? f.path.slice(f.path.lastIndexOf('.') + 1) : '(none)';
-      const t = byType.get(extension) ?? { extension, files: 0, added: 0, removed: 0 };
-      byType.set(extension, { extension, files: t.files + 1, added: t.added + f.added, removed: t.removed + f.removed });
-    }
-    return { files, loc: [...byType.values()] };
+    return r.parts === null ? this.transport.sdlcDiffFiles(r.path, part) : r.parts[part];
   }
 
   /** Every file of each part of one repository's change. */
@@ -374,7 +366,7 @@ export class ChangesViewModel {
       const missing = this.transport.sdlcMissingChangeBranches(ctx.ref).catch(() => []);
       const found = await this.transport.sdlcChangeRepos(ctx.ref);
       // A single-repo change comes as groups the backend has ordered (apps, then the repository root); only a workspace puts the master first.
-      const grouped = found.some((r) => r.files !== null);
+      const grouped = found.some((r) => r.layout === 'single-repo');
       const repos = grouped ? found : [...found.filter((r) => r.repo === ctx.masterRepo), ...found.filter((r) => r.repo !== ctx.masterRepo)];
       // A commit read that fails leaves that repository's files untied; it never fails the list.
       // The plain label names the first repository still being read and moves on as each one is read.

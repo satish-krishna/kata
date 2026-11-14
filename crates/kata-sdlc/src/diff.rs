@@ -622,28 +622,39 @@ pub fn change_group_repos(
     }
     let branch = change_branch(copy, system, change)?;
     let base = base_info(copy).map_err(|e| e.to_string())?;
+    let committed = change_groups(copy, apps, Part::Committed)?;
+    let uncommitted = change_groups(copy, apps, Part::Uncommitted)?;
+    // A group a part does not touch has no files in that part.
+    let listing_in = |groups: &[ChangeGroup], group: &str| {
+        let files = groups
+            .iter()
+            .find(|g| g.group == group)
+            .map(|g| g.files.clone())
+            .unwrap_or_default();
+        DiffListing {
+            loc: loc_by_file_type(&files),
+            files,
+        }
+    };
     Ok(change_groups(copy, apps, Part::Whole)?
         .into_iter()
-        .map(|g| ChangeRepo {
-            repo: g.label,
-            path: g.path,
-            branch: branch.clone(),
-            base: base.clone(),
-            layout: Layout::SingleRepo,
-            parts: Some(PartListings {
+        .map(|g| {
+            let parts = PartListings {
+                committed: listing_in(&committed, &g.group),
+                uncommitted: listing_in(&uncommitted, &g.group),
                 whole: DiffListing {
                     loc: loc_by_file_type(&g.files),
                     files: g.files,
                 },
-                committed: DiffListing {
-                    files: Vec::new(),
-                    loc: Vec::new(),
-                },
-                uncommitted: DiffListing {
-                    files: Vec::new(),
-                    loc: Vec::new(),
-                },
-            }),
+            };
+            ChangeRepo {
+                repo: g.label,
+                path: g.path,
+                branch: branch.clone(),
+                base: base.clone(),
+                layout: Layout::SingleRepo,
+                parts: Some(parts),
+            }
         })
         .collect())
 }
@@ -1431,11 +1442,17 @@ mod change_repos_tests {
         let parts = repos[0].parts.as_ref().unwrap();
         let paths = |l: &DiffListing| l.files.iter().map(|f| f.path.clone()).collect::<Vec<_>>();
         let record = format!("intent/{SYS}/{CHG}/change.yml");
-        assert_eq!(paths(&parts.whole), vec![record.clone(), "pending.txt".to_string()]);
+        assert_eq!(
+            paths(&parts.whole),
+            vec![record.clone(), "pending.txt".to_string()]
+        );
         assert_eq!(paths(&parts.committed), vec![record]);
         assert_eq!(paths(&parts.uncommitted), vec!["pending.txt".to_string()]);
         // The line counts by file type are the backend's, for each part.
-        assert_eq!(parts.uncommitted.loc, loc_by_file_type(&parts.uncommitted.files));
+        assert_eq!(
+            parts.uncommitted.loc,
+            loc_by_file_type(&parts.uncommitted.files)
+        );
         assert_eq!(parts.uncommitted.loc.len(), 1);
         assert_eq!(parts.uncommitted.loc[0].extension, "txt");
     }
