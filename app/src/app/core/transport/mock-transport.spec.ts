@@ -11,7 +11,7 @@ import type { Resolved } from '@bindings/Resolved';
 import type { BuildEvent } from '@bindings/BuildEvent';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
-import { MOCK_BUILD_CHANGE, MOCK_COPY_CHANGE, MOCK_BUILD_SECOND, MOCK_HELD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MOCK_MASTER, MOCK_STARTED_FIX, TRIAGE_LIGHT, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_COPY_CHANGE, MOCK_BUILD_SECOND, MOCK_HELD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_SINGLE_FOLDER, MOCK_WORKSPACE_FOLDER, MOCK_MASTER, MOCK_STARTED_FIX, TRIAGE_LIGHT, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 
 const ref = (change: string): ChangeRef => ({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change });
 const total = (steps: { delay: number }[]) => steps.reduce((a, s) => a + s.delay, 0);
@@ -127,6 +127,13 @@ describe('MockTransport', () => {
     expect(await t.sdlcBranches('/m')).toEqual({ current: 'change/2026-10-17-product-notes', others: [], default_base: 'main', switchable: true, base_refusal: null });
     await t.sdlcCheckout('/m', 'main');
     expect((await t.sdlcBranches('/m')).others.map((o) => o.change)).toEqual(['2026-10-17-product-notes']);
+  });
+
+  it('places the master itself: the single-repo repository is never switched, whatever the caller says (R6.1)', async () => {
+    const t = new MockTransport();
+    await expect(t.sdlcCheckout(MOCK_SINGLE_FOLDER, 'main')).rejects.toContain('never switched');
+    expect((await t.sdlcBranches(MOCK_SINGLE_FOLDER)).switchable).toBe(false);
+    expect((await t.sdlcBranches('/m')).switchable).toBe(true);
   });
 
   it('starting a change adds it, named from the title, on its own branch', async () => {

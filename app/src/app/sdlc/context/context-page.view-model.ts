@@ -126,7 +126,7 @@ export class ContextPageViewModel {
       if (repo === null) return null;
       const master = masterFolder(w.folder, repo, scan.layout);
       const [branches, contexts] = await Promise.all([
-        this.transport.sdlcBranches(master, scan.layout),
+        this.transport.sdlcBranches(master),
         readContextStates(scan, (m, s, r) => this.transport.sdlcContextHealth(w.folder, m, s, r)),
       ]);
       this.scan.set(scan);

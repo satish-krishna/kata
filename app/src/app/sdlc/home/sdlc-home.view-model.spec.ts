@@ -1757,7 +1757,7 @@ describe('SdlcHomeViewModel single-repo repository', () => {
       branches = vi.spyOn(transport, 'sdlcBranches');
       checkout = vi.spyOn(transport, 'sdlcCheckout');
     });
-    expect(branches).toHaveBeenCalledWith('D:/kata', 'single-repo');
+    expect(branches).toHaveBeenCalledWith('D:/kata');
     expect(vm.branches()?.switchable).toBe(false);
     expect(vm.otherBranches()).toEqual([]);
     await vm.openOtherBranch('2026-10-17-product-notes');

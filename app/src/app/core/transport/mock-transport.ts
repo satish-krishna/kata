@@ -17,7 +17,6 @@ import type { ChangeView } from '@bindings/ChangeView';
 import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { AppRows } from '@bindings/AppRows';
-import type { Layout } from '@bindings/Layout';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
@@ -355,7 +354,8 @@ export class MockTransport extends KataTransport {
   async sdlcHomePullRequests(folder: string, system: string, changes: string[]): Promise<HomeChecked> { return this.sdlc.homePullRequests(system, changes, await this.sdlcPluginReadiness(folder)); }
   /** Every demo folder is there. */
   sdlcMissingFolders(_folders: string[]): Promise<string[]> { return Promise.resolve([]); }
-  sdlcBranches(_master: string, layout?: Layout): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches(layout)); }
+  /** The mock places the folder as the backend does: the single-repo demo's repository is its own master, every other folder is a workspace's. */
+  sdlcBranches(master: string): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches(master === MOCK_SINGLE_FOLDER ? 'single-repo' : 'workspace')); }
   sdlcAppRows(_folder: string, _system: string): Promise<AppRows> { return Promise.resolve(this.sdlc.appRows()); }
   /** Everything the change page opens with, from the fixture the change's home picks; rejects for a change the workspace does not list. */
   async sdlcOpenChange(ref: ChangeRef, doc: string): Promise<OpenedChange> {
@@ -404,8 +404,8 @@ export class MockTransport extends KataTransport {
   sdlcCheckScope(_folder: string, scope: string): Promise<string[]> { return Promise.resolve(scope.includes(' ') ? ['a scope cannot contain a space'] : []); }
   sdlcRenameBranch(_folder: string, _workspaceId: string, _system: string, change: string, to: string): Promise<RenameOutcome> { return Promise.resolve(this.sdlc.renameBranch(change, to)); }
   /** Refused, as the backend refuses it, while a change's document run is live. */
-  sdlcCheckout(master: string, branch: string, layout?: Layout): Promise<void> {
-    if (layout === 'single-repo') return Promise.reject(MOCK_NOT_SWITCHABLE);
+  sdlcCheckout(master: string, branch: string): Promise<void> {
+    if (master === MOCK_SINGLE_FOLDER) return Promise.reject(MOCK_NOT_SWITCHABLE);
     const busy = [...this.changeRunsLive].find(([id]) => this.runs.get(id)?.ended !== true);
     if (busy !== undefined) return Promise.reject(`The change ${busy[1]} has a run working in ${master}. Switch the branch after the run ends.`);
     this.sdlc.checkout(branch);

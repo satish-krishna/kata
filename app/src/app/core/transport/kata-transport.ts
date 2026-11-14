@@ -18,7 +18,6 @@ import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { ChangeView } from '@bindings/ChangeView';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { AppRows } from '@bindings/AppRows';
-import type { Layout } from '@bindings/Layout';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
@@ -185,7 +184,7 @@ export abstract class KataTransport {
   abstract sdlcHomePullRequests(folder: string, system: string, changes: string[]): Promise<HomeChecked>;
   abstract sdlcMissingFolders(folders: string[]): Promise<string[]>;
   /** The master's branches. `layout` is the saved folder's; the backend refuses switching in a single-repo repository and says so in `switchable` and `base_refusal`. */
-  abstract sdlcBranches(master: string, layout?: Layout): Promise<BranchInfo>;
+  abstract sdlcBranches(master: string): Promise<BranchInfo>;
   /** The apps of a single-repo system with each one's context health, and the instructions in the repository's root file. */
   abstract sdlcAppRows(folder: string, system: string): Promise<AppRows>;
   /** A change opened from one resolution of where it lives: its view, the document asked for, and the build and review when it has a plan. Rejects with the reason when the change cannot be placed. */
@@ -212,7 +211,7 @@ export abstract class KataTransport {
   /** Repositories where the change's branch name is already taken on GitHub by work this machine does not have. */
   /** Why the scope is not usable, one reason per entry; empty when it is accepted as typed. */
   abstract sdlcCheckScope(folder: string, scope: string): Promise<string[]>;
-  abstract sdlcCheckout(master: string, branch: string, layout?: Layout): Promise<void>;
+  abstract sdlcCheckout(master: string, branch: string): Promise<void>;
   /** Accept a document of a change: the plugin commits it and runs the team's accepting hooks. */
   abstract sdlcAccept(change: ChangeRef, doc: ChangeDocument): Promise<AcceptOutcome>;
   /** Reject a change through the plugin, which commits the rejection and removes the change's copy. */

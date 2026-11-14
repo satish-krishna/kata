@@ -817,26 +817,41 @@ fn sdlc_missing_folders(folders: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-/// The layout of `master` as the program places it, and the refusal when that layout may not be switched.
-/// Not implemented yet.
-fn switch_layout(
-    _program: Option<&sdlc::ai_sdlc::Program>,
-    _master: &str,
+/// The layout of `master` as the program places it. Without a program, or when the program cannot place the
+/// folder, nothing is known about it and the answer is the refusal; the caller never says.
+fn master_layout(
+    program: Option<&sdlc::ai_sdlc::Program>,
+    master: &str,
 ) -> Result<sdlc::layout::Layout, String> {
-    Ok(sdlc::layout::Layout::Workspace)
+    let program = program.ok_or("the ai-sdlc plugin is not ready")?;
+    sdlc::layout::open(program, Path::new(master))
+        .map(|opened| opened.layout)
+        .map_err(|e| e.to_string())
 }
 
-/// The branches of `master` in the layout the program places it in. Not implemented yet.
-fn branches_in(
-    _program: Option<&sdlc::ai_sdlc::Program>,
-    _master: &str,
-) -> sdlc::branch::BranchInfo {
-    sdlc::branch::BranchInfo::default()
+/// The layout of `master`, or the refusal when that layout does not let its checkout be switched.
+fn switch_layout(
+    program: Option<&sdlc::ai_sdlc::Program>,
+    master: &str,
+) -> Result<sdlc::layout::Layout, String> {
+    let layout = master_layout(program, master)?;
+    if sdlc::branch::switchable(layout) {
+        Ok(layout)
+    } else {
+        Err(sdlc::branch::BranchError::NotSwitchable.to_string())
+    }
+}
+
+/// The branches of `master` in the layout the program places it in. A folder that cannot be placed reads as
+/// the layout that may not be switched.
+fn branches_in(program: Option<&sdlc::ai_sdlc::Program>, master: &str) -> sdlc::branch::BranchInfo {
+    let layout = master_layout(program, master).unwrap_or(sdlc::layout::Layout::SingleRepo);
+    sdlc::branch::branch_info_in(Path::new(master), layout)
 }
 
 #[tauri::command(async)]
-fn sdlc_branches(master: String, layout: Option<sdlc::layout::Layout>) -> sdlc::branch::BranchInfo {
-    sdlc::branch::branch_info_in(Path::new(&master), layout.unwrap_or_default())
+fn sdlc_branches(master: String) -> sdlc::branch::BranchInfo {
+    branches_in(state_inputs(&master).0.as_ref(), &master)
 }
 
 /// The apps of a single-repo folder with their context health, and its instructions state.
@@ -1119,12 +1134,8 @@ fn sdlc_checkout(
     control: State<'_, RunControl>,
     master: String,
     branch: String,
-    layout: Option<sdlc::layout::Layout>,
 ) -> Result<(), String> {
-    let layout = layout.unwrap_or_default();
-    if !sdlc::branch::switchable(layout) {
-        return Err(sdlc::branch::BranchError::NotSwitchable.to_string());
-    }
+    let layout = switch_layout(state_inputs(&master).0.as_ref(), &master)?;
     let table = control.state.lock().unwrap();
     table.may_switch(Path::new(&master))?;
     let out =

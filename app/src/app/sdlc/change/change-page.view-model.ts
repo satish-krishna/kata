@@ -1048,7 +1048,7 @@ export class ChangePageViewModel {
     const fixRef: ChangeRef = { workspace: workspace.folder, system: this.system(), change: this.changeName() };
     let outcome;
     try {
-      const branches = await this.transport.sdlcBranches(master, scan.layout);
+      const branches = await this.transport.sdlcBranches(master);
       // A setting that cannot be used stops the start, as on the workspace home; there is no fall back to `change/` naming (R3.2).
       const repo = masterRepo(scan);
       let naming: NamingState = { kind: 'none' };
@@ -1633,7 +1633,7 @@ export class ChangePageViewModel {
       const master = masterFolder(w.folder, repo, scan.layout);
       const ref: ChangeRef = { workspace: w.folder, system, change: name };
       const [branches, opening, links, records, catalog, recorded] = await Promise.all([
-        this.transport.sdlcBranches(master, scan.layout),
+        this.transport.sdlcBranches(master),
         this.openChange(ref, this.openStem()),
         this.transport.sdlcRunLinks(),
         this.transport.listRuns(),

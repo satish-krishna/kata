@@ -786,7 +786,7 @@ export class SdlcHomeViewModel {
     try {
       // The branch is the one the list read: a recorded branch is not named after its change.
       const branch = this.branches()?.others.find((o) => o.change === change)?.branch ?? `change/${change}`;
-      await this.checkout(master, branch, this.scan()?.layout);
+      await this.transport.sdlcCheckout(master, branch);
     } catch (e) {
       this.toasts.error(message(e));
       return;
@@ -934,7 +934,7 @@ export class SdlcHomeViewModel {
     const scan = this.scan();
     const master = this.masterDir();
     if (!workspace || !scan || !master) return;
-    if (!(await this.onBase(master, masterRepo(scan) ?? 'the master repo', scan.layout))) return;
+    if (!(await this.onBase(master, masterRepo(scan) ?? 'the master repo'))) return;
     const built = specFor(kind, null, { folder: workspace.folder, change: null, ...ctx }, await this.currentSettings(), this.catalog() ?? []);
     const spec = await this.confirm(built);
     if (!spec) return;
@@ -981,10 +981,10 @@ export class SdlcHomeViewModel {
   /**
    * Offer to leave a change branch before a run that belongs on the base branch, which the backend resolves.
    */
-  private async onBase(master: string, repo: string, layout?: Layout): Promise<boolean> {
+  private async onBase(master: string, repo: string): Promise<boolean> {
     let info: BranchInfo;
     try {
-      info = await this.transport.sdlcBranches(master, layout);
+      info = await this.transport.sdlcBranches(master);
     } catch (e) {
       // Without the branch there is no telling where a commit would land, so do not run.
       this.toasts.error(`Could not read the master repo's branch: ${message(e)}`);
@@ -1004,17 +1004,12 @@ export class SdlcHomeViewModel {
     }
     if (!(await this.confirmSwitch(`Switch ${repo} to ${target} first?`))) return false;
     try {
-      await this.checkout(master, target, layout);
+      await this.transport.sdlcCheckout(master, target);
     } catch (e) {
       this.toasts.error(message(e));
       return false;
     }
     return true;
-  }
-
-  /** The layout travels only for a single-repo repository, where the backend refuses the switch; a workspace is asked as before. */
-  private checkout(master: string, branch: string, layout: Layout | undefined): Promise<void> {
-    return layout === 'single-repo' ? this.transport.sdlcCheckout(master, branch, layout) : this.transport.sdlcCheckout(master, branch);
   }
 
   private confirmSwitch(prompt: string): Promise<boolean> {
@@ -1243,7 +1238,7 @@ export class SdlcHomeViewModel {
         const master = masterFolder(w.folder, repo, scan.layout);
         let home: { list: HomeList; views: WorkspaceView | null };
         [branches, home, lastRuns] = await Promise.all([
-          this.transport.sdlcBranches(master, scan.layout),
+          this.transport.sdlcBranches(master),
           this.readHome(w, scan, trigger),
           this.transport.sdlcRunLinks().then((links) => lastRunTimes(links, w.id)),
         ]);

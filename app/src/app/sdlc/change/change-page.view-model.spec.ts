@@ -1917,8 +1917,8 @@ describe('ChangePageViewModel of a single-repo repository', () => {
 
   it('no switch of the checkout is offered for a single-repo change (R6.1)', async () => {
     const { vm, branches, checkout } = await opened();
-    expect(branches).toHaveBeenCalledWith('D:/kata', 'single-repo');
-    expect(branches.mock.calls.every(([, layout]) => layout === 'single-repo')).toBe(true);
+    expect(branches).toHaveBeenCalledWith('D:/kata');
+    expect(branches.mock.calls.every((args) => args.length === 1)).toBe(true);
     expect(vm.state()).toBe('ready');
     expect(checkout).not.toHaveBeenCalled();
   });
