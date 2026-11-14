@@ -1703,3 +1703,72 @@ describe('SdlcHomeViewModel removing a merged change\'s copy', () => {
     });
   }
 });
+
+describe('SdlcHomeViewModel single-repo repository', () => {
+  const demoAt = (query: string | null) => history.replaceState({}, '', query ? `/?${query}` : '/');
+  afterEach(() => demoAt(null));
+  /** The address names the demo before the transport is made, the way the browser reaches it. */
+  const opened = async (query = 'demo=single-repo', before: (made: ReturnType<typeof setup>) => void = () => undefined) => {
+    demoAt(query);
+    const made = setup({ home: 'listed' });
+    before(made);
+    await made.vm.init();
+    await flush();
+    return made;
+  };
+
+  it('a single-repo repository lists its system and its apps', async () => {
+    let rows: ReturnType<typeof vi.spyOn> | undefined;
+    const { vm } = await opened('demo=single-repo', ({ transport }) => {
+      rows = vi.spyOn(transport, 'sdlcAppRows');
+    });
+    expect(vm.current()?.name).toBe('kata');
+    expect(vm.state()).toBe('ready');
+    expect(vm.systems()).toEqual(['kata']);
+    expect(rows).toHaveBeenCalledWith('D:/kata', 'kata');
+    expect(vm.apps()?.map((a) => a.name)).toEqual(['engine', 'workbench']);
+    // One row per app and no master row: the table's repository rows stay empty.
+    expect(vm.repoRows()).toEqual([]);
+    expect(vm.instructions()).toBe('current');
+  });
+
+  it('the saved list marks a single-repo repository and not a workspace', async () => {
+    const { vm } = await opened();
+    expect(vm.workspaces().map((w) => [w.name, w.folder, w.layout])).toEqual([
+      ['workspaces', 'D:/workspaces', 'workspace'],
+      ['kata', 'D:/kata', 'single-repo'],
+    ]);
+  });
+
+  it('a refused single-repo repository offers nothing (R2.2)', async () => {
+    const { vm } = await opened('demo=single-repo&plugin=1.3.1');
+    expect(vm.state()).toBe('refused');
+    expect(vm.blockMessage()).toContain('1.3.1');
+    expect(vm.canWork()).toBe(false);
+    expect(vm.canStartChange()).toBe(false);
+    expect(vm.apps()).toBeNull();
+    expect(vm.instructions()).toBeNull();
+  });
+
+  it('no switch of the checkout is offered in a single-repo repository (R6.1)', async () => {
+    let branches: ReturnType<typeof vi.spyOn> | undefined;
+    let checkout: ReturnType<typeof vi.spyOn> | undefined;
+    const { vm, runAgent } = await opened('demo=single-repo', ({ transport }) => {
+      branches = vi.spyOn(transport, 'sdlcBranches');
+      checkout = vi.spyOn(transport, 'sdlcCheckout');
+    });
+    expect(branches).toHaveBeenCalledWith('D:/kata', 'single-repo');
+    expect(vm.branches()?.switchable).toBe(false);
+    expect(vm.otherBranches()).toEqual([]);
+    await vm.openOtherBranch('2026-10-17-product-notes');
+    expect(checkout).not.toHaveBeenCalled();
+    // Off the base branch the context run is refused with the backend's text, and no switch is offered.
+    const text = 'Your checkout is on change/2026-11-12-x. Kata never switches it; check out main yourself and run this again.';
+    branches!.mockResolvedValue({ current: 'change/2026-11-12-x', others: [], default_base: 'main', switchable: false, base_refusal: text });
+    await vm.runContext('workbench');
+    expect(toastText()).toContain(text);
+    expect(vm.switchPrompt()).toBeNull();
+    expect(checkout).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+});

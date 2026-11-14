@@ -20,6 +20,8 @@ import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ChangeView } from '@bindings/ChangeView';
 import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { BranchInfo } from '@bindings/BranchInfo';
+import type { AppRows } from '@bindings/AppRows';
+import type { Layout } from '@bindings/Layout';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
@@ -124,7 +126,8 @@ export class TauriTransport extends KataTransport {
   sdlcHomeOpen(folder: string, system: string, shown: string[], trigger: Refresh) { return this.ipc.invoke<HomeOpen>('sdlc_home_open', { folder, system, shown, trigger }); }
   sdlcHomePullRequests(folder: string, system: string, changes: string[]) { return this.ipc.invoke<HomeChecked>('sdlc_home_pull_requests', { folder, system, changes }); }
   sdlcMissingFolders(folders: string[]) { return this.ipc.invoke<string[]>('sdlc_missing_folders', { folders }); }
-  sdlcBranches(master: string) { return this.ipc.invoke<BranchInfo>('sdlc_branches', { master }); }
+  sdlcBranches(master: string, layout?: Layout) { return this.ipc.invoke<BranchInfo>('sdlc_branches', { master, layout }); }
+  sdlcAppRows(folder: string, system: string) { return this.ipc.invoke<AppRows>('sdlc_app_rows', { folder, system }); }
   sdlcOpenChange(change: ChangeRef, doc: string) { return this.ipc.invoke<OpenedChange>('sdlc_open_change', { change, doc }); }
   sdlcReadDocument(change: ChangeRef, doc: string) { return this.ipc.invoke<DocumentRead>('sdlc_read_document', { change, doc }); }
   sdlcReadDoc(change: ChangeRef, doc: string) { return this.ipc.invoke<string | null>('sdlc_read_doc', { change, doc }); }
@@ -155,7 +158,7 @@ export class TauriTransport extends KataTransport {
   sdlcNaming(folder: string, masterRepo: string, system: string) { return this.ipc.invoke<NamingState>('sdlc_naming', { folder, masterRepo, system }); }
   sdlcRenameBranch(folder: string, workspaceId: string, system: string, change: string, to: string) { return this.ipc.invoke<RenameOutcome>('sdlc_rename_branch', { folder, workspaceId, system, change, to }); }
   sdlcCheckScope(folder: string, scope: string) { return this.ipc.invoke<string[]>('sdlc_check_scope', { folder, scope }); }
-  sdlcCheckout(master: string, branch: string) { return this.ipc.invoke<void>('sdlc_checkout', { master, branch }); }
+  sdlcCheckout(master: string, branch: string, layout?: Layout) { return this.ipc.invoke<void>('sdlc_checkout', { master, branch, layout }); }
   sdlcCopyRemoval(change: ChangeRef) { return this.ipc.invoke<CopyRemoval>('sdlc_copy_removal', { change }); }
   sdlcCopyBranch(change: ChangeRef) { return this.ipc.invoke<string>('sdlc_copy_branch', { change }); }
   sdlcRemoveCopy(change: ChangeRef) { return this.ipc.invoke<RemoveOutcome>('sdlc_remove_copy', { change }); }

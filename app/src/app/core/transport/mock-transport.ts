@@ -16,6 +16,8 @@ import type { ChangeInfo } from '../../lib/sdlc-mock-types';
 import type { ChangeView } from '@bindings/ChangeView';
 import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { BranchInfo } from '@bindings/BranchInfo';
+import type { AppRows } from '@bindings/AppRows';
+import type { Layout } from '@bindings/Layout';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
@@ -351,7 +353,8 @@ export class MockTransport extends KataTransport {
   async sdlcHomePullRequests(folder: string, system: string, changes: string[]): Promise<HomeChecked> { return this.sdlc.homePullRequests(system, changes, await this.sdlcPluginReadiness(folder)); }
   /** Every demo folder is there. */
   sdlcMissingFolders(_folders: string[]): Promise<string[]> { return Promise.resolve([]); }
-  sdlcBranches(_master: string): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches()); }
+  sdlcBranches(_master: string, _layout?: Layout): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches()); }
+  sdlcAppRows(_folder: string, _system: string): Promise<AppRows> { return Promise.reject(new Error('not implemented')); }
   /** Everything the change page opens with, from the fixture the change's home picks; rejects for a change the workspace does not list. */
   async sdlcOpenChange(ref: ChangeRef, doc: string): Promise<OpenedChange> {
     const view = await this.sdlcChangeState(ref.workspace, ref.system, ref.change);
@@ -399,7 +402,7 @@ export class MockTransport extends KataTransport {
   sdlcCheckScope(_folder: string, scope: string): Promise<string[]> { return Promise.resolve(scope.includes(' ') ? ['a scope cannot contain a space'] : []); }
   sdlcRenameBranch(_folder: string, _workspaceId: string, _system: string, change: string, to: string): Promise<RenameOutcome> { return Promise.resolve(this.sdlc.renameBranch(change, to)); }
   /** Refused, as the backend refuses it, while a change's document run is live. */
-  sdlcCheckout(master: string, branch: string): Promise<void> {
+  sdlcCheckout(master: string, branch: string, _layout?: Layout): Promise<void> {
     const busy = [...this.changeRunsLive].find(([id]) => this.runs.get(id)?.ended !== true);
     if (busy !== undefined) return Promise.reject(`The change ${busy[1]} has a run working in ${master}. Switch the branch after the run ends.`);
     this.sdlc.checkout(branch);

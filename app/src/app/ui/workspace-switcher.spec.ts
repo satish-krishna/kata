@@ -117,3 +117,14 @@ describe('WorkspaceSwitcher without counts (R3.1)', () => {
     expect(rows.find((t) => t.includes('old-billing'))).toContain('folder missing');
   });
 });
+
+describe('WorkspaceSwitcher single-repo mark (R1.3)', () => {
+  const K: WorkspaceEntry = { ...ws('kata', 'D:/kata'), layout: 'single-repo' };
+  it('marks the single-repo repository and not the workspace', async () => {
+    const { container } = await render(WorkspaceSwitcher, { workspaces: [A, K], current: K, missing: [] });
+    await open(container);
+    const read = (t: string) => radioWith(t).textContent!.replace(/\s+/g, ' ');
+    expect(read('kata')).toContain('single-repo');
+    expect(read('acme-commerce')).not.toContain('single-repo');
+  });
+});

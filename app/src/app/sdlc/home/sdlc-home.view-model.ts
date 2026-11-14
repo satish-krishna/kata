@@ -1,5 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
+import type { AppHealth } from '@bindings/AppHealth';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { WorkspaceView } from '@bindings/WorkspaceView';
@@ -55,6 +56,7 @@ export type HomeState =
   | 'many-masters'
   | 'marker-error'
   | 'not-set-up'
+  | 'refused'
   | 'ready';
 
 /** The home page's progress entry, kept apart from the change page's. */
@@ -190,6 +192,10 @@ export class SdlcHomeViewModel {
     const m = this.scan()?.master;
     return m?.kind === 'many' ? m.repos : [];
   });
+  /** The apps of a single-repo system with their context health; null in a workspace. */
+  readonly apps = signal<AppHealth[] | null>(null);
+  /** The message of a blocked readiness; null when the mode can run. */
+  readonly blockMessage = computed<string | null>(() => null);
   readonly masterBranch = computed(() => this.branches()?.current ?? null);
   readonly otherBranches = computed(() => (this.branches()?.others ?? []).map((o) => o.change));
   readonly systems = computed(() => {
