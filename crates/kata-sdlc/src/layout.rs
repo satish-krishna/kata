@@ -430,4 +430,105 @@ mod tests {
             }
         );
     }
+
+    /// R8.1: a workspace of a master `m` and products `app` and `api` keeps every answer it had before
+    /// the layout existed.
+    #[test]
+    fn a_workspace_keeps_every_answer() {
+        use crate::branch;
+        use crate::coordinator::{
+            BuildChoices, BuildFacts, BuildReadiness, Command, Coordinator, Input, RepoReadiness,
+            TaskFact,
+        };
+        use crate::holds::{keys_for, RepoKey};
+        use crate::permissions::fixtures::place;
+        use crate::permissions::RunKind;
+        use crate::plugin::{self, GhPresence, Plugin, Readiness};
+        use crate::review::ReviewCurrency;
+        use crate::runspec::build_workdir;
+        use std::collections::BTreeMap;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().to_path_buf();
+        let master = testutil::repo(&ws, "m");
+        testutil::commit_file(
+            &master,
+            ".ai-sdlc.json",
+            "{\"version\":1,\"systems\":{}}\n",
+            "marker",
+        );
+        testutil::repo(&ws, "app");
+        testutil::repo(&ws, "api");
+
+        // The layout of the opened folder and the repository it opens as.
+        assert_opened(open(&program(), &ws), &ws, &ws, Layout::Workspace);
+
+        // The readiness comes back unchanged on 1.1.0.
+        let ready = Readiness::Ready {
+            plugin: Plugin {
+                dir: ws.join("plugin"),
+                version: "1.1.0".into(),
+                layouts: vec![1],
+            },
+            gh: GhPresence::Present,
+        };
+        assert_eq!(plugin::for_layout(&ready, Layout::Workspace), ready);
+
+        // The master checkout can be switched.
+        assert!(branch::switchable(Layout::Workspace));
+
+        // A build or review holds one key per product repository.
+        let repos = vec!["app".to_string(), "api".to_string()];
+        assert_eq!(
+            keys_for(Layout::Workspace, &master, &ws, &repos),
+            vec![RepoKey::of(&ws.join("app")), RepoKey::of(&ws.join("api"))]
+        );
+
+        // A run of a repository works in `<ws>/<repo>`.
+        let mut at = place(RunKind::Build { repo: "app".into() });
+        at.workspace = ws.clone();
+        assert_eq!(build_workdir(&at, "app"), ws.join("app"));
+        assert_eq!(build_workdir(&at, "api"), ws.join("api"));
+
+        // Both ready repositories launch in one look.
+        let mut co = Coordinator::new(ReviewCurrency::None, BTreeMap::new(), false);
+        let choices = BuildChoices {
+            timeout_secs: 3600,
+            instructions: None,
+            continue_on_leftovers: false,
+        };
+        let asked = co.step(Input::Begin {
+            timeout_secs: 3600,
+            rounds: Vec::new(),
+            choices,
+        });
+        assert_eq!(asked, vec![Command::ReadStatus]);
+        let facts = BuildFacts {
+            has_tasks: true,
+            repos: ["app", "api"]
+                .iter()
+                .map(|r| RepoReadiness {
+                    repo: r.to_string(),
+                    state: BuildReadiness::Ready,
+                })
+                .collect(),
+            tasks: [("T1", "app"), ("T2", "api")]
+                .iter()
+                .map(|(id, r)| TaskFact {
+                    id: id.to_string(),
+                    repo: r.to_string(),
+                    logged: false,
+                })
+                .collect(),
+        };
+        let launched: Vec<String> = co
+            .step(Input::Status(facts))
+            .into_iter()
+            .filter_map(|c| match c {
+                Command::Launch { key, .. } => Some(key),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(launched, vec!["app".to_string(), "api".to_string()]);
+    }
 }
