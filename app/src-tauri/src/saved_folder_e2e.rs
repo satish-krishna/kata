@@ -228,3 +228,28 @@ fn the_backend_refuses_a_switch_it_cannot_place() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(crate::switch_layout(None, tmp.path().to_str().unwrap()).is_err());
 }
+
+/// R8.1: a workspace whose own folder is the root of a git repository (a workspace kept under git, the
+/// master a child) is added as a workspace and found again from the saved folder.
+#[test]
+fn a_workspace_that_is_a_git_root_is_found_from_the_folder_saved_for_it() {
+    let program = vendored();
+    let tmp = tempfile::tempdir().unwrap();
+    let parent = tmp.path().canonicalize().unwrap();
+    let ws = workspace(&parent);
+    git(&ws, &["init", "-q", "-b", "main"]);
+
+    let (saved, layout) = crate::resolve_added(Some(&program), ws.to_str().unwrap()).unwrap();
+    assert_eq!(layout, Layout::Workspace);
+
+    start(
+        &program,
+        &Place {
+            layout,
+            master: ws.join("ai-sdlc"),
+            workspace: ws.clone(),
+        },
+    );
+
+    found_again(&program, &saved);
+}
