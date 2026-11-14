@@ -246,7 +246,7 @@ describe('SdlcHomeViewModel add workspace', () => {
       new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [],
     });
     vi.spyOn(transport, 'sdlcScan')
-      .mockResolvedValueOnce(scanOf({ master: { kind: 'none' }, marker: null }))
+      .mockResolvedValueOnce(scanOf({ master: { kind: 'none' }, master_folder: null, marker: null }))
       .mockResolvedValueOnce(scanOf({ master: { kind: 'one', repo: 'commerce-docs', committed: false }, marker: null }));
     await vm.addWorkspace();
     expect(snap.mock.calls.map((c) => c[0])).toEqual([

@@ -9,7 +9,6 @@ import type { HomeList } from '@bindings/HomeList';
 import type { HomeRow } from '@bindings/HomeRow';
 import type { Refresh } from '@bindings/Refresh';
 import type { ContextState } from '@bindings/ContextState';
-import type { Layout } from '@bindings/Layout';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { Readiness } from '@bindings/Readiness';
 import type { Settings } from '@bindings/Settings';
@@ -37,7 +36,6 @@ import {
   folderName,
   isSetUp,
   lastRunTimes,
-  masterPath,
   masterRepo,
   readContextStates,
   repoRows,
@@ -64,8 +62,6 @@ export type HomeState =
 const PROGRESS_OWNER = 'home';
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-/** The git repository a run works in: the folder itself for a single-repo repository, the master's folder in a workspace. */
-const masterFolder = (folder: string, repo: string, layout: Layout | undefined): string => (layout === 'single-repo' ? folder : masterPath(folder, repo));
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 /** One spelling per folder: forward slashes, no trailing separator, case-insensitive (Windows paths). */
 const sameFolder = (a: string, b: string): boolean => {
@@ -413,8 +409,7 @@ export class SdlcHomeViewModel {
 
   private readonly masterDir = computed(() => {
     const w = this.current();
-    const repo = this.scan() ? masterRepo(this.scan()!) : null;
-    return w && repo ? masterFolder(w.folder, repo, this.scan()?.layout) : null;
+    return w ? (this.scan()?.master_folder ?? null) : null;
   });
 
   /** `demo` is the `?demo=` query value: `sdlc-setup` opens the add-workspace flow on a folder that needs setup, and `start` triages a described change with a scripted run. Browser only. `context` is the `?context=` query value, a repo the context screen handed over to run or refresh its context. */
@@ -950,7 +945,7 @@ export class SdlcHomeViewModel {
   /** Run first-time setup for a folder. Returns the rescanned workspace, or null when it did not end set up. */
   private async runSetup(folder: string, scan: WorkspaceScan): Promise<WorkspaceScan | null> {
     const repo = masterRepo(scan);
-    const master = repo ? masterPath(folder, repo) : null;
+    const master = scan.master_folder;
     if (master && repo && !(await this.onBase(master, repo))) return null;
     const built = specFor('setup', null, { folder, system: '', change: null }, await this.currentSettings(), this.catalog() ?? []);
     const spec = await this.confirm(built);
@@ -1233,9 +1228,9 @@ export class SdlcHomeViewModel {
     } catch {
       // Nothing decided the plugin is usable, so the notice says to install it.
     }
-    if (isSetUp(scan) && repo !== null) {
+    const master = scan.master_folder;
+    if (isSetUp(scan) && repo !== null && master !== null) {
       try {
-        const master = masterFolder(w.folder, repo, scan.layout);
         let home: { list: HomeList; views: WorkspaceView | null };
         [branches, home, lastRuns] = await Promise.all([
           this.transport.sdlcBranches(master),

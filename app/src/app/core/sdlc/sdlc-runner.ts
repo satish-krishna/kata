@@ -664,8 +664,8 @@ export class SdlcRunner {
       const scan = await this.transport.sdlcScan(folder);
       const repo = masterRepo(scan);
       const snapshot = repo === null ? undefined : candidates.get(repo);
-      if (repo === null || snapshot === undefined) return null;
-      return { target: { kind: 'workspace', master: masterPath(folder, repo) }, snapshot };
+      if (scan.master_folder === null || snapshot === undefined) return null;
+      return { target: { kind: 'workspace', master: scan.master_folder }, snapshot };
     } catch {
       return null;
     }

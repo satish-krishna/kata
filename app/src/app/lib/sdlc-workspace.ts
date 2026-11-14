@@ -22,11 +22,6 @@ export function masterPath(folder: string, repo: string): string {
   return `${folder.replace(/[\\/]+$/, '')}/${repo}`;
 }
 
-/** The git repository a run works in: the folder itself for a single-repo repository, the master's folder in a workspace. */
-export function masterFolder(folder: string, repo: string, layout: string | undefined): string {
-  return layout === 'single-repo' ? folder : masterPath(folder, repo);
-}
-
 /** The last path segment, used as the default workspace name. */
 export function folderName(folder: string): string {
   const parts = folder.split(/[\\/]/).filter((p) => p !== '');

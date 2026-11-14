@@ -303,7 +303,7 @@ describe('SdlcRunner.run', () => {
       fake.calls.push('snapshot');
       return (a[0] as { master: string }).master === '/ws/a-intent' ? before.a : before.b;
     });
-    fake.scan = { folder: '/ws', repos: ['a-intent', 'a-core'], master: { kind: 'one', repo: 'a-intent', committed: false }, master_folder: null, marker: null, marker_error: null };
+    fake.scan = { folder: '/ws', repos: ['a-intent', 'a-core'], master: { kind: 'one', repo: 'a-intent', committed: false }, master_folder: '/ws/a-intent', marker: null, marker_error: null };
     fake.leftovers = { ...EMPTY, discardable: ['.ai-sdlc.json'] };
     await runner.run('Running setup', seedSpec(), {
       ...TARGET, target: null, link: null, firstSetup: { folder: '/ws', repos: ['a-intent', 'a-core'] },

@@ -11,7 +11,7 @@ import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { VersionsStore } from '../../core/versions/versions.store';
 import { parseFrontMatter } from '../../lib/sdlc';
-import { contextAction, contextLabel, masterFolder, masterRepo, readContextStates, repoRows } from '../../lib/sdlc-workspace';
+import { contextAction, contextLabel, masterRepo, readContextStates, repoRows } from '../../lib/sdlc-workspace';
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -124,7 +124,8 @@ export class ContextPageViewModel {
       const scan = await this.transport.sdlcScan(w.folder);
       const repo = masterRepo(scan);
       if (repo === null) return null;
-      const master = masterFolder(w.folder, repo, scan.layout);
+      const master = scan.master_folder;
+      if (master === null) return null;
       const [branches, contexts] = await Promise.all([
         this.transport.sdlcBranches(master),
         readContextStates(scan, (m, s, r) => this.transport.sdlcContextHealth(w.folder, m, s, r)),

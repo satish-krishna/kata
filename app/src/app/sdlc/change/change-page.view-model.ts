@@ -76,7 +76,7 @@ import { section } from '../../lib/doc';
 import { fullPipelineIdea } from '../../lib/sdlc-fix';
 import { inTauri } from '../../lib/mock';
 import { taskRecord, withRows, type TaskView } from '../../lib/task-view';
-import { masterFolder, masterRepo } from '../../lib/sdlc-workspace';
+import { masterRepo } from '../../lib/sdlc-workspace';
 import { namingRefusal } from '../../lib/sdlc-naming';
 
 export type ChangeState = 'loading' | 'ready' | 'not-found';
@@ -1311,9 +1311,7 @@ export class ChangePageViewModel {
 
   private masterDir(): string | null {
     const w = this.current();
-    const scan = this.scan();
-    const repo = scan ? masterRepo(scan) : null;
-    return w && repo ? masterFolder(w.folder, repo, scan?.layout) : null;
+    return w ? (this.scan()?.master_folder ?? null) : null;
   }
 
   /** Accept a document of the change the page shows: the plugin commits it and runs the team's accepting hooks. */
@@ -1630,7 +1628,11 @@ export class ChangePageViewModel {
         finish('not-found', null, null);
         return;
       }
-      const master = masterFolder(w.folder, repo, scan.layout);
+      const master = scan.master_folder;
+      if (master === null) {
+        finish('not-found', null, null);
+        return;
+      }
       const ref: ChangeRef = { workspace: w.folder, system, change: name };
       const [branches, opening, links, records, catalog, recorded] = await Promise.all([
         this.transport.sdlcBranches(master),
