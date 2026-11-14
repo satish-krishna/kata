@@ -3884,6 +3884,35 @@ mod tests {
         );
     }
 
+    // T13: a refusal while continuing leaves the build in place, stopped.
+    #[test]
+    fn a_refused_continue_leaves_the_stopped_build_in_place() {
+        let text = "`engine` is being built in this copy; build one app at a time";
+        let refusal = json!({"event": "build.start", "repo": "workbench", "outcome": "refused",
+            "problems": [text], "details": {}});
+        let r = single_rig();
+        r.two_apps("B");
+        r.tools.start_answer("workbench", refusal);
+        assert!(matches!(
+            r.host.start(&cref("B"), form()),
+            StartOutcome::Started { .. }
+        ));
+        r.tools.log("B", "engine", "T1");
+        r.launcher.finish(r.launcher.launched("engine")[0], 0);
+        let stopped = r.host.state(&cref("B")).unwrap().stopped;
+        assert!(stopped["workbench"].reason.contains(text), "{stopped:?}");
+        // Continuing with nothing live starts afresh; the plugin refuses again.
+        assert_eq!(
+            r.host.continue_with(&cref("B"), "workbench", None),
+            StartOutcome::Refused {
+                problems: strs(&[text])
+            }
+        );
+        let after = r.host.state(&cref("B")).unwrap();
+        assert_eq!(after.stopped, stopped, "the stopped build is still shown");
+        assert_eq!(r.root_holder(), None, "nothing is held");
+    }
+
     // R4.2
     #[test]
     fn single_repo_prepares_each_app_just_before_it_launches() {
