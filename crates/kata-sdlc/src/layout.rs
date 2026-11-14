@@ -145,6 +145,11 @@ pub fn open(program: &Program, folder: &Path) -> Result<Opened, OpenError> {
     })
 }
 
+/// The layout the program is called in for `folder`.
+pub fn for_folder(_program: &Program, _folder: &Path) -> Result<Layout, ProgramError> {
+    Ok(Layout::Workspace)
+}
+
 /// The `layout` field of the marker in `dir`, when there is a marker that has one.
 fn marker_layout(dir: &Path) -> Option<Layout> {
     let text = std::fs::read_to_string(dir.join(crate::workspace::MARKER)).ok()?;
@@ -321,6 +326,156 @@ mod tests {
             entry,
         };
         assert_opened(open(&old, &root), &root, &parent, Layout::SingleRepo);
+    }
+
+    /// Points `KATA_HOME` at an empty folder while held, so the saved workspace list is the test's own.
+    struct Home {
+        dir: tempfile::TempDir,
+        prev: Option<std::ffi::OsString>,
+    }
+
+    impl Home {
+        fn new() -> Home {
+            let dir = tempfile::tempdir().unwrap();
+            let prev = std::env::var_os("KATA_HOME");
+            std::env::set_var("KATA_HOME", dir.path());
+            Home { dir, prev }
+        }
+
+        /// Writes the saved workspace list as given, the way an earlier Workbench left it.
+        fn saved(&self, json: &str) {
+            let dir = self.dir.path().join("workbench");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("workspaces.json"), json).unwrap();
+        }
+    }
+
+    impl Drop for Home {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(v) => std::env::set_var("KATA_HOME", v),
+                None => std::env::remove_var("KATA_HOME"),
+            }
+        }
+    }
+
+    fn saved_layouts() -> Vec<Option<Layout>> {
+        crate::store::load_workspaces()
+            .iter()
+            .map(|w| w.layout)
+            .collect()
+    }
+
+    fn entry_json(folder: &Path, layout: &str) -> String {
+        let folder = serde_json::to_string(&folder.display().to_string()).unwrap();
+        format!(r#"[{{"id":"w","name":"w","folder":{folder},"last_opened":1{layout}}}]"#)
+    }
+
+    /// A program that logs each call's arguments to `calls.log` beside it and answers as a workspace would.
+    fn recording(dir: &Path) -> Program {
+        let entry = dir.join("ai-sdlc.mjs");
+        let script = r#"import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const here = path.dirname(fileURLToPath(import.meta.url));
+const args = process.argv.slice(2);
+fs.appendFileSync(path.join(here, 'calls.log'), args.join(' ') + '\n');
+if (args[0] === 'resolve') {
+  console.log(JSON.stringify({ master: here, workspace: here, problems: [], layout: 'workspace' }));
+} else {
+  console.log(JSON.stringify({ system: 'kata', changes: [], problems: [] }));
+}
+"#;
+        std::fs::write(&entry, script).unwrap();
+        Program {
+            node: "node".into(),
+            entry,
+        }
+    }
+
+    fn calls(dir: &Path) -> Vec<String> {
+        std::fs::read_to_string(dir.join("calls.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// An entry saved before the field existed is a workspace: the home reads it in the workspace form, with no
+    /// Node start to learn the layout, and the folder is placed in that form too.
+    #[test]
+    #[serial_test::serial]
+    fn an_entry_saved_without_a_layout_is_read_as_a_workspace() {
+        let home = Home::new();
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path();
+        home.saved(&entry_json(folder, ""));
+        assert_eq!(saved_layouts(), [Some(Layout::Workspace)]);
+
+        let program = recording(folder);
+        let layout = for_folder(&program, folder).unwrap();
+        assert_eq!(layout, Layout::Workspace);
+        assert!(calls(folder).is_empty(), "{:?}", calls(folder));
+
+        let named = folder.display().to_string();
+        program
+            .run_in(&["list", "--json", "--system", "kata"], folder, layout)
+            .unwrap();
+        assert_eq!(
+            calls(folder),
+            [format!("list --json --system kata --workspace {named}")]
+        );
+
+        program.resolve(folder).unwrap();
+        assert_eq!(
+            calls(folder)[1..],
+            [format!("resolve --json --workspace {named}")]
+        );
+        assert_eq!(saved_layouts(), [Some(Layout::Workspace)]);
+    }
+
+    /// A saved layout is never replaced: a single-repo repository saved as a workspace stays one, and is
+    /// called in the workspace form, whatever the program says about it.
+    #[test]
+    #[serial_test::serial]
+    fn a_saved_layout_is_never_overwritten_by_the_program() {
+        let home = Home::new();
+        let tmp = tempfile::tempdir().unwrap();
+        let root = testutil::single_repo(tmp.path(), "kata", &[("engine", "engine")]);
+        home.saved(&entry_json(&root, r#","layout":"workspace""#));
+        let program = program();
+
+        assert_eq!(open(&program, &root).unwrap().layout, Layout::Workspace);
+        let place = program.resolve(&root).unwrap();
+        assert_eq!(place.layout, Layout::Workspace);
+        assert!(same(&place.workspace, &root), "{:?}", place.workspace);
+        assert_eq!(for_folder(&program, &root).unwrap(), Layout::Workspace);
+        assert_eq!(saved_layouts(), [Some(Layout::Workspace)]);
+    }
+
+    /// A saved folder whose layout is not known yet takes the program's first answer, once; a folder that is
+    /// not saved is answered the same way and nothing is written.
+    #[test]
+    #[serial_test::serial]
+    fn the_first_answer_fills_a_layout_that_is_not_known() {
+        let home = Home::new();
+        let tmp = tempfile::tempdir().unwrap();
+        let root = testutil::single_repo(tmp.path(), "kata", &[("engine", "engine")]);
+        home.saved(&entry_json(&root, r#","layout":null"#));
+        let program = program();
+
+        assert_eq!(saved_layouts(), [None]);
+        assert_opened(open(&program, &root), &root, tmp.path(), Layout::SingleRepo);
+        assert_eq!(saved_layouts(), [Some(Layout::SingleRepo)]);
+        assert_eq!(for_folder(&program, &root).unwrap(), Layout::SingleRepo);
+
+        let other = tempfile::tempdir().unwrap();
+        let elsewhere = testutil::single_repo(other.path(), "kata", &[("engine", "engine")]);
+        assert_eq!(
+            for_folder(&program, &elsewhere).unwrap(),
+            Layout::SingleRepo
+        );
+        assert_eq!(crate::store::load_workspaces().len(), 1);
     }
 
     fn program() -> Program {

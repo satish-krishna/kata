@@ -61,7 +61,7 @@ pub struct WorkspaceEntry {
     #[cfg_attr(feature = "ts", ts(skip))]
     pub last_system: Option<String>,
     /// How the saved folder is laid out; an entry saved before this field existed is a workspace.
-    pub layout: crate::layout::Layout,
+    pub layout: Option<crate::layout::Layout>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -227,7 +227,7 @@ fn workspace_id(name: &str, list: &[WorkspaceEntry]) -> String {
 pub fn add_workspace(
     name: &str,
     folder: &str,
-    layout: crate::layout::Layout,
+    layout: Option<crate::layout::Layout>,
     now: u64,
 ) -> Result<WorkspaceChoice, StoreError> {
     update_workspaces(|list| {
@@ -476,12 +476,12 @@ mod tests {
     #[serial]
     fn add_workspace_makes_a_unique_id() {
         let _home = with_home();
-        add_workspace("My Repo", "/one", Layout::Workspace, 10).unwrap();
-        let second = add_workspace("My Repo", "/two", Layout::Workspace, 10).unwrap();
+        add_workspace("My Repo", "/one", Some(Layout::Workspace), 10).unwrap();
+        let second = add_workspace("My Repo", "/two", Some(Layout::Workspace), 10).unwrap();
         let ids: Vec<&str> = second.workspaces.iter().map(|w| w.id.as_str()).collect();
         assert_eq!(ids, ["my-repo", "my-repo-2"]);
         assert_eq!(second.current.as_deref(), Some("my-repo-2"));
-        let odd = add_workspace("!!!", "/three", Layout::Workspace, 10).unwrap();
+        let odd = add_workspace("!!!", "/three", Some(Layout::Workspace), 10).unwrap();
         assert_eq!(odd.workspaces.last().unwrap().id, "workspace");
     }
 
@@ -510,31 +510,32 @@ mod tests {
     #[serial]
     fn a_single_repo_entry_keeps_its_layout() {
         let _home = with_home();
-        add_workspace("workspaces", "D:/workspaces", Layout::Workspace, 10).unwrap();
-        add_workspace("kata", "D:/tmp/kata", Layout::SingleRepo, 20).unwrap();
+        add_workspace("workspaces", "D:/workspaces", Some(Layout::Workspace), 10).unwrap();
+        add_workspace("kata", "D:/tmp/kata", Some(Layout::SingleRepo), 20).unwrap();
         let list = load_workspaces();
-        let seen: Vec<(&str, Layout)> =
+        let seen: Vec<(&str, Option<Layout>)> =
             list.iter().map(|w| (w.folder.as_str(), w.layout)).collect();
         assert_eq!(
             seen,
             vec![
-                ("D:/workspaces", Layout::Workspace),
-                ("D:/tmp/kata", Layout::SingleRepo)
+                ("D:/workspaces", Some(Layout::Workspace)),
+                ("D:/tmp/kata", Some(Layout::SingleRepo))
             ]
         );
         // A file written before the field existed reads as a workspace.
         let old = r#"[{"id":"old","name":"old","folder":"/old","last_opened":3}]"#;
         std::fs::write(workbench_dir().unwrap().join("workspaces.json"), old).unwrap();
-        assert_eq!(load_workspaces()[0].layout, Layout::Workspace);
+        assert_eq!(load_workspaces()[0].layout, Some(Layout::Workspace));
     }
 
     #[test]
     #[serial]
     fn adding_a_saved_root_selects_that_entry() {
         let _home = with_home();
-        add_workspace("kata", "D:/tmp/kata", Layout::SingleRepo, 10).unwrap();
-        add_workspace("other", "D:/tmp/other", Layout::Workspace, 20).unwrap();
-        let choice = add_workspace("kata again", "d:/tmp/kata/", Layout::SingleRepo, 30).unwrap();
+        add_workspace("kata", "D:/tmp/kata", Some(Layout::SingleRepo), 10).unwrap();
+        add_workspace("other", "D:/tmp/other", Some(Layout::Workspace), 20).unwrap();
+        let choice =
+            add_workspace("kata again", "d:/tmp/kata/", Some(Layout::SingleRepo), 30).unwrap();
         assert_eq!(choice.workspaces.len(), 2);
         assert_eq!(choice.current.as_deref(), Some("kata"));
     }
@@ -662,6 +663,25 @@ mod tests {
         assert_eq!(w[0].id, "w1");
         assert_eq!(w[0].folder, "D:/acme");
         assert_eq!(w[0].last_opened, 0);
+    }
+
+    #[test]
+    fn an_entry_without_a_layout_is_a_workspace_and_a_null_layout_is_not_known() {
+        let w: Vec<WorkspaceEntry> = serde_json::from_str(
+            r#"[{"id":"old","name":"old","folder":"/old","last_opened":3},
+                {"id":"new","name":"new","folder":"/new","last_opened":4,"layout":null},
+                {"id":"one","name":"one","folder":"/one","last_opened":5,"layout":"single-repo"}]"#,
+        )
+        .unwrap();
+        let layouts: Vec<Option<Layout>> = w.iter().map(|e| e.layout).collect();
+        assert_eq!(
+            layouts,
+            [Some(Layout::Workspace), None, Some(Layout::SingleRepo)]
+        );
+        // A layout that is not known yet is written as null, so it reads back as not known.
+        let again: Vec<WorkspaceEntry> =
+            serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
+        assert_eq!(again, w);
     }
 
     #[test]

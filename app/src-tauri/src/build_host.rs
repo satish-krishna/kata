@@ -219,7 +219,9 @@ pub fn workspace_id_in_store(folder: &Path) -> Option<String> {
 /// The layout the Workbench's workspace list keeps `folder` under; a folder that is not saved reads as a
 /// workspace, the default.
 pub fn layout_in_store(folder: &Path) -> kata_sdlc::layout::Layout {
-    saved_entry(folder).map(|w| w.layout).unwrap_or_default()
+    saved_entry(folder)
+        .and_then(|w| w.layout)
+        .unwrap_or_default()
 }
 
 /// The id of a run's transcript: the stem of the path in its first `transcript: <path>` log event.

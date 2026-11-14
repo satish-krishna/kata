@@ -758,12 +758,15 @@ fn sdlc_add_workspace(
 fn resolve_added(
     program: Option<&sdlc::ai_sdlc::Program>,
     folder: &str,
-) -> Result<(String, sdlc::layout::Layout), String> {
+) -> Result<(String, Option<sdlc::layout::Layout>), String> {
     let Some(program) = program else {
-        return Ok((folder.to_string(), sdlc::layout::Layout::Workspace));
+        return Ok((folder.to_string(), Some(sdlc::layout::Layout::Workspace)));
     };
     let opened = sdlc::layout::open(program, Path::new(folder)).map_err(|e| e.to_string())?;
-    Ok((opened.root.to_string_lossy().into_owned(), opened.layout))
+    Ok((
+        opened.root.to_string_lossy().into_owned(),
+        Some(opened.layout),
+    ))
 }
 
 #[tauri::command]
@@ -1419,7 +1422,7 @@ fn sdlc_home_list(
         &readiness,
         entry.last_system.as_deref(),
         Path::new(&entry.folder),
-        entry.layout,
+        entry.layout.unwrap_or_default(),
         &systems,
     )
 }
@@ -2577,7 +2580,7 @@ mod tests {
         let program = sdlc::ai_sdlc::Program::locate(&plugin);
         let (root, layout) = resolve_added(Some(&program), app.to_str().unwrap()).unwrap();
         assert_eq!(Path::new(&root), repo);
-        assert_eq!(layout, sdlc::layout::Layout::SingleRepo);
+        assert_eq!(layout, Some(sdlc::layout::Layout::SingleRepo));
     }
 
     #[test]

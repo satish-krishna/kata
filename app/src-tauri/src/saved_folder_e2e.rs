@@ -150,6 +150,7 @@ fn a_single_repo_change_is_found_from_the_folder_saved_for_it() {
 
     // The folder the app saves for the engineer's pick, exactly as `sdlc_add_workspace` computes it.
     let (saved, layout) = crate::resolve_added(Some(&program), root.to_str().unwrap()).unwrap();
+    let layout = layout.unwrap();
     assert_eq!(layout, Layout::SingleRepo);
 
     // Start the change; the one hand-made place is for this setup step only.
@@ -173,6 +174,7 @@ fn a_workspace_change_is_found_from_the_folder_saved_for_it() {
     let ws = workspace(&parent);
 
     let (saved, layout) = crate::resolve_added(Some(&program), ws.to_str().unwrap()).unwrap();
+    let layout = layout.unwrap();
     assert_eq!(layout, Layout::Workspace);
 
     start(
@@ -240,6 +242,7 @@ fn a_workspace_that_is_a_git_root_is_found_from_the_folder_saved_for_it() {
     git(&ws, &["init", "-q", "-b", "main"]);
 
     let (saved, layout) = crate::resolve_added(Some(&program), ws.to_str().unwrap()).unwrap();
+    let layout = layout.unwrap();
     assert_eq!(layout, Layout::Workspace);
 
     start(
@@ -251,5 +254,80 @@ fn a_workspace_that_is_a_git_root_is_found_from_the_folder_saved_for_it() {
         },
     );
 
+    found_again(&program, &saved, layout);
+}
+
+/// Points `KATA_HOME` at an empty folder while held, under the lock every test that moves the home takes.
+struct KataHome {
+    _dir: tempfile::TempDir,
+    prev: Option<std::ffi::OsString>,
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+impl KataHome {
+    fn empty() -> KataHome {
+        let guard = crate::tests::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let prev = std::env::var_os("KATA_HOME");
+        std::env::set_var("KATA_HOME", dir.path());
+        KataHome {
+            _dir: dir,
+            prev,
+            _guard: guard,
+        }
+    }
+}
+
+impl Drop for KataHome {
+    fn drop(&mut self) {
+        match &self.prev {
+            Some(v) => std::env::set_var("KATA_HOME", v),
+            None => std::env::remove_var("KATA_HOME"),
+        }
+    }
+}
+
+/// F1 of review 3: a single-repo repository added while the plugin was 1.3.1 (no program, so nothing is known
+/// about its layout) is saved with no layout. Opened on 1.4.0, the program's answer is stored once, and the home
+/// lists its started change from the saved folder in the layout it stored.
+#[test]
+fn a_single_repo_added_without_a_program_stores_its_layout_when_opened_and_lists_its_change() {
+    let _home = KataHome::empty();
+    let program = vendored();
+    let tmp = tempfile::tempdir().unwrap();
+    let parent = tmp.path().canonicalize().unwrap();
+    let root = single_repo(&parent);
+
+    // Added on 1.3.1: the mode is not ready, so there is no program to ask.
+    let (saved, layout) = crate::resolve_added(None, root.to_str().unwrap()).unwrap();
+    assert_eq!(layout, None);
+    kata_sdlc::store::add_workspace("kata", &saved, layout, 1).unwrap();
+
+    start(
+        &program,
+        &Place {
+            layout: Layout::SingleRepo,
+            master: root.clone(),
+            workspace: parent.clone(),
+        },
+    );
+
+    // Upgraded to 1.4.0: the home opens the folder (`sdlc_scan`), and the program's answer is stored.
+    let opened = kata_sdlc::layout::open(&program, Path::new(&saved)).unwrap();
+    assert_eq!(opened.layout, Layout::SingleRepo);
+    let stored = |w: &kata_sdlc::store::WorkspaceEntry| (w.folder.clone(), w.layout);
+    assert_eq!(
+        kata_sdlc::store::load_workspaces()
+            .iter()
+            .map(stored)
+            .collect::<Vec<_>>(),
+        [(saved.clone(), Some(Layout::SingleRepo))]
+    );
+
+    // The home lists the change in the layout the saved entry now holds, and every other read finds it.
+    let layout = kata_sdlc::layout::for_folder(&program, Path::new(&saved)).unwrap();
+    assert_eq!(layout, Layout::SingleRepo);
     found_again(&program, &saved, layout);
 }
