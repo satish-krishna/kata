@@ -11,10 +11,26 @@ use std::path::{Path, PathBuf};
 /// names, a `\\?\` prefix, a mapped drive, a junction or a symlink all name one folder in different spellings. A
 /// folder that is gone keeps its lexical key.
 pub fn resolved_key(path: &Path) -> RepoKey {
-    match std::fs::canonicalize(path) {
-        Ok(real) => RepoKey::of(&strip_verbatim(real)),
-        Err(_) => RepoKey::of(path),
+    if let Ok(real) = std::fs::canonicalize(path) {
+        return RepoKey::of(&strip_verbatim(real));
     }
+    // A folder that is gone resolves through its nearest existing ancestor, the rest joined on as written.
+    let mut tail: Vec<&std::ffi::OsStr> = Vec::new();
+    let mut cur = path;
+    while let Some(parent) = cur.parent() {
+        if let Some(name) = cur.file_name() {
+            tail.push(name);
+        }
+        if let Ok(real) = std::fs::canonicalize(parent) {
+            let mut full = strip_verbatim(real);
+            for name in tail.iter().rev() {
+                full.push(name);
+            }
+            return RepoKey::of(&full);
+        }
+        cur = parent;
+    }
+    RepoKey::of(path)
 }
 
 /// `resolved_key` for a key already held: the key's normalized path is resolved again.
@@ -173,6 +189,18 @@ mod tests {
     fn a_missing_path_keeps_its_lexical_key() {
         let gone = Path::new("D:/no/such/Folder/here");
         assert_eq!(resolved_key(gone), RepoKey::of(gone));
+    }
+
+    #[test]
+    fn a_missing_child_resolves_through_its_existing_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let child = dir.path().join("gone").join("app");
+        let want = resolved_key(dir.path());
+        assert_eq!(
+            resolved_key(&child).path(),
+            format!("{}/gone/app", want.path())
+        );
+        assert!(want.contains(&resolved_key(&child)));
     }
 
     #[cfg(windows)]
