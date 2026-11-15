@@ -441,6 +441,14 @@ describe('MockTransport', () => {
       expect(opened.status).toEqual(await t.sdlcBuildStatus(ref(MOCK_BUILD_CHANGE)));
     });
 
+    it('answers a red record for the demo change: T2 has a recorded pass with 20 lines, any other task has none', async () => {
+      const t = new MockTransport();
+      const t2 = await t.sdlcRedRecord(ref(MOCK_BUILD_CHANGE), 'commerce-core', 'T2');
+      expect(t2.observed).toBe(false);
+      expect(t2.stored?.output.split('\n')).toHaveLength(20);
+      expect(await t.sdlcRedRecord(ref(MOCK_BUILD_CHANGE), 'commerce-core', 'T1')).toEqual({ observed: false, reason: 'no red recorded for T1 on this machine', stored: null });
+    });
+
     it('opens a planned change whose build status cannot be read: no status and a notice, never a failed open (F1)', async () => {
       const t = new MockTransport();
       vi.spyOn(t, 'sdlcBuildStatus').mockRejectedValue(new Error('path does not exist in HEAD'));

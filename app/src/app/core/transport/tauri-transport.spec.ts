@@ -127,6 +127,7 @@ const rows: Row[] = [
   ['sdlcRunLinks', (t) => t.sdlcRunLinks(), 'sdlc_run_links', undefined],
   ['sdlcLinkRun', (t) => t.sdlcLinkRun(link), 'sdlc_link_run', { link }],
   ['sdlcBuildStatus', (t) => t.sdlcBuildStatus(change), 'sdlc_build_status', { change }],
+  ['sdlcRedRecord', (t) => t.sdlcRedRecord(change, 'r', 'T2'), 'sdlc_red_record', { change, repo: 'r', task: 'T2' }],
   ['sdlcBuildBoard', (t) => t.sdlcBuildBoard(['a'], { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [], redShown: false }, ['a'], {}), 'sdlc_build_board', { repos: ['a'], status: { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [], redShown: false }, going: ['a'], stopped: {} }],
   ['sdlcReviewStanding', (t) => t.sdlcReviewStanding({ links: [], records: [], heads: { a: 'h' }, scope: { workspaceId: 'w', system: 's', change: 'c' }, document: null, master: 'm' }), 'sdlc_review_standing', { links: [], records: [], heads: { a: 'h' }, scope: { workspaceId: 'w', system: 's', change: 'c' }, document: null, master: 'm' }],
   ['sdlcReviewRecord', (t) => t.sdlcReviewRecord(change), 'sdlc_review_record', { change }],

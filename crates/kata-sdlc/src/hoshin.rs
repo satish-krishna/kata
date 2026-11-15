@@ -7,6 +7,7 @@
 //! [`Program::step`] or [`Program::step_long`] as a typed [`StepOutcome`], and a read through
 //! [`Program::run`] as its JSON.
 pub mod list;
+pub mod red;
 pub mod show;
 pub mod state;
 pub mod status;
@@ -70,6 +71,7 @@ const PLACED: &[&str] = &[
     "status",
     "commit",
     "change",
+    "red",
 ];
 
 /// Where an hoshin command works: the master repository and the workspace around it.
@@ -809,6 +811,18 @@ mod tests {
             ]
         );
         // The caller's own placement is kept, and a command that takes none is left alone.
+        assert_eq!(
+            with_place(&["red", "show", "--json"], "/m", "/w"),
+            [
+                "red",
+                "show",
+                "--json",
+                "--master",
+                "/m",
+                "--workspace",
+                "/w"
+            ]
+        );
         let given = with_place(&["change", "show", "--master", "/x"], "/m", "/w");
         assert_eq!(
             given,

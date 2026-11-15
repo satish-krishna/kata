@@ -1338,6 +1338,25 @@ fn sdlc_build_status(change: build_host::ChangeRef) -> Result<sdlc::build::Build
         .map_err(|e| e.to_string())
 }
 
+/// What the program stored when it ran a task's test at its test commit, and whether red counts as
+/// observed (`red show`). It runs nothing; no record on this machine is an answer, not an error.
+#[tauri::command(async)]
+fn sdlc_red_record(
+    change: build_host::ChangeRef,
+    repo: String,
+    task: String,
+) -> Result<sdlc::hoshin::red::RedRecord, String> {
+    let (plugin, home) = resolved(&change)?;
+    sdlc::hoshin::red::show(
+        &sdlc::hoshin::Program::locate(&plugin),
+        &home.place,
+        &change.change,
+        &repo,
+        &task,
+    )
+    .map_err(|e| e.to_string())
+}
+
 /// The build page's tasks area for the repositories asked for: where each stands and what each task's row shows, from the build log's
 /// status and the live runs and stops the host announced, both as the page last read them from the backend.
 #[tauri::command]
@@ -2547,6 +2566,7 @@ pub fn run() {
             sdlc_link_run,
             sdlc_wait_run_exit,
             sdlc_build_status,
+            sdlc_red_record,
             sdlc_build_heads,
             sdlc_review_record,
             sdlc_plugin_readiness,
