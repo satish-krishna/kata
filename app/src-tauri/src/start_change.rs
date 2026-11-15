@@ -3,8 +3,8 @@
 //! sorted by what the engineer can do about it.
 use crate::steps::{StepKind, StepTable};
 use kata_core::proc::LineSink;
-use kata_sdlc::ai_sdlc::{progress_of, HookFailure, Place, Program, StepOutcome};
 use kata_sdlc::holds::{ChangeKey, RepoKey};
+use kata_sdlc::hoshin::{progress_of, HookFailure, Place, Program, StepOutcome};
 use kata_sdlc::naming;
 use serde::Serialize;
 use std::path::Path;
@@ -156,7 +156,7 @@ pub fn place_for(program: &Program, folder: &std::path::Path) -> Result<Place, S
 }
 
 /// Asks the plugin to start a change named from `date` and the title, and reads its answer through
-/// `ai_sdlc::answer_of`. An `Err` is an answer that passed but named no branch or copy.
+/// `hoshin::answer_of`. An `Err` is an answer that passed but named no branch or copy.
 pub fn start_change(
     program: &Program,
     place: &Place,

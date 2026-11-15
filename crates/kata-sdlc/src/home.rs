@@ -2,9 +2,9 @@
 //! (its own copy, or the engineer's checkout) and the folder of its documents. This module is the one place
 //! Kata asks that, and the one place that checks the folder is on disk. Nothing falls back to the checkout:
 //! a change the plugin cannot place is an error with a message, never a guess.
-use crate::ai_sdlc::state::{self, ChangeState};
-use crate::ai_sdlc::{Place, Program, ProgramError};
 use crate::changes::{is_change_name, is_safe_system};
+use crate::hoshin::state::{self, ChangeState};
+use crate::hoshin::{Place, Program, ProgramError};
 use std::path::{Path, PathBuf};
 
 /// Where the plugin has a change, and how it stands there.

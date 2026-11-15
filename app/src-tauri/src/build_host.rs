@@ -9,10 +9,6 @@ use crate::steps::{StepGuard, StepKind, StepTable};
 use kata_core::proc::{CancelToken, LineSink};
 use kata_core::spec::PermissionMode;
 use kata_core::RunSpec;
-use kata_sdlc::ai_sdlc::state::{self, ChangeState};
-use kata_sdlc::ai_sdlc::{
-    progress_of, Answer, HookFailure, Place, Program, ProgramError, StepOutcome, StepProgressKind,
-};
 use kata_sdlc::coordinator::{
     self, BuildChoices, BuildFacts, BuildPhase, BuildState, Command, Coordinator, Input,
 };
@@ -20,6 +16,10 @@ use kata_sdlc::format::{self, ParsedPlan, ReadResult};
 use kata_sdlc::git;
 use kata_sdlc::holds::{
     keys_for, needed_repos, review_repos, ChangeKey, HoldTable, Purpose, RepoKey,
+};
+use kata_sdlc::hoshin::state::{self, ChangeState};
+use kata_sdlc::hoshin::{
+    progress_of, Answer, HookFailure, Place, Program, ProgramError, StepOutcome, StepProgressKind,
 };
 use kata_sdlc::layout::Layout;
 use kata_sdlc::permissions::{RunKind, RunPlace};
@@ -562,7 +562,7 @@ fn could_not_run(e: &ProgramError) -> StartOutcome {
     }
 }
 
-/// What a step of the plugin that did not pass came to, as `ai_sdlc::answer_of` read it; None when it
+/// What a step of the plugin that did not pass came to, as `hoshin::answer_of` read it; None when it
 /// passed. `prepared` names the repositories already prepared, for a call that was stopped.
 fn failure(outcome: StepOutcome, prepared: &[String]) -> Option<StartOutcome> {
     match outcome {
@@ -1943,11 +1943,11 @@ struct Before {
 mod tests {
     use super::*;
     use crate::steps::{StepEvent, StepKind};
-    use kata_sdlc::ai_sdlc::StepProgressKind;
-    use kata_sdlc::ai_sdlc::{answer_of, ExecError, Reply};
     use kata_sdlc::coordinator::BuildPhase;
     use kata_sdlc::format::{ParsedReviewSection, ParsedTask};
     use kata_sdlc::holds::{Purpose, RepoKey};
+    use kata_sdlc::hoshin::StepProgressKind;
+    use kata_sdlc::hoshin::{answer_of, ExecError, Reply};
     use serde_json::json;
     use std::collections::BTreeSet;
 
@@ -4328,7 +4328,7 @@ mod tests {
                     .map(|a| {
                         (
                             a.to_string(),
-                            kata_sdlc::ai_sdlc::state::AppFacts {
+                            kata_sdlc::hoshin::state::AppFacts {
                                 folder: a.to_string(),
                                 touched: true,
                                 head: Some(format!("head-of-{a}")),

@@ -1,8 +1,8 @@
 //! What a change shows and offers: its stage, its label and the actions the Workbench puts on it, decided
 //! from the plugin's answer (`ChangeState`) and the few facts only the Workbench has (`LiveFacts`).
 //! The frontend arranges this answer; it decides nothing.
-use crate::ai_sdlc::state::{ChangeState, ChangeTrack, SourcePin, StateDocument};
 use crate::copy_removal::CopyRemoval;
+use crate::hoshin::state::{ChangeState, ChangeTrack, SourcePin, StateDocument};
 use serde::{Deserialize, Serialize};
 
 /// What only the Workbench knows about a change right now. Per change: another change's run never counts.
@@ -478,11 +478,11 @@ pub fn of(change: &ChangeState, live: &LiveFacts) -> ChangeOffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_sdlc::state::{
+    use crate::format::{FixAccepted, FixDocumentFacts, FixFacts, FixState};
+    use crate::hoshin::state::{
         BuildLogState, ChangeTrack, Ready, ReadyGate, RepoTasks, ReviewDraft, ReviewState,
         SourcePin, StateDocument, StateDocuments,
     };
-    use crate::format::{FixAccepted, FixDocumentFacts, FixFacts, FixState};
     use std::collections::BTreeMap;
 
     const NOT_LIVE: LiveFacts = LiveFacts {

@@ -96,7 +96,7 @@ pub fn given_for(off: &[String], workdir: &str) -> Given {
     given
 }
 
-const AI_SDLC: &str = "hoshin";
+const HOSHIN: &str = "hoshin";
 const GITHUB_TOKENS: [&str; 3] = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"];
 
 /// The folder a build run of `repo` works in.
@@ -185,9 +185,9 @@ pub fn change_spec(place: &RunPlace, form: RunForm) -> RunSpec {
         name,
         task,
         workdir,
-        plugins: BTreeMap::from([(AI_SDLC.to_string(), PluginConfig::default())]),
+        plugins: BTreeMap::from([(HOSHIN.to_string(), PluginConfig::default())]),
         given: Some(Given {
-            required_plugins: vec![AI_SDLC.to_string()],
+            required_plugins: vec![HOSHIN.to_string()],
             build,
             ..form.given.clone().unwrap_or_default()
         }),

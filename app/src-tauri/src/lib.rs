@@ -390,13 +390,13 @@ fn sdlc_run_history(
 struct PluginTools;
 
 impl PluginTools {
-    fn program(workspace: &Path) -> Result<build_host::ProgramTools, sdlc::ai_sdlc::ProgramError> {
+    fn program(workspace: &Path) -> Result<build_host::ProgramTools, sdlc::hoshin::ProgramError> {
         match state_inputs(&workspace.display().to_string()) {
             (Some(program), _) => Ok(build_host::ProgramTools::new(program)),
             (None, sdlc::plugin::Readiness::Blocked { message, .. }) => {
-                Err(sdlc::ai_sdlc::ProgramError::CouldNotRun { message })
+                Err(sdlc::hoshin::ProgramError::CouldNotRun { message })
             }
-            (None, _) => Err(sdlc::ai_sdlc::ProgramError::CouldNotRun {
+            (None, _) => Err(sdlc::hoshin::ProgramError::CouldNotRun {
                 message: "the hoshin plugin cannot be used".into(),
             }),
         }
@@ -404,53 +404,48 @@ impl PluginTools {
 }
 
 impl build_host::Tools for PluginTools {
-    fn resolve(
-        &self,
-        workspace: &Path,
-    ) -> Result<sdlc::ai_sdlc::Place, sdlc::ai_sdlc::ProgramError> {
+    fn resolve(&self, workspace: &Path) -> Result<sdlc::hoshin::Place, sdlc::hoshin::ProgramError> {
         Self::program(workspace)?.resolve(workspace)
     }
     fn run(
         &self,
         command: &[&str],
-        place: &sdlc::ai_sdlc::Place,
-    ) -> Result<Value, sdlc::ai_sdlc::ProgramError> {
+        place: &sdlc::hoshin::Place,
+    ) -> Result<Value, sdlc::hoshin::ProgramError> {
         Self::program(&place.workspace)?.run(command, place)
     }
     fn step_long(
         &self,
         command: &[&str],
-        place: &sdlc::ai_sdlc::Place,
+        place: &sdlc::hoshin::Place,
         token: &kata_core::proc::CancelToken,
         on_line: Option<kata_core::proc::LineSink>,
-    ) -> sdlc::ai_sdlc::Answer {
+    ) -> sdlc::hoshin::Answer {
         match Self::program(&place.workspace) {
             Ok(tools) => tools.step_long(command, place, token, on_line),
-            Err(e) => {
-                sdlc::ai_sdlc::answer_of(Err(sdlc::ai_sdlc::ExecError::Machine(e.to_string())))
-            }
+            Err(e) => sdlc::hoshin::answer_of(Err(sdlc::hoshin::ExecError::Machine(e.to_string()))),
         }
     }
     fn change_state(
         &self,
-        place: &sdlc::ai_sdlc::Place,
+        place: &sdlc::hoshin::Place,
         system: &str,
         change: &str,
-    ) -> Result<Option<sdlc::ai_sdlc::state::ChangeState>, sdlc::ai_sdlc::ProgramError> {
+    ) -> Result<Option<sdlc::hoshin::state::ChangeState>, sdlc::hoshin::ProgramError> {
         Self::program(&place.workspace)?.change_state(place, system, change)
     }
     fn other_copies(
         &self,
-        place: &sdlc::ai_sdlc::Place,
+        place: &sdlc::hoshin::Place,
         system: &str,
         change: &str,
-    ) -> Result<Vec<std::path::PathBuf>, sdlc::ai_sdlc::ProgramError> {
+    ) -> Result<Vec<std::path::PathBuf>, sdlc::hoshin::ProgramError> {
         Self::program(&place.workspace)?.other_copies(place, system, change)
     }
     fn plan(
         &self,
-        place: &sdlc::ai_sdlc::Place,
-        state: &sdlc::ai_sdlc::state::ChangeState,
+        place: &sdlc::hoshin::Place,
+        state: &sdlc::hoshin::state::ChangeState,
     ) -> Result<sdlc::format::ParsedPlan, String> {
         Self::program(&place.workspace)
             .map_err(|e| e.to_string())?
@@ -458,9 +453,9 @@ impl build_host::Tools for PluginTools {
     }
     fn review_record(
         &self,
-        place: &sdlc::ai_sdlc::Place,
+        place: &sdlc::hoshin::Place,
         system: &str,
-        state: &sdlc::ai_sdlc::state::ChangeState,
+        state: &sdlc::hoshin::state::ChangeState,
     ) -> Result<Option<sdlc::review::ReviewRecord>, String> {
         Self::program(&place.workspace)
             .map_err(|e| e.to_string())?
@@ -757,7 +752,7 @@ fn sdlc_add_workspace(
 /// (the mode is not ready) the folder is saved as it is, with no layout: it may be a single-repo repository,
 /// and the program's first answer for it fills the layout in (`sdlc::layout::for_folder`).
 fn resolve_added(
-    program: Option<&sdlc::ai_sdlc::Program>,
+    program: Option<&sdlc::hoshin::Program>,
     folder: &str,
 ) -> Result<(String, Option<sdlc::layout::Layout>), String> {
     let Some(program) = program else {
@@ -824,7 +819,7 @@ fn sdlc_missing_folders(folders: Vec<String>) -> Vec<String> {
 /// The layout of `master` as the program places it. Without a program, or when the program cannot place the
 /// folder, nothing is known about it and the answer is the refusal; the caller never says.
 fn master_layout(
-    program: Option<&sdlc::ai_sdlc::Program>,
+    program: Option<&sdlc::hoshin::Program>,
     master: &str,
 ) -> Result<sdlc::layout::Layout, String> {
     let program = program.ok_or("the hoshin plugin is not ready")?;
@@ -835,7 +830,7 @@ fn master_layout(
 
 /// The layout of `master`, or the refusal when that layout does not let its checkout be switched.
 fn switch_layout(
-    program: Option<&sdlc::ai_sdlc::Program>,
+    program: Option<&sdlc::hoshin::Program>,
     master: &str,
 ) -> Result<sdlc::layout::Layout, String> {
     let layout = master_layout(program, master)?;
@@ -848,7 +843,7 @@ fn switch_layout(
 
 /// The branches of `master` in the layout the program places it in. A folder that cannot be placed reads as
 /// the layout that may not be switched.
-fn branches_in(program: Option<&sdlc::ai_sdlc::Program>, master: &str) -> sdlc::branch::BranchInfo {
+fn branches_in(program: Option<&sdlc::hoshin::Program>, master: &str) -> sdlc::branch::BranchInfo {
     let layout = master_layout(program, master).unwrap_or(sdlc::layout::Layout::SingleRepo);
     sdlc::branch::branch_info_in(Path::new(master), layout)
 }
@@ -913,7 +908,7 @@ impl Placed {
     }
 }
 
-fn place_target_with(program: &sdlc::ai_sdlc::Program, target: &SnapshotTarget) -> Placed {
+fn place_target_with(program: &sdlc::hoshin::Program, target: &SnapshotTarget) -> Placed {
     match target {
         SnapshotTarget::Workspace { master } => Placed::Workspace(master.into()),
         SnapshotTarget::Change(change) => Placed::Change {
@@ -933,7 +928,7 @@ fn place_target(target: &SnapshotTarget) -> Placed {
     match target {
         SnapshotTarget::Workspace { master } => Placed::Workspace(master.into()),
         SnapshotTarget::Change(change) => match plugin_for_change(&change.workspace) {
-            Ok(dir) => place_target_with(&sdlc::ai_sdlc::Program::locate(&dir), target),
+            Ok(dir) => place_target_with(&sdlc::hoshin::Program::locate(&dir), target),
             Err(e) => Placed::Change {
                 workspace: (&change.workspace).into(),
                 system: change.system.clone(),
@@ -1027,7 +1022,7 @@ fn sdlc_start_change(
     scope: String,
     branch: Option<String>,
 ) -> Result<start_change::ChangeStart, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&folder)?);
+    let program = sdlc::hoshin::Program::locate(&hoshin_dir_in(&folder)?);
     let place = start_change::place_for(&program, Path::new(&folder))?;
     start_change::start_change(
         &program,
@@ -1085,7 +1080,7 @@ impl NamingState {
 /// The system's naming setting, read from the master repository's committed marker.
 #[tauri::command(async)]
 fn sdlc_naming(folder: String, master_repo: String, system: String) -> NamingState {
-    let plugin = ai_sdlc_readiness(Some(&folder));
+    let plugin = hoshin_readiness(Some(&folder));
     let master = Path::new(&folder).join(&master_repo);
     match sdlc::naming::setting(&plugin, &master, &system) {
         Ok(None) => NamingState::None,
@@ -1100,7 +1095,7 @@ fn sdlc_naming(folder: String, master_repo: String, system: String) -> NamingSta
 /// Why a scope typed at the start of a change cannot be used; empty when it is accepted as typed.
 #[tauri::command(async)]
 fn sdlc_check_scope(folder: String, scope: String) -> Result<Vec<String>, String> {
-    let plugin = ai_sdlc_readiness(Some(&folder));
+    let plugin = hoshin_readiness(Some(&folder));
     sdlc::naming::check_scope(&plugin, &scope).map_err(|e| e.to_string())
 }
 
@@ -1119,7 +1114,7 @@ fn sdlc_rename_branch(
     if let Some(refused) = rename_refusal(&control.state.lock().unwrap(), &system, &change) {
         return Err(refused);
     }
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&folder)?);
+    let program = sdlc::hoshin::Program::locate(&hoshin_dir_in(&folder)?);
     let place = program
         .resolve(Path::new(&folder))
         .map_err(|e| e.to_string())?;
@@ -1159,7 +1154,7 @@ fn sdlc_checkout(
 
 /// Where the plugin has the change: `kata_sdlc::home::resolve` for the change's workspace.
 fn change_home(
-    program: &sdlc::ai_sdlc::Program,
+    program: &sdlc::hoshin::Program,
     change: &build_host::ChangeRef,
 ) -> Result<sdlc::home::ChangeHome, String> {
     sdlc::home::resolve(
@@ -1178,14 +1173,14 @@ fn sdlc_accept(
     change: build_host::ChangeRef,
     doc: sdlc::accept::ChangeDocument,
 ) -> Result<sdlc::accept::AcceptOutcome, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
+    let program = sdlc::hoshin::Program::locate(&change_plugin_dir(&change.workspace)?);
     accept_in(&steps, &program, &change, doc)
 }
 
 /// The accept step of `sdlc_accept`, with the program given.
 fn accept_in(
     steps: &steps::StepTable,
-    program: &sdlc::ai_sdlc::Program,
+    program: &sdlc::hoshin::Program,
     change: &build_host::ChangeRef,
     doc: sdlc::accept::ChangeDocument,
 ) -> Result<sdlc::accept::AcceptOutcome, String> {
@@ -1217,7 +1212,7 @@ fn sdlc_reject(
     steps: State<'_, steps::StepTable>,
     change: build_host::ChangeRef,
 ) -> Result<sdlc::accept::RejectOutcome, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
+    let program = sdlc::hoshin::Program::locate(&change_plugin_dir(&change.workspace)?);
     reject_in(&control, &steps, &program, &change)
 }
 
@@ -1225,14 +1220,14 @@ fn sdlc_reject(
 fn reject_in(
     control: &RunControl,
     steps: &steps::StepTable,
-    program: &sdlc::ai_sdlc::Program,
+    program: &sdlc::hoshin::Program,
     change: &build_host::ChangeRef,
 ) -> Result<sdlc::accept::RejectOutcome, String> {
     let key = build_host::key_of(change);
     // The track decides what the step says it rejects: a fix on the light track, else the intent.
     let home = change_home(program, change);
     let kind = match &home {
-        Ok(home) if home.state.track == sdlc::ai_sdlc::state::ChangeTrack::Fix => {
+        Ok(home) if home.state.track == sdlc::hoshin::state::ChangeTrack::Fix => {
             steps::StepKind::RejectingFix
         }
         _ => steps::StepKind::Rejecting(sdlc::accept::ChangeDocument::Intent),
@@ -1260,7 +1255,7 @@ fn reject_in(
 fn sdlc_copy_removal(
     change: build_host::ChangeRef,
 ) -> Result<sdlc::copy_removal::CopyRemoval, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
+    let program = sdlc::hoshin::Program::locate(&change_plugin_dir(&change.workspace)?);
     let home = change_home(&program, &change)?;
     sdlc::copy_removal::offer(&program, &home.place, &home.state)
 }
@@ -1268,7 +1263,7 @@ fn sdlc_copy_removal(
 /// The branch the change's copy holds, as the plugin records it.
 #[tauri::command(async)]
 fn sdlc_copy_branch(change: build_host::ChangeRef) -> Result<String, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
+    let program = sdlc::hoshin::Program::locate(&change_plugin_dir(&change.workspace)?);
     let place = program
         .resolve(Path::new(&change.workspace))
         .map_err(|e| e.to_string())?;
@@ -1283,7 +1278,7 @@ fn sdlc_remove_copy(
     steps: State<'_, steps::StepTable>,
     change: build_host::ChangeRef,
 ) -> Result<sdlc::copy_removal::RemoveOutcome, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
+    let program = sdlc::hoshin::Program::locate(&change_plugin_dir(&change.workspace)?);
     remove_copy_in(&control, &steps, &program, &change)
 }
 
@@ -1291,7 +1286,7 @@ fn sdlc_remove_copy(
 fn remove_copy_in(
     control: &RunControl,
     steps: &steps::StepTable,
-    program: &sdlc::ai_sdlc::Program,
+    program: &sdlc::hoshin::Program,
     change: &build_host::ChangeRef,
 ) -> Result<sdlc::copy_removal::RemoveOutcome, String> {
     let key = build_host::key_of(change);
@@ -1310,7 +1305,7 @@ fn remove_copy_in(
 #[tauri::command(async)]
 fn sdlc_open_copy_folder(app: AppHandle, change: build_host::ChangeRef) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
-    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
+    let program = sdlc::hoshin::Program::locate(&change_plugin_dir(&change.workspace)?);
     let home = change_home(&program, &change)?;
     open_copy_with(home.in_copy, &home.state.master, |path| {
         app.opener()
@@ -1426,11 +1421,11 @@ fn rename_refusal<C>(table: &RunTable<C>, system: &str, change: &str) -> Option<
 }
 
 /// The program to ask, and the readiness, for a workspace folder. Only a ready mode has a program.
-fn state_inputs(folder: &str) -> (Option<sdlc::ai_sdlc::Program>, sdlc::plugin::Readiness) {
-    let readiness = ai_sdlc_readiness(Some(folder));
+fn state_inputs(folder: &str) -> (Option<sdlc::hoshin::Program>, sdlc::plugin::Readiness) {
+    let readiness = hoshin_readiness(Some(folder));
     let program = match &readiness {
         sdlc::plugin::Readiness::Ready { plugin, .. } => {
-            Some(sdlc::ai_sdlc::Program::locate(&plugin.dir))
+            Some(sdlc::hoshin::Program::locate(&plugin.dir))
         }
         sdlc::plugin::Readiness::Blocked { .. } => None,
     };
@@ -1585,7 +1580,7 @@ fn sdlc_change_state(
 /// offer lists it and that Kata saved pull requests for needs the plugin asked, so a page costs nothing more
 /// for any other change.
 fn drop_declare_done_after_earlier_declaration(
-    program: &sdlc::ai_sdlc::Program,
+    program: &sdlc::hoshin::Program,
     folder: &str,
     system: &str,
     change: &str,
@@ -1624,7 +1619,7 @@ fn app_versions(app: tauri::AppHandle) -> versions::Versions {
     versions::versions(
         &app.package_info().version.to_string(),
         cfg!(debug_assertions),
-        versions::find_ai_sdlc(folder.as_deref()),
+        versions::find_hoshin(folder.as_deref()),
     )
 }
 
@@ -1637,11 +1632,11 @@ fn sdlc_current_workspace() -> Option<String> {
 
 #[tauri::command(async)]
 fn sdlc_plugin_readiness(workdir: Option<String>) -> sdlc::plugin::Readiness {
-    ai_sdlc_readiness(workdir.as_deref())
+    hoshin_readiness(workdir.as_deref())
 }
 
 /// The installed plugin that is the hoshin plugin: a plugin named `hoshin` that provides the build skill.
-pub(crate) fn ai_sdlc_entry(found: &[CatalogEntry]) -> Option<&CatalogEntry> {
+pub(crate) fn hoshin_entry(found: &[CatalogEntry]) -> Option<&CatalogEntry> {
     found.iter().find(|e| {
         e.kind == catalog::EntryKind::Plugin
             && e.name == "hoshin"
@@ -1650,10 +1645,10 @@ pub(crate) fn ai_sdlc_entry(found: &[CatalogEntry]) -> Option<&CatalogEntry> {
 }
 
 /// Whether the hoshin plugin that `workdir`'s catalog finds can be used, and where it is.
-fn ai_sdlc_readiness(workdir: Option<&str>) -> sdlc::plugin::Readiness {
+fn hoshin_readiness(workdir: Option<&str>) -> sdlc::plugin::Readiness {
     let roots = catalog::roots_for_workdir(workdir);
     let found = catalog::discover(&roots);
-    let plugin = ai_sdlc_entry(&found);
+    let plugin = hoshin_entry(&found);
     sdlc::plugin::readiness(&sdlc::plugin::Machine::detect(
         plugin.map(|e| e.path.as_path()),
     ))
@@ -1662,8 +1657,8 @@ fn ai_sdlc_readiness(workdir: Option<&str>) -> sdlc::plugin::Readiness {
 /// The hoshin plugin folder the format program is read from, or why the build cannot be read. It is
 /// found from the workspace folder, the same place `sdlc_plugin_readiness` is asked about, so a
 /// project-scoped plugin there is the one every command uses.
-fn ai_sdlc_dir_in(folder: &str) -> Result<std::path::PathBuf, String> {
-    match ai_sdlc_readiness(Some(folder)) {
+fn hoshin_dir_in(folder: &str) -> Result<std::path::PathBuf, String> {
+    match hoshin_readiness(Some(folder)) {
         sdlc::plugin::Readiness::Ready { plugin, .. } => Ok(plugin.dir),
         sdlc::plugin::Readiness::Blocked { message, .. } => Err(message),
     }
@@ -1684,7 +1679,7 @@ fn plugin_of(
 
 /// The plugin folder for a command on one change, found from the change's workspace folder.
 fn plugin_for_change(workspace: &str) -> Result<std::path::PathBuf, sdlc::home::HomeError> {
-    plugin_of(&ai_sdlc_readiness(Some(workspace)))
+    plugin_of(&hoshin_readiness(Some(workspace)))
 }
 
 /// `plugin_for_change` with the message a command returns.
@@ -1871,7 +1866,7 @@ fn resolved(
     change: &build_host::ChangeRef,
 ) -> Result<(std::path::PathBuf, sdlc::home::ChangeHome), String> {
     let plugin = change_plugin_dir(&change.workspace)?;
-    let home = change_home(&sdlc::ai_sdlc::Program::locate(&plugin), change)?;
+    let home = change_home(&sdlc::hoshin::Program::locate(&plugin), change)?;
     Ok((plugin, home))
 }
 
@@ -1882,9 +1877,9 @@ fn sdlc_open_change(
     change: build_host::ChangeRef,
     doc: String,
 ) -> Result<OpenedChange, String> {
-    let readiness = ai_sdlc_readiness(Some(&change.workspace));
+    let readiness = hoshin_readiness(Some(&change.workspace));
     let plugin_dir = plugin_of(&readiness).map_err(|e| e.to_string())?;
-    let program = sdlc::ai_sdlc::Program::locate(&plugin_dir);
+    let program = sdlc::hoshin::Program::locate(&plugin_dir);
     let home = change_home(&program, &change)?;
     let live = live_facts(&control, &change.system, &change.change);
     let mut opened = open_change_in(&home, &plugin_dir, &readiness, live, &change.system, &doc)?;
@@ -1904,7 +1899,7 @@ fn sdlc_change_repos(change: build_host::ChangeRef) -> Result<Vec<sdlc::diff::Ch
     if home.place.layout == sdlc::layout::Layout::SingleRepo {
         // The program's app order, not the state's map: the groups follow it.
         let apps: Vec<(String, String)> = sdlc::layout::apps(
-            &sdlc::ai_sdlc::Program::locate(&plugin),
+            &sdlc::hoshin::Program::locate(&plugin),
             &home.place,
             &change.system,
         )
@@ -1972,7 +1967,7 @@ fn sdlc_diff_base(repo_path: String) -> Result<sdlc::diff::BaseInfo, String> {
 fn sdlc_checks_view(
     change: build_host::ChangeRef,
 ) -> Result<Vec<sdlc::checks_view::RepoCheckView>, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&change_plugin_dir(&change.workspace)?);
+    let program = sdlc::hoshin::Program::locate(&change_plugin_dir(&change.workspace)?);
     let home = change_home(&program, &change)?;
     let (place, state) = (home.place, home.state);
     let repos: Vec<String> = state
@@ -1993,17 +1988,17 @@ fn sdlc_declare_done(
     change: build_host::ChangeRef,
 ) -> sdlc::done::DeclareView {
     let program = match change_plugin_dir(&change.workspace) {
-        Ok(dir) => sdlc::ai_sdlc::Program::locate(&dir),
+        Ok(dir) => sdlc::hoshin::Program::locate(&dir),
         Err(message) => return sdlc::done::DeclareView::CouldNotRun { message },
     };
-    let readiness = ai_sdlc_readiness(Some(&change.workspace));
+    let readiness = hoshin_readiness(Some(&change.workspace));
     declare_in(&steps, &program, &readiness, &change)
 }
 
 /// The declare step of `sdlc_declare_done`, with the program and the machine's readiness given.
 fn declare_in(
     steps: &steps::StepTable,
-    program: &sdlc::ai_sdlc::Program,
+    program: &sdlc::hoshin::Program,
     readiness: &sdlc::plugin::Readiness,
     change: &build_host::ChangeRef,
 ) -> sdlc::done::DeclareView {
@@ -2017,7 +2012,7 @@ fn declare_in(
         Err(message) => return could_not_run(message),
     };
     // A change that lives in a copy is declared done from its copy.
-    let at = sdlc::ai_sdlc::Place {
+    let at = sdlc::hoshin::Place {
         layout: place.layout,
         master: std::path::PathBuf::from(&state.master),
         workspace: place.workspace,
@@ -2038,7 +2033,7 @@ fn declare_in(
         return view;
     }
     // The state after the event says which apps the change touched; the program's order is the app order.
-    let facts = sdlc::ai_sdlc::state::one(program, &at, &change.system, &change.change)
+    let facts = sdlc::hoshin::state::one(program, &at, &change.system, &change.change)
         .ok()
         .flatten()
         .and_then(|state| state.apps);
@@ -2060,7 +2055,7 @@ fn sdlc_pull_requests_view(
     change: String,
     refresh: bool,
 ) -> Result<sdlc::pull_requests::PullRequestsView, String> {
-    let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&folder)?);
+    let program = sdlc::hoshin::Program::locate(&hoshin_dir_in(&folder)?);
     let place = program
         .resolve(Path::new(&folder))
         .map_err(|e| e.to_string())?;
@@ -2665,7 +2660,7 @@ mod tests {
             format!("console.log(JSON.stringify({answer}));\n"),
         )
         .unwrap();
-        let program = sdlc::ai_sdlc::Program::locate(&plugin);
+        let program = sdlc::hoshin::Program::locate(&plugin);
         let (root, layout) = resolve_added(Some(&program), app.to_str().unwrap()).unwrap();
         assert_eq!(Path::new(&root), repo);
         assert_eq!(layout, Some(sdlc::layout::Layout::SingleRepo));
@@ -2741,7 +2736,7 @@ mod tests {
             std::env::set_var(k, &empty_home);
         }
         let ws = workspace.to_str().unwrap();
-        let readiness = ai_sdlc_readiness(Some(ws));
+        let readiness = hoshin_readiness(Some(ws));
         let direct = change_plugin_dir(ws);
         let through_resolved = resolved(&build_host::ChangeRef {
             workspace: ws.into(),
@@ -3008,8 +3003,8 @@ name: build
             std::env::set_var(k, &empty_home);
         }
 
-        let readiness = ai_sdlc_readiness(Some(workspace.to_str().unwrap()));
-        let resolved = ai_sdlc_dir_in(workspace.to_str().unwrap());
+        let readiness = hoshin_readiness(Some(workspace.to_str().unwrap()));
+        let resolved = hoshin_dir_in(workspace.to_str().unwrap());
 
         for (k, v) in saved {
             match v {
@@ -3096,7 +3091,7 @@ name: build
             let before = snapshot_in(&Placed::Workspace(master.clone())).unwrap();
             std::fs::write(master.join("run.md"), "x").unwrap();
             // A plugin folder with no program: the plugin cannot say where the change lives.
-            let program = sdlc::ai_sdlc::Program::locate(&dir.path().join("no-plugin"));
+            let program = sdlc::hoshin::Program::locate(&dir.path().join("no-plugin"));
             let target = SnapshotTarget::Change(change_ref(dir.path()));
             let placed = place_target_with(&program, &target);
             assert!(matches!(
@@ -3118,8 +3113,8 @@ name: build
 
     mod open {
         use super::*;
-        use sdlc::ai_sdlc::state::read_state;
         use sdlc::home::ChangeHome;
+        use sdlc::hoshin::state::read_state;
         use std::path::PathBuf;
 
         const SYSTEM: &str = "demo";
@@ -3206,7 +3201,7 @@ name: build
             folder: &Path,
             in_copy: bool,
             plan: bool,
-        ) -> sdlc::ai_sdlc::state::ChangeState {
+        ) -> sdlc::hoshin::state::ChangeState {
             let doc = |exists: bool| {
                 format!(
                     r#"{{"exists":{exists},"inHead":{exists},"headStatus":null,"workingStatus":null,"uncommitted":false,"pin":null}}"#
@@ -3270,7 +3265,7 @@ name: build
         fn home_of_copy(fx: &Fx, plan: bool) -> ChangeHome {
             let folder = fx.copy.join("intent").join(SYSTEM).join(CHANGE);
             ChangeHome {
-                place: sdlc::ai_sdlc::Place {
+                place: sdlc::hoshin::Place {
                     layout: kata_sdlc::layout::Layout::Workspace,
                     master: fx.checkout.clone(),
                     workspace: fx.checkout.parent().unwrap().to_path_buf(),
@@ -3513,9 +3508,9 @@ mod steps_commands {
     use super::*;
     use crate::steps::{StepEvent, StepKind, StepTable};
     use sdlc::accept::{AcceptOutcome, ChangeDocument, RejectOutcome};
-    use sdlc::ai_sdlc::{Place, Program};
     use sdlc::copy_removal::RemoveOutcome;
     use sdlc::done::DeclareView;
+    use sdlc::hoshin::{Place, Program};
     use sdlc::plugin::{GhPresence, Plugin, Readiness};
     use std::path::PathBuf;
     use std::process::Command;

@@ -56,7 +56,7 @@ impl Program {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_sdlc::state;
+    use crate::hoshin::state;
     use crate::layout::Layout;
     use crate::testutil;
     use std::path::Path;

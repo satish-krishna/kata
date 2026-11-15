@@ -2,8 +2,8 @@
 //! `build.finish` hooks, committed to the master's base branch and run by the plugin when a repository's
 //! build finishes; Kata runs none of them. This module only reads the plugin's ledger and hook list and
 //! names the state the page shows, in the words it shows.
-use crate::ai_sdlc::status::{Hooks, OnFailure, Status};
-use crate::ai_sdlc::{Place, Program, ProgramError};
+use crate::hoshin::status::{Hooks, OnFailure, Status};
+use crate::hoshin::{Place, Program, ProgramError};
 use crate::layout::Layout;
 use serde::Serialize;
 
@@ -191,7 +191,7 @@ pub fn for_change(
     // In the single-repo layout an app's head is the one the change's `apps` give.
     let app_heads = match place.layout {
         Layout::SingleRepo => {
-            crate::ai_sdlc::state::one(program, place, system, change)?
+            crate::hoshin::state::one(program, place, system, change)?
                 .ok_or_else(|| ProgramError::CouldNotRun {
                     message: format!("the state answer has no change {change}"),
                 })?
@@ -561,7 +561,7 @@ mod tests {
             .join(CHANGE);
         std::fs::create_dir_all(&doc).unwrap();
         std::fs::write(doc.join("intent.md"), "# Greeting\n").unwrap();
-        let state = crate::ai_sdlc::state::one(&program(), &place, "kata", CHANGE)
+        let state = crate::hoshin::state::one(&program(), &place, "kata", CHANGE)
             .unwrap()
             .unwrap();
         let head_of = |app: &str| state.apps.as_ref().unwrap()[app].head.clone().unwrap();

@@ -4,7 +4,7 @@ import type { Stage } from "./sdlc-mock-types";
 import type { WorkspaceScan } from "@bindings/WorkspaceScan";
 import type { KataEvent, RunDetail } from "./events";
 import { validateLocal } from "./mock";
-import { actionLabel, actionLabelAt, buildPreviewFor, givenFor, safetyRules, hasAiSdlcPlugin, isBuildRun, primaryAction, restrictedFor, reviewFindings, specFor, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type Restricted, type RunContext, type StageAction } from "./sdlc";
+import { actionLabel, actionLabelAt, buildPreviewFor, givenFor, safetyRules, hasHoshinPlugin, isBuildRun, primaryAction, restrictedFor, reviewFindings, specFor, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type Restricted, type RunContext, type StageAction } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
@@ -58,11 +58,11 @@ describe("action labels of a fix", () => {
   });
 });
 
-describe("hasAiSdlcPlugin", () => {
+describe("hasHoshinPlugin", () => {
   it("needs a plugin entry, not a skill", () => {
-    expect(hasAiSdlcPlugin(both)).toBe(true);
-    expect(hasAiSdlcPlugin([skill("ai-sdlc")])).toBe(false);
-    expect(hasAiSdlcPlugin([])).toBe(false);
+    expect(hasHoshinPlugin(both)).toBe(true);
+    expect(hasHoshinPlugin([skill("ai-sdlc")])).toBe(false);
+    expect(hasHoshinPlugin([])).toBe(false);
   });
 });
 

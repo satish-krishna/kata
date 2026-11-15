@@ -1,8 +1,8 @@
 //! The pull requests a change was declared done with, as the change shows them: the program's record in
 //! `change.yml` first, else what Kata saved before the program recorded them.
-use crate::ai_sdlc::show::ChangeShow;
-use crate::ai_sdlc::status::Status;
-use crate::ai_sdlc::{Place, Program};
+use crate::hoshin::show::ChangeShow;
+use crate::hoshin::status::Status;
+use crate::hoshin::{Place, Program};
 use crate::prs::{PrEntry, PrStateKind};
 use serde::Serialize;
 
@@ -217,7 +217,7 @@ pub fn read_view(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_sdlc::show::{ChangeRecord, RecordedByPlugin};
+    use crate::hoshin::show::{ChangeRecord, RecordedByPlugin};
     use crate::prs::PrStateKind;
 
     fn show(pull_requests: Vec<RecordedByPlugin>) -> ChangeShow {

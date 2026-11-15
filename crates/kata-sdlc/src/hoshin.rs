@@ -1050,7 +1050,7 @@ mod tests {
         assert_eq!(TIMEOUT, Duration::from_secs(300));
         // The format program's reads use the same limit, with no limit of their own.
         let format = include_str!("format.rs");
-        assert!(format.contains("ai_sdlc::TIMEOUT"));
+        assert!(format.contains("hoshin::TIMEOUT"));
         assert!(!format.contains("const TIMEOUT"));
     }
 

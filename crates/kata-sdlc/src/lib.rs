@@ -2,7 +2,6 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 pub mod accept;
-pub mod ai_sdlc;
 pub mod board;
 pub mod branch;
 pub mod build;
@@ -17,6 +16,7 @@ pub mod frontmatter;
 pub mod git;
 pub mod holds;
 pub mod home;
+pub mod hoshin;
 pub mod layout;
 pub mod naming;
 pub mod offer;

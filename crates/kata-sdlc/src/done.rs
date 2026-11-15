@@ -1,8 +1,8 @@
 //! Declaring a change done is the plugin's step: `run change.done` verifies the change, pushes every
 //! touched repository, opens one pull request each (the master's last) and records them in the change.
 //! Kata runs it, relays its progress and shows its answer; it adds no check of its own.
-use crate::ai_sdlc::state::AppFacts;
-use crate::ai_sdlc::{progress_of, Answer, Place, Program, StepOutcome, StepProgress};
+use crate::hoshin::state::AppFacts;
+use crate::hoshin::{progress_of, Answer, Place, Program, StepOutcome, StepProgress};
 use crate::plugin::{GhPresence, Readiness};
 use crate::pull_requests::{recorded, PullRequestSource, RecordedPullRequest};
 use kata_core::proc::{CancelToken, LineSink};
@@ -53,7 +53,7 @@ pub enum DeclareView {
 /// The refusal when `gh` is not installed.
 pub const GH_MISSING: &str = "Declaring done needs GitHub's command-line tool, gh. Install it from https://cli.github.com and reopen.";
 
-/// The view of the plugin's `change.done` answer, as [`crate::ai_sdlc::answer_of`] read it:
+/// The view of the plugin's `change.done` answer, as [`crate::hoshin::answer_of`] read it:
 ///
 /// | # | outcome | view |
 /// |---|---|---|
@@ -266,7 +266,7 @@ fn opened_pull_request(line: &str) -> Option<RecordedPullRequest> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_sdlc::{answer_of, Reply};
+    use crate::hoshin::{answer_of, Reply};
     use crate::plugin::{self, BlockReason, GhPresence, Installed, Machine, Plugin};
     use crate::pull_requests::PullRequestSource;
     use crate::testutil;

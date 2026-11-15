@@ -9,13 +9,13 @@ import { MockTransport } from './core/transport/mock-transport';
 
 const found = (version: string): Versions => ({
   workbench: '3.3.0',
-  aiSdlc: { kind: 'found', version },
+  hoshin: { kind: 'found', version },
   line: `Workbench 3.3.0 · ai-sdlc ${version}`,
   copy: `Kata Workbench 3.3.0, ai-sdlc ${version}`,
 });
 const notFound: Versions = {
   workbench: '3.3.0',
-  aiSdlc: { kind: 'notFound' },
+  hoshin: { kind: 'notFound' },
   line: 'Workbench 3.3.0 · ai-sdlc: not found',
   copy: 'Kata Workbench 3.3.0, ai-sdlc: not found',
 };

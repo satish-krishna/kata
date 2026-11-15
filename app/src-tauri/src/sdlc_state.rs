@@ -1,8 +1,8 @@
 //! Where a system's changes stand, as the Workbench shows them: the plugin's `state` answer, what each
 //! change shows and offers, and the live facts only the run table knows. The Tauri commands in `lib.rs`
 //! are one-line wrappers over [`system_view`] and [`change_view`], so this module is testable without Tauri.
-use kata_sdlc::ai_sdlc::state::{ChangeState, SystemState};
-use kata_sdlc::ai_sdlc::{Program, ProgramError};
+use kata_sdlc::hoshin::state::{ChangeState, SystemState};
+use kata_sdlc::hoshin::{Program, ProgramError};
 use kata_sdlc::offer::{ChangeOffer, LiveFacts};
 use kata_sdlc::plugin::Readiness;
 pub use kata_sdlc::view::{ChangeView, SystemView, WorkspaceView};
@@ -25,7 +25,7 @@ impl StateSource for Program {
         system: &str,
         change: Option<&str>,
     ) -> Result<SystemState, ProgramError> {
-        kata_sdlc::ai_sdlc::state::state(self, workspace, system, change)
+        kata_sdlc::hoshin::state::state(self, workspace, system, change)
     }
 }
 
@@ -137,7 +137,7 @@ pub fn change_view(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kata_sdlc::ai_sdlc::state::read_state;
+    use kata_sdlc::hoshin::state::read_state;
     use kata_sdlc::plugin::{GhPresence, Plugin};
     use std::cell::Cell;
     use std::path::PathBuf;
@@ -265,7 +265,7 @@ mod tests {
                     "change", "start", "--json", "--system", "demo", "--change", change, "--type",
                     "feat", "--scope", "X-1",
                 ],
-                &kata_sdlc::ai_sdlc::Place {
+                &kata_sdlc::hoshin::Place {
                     layout: kata_sdlc::layout::Layout::Workspace,
                     master: master.clone(),
                     workspace: ws.clone(),

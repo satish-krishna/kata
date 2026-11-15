@@ -33,7 +33,7 @@ import { HOME_STEPS, isStep, removalStopped, startStopped, stepOf, stepRef, stop
 import { StepStore } from '../../core/step/step.store';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import { shownChangeList } from '../../lib/doc-notice';
-import { hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
+import { hasHoshinPlugin, specFor, type StartTrack } from '../../lib/sdlc';
 import { DEMO_SETUP_FOLDER, DEMO_START_IDEA, DEMO_START_SYSTEM } from '../../lib/demo';
 import {
   folderName,
@@ -103,7 +103,7 @@ export class SdlcHomeViewModel {
 
   // --- what the current workspace holds
   private readonly catalog = signal<CatalogEntry[] | null>(null);
-  readonly pluginMissing = computed(() => this.catalog() !== null && !hasAiSdlcPlugin(this.catalog() ?? []));
+  readonly pluginMissing = computed(() => this.catalog() !== null && !hasHoshinPlugin(this.catalog() ?? []));
   readonly scan = signal<WorkspaceScan | null>(null);
   readonly scanError = signal<string | null>(null);
   readonly branches = signal<BranchInfo | null>(null);

@@ -90,19 +90,19 @@ describe('App zoom keys', () => {
 describe('App version line', () => {
   const found = (version: string): Versions => ({
     workbench: '3.3.0',
-    aiSdlc: { kind: 'found', version },
+    hoshin: { kind: 'found', version },
     line: `Workbench 3.3.0 · ai-sdlc ${version}`,
     copy: `Kata Workbench 3.3.0, ai-sdlc ${version}`,
   });
   const missing: Versions = {
     workbench: '3.3.0',
-    aiSdlc: { kind: 'notFound' },
+    hoshin: { kind: 'notFound' },
     line: 'Workbench 3.3.0 · ai-sdlc: not found',
     copy: 'Kata Workbench 3.3.0, ai-sdlc: not found',
   };
   const unknown: Versions = {
     workbench: '3.3.0',
-    aiSdlc: { kind: 'unknown' },
+    hoshin: { kind: 'unknown' },
     line: 'Workbench 3.3.0 · ai-sdlc: version unknown',
     copy: 'Kata Workbench 3.3.0, ai-sdlc: version unknown',
   };

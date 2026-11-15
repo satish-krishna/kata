@@ -2,10 +2,10 @@
 //! merge check last said about each. The Tauri commands in `lib.rs` are one-line wrappers over [`home_list`],
 //! [`home_open`] and [`home_pull_requests`], so this module is testable without Tauri.
 use crate::sdlc_state::view_of;
-use kata_sdlc::ai_sdlc::list::ChangeList;
-use kata_sdlc::ai_sdlc::state::{ChangeState, SystemState};
-use kata_sdlc::ai_sdlc::{Place, Program, ProgramError};
 use kata_sdlc::copy_removal::CopyRemoval;
+use kata_sdlc::hoshin::list::ChangeList;
+use kata_sdlc::hoshin::state::{ChangeState, SystemState};
+use kata_sdlc::hoshin::{Place, Program, ProgramError};
 use kata_sdlc::layout::{AppHealth, Layout};
 use kata_sdlc::offer::{home_reading, LiveFacts};
 use kata_sdlc::open_changes::{
@@ -82,7 +82,7 @@ impl HomeSource for Program {
         let answer = self
             .run_in(&["list", "--json", "--system", system], folder, layout)
             .map_err(program_error)?;
-        kata_sdlc::ai_sdlc::list::read_list(answer).map_err(program_error)
+        kata_sdlc::hoshin::list::read_list(answer).map_err(program_error)
     }
     fn open_states(
         &self,
@@ -97,7 +97,7 @@ impl HomeSource for Program {
                 layout,
             )
             .map_err(program_error)?;
-        kata_sdlc::ai_sdlc::state::read_state(answer).map_err(program_error)
+        kata_sdlc::hoshin::state::read_state(answer).map_err(program_error)
     }
     fn declared(&self, folder: &Path, system: &str, change: &str) -> Result<bool, String> {
         let workspace_id = crate::build_host::workspace_id_in_store(folder);
@@ -324,8 +324,8 @@ pub fn home_pull_requests(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kata_sdlc::ai_sdlc::list::{ChangeListing, Finished};
-    use kata_sdlc::ai_sdlc::state::read_state;
+    use kata_sdlc::hoshin::list::{ChangeListing, Finished};
+    use kata_sdlc::hoshin::state::read_state;
     use kata_sdlc::offer::HomeAction;
     use kata_sdlc::plugin::{GhPresence, Plugin};
     use std::path::PathBuf;
@@ -390,7 +390,7 @@ mod tests {
                     .map(|(name, finished)| ChangeListing {
                         change: name.clone(),
                         title: None,
-                        track: kata_sdlc::ai_sdlc::state::ChangeTrack::Full,
+                        track: kata_sdlc::hoshin::state::ChangeTrack::Full,
                         master: "/m".into(),
                         in_copy: false,
                         finished: *finished,

@@ -228,7 +228,7 @@ pub fn one(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_sdlc::Place;
+    use crate::hoshin::Place;
     use crate::testutil;
 
     const EXAMPLE: &str = r#"{"system":"demo","changes":[{"change":"2026-11-01-greeting","master":"/ws/.hoshin/copies/2026-11-01-greeting","folder":"/ws/.hoshin/copies/2026-11-01-greeting/intent/demo/2026-11-01-greeting","inCopy":true,"title":"Greeting","track":"full",

@@ -3,4 +3,4 @@
 /**
  * What the Workbench knows about the hoshin plugin's version.
  */
-export type AiSdlc = { "kind": "found", version: string, } | { "kind": "notFound" } | { "kind": "unknown" };
+export type Hoshin = { "kind": "found", version: string, } | { "kind": "notFound" } | { "kind": "unknown" };

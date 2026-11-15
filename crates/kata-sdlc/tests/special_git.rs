@@ -11,9 +11,9 @@
 //! Node.js on `PATH`.
 #![allow(clippy::disallowed_methods)]
 use kata_sdlc::accept::{self, AcceptOutcome, ChangeDocument};
-use kata_sdlc::ai_sdlc::state;
-use kata_sdlc::ai_sdlc::{Place, Program};
 use kata_sdlc::done::{self, DeclareView};
+use kata_sdlc::hoshin::state;
+use kata_sdlc::hoshin::{Place, Program};
 use kata_sdlc::plugin::{GhPresence, Plugin, Readiness};
 use serde_json::Value;
 use std::ffi::OsString;
@@ -60,13 +60,13 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 fn plugin(place: &Place, args: &[&str]) -> Value {
-    match kata_sdlc::ai_sdlc::call_kind(args) {
-        kata_sdlc::ai_sdlc::CallKind::Long => {
+    match kata_sdlc::hoshin::call_kind(args) {
+        kata_sdlc::hoshin::CallKind::Long => {
             program()
                 .step_long(args, place, &kata_core::proc::CancelToken::new(), None)
                 .json
         }
-        kata_sdlc::ai_sdlc::CallKind::Quick => program().run(args, place).unwrap(),
+        kata_sdlc::hoshin::CallKind::Quick => program().run(args, place).unwrap(),
     }
 }
 

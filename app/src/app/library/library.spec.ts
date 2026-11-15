@@ -42,7 +42,7 @@ describe('the library footer and the version line', () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'appVersions').mockResolvedValue({
       workbench: '3.3.0',
-      aiSdlc: { kind: 'notFound' },
+      hoshin: { kind: 'notFound' },
       line: 'Workbench 3.3.0 · ai-sdlc: not found',
       copy: 'Kata Workbench 3.3.0, ai-sdlc: not found',
     });

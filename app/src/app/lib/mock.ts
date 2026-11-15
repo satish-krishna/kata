@@ -308,8 +308,8 @@ export function previewFixture(spec: RunSpec): Resolved {
 /** What a plain browser shows on the version line: the Workbench's version (the app's own unless one is given) and the plugin the fixtures say is installed. `?demo=versions-missing` answers that ai-sdlc is not installed. */
 export function mockVersions(demo: string | null, workbench: string = appVersion): Versions {
   if (demo === 'versions-missing') {
-    return { workbench, aiSdlc: { kind: 'notFound' }, line: `Workbench ${workbench} · ai-sdlc: not found`, copy: `Kata Workbench ${workbench}, ai-sdlc: not found` };
+    return { workbench, hoshin: { kind: 'notFound' }, line: `Workbench ${workbench} · ai-sdlc: not found`, copy: `Kata Workbench ${workbench}, ai-sdlc: not found` };
   }
   const version = '1.3.0';
-  return { workbench, aiSdlc: { kind: 'found', version }, line: `Workbench ${workbench} · ai-sdlc ${version}`, copy: `Kata Workbench ${workbench}, ai-sdlc ${version}` };
+  return { workbench, hoshin: { kind: 'found', version }, line: `Workbench ${workbench} · ai-sdlc ${version}`, copy: `Kata Workbench ${workbench}, ai-sdlc ${version}` };
 }

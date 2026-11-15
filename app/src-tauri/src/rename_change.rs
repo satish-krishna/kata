@@ -3,8 +3,8 @@
 //! reasons, as it printed them.
 use crate::start_change::{relay, STEP_BUSY};
 use crate::steps::{StepKind, StepTable};
-use kata_sdlc::ai_sdlc::{Place, Program, StepOutcome};
 use kata_sdlc::holds::ChangeKey;
+use kata_sdlc::hoshin::{Place, Program, StepOutcome};
 use kata_sdlc::prs::PrEntry;
 use kata_sdlc::pull_requests::{recorded, RecordedPullRequest};
 use serde::Serialize;

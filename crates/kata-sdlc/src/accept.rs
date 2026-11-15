@@ -1,10 +1,10 @@
 //! Accepting and rejecting a change's documents through the hoshin plugin. Kata edits one front matter
 //! line; the plugin commits it (`commit --kind accept-<doc>` or `reject-intent` / `reject-fix`), runs the
 //! `doc.accept` event and removes the rejected change's copy. Kata makes no commit and runs no hook.
-use crate::ai_sdlc::state::{ChangeState, ChangeTrack};
-use crate::ai_sdlc::{progress_of, Answer, Place, Program, StepOutcome};
 use crate::done::StepSink;
 use crate::frontmatter;
+use crate::hoshin::state::{ChangeState, ChangeTrack};
+use crate::hoshin::{progress_of, Answer, Place, Program, StepOutcome};
 use kata_core::proc::{CancelToken, LineSink};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -352,8 +352,8 @@ fn event_outcome(answer: &Answer) -> AcceptOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_sdlc::state;
-    use crate::ai_sdlc::{StepProgress, StepProgressKind};
+    use crate::hoshin::state;
+    use crate::hoshin::{StepProgress, StepProgressKind};
     use crate::offer::{self, LiveFacts, StageAction};
     use crate::testutil;
     use serde_json::{json, Value};

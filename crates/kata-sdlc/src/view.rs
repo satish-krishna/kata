@@ -1,7 +1,7 @@
 //! What the Workbench's home and change page read: a system's changes as the plugin reported them, with
 //! what each shows and offers. The Tauri commands build these; the types live here so ts-rs can generate
 //! their bindings.
-use crate::ai_sdlc::state::ChangeState;
+use crate::hoshin::state::ChangeState;
 use crate::offer::{ChangeOffer, LiveFacts};
 use crate::plugin::Readiness;
 use serde::Serialize;

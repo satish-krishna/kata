@@ -2,10 +2,10 @@
 //! a change in a copy whose recorded pull requests are all merged and whose copy holds no uncommitted file.
 //! The removal itself is the plugin's `change remove`, which refuses a copy with uncommitted files at the
 //! moment it removes it, so a file written after the offer still keeps the copy.
-use crate::ai_sdlc::show::ChangeShow;
-use crate::ai_sdlc::state::ChangeState;
-use crate::ai_sdlc::{Place, Program, StepOutcome};
 use crate::git::{Repo, StatusEntry};
+use crate::hoshin::show::ChangeShow;
+use crate::hoshin::state::ChangeState;
+use crate::hoshin::{Place, Program, StepOutcome};
 use kata_core::proc::CancelToken;
 use serde::Serialize;
 use serde_json::Value;
@@ -167,8 +167,8 @@ fn strings(value: &Value) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_sdlc::state;
     use crate::git::Repo;
+    use crate::hoshin::state;
     use crate::testutil;
     use std::path::{Path, PathBuf};
 
@@ -315,7 +315,7 @@ if ({trigger}) {{
     }
 
     fn show(states: Option<&[(&str, Option<&str>)]>, recorded: usize) -> ChangeShow {
-        use crate::ai_sdlc::show::{ChangeRecord, RecordedByPlugin};
+        use crate::hoshin::show::{ChangeRecord, RecordedByPlugin};
         ChangeShow {
             change: CHANGE.into(),
             system: SYSTEM.into(),

@@ -4,8 +4,8 @@
 use crate::build_host::ChangeRef;
 use kata_core::proc::CancelToken;
 use kata_sdlc::accept::ChangeDocument;
-use kata_sdlc::ai_sdlc::{StepProgress, StepProgressKind};
 use kata_sdlc::holds::ChangeKey;
+use kata_sdlc::hoshin::{StepProgress, StepProgressKind};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -323,8 +323,8 @@ pub fn sdlc_steps(steps: tauri::State<'_, StepTable>) -> Vec<RunningStep> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kata_sdlc::ai_sdlc::progress_of;
     use kata_sdlc::holds::RepoKey;
+    use kata_sdlc::hoshin::progress_of;
     use std::path::Path;
 
     fn key(change: &str) -> ChangeKey {

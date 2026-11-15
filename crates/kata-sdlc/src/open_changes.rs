@@ -1,7 +1,7 @@
 //! The home's list rules: which system it shows, which changes are open and which finished, whether a
 //! refresh must list again, and which open changes the GitHub merge check asks about.
-use crate::ai_sdlc::list::{ChangeList, Finished};
-use crate::ai_sdlc::state::ChangeState;
+use crate::hoshin::list::{ChangeList, Finished};
+use crate::hoshin::state::ChangeState;
 use crate::offer::HomeReading;
 use crate::view::ChangeView;
 use serde::{Deserialize, Serialize};
@@ -147,8 +147,8 @@ pub fn to_check(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_sdlc::list::ChangeListing;
-    use crate::ai_sdlc::state::ChangeTrack;
+    use crate::hoshin::list::ChangeListing;
+    use crate::hoshin::state::ChangeTrack;
     use crate::permissions::fixtures::change_state;
 
     fn names(v: &[&str]) -> Vec<String> {

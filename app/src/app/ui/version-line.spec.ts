@@ -4,7 +4,7 @@ import { VersionLine } from './version-line';
 
 const versions: Versions = {
   workbench: '3.3.0',
-  aiSdlc: { kind: 'found', version: '1.3.0' },
+  hoshin: { kind: 'found', version: '1.3.0' },
   line: 'Workbench 3.3.0 · ai-sdlc 1.3.0',
   copy: 'Kata Workbench 3.3.0, ai-sdlc 1.3.0',
 };

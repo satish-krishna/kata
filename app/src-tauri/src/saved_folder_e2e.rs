@@ -4,7 +4,7 @@
 //! is faked and no `Place` under test is built by hand; the only hand-made one starts the change.
 use crate::build_host::{ProgramTools, Tools};
 use crate::sdlc_home::HomeSource;
-use kata_sdlc::ai_sdlc::{Place, Program};
+use kata_sdlc::hoshin::{Place, Program};
 use kata_sdlc::layout::Layout;
 use std::path::{Path, PathBuf};
 

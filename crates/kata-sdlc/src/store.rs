@@ -61,7 +61,7 @@ pub struct WorkspaceEntry {
     #[cfg_attr(feature = "ts", ts(skip))]
     pub last_system: Option<String>,
     /// How the saved folder is laid out, and so the form every program call for it takes (see
-    /// [`crate::ai_sdlc::Program::run_in`]). The saved entry is the one owner of it: it is written once, from the
+    /// [`crate::hoshin::Program::run_in`]). The saved entry is the one owner of it: it is written once, from the
     /// program's first answer for the folder ([`crate::layout::for_folder`]), and never detected again, so a
     /// folder whose layout changes (the hoshin setup skill run on it) must be removed from the saved list and
     /// added again. `None` (written as `null`) is a folder added while no program could answer, its layout not

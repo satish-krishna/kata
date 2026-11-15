@@ -7,8 +7,8 @@
 #![allow(clippy::disallowed_methods)]
 
 use kata_core::proc::SpawnLog;
-use kata_sdlc::ai_sdlc::{state, Program};
 use kata_sdlc::diff::{self, Part};
+use kata_sdlc::hoshin::{state, Program};
 use kata_sdlc::snapshot::{self, BuildScope};
 use kata_sdlc::{branch, build, changes, review};
 use serial_test::serial;

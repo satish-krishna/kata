@@ -4,7 +4,7 @@
 //! editing tool). On Windows claude matches only the colon-less, lowercase-drive form, so `D:\ws` is
 //! `//d/ws`; the proofs in `crates/kata-core/tests/run_it.rs` take their rule strings from [`rule_path`].
 
-use crate::ai_sdlc::state::ChangeState;
+use crate::hoshin::state::ChangeState;
 use crate::layout::Layout;
 use std::path::{Path, PathBuf};
 
@@ -218,7 +218,7 @@ pub fn rules(place: &RunPlace) -> Rules {
 #[cfg(test)]
 pub(crate) mod fixtures {
     use super::*;
-    use crate::ai_sdlc::state::*;
+    use crate::hoshin::state::*;
     use std::collections::BTreeMap;
 
     fn doc() -> StateDocument {

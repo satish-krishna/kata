@@ -1,6 +1,6 @@
 //! What the program recorded and what it will run: `status --json` (the ledger of a change's event runs on
 //! this machine) and `hooks --json` (the team's hooks as committed on the master's base branch).
-use crate::ai_sdlc::{Place, Program, ProgramError};
+use crate::hoshin::{Place, Program, ProgramError};
 use serde::Deserialize;
 
 /// What a failed blocking hook asks for.

@@ -1,7 +1,7 @@
 //! The layout of the folder Kata is opened on, and the answers only the single-repo layout has: its apps
 //! and their context, and the instructions in the repository's root file. Every answer is the hoshin
 //! program's; this module types it and decides nothing.
-use crate::ai_sdlc::{Place, Program, ProgramError};
+use crate::hoshin::{Place, Program, ProgramError};
 use crate::workspace::InstructionsState;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -287,8 +287,8 @@ pub fn instructions(program: &Program, place: &Place) -> Result<InstructionsStat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_sdlc::state::{self, AppFacts};
-    use crate::ai_sdlc::StepOutcome;
+    use crate::hoshin::state::{self, AppFacts};
+    use crate::hoshin::StepOutcome;
     use crate::testutil;
     use std::path::Path;
 

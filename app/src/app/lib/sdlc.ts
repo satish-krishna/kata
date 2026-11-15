@@ -76,7 +76,7 @@ export function restrictedFor(workspaceFolder: string, scan: WorkspaceScan): Res
 
 export const DEFAULT_BUILD_SECS = 7200;
 
-const AI_SDLC = "ai-sdlc";
+const HOSHIN = "ai-sdlc";
 
 const BUILD_DENY = ["Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)"];
 const GITHUB_TOKENS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"];
@@ -110,8 +110,8 @@ export function productRepoRules(ws: string, systemRepos: readonly string[], mas
 const hasPlugin = (catalog: CatalogEntry[], name: string): boolean =>
   catalog.some((e) => e.kind === "plugin" && e.name === name);
 
-export function hasAiSdlcPlugin(catalog: CatalogEntry[]): boolean {
-  return hasPlugin(catalog, AI_SDLC);
+export function hasHoshinPlugin(catalog: CatalogEntry[]): boolean {
+  return hasPlugin(catalog, HOSHIN);
 }
 
 function nameFor(kind: SdlcKind, ctx: RunContext): string {
@@ -190,7 +190,7 @@ export function specFor(
 ): RunSpec {
   if (kind === "build") throw new Error("a build run-spec is composed by the backend");
   const spec = defaultSpec();
-  const plugins: Record<string, PluginConfig> = { [AI_SDLC]: {} };
+  const plugins: Record<string, PluginConfig> = { [HOSHIN]: {} };
   spec.name = nameFor(kind, ctx);
   const feedback = ctx.feedback?.trim() ?? "";
   spec.task = taskFor(kind, action, ctx) + (feedback ? `\n\nOperator feedback:\n${feedback}` : "");
