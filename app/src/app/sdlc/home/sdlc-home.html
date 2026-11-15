@@ -86,6 +86,9 @@
           <section class="k-state" aria-labelledby="state-title">
             <h1 id="state-title" class="k-state__title">Workspace folder not found</h1>
             <p class="k-state__body">Kata could not read <code class="k-mono">{{ vm.current()?.folder }}</code>: {{ vm.scanError() }}</p>
+            @if (vm.migrationCheckError(); as why) {
+              <p class="k-state__body">Kata could not check whether this folder needs migrating: {{ why }}</p>
+            }
             <p class="k-state__body">Move the folder back, or forget this workspace. Forgetting touches nothing on disk.</p>
             <button hlmBtn variant="secondary" type="button" (click)="vm.askRemove()">Remove from list…</button>
           </section>
@@ -285,6 +288,7 @@
     [plan]="vm.shownMigration()"
     [done]="vm.migrationDone()"
     [canMigrate]="vm.canMigrate()"
+    [busy]="vm.migrationBusy()"
     [error]="vm.migrationError()"
     (migrate)="vm.runMigration()"
     (close)="vm.closeMigration()"

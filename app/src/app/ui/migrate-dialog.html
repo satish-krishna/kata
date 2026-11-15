@@ -1,4 +1,4 @@
-<hlm-dialog [state]="open() ? 'open' : 'closed'" (stateChanged)="onState($event)">
+<hlm-dialog [state]="open() ? 'open' : 'closed'" [disableClose]="busy()" (stateChanged)="onState($event)">
   <hlm-dialog-content *hlmDialogPortal="let ctx" class="[--dialog-w:60rem]">
     @if (plan(); as p) {
       <h2 hlmDialogTitle>{{ done() ? 'Migrated to hoshin' : 'Migrate to hoshin' }}</h2>
@@ -60,7 +60,7 @@
         @if (done()) {
           <button hlmBtn variant="primary" size="sm" type="button" (click)="close.emit()">Close</button>
         } @else {
-          <button hlmBtn variant="ghost" size="sm" type="button" (click)="close.emit()">Cancel</button>
+          <button hlmBtn variant="ghost" size="sm" type="button" [disabled]="busy()" (click)="close.emit()">Cancel</button>
           <button hlmBtn variant="primary" size="sm" type="button" [disabled]="!canMigrate()" (click)="migrate.emit()">Migrate</button>
         }
       </hlm-dialog-footer>

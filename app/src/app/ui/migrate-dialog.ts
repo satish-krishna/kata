@@ -33,6 +33,9 @@ export class MigrateDialog {
   /** The sentence the migration was refused or failed with. */
   readonly error = input.required<string | null>();
 
+  /** The migration is running: the dialog cannot be closed until it ends, so the host reloads the page when it finishes. */
+  readonly busy = input(false);
+
   readonly migrate = output<void>();
   readonly close = output<void>();
 
@@ -42,6 +45,6 @@ export class MigrateDialog {
 
   /** Escape closes the overlay from inside; surface that as close. */
   protected onState(state: BrnDialogState): void {
-    if (state === 'closed' && this.open()) this.close.emit();
+    if (state === 'closed' && this.open() && !this.busy()) this.close.emit();
   }
 }

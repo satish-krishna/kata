@@ -67,6 +67,16 @@ describe('MigrateDialog', () => {
     expect(button('Migrate')!.disabled).toBe(true);
   });
 
+  it('cannot be cancelled while the migration runs', async () => {
+    await open({ busy: true, canMigrate: false });
+    expect(button('Cancel')!.disabled).toBe(true);
+  });
+
+  it('can be cancelled when idle', async () => {
+    await open();
+    expect(button('Cancel')!.disabled).toBe(false);
+  });
+
   it('shows the refusal as an alert', async () => {
     await open({ error: 'A run is working in this workspace.' });
     expect(dialog().querySelector('[role="alert"]')!.textContent).toContain('A run is working in this workspace.');

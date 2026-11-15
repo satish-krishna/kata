@@ -2031,12 +2031,33 @@ describe('SdlcHomeViewModel migration', () => {
     expect(vm.migration()).toBeNull();
   });
 
-  it('keeps the error when asking for the plan fails', async () => {
+  it('keeps the open error and shows why the folder could not be checked when asking for the plan fails', async () => {
     const s = setup();
     vi.spyOn(s.transport, 'sdlcScan').mockRejectedValue('no marker');
     vi.spyOn(s.transport, 'sdlcMigration').mockRejectedValue(new Error('node is missing'));
     await s.vm.init();
     expect(s.vm.state()).toBe('folder-missing');
+    expect(s.vm.scanError()).toContain('no marker');
+    expect(s.vm.migrationCheckError()).toBe('node is missing');
+  });
+
+  it('has no check error when the program answers with no plan', async () => {
+    const { vm } = await legacy(null);
+    expect(vm.migrationCheckError()).toBeNull();
+  });
+
+  it('does not close while the migration runs', async () => {
+    const { vm, migrate } = await legacy();
+    let release: (p: MigratePlan) => void = () => undefined;
+    migrate.mockReturnValue(new Promise<MigratePlan>((ok) => (release = ok)));
+    vm.reviewMigration();
+    const running = vm.runMigration();
+    expect(vm.migrationBusy()).toBe(true);
+    await vm.closeMigration();
+    expect(vm.migrationOpen()).toBe(true);
+    release(plan({ write: true }));
+    await running;
+    expect(vm.migrationBusy()).toBe(false);
   });
 
   it('opens the dialog on review and enables migrating while there are no problems', async () => {

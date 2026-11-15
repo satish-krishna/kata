@@ -245,7 +245,9 @@ export class SdlcHomeViewModel {
   /** The program's dry run for the current folder, when it failed to open and the program has a plan for it; null otherwise. */
   readonly migration = signal<MigratePlan | null>(null);
   readonly migrationOpen = signal(false);
-  private readonly migrationBusy = signal(false);
+  readonly migrationBusy = signal(false);
+  /** The program's words when asking for the dry run failed; null when it answered, with a plan or with none. */
+  readonly migrationCheckError = signal<string | null>(null);
   /** The sentence the migration was refused or failed with. */
   readonly migrationError = signal<string | null>(null);
   /** The program's answer to the migration, once it ran. */
@@ -277,6 +279,7 @@ export class SdlcHomeViewModel {
 
   /** Close the dialog; after a migration the workspace is read again, so the home page shows it as it now is. */
   async closeMigration(): Promise<void> {
+    if (this.migrationBusy()) return;
     this.migrationOpen.set(false);
     if (this.migrated() === null) return;
     this.migrated.set(null);
@@ -285,11 +288,11 @@ export class SdlcHomeViewModel {
   }
 
   /** The dry run for a folder that failed to open; null when there is none or it could not be read, and the open error stands. */
-  private async readMigration(folder: string): Promise<MigratePlan | null> {
+  private async readMigration(folder: string): Promise<{ plan: MigratePlan | null; error: string | null }> {
     try {
-      return await this.transport.sdlcMigration(folder);
-    } catch {
-      return null;
+      return { plan: await this.transport.sdlcMigration(folder), error: null };
+    } catch (e) {
+      return { plan: null, error: message(e) };
     }
   }
   readonly newChangeOpen = signal(false);
@@ -1323,6 +1326,7 @@ export class SdlcHomeViewModel {
     ++this.viewSeq;
     const w = this.current();
     this.scanError.set(null);
+    this.migrationCheckError.set(null);
     if (!w) {
       this.clearDetail();
       this.currentRead.set(true);
@@ -1336,7 +1340,8 @@ export class SdlcHomeViewModel {
       const offered = await this.readMigration(w.folder);
       if (seq !== this.loadSeq) return;
       this.clearDetail();
-      this.migration.set(offered);
+      this.migration.set(offered.plan);
+      this.migrationCheckError.set(offered.error);
       this.scanError.set(message(e));
       this.scanFailed.update((l) => (l.includes(w.id) ? l : [...l, w.id]));
       this.currentRead.set(true);
