@@ -116,7 +116,7 @@ describe('SdlcHome', () => {
   it('lists every master when there is more than one', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcScan').mockResolvedValue({
-      folder: 'D:/Work/acme-commerce', repos: ['a', 'b'], master: { kind: 'many', repos: ['a', 'b'] }, marker: null, marker_error: null,
+      folder: 'D:/Work/acme-commerce', layout: 'workspace', repos: ['a', 'b'], master: { kind: 'many', repos: ['a', 'b'] }, master_folder: null, marker: null, marker_error: null,
     });
     const { container } = await mount(transport);
     expect(container.textContent).toContain('More than one master repo');
@@ -127,7 +127,7 @@ describe('SdlcHome', () => {
   it('says the master repo is gone when no repo holds the marker', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcScan').mockResolvedValue({
-      folder: 'D:/Work/acme-commerce', repos: ['a'], master: { kind: 'none' }, marker: null, marker_error: null,
+      folder: 'D:/Work/acme-commerce', layout: 'workspace', repos: ['a'], master: { kind: 'none' }, master_folder: null, marker: null, marker_error: null,
     });
     const { container } = await mount(transport);
     expect(container.textContent).toContain('No master repo found');
@@ -252,5 +252,62 @@ describe('SdlcHome finished changes and system choice', () => {
   it('no finished section when the system has none', async () => {
     const { container } = await mount();
     expect(container.querySelector('app-finished-changes button')).toBeNull();
+  });
+});
+
+describe('SdlcHome of a single-repo repository', () => {
+  const demoAt = (query: string | null) => history.replaceState({}, '', query ? `/?${query}` : '/');
+  afterEach(() => demoAt(null));
+  const text = (c: HTMLElement) => c.textContent!.replace(/\s+/g, ' ');
+
+  it('lists the system and the apps, with no master row', async () => {
+    demoAt('demo=single-repo');
+    const { container } = await mount();
+    expect(text(container)).toContain('kata');
+    const table = container.querySelector<HTMLElement>('app-repos-table')!;
+    const names = Array.from(table.querySelectorAll('tbody tr td:first-child')).map((td) => td.textContent!.trim());
+    expect(names).toEqual(['engine', 'workbench']);
+  });
+
+  it('shows each app its own context state and action (R1.4)', async () => {
+    demoAt('demo=single-repo');
+    const { container } = await mount();
+    const [engine, workbench] = Array.from(container.querySelectorAll<HTMLElement>('app-repos-table tbody tr'));
+    expect(text(engine)).toContain('out of date');
+    expect(engine.querySelector('button[aria-label="View context of engine"]')).not.toBeNull();
+    expect(text(workbench)).toContain('missing');
+    expect(workbench.querySelector('button[aria-label="View context of workbench"]')).toBeNull();
+    const build = workbench.querySelector<HTMLButtonElement>('button[aria-label="Build context for workbench"]')!;
+    expect(build.textContent!.trim()).toBe('Build context');
+  });
+
+  it('crosses the seam: Build context on an app runs the context run for it', async () => {
+    demoAt('demo=single-repo');
+    const { container, transport } = await mount();
+    const run = vi.spyOn(transport, 'runSpec').mockResolvedValue('1');
+    container.querySelector<HTMLButtonElement>('button[aria-label="Build context for workbench"]')!.click();
+    await confirmPreview();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0][0].name).toBe('sdlc-kata-context');
+  });
+
+  it('a refused repository shows the message and offers nothing (R2.2)', async () => {
+    demoAt('demo=single-repo&plugin=1.3.1');
+    const { container } = await mount();
+    expect(text(container)).toContain('this machine has 1.3.1');
+    const all = labels(container);
+    for (const gone of ['Add system', 'Run setup', 'Refresh instructions', 'Write instructions']) expect(all).not.toContain(gone);
+    expect(container.querySelector('app-repos-table')).toBeNull();
+    expect(container.querySelector('app-instructions-row')).toBeNull();
+    expect(container.querySelector('button[aria-label^="View context"]')).toBeNull();
+    expect(container.querySelector('button[aria-label^="Build context"]')).toBeNull();
+    const start = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'New change');
+    expect(start === undefined || start.disabled).toBe(true);
+  });
+
+  it('offers no way to open another branch in a single-repo repository (R6.1)', async () => {
+    demoAt('demo=single-repo');
+    const { container } = await mount();
+    expect(text(container)).not.toContain('In progress on other branches');
   });
 });

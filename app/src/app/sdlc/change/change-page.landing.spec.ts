@@ -100,7 +100,7 @@ describe('ChangePage landing on a run picked from the running changes (R13.2)', 
 
   it('a run picked in another workspace opens it through the backend', async () => {
     const transport = new MockTransport();
-    const other = { id: 'other', name: 'other', folder: 'D:/elsewhere/other', last_opened: 1 };
+    const other = { id: 'other', name: 'other', folder: 'D:/elsewhere/other', last_opened: 1, layout: 'workspace' as const };
     const now = await transport.sdlcWorkspaces();
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([...now, other]);
     const open = vi.spyOn(transport, 'sdlcOpenWorkspace').mockResolvedValue({ workspaces: [...now, { ...other, last_opened: 99 }], current: 'other' });

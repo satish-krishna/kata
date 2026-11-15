@@ -11,7 +11,7 @@
     (remove)="vm.askRemove()"
     (openSettings)="vm.openSettings()"
   >
-    @if (vm.canWork()) {
+    @if (vm.canWork() || vm.state() === 'refused') {
       <button
         hlmBtn
         variant="primary"
@@ -125,6 +125,15 @@
           </section>
         </main>
       }
+      @case ('refused') {
+        <main class="k-home__state">
+          <section class="k-state" aria-labelledby="state-title">
+            <h1 id="state-title" class="k-state__title">The single-repo layout needs a newer ai-sdlc</h1>
+            <p class="k-state__body">{{ vm.blockMessage() }}</p>
+            <p class="k-state__body">Nothing else in this folder works until the plugin is updated. There is no action on this screen.</p>
+          </section>
+        </main>
+      }
       @case ('not-set-up') {
         <main class="k-home__state">
           <section class="k-state" aria-labelledby="state-title">
@@ -198,13 +207,14 @@
             </div>
           </section>
           <section class="k-home__pane" aria-labelledby="repos-heading">
-            <div class="wb-pane__head"><h2 id="repos-heading" class="kata-eyebrow">Repositories</h2></div>
+            <div class="wb-pane__head"><h2 id="repos-heading" class="kata-eyebrow">{{ vm.singleRepo() ? 'Apps' : 'Repositories' }}</h2></div>
             <div class="k-home__body">
               @if (vm.instructions(); as instructions) {
                 <app-instructions-row [state]="instructions" [disabled]="vm.locked()" (refresh)="vm.refreshInstructions()" />
               }
               <app-repos-table
                 [rows]="vm.repoRows()"
+                [apps]="vm.apps()"
                 [marker]="vm.markerLine()"
                 [disabled]="vm.locked()"
                 (runContext)="vm.runContext($event)"

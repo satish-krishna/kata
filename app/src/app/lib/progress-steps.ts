@@ -10,6 +10,7 @@ export const PROGRESS_STEP_IDS = [
   'running-checks',
   'pushing',
   'opening-prs',
+  'opening-preview',
 ] as const;
 
 export type ProgressStepId = (typeof PROGRESS_STEP_IDS)[number];
@@ -105,6 +106,15 @@ export const PROGRESS_STEPS: Record<ProgressStepId, { usualMs: number; lines: re
       'Pushing the commits, one repository at a time…',
     ],
   },
+  'opening-preview': {
+    usualMs: 3_000,
+    lines: [
+      'Opening the preview…',
+      'Opening the preview, folder by folder…',
+      'Opening the preview once every spec is composed…',
+      'Opening the preview with what the build will start from…',
+    ],
+  },
   'opening-prs': {
     usualMs: 30_000,
     lines: [
@@ -128,6 +138,7 @@ export const PROGRESS_NAMES: Record<ProgressStepId, string> = {
   'running-checks': 'Running the checks',
   'pushing': 'Pushing the change branch',
   'opening-prs': 'Opening pull requests',
+  'opening-preview': 'Opening the preview',
 };
 
 /** The plain label of each step, with the facts that stay put while the playful line rotates. */
@@ -139,4 +150,6 @@ export const progressLabels = {
   checkingBase: (): string => 'Checking the base before building',
   preparingBuild: (): string => 'Checking the repositories before building',
   preparingReview: (): string => 'Checking the repositories before the review',
+  openingPreview: (): string => 'Preparing the preview',
+  openingRound: (): string => 'Preparing the round',
 };

@@ -53,6 +53,17 @@ export class PrListDialog {
     return v?.kind === 'partial' ? v.opened : [];
   });
 
+  /** The apps the change touched, listed under the one pull request; empty for a workspace change. */
+  protected readonly apps = computed<string[]>(() => {
+    const v = this.view();
+    return v?.kind === 'done' ? (v.apps ?? []) : [];
+  });
+  /** The apps the plan named that the change did not touch; empty for a workspace change. */
+  protected readonly untouched = computed<string[]>(() => {
+    const v = this.view();
+    return v?.kind === 'done' ? (v.untouched ?? []) : [];
+  });
+
   /** Escape closes the overlay from inside; surface that as close. */
   protected onState(state: BrnDialogState): void {
     if (state === 'closed' && this.open()) this.close.emit();

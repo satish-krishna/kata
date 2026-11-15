@@ -139,38 +139,70 @@ pub fn advance_origin_only(repo: &Path, branch: &str, rel: &str, msg: &str) {
     checkout(repo, &back, false);
 }
 
+/// A single-repo layout master at `<dir>/<name>`: a git repository on `main` whose root holds the
+/// marker (`layout` "single-repo", one system `kata` with `apps`, app name to folder), one committed
+/// file in each app folder, `intent/kata/policies.md` and `intent/kata/context/`, all committed.
+#[allow(dead_code)]
+pub fn single_repo(dir: &Path, name: &str, apps: &[(&str, &str)]) -> PathBuf {
+    let path = repo(dir, name);
+    let map: serde_json::Map<String, serde_json::Value> = apps
+        .iter()
+        .map(|(app, folder)| ((*app).to_string(), serde_json::json!(folder)))
+        .collect();
+    let marker = serde_json::json!({
+        "version": 1,
+        "layout": "single-repo",
+        "systems": {"kata": {"apps": map}}
+    });
+    write(&path, ".ai-sdlc.json", &format!("{marker}\n"));
+    for (_, folder) in apps {
+        write(&path, &format!("{folder}/README.md"), "app\n");
+    }
+    write(&path, "intent/kata/policies.md", "# Policies\n");
+    write(&path, "intent/kata/context/.gitkeep", "");
+    git::run(&path, &["add", "-A"]).unwrap();
+    git::run(&path, &["commit", "-q", "-m", "single-repo layout"]).unwrap();
+    path
+}
+
 /// A stand-in for the ai-sdlc plugin folder: its `tools/` is the vendored copy of the plugin's
 /// format program, and its version is the first one that supports the light track. Made once per test process.
 pub fn plugin_dir() -> &'static Path {
     static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-    DIR.get_or_init(|| {
-        fn copy(from: &Path, to: &Path) {
-            std::fs::create_dir_all(to).unwrap();
-            for entry in std::fs::read_dir(from).unwrap().flatten() {
-                let target = to.join(entry.file_name());
-                if entry.path().is_dir() {
-                    copy(&entry.path(), &target);
-                } else {
-                    std::fs::copy(entry.path(), target).unwrap();
-                }
+    DIR.get_or_init(|| plugin_copy(crate::plugin::MIN_VERSION))
+        .path()
+}
+
+/// The same copy of the vendored program as [`plugin_dir`], declaring `version` in its manifest, for
+/// the tests of what a given plugin version allows. A new folder on every call, removed when dropped.
+#[allow(dead_code)]
+pub fn plugin_dir_at(version: &str) -> tempfile::TempDir {
+    plugin_copy(version)
+}
+
+fn plugin_copy(version: &str) -> tempfile::TempDir {
+    fn copy(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap().flatten() {
+            let target = to.join(entry.file_name());
+            if entry.path().is_dir() {
+                copy(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), target).unwrap();
             }
         }
-        let dir = tempfile::tempdir().unwrap();
-        let vendored = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools");
-        copy(&vendored, &dir.path().join("tools"));
-        let meta = dir.path().join(".claude-plugin");
-        std::fs::create_dir_all(&meta).unwrap();
-        std::fs::write(
-            meta.join("plugin.json"),
-            format!(
-                r#"{{"name":"ai-sdlc","version":"{}"}}"#,
-                crate::plugin::MIN_VERSION
-            ),
-        )
-        .unwrap();
-        dir
-    })
-    .path()
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let vendored = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools");
+    copy(&vendored, &dir.path().join("tools"));
+    let meta = dir.path().join(".claude-plugin");
+    std::fs::create_dir_all(&meta).unwrap();
+    std::fs::write(
+        meta.join("plugin.json"),
+        format!(r#"{{"name":"ai-sdlc","version":"{version}"}}"#),
+    )
+    .unwrap();
+    dir
 }
 
 /// A stand-in plugin at `dir` whose `tools/ai-sdlc.ts` answers `fix-state --json <folder>...` without
@@ -203,4 +235,41 @@ console.log(JSON.stringify(folders.map((folder) => folder.includes('broken')
     )
     .unwrap();
     dir.to_path_buf()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(args: &[&str], cwd: &Path) -> (bool, String) {
+        let program = plugin_dir().join("tools/ai-sdlc.ts");
+        let out = std::process::Command::new("node")
+            .arg(program)
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.success(), text)
+    }
+
+    #[test]
+    fn single_repo_fixture_passes_the_program_check() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = single_repo(
+            tmp.path(),
+            "mono",
+            &[("engine", "engine"), ("workbench", "app")],
+        );
+        let marker = root.join(".ai-sdlc.json");
+        let (ok, text) = node(&["check", marker.to_str().unwrap()], &root);
+        assert!(ok, "check reported problems: {text}");
+        let (ok, text) = node(&["resolve", "--json"], &root);
+        assert!(ok, "resolve failed: {text}");
+        assert!(text.contains(r#""layout":"single-repo""#), "{text}");
+    }
 }

@@ -69,9 +69,11 @@ const previewReady = (preview: RunPreviewViewModel) => vi.waitFor(() => expect(p
 
 const scanOf = (over: Partial<WorkspaceScan>): WorkspaceScan => ({
   folder: NEW_FOLDER,
+  layout: 'workspace',
   repos: ['commerce-docs', 'customer-portal'],
   master: { kind: 'one', repo: 'commerce-docs', committed: true },
   marker: { version: 1, systems: { commerce: { repos: ['customer-portal'] } } },
+  master_folder: `${NEW_FOLDER}/commerce-docs`,
   marker_error: null,
   ...over,
 });
@@ -95,8 +97,8 @@ describe('SdlcHomeViewModel init', () => {
   it('opens the workspace with the newest last_opened when several exist', async () => {
     const { vm, transport } = setup();
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([
-      { id: 'old', name: 'old', folder: '/old', last_opened: 5 },
-      { id: 'new', name: 'new', folder: '/new', last_opened: 50 },
+      { id: 'old', name: 'old', folder: '/old', last_opened: 5, layout: 'workspace' },
+      { id: 'new', name: 'new', folder: '/new', last_opened: 50, layout: 'workspace' },
     ]);
     vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('new');
     await vm.init();
@@ -106,8 +108,8 @@ describe('SdlcHomeViewModel init', () => {
   it('opens the workspace the backend names as current, even on a tie a TS sort would break the other way', async () => {
     const { vm, transport } = setup();
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([
-      { id: 'first', name: 'first', folder: '/first', last_opened: 0 },
-      { id: 'last', name: 'last', folder: '/last', last_opened: 0 },
+      { id: 'first', name: 'first', folder: '/first', last_opened: 0, layout: 'workspace' },
+      { id: 'last', name: 'last', folder: '/last', last_opened: 0, layout: 'workspace' },
     ]);
     const ask = vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('last');
     await vm.init();
@@ -118,9 +120,9 @@ describe('SdlcHomeViewModel init', () => {
   it('removing the current workspace moves to what the backend answers', async () => {
     const { vm, transport, removeWorkspace } = setup();
     const list: WorkspaceEntry[] = [
-      { id: 'a', name: 'a', folder: '/a', last_opened: 0 },
-      { id: 'b', name: 'b', folder: '/b', last_opened: 0 },
-      { id: 'c', name: 'c', folder: '/c', last_opened: 0 },
+      { id: 'a', name: 'a', folder: '/a', last_opened: 0, layout: 'workspace' },
+      { id: 'b', name: 'b', folder: '/b', last_opened: 0, layout: 'workspace' },
+      { id: 'c', name: 'c', folder: '/c', last_opened: 0, layout: 'workspace' },
     ];
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue(list);
     vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('a');
@@ -250,7 +252,7 @@ describe('SdlcHomeViewModel add workspace', () => {
       new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [],
     });
     vi.spyOn(transport, 'sdlcScan')
-      .mockResolvedValueOnce(scanOf({ master: { kind: 'none' }, marker: null }))
+      .mockResolvedValueOnce(scanOf({ master: { kind: 'none' }, master_folder: null, marker: null }))
       .mockResolvedValueOnce(scanOf({ master: { kind: 'one', repo: 'commerce-docs', committed: false }, marker: null }));
     await vm.addWorkspace();
     expect(snap.mock.calls.map((c) => c[0])).toEqual([
@@ -324,7 +326,7 @@ describe('SdlcHomeViewModel add workspace', () => {
   it('treats a listed folder as already listed despite slashes, a trailing separator and case', async () => {
     const { vm, transport, runSteps } = setup();
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([
-      { id: 'acme-commerce', name: 'acme-commerce', folder: 'D:\\Work\\acme-commerce\\', last_opened: 1 },
+      { id: 'acme-commerce', name: 'acme-commerce', folder: 'D:\\Work\\acme-commerce\\', last_opened: 1, layout: 'workspace' },
     ]);
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue('d:/work/acme-commerce');
     await vm.init();
@@ -433,7 +435,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('asks to switch to the base branch first, and only then runs', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main', switchable: true, base_refusal: null });
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
     const done = vm.runContext('customer-portal');
     await flush();
@@ -449,7 +451,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('switches to the base the backend resolves, not a stored one', async () => {
     const { vm, transport } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'develop' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'develop', switchable: true, base_refusal: null });
     const done = vm.runContext('customer-portal');
     await flush();
     expect(vm.switchPrompt()).toBe(`Switch ${MOCK_MASTER} to develop first?`);
@@ -460,7 +462,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('runs nothing when the switch is declined', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main', switchable: true, base_refusal: null });
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
     const done = vm.runContext('customer-portal');
     await flush();
@@ -473,7 +475,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('shows git message and runs nothing when the switch is refused', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main', switchable: true, base_refusal: null });
     vi.spyOn(transport, 'sdlcCheckout').mockRejectedValue('the master repo has uncommitted changes: a.md');
     const done = vm.runContext('customer-portal');
     await flush();
@@ -495,7 +497,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('aborts context with an error when the master repo is not on a branch', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main', switchable: true, base_refusal: null });
     await vm.runContext('customer-portal');
     expect(toastText()).toContain(`${MOCK_MASTER} is not on a branch`);
     expect(runAgent).not.toHaveBeenCalled();
@@ -504,7 +506,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('aborts setup with an error when the master repo is not on a branch', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main', switchable: true, base_refusal: null });
     await vm.addSystem();
     expect(toastText()).toContain('is not on a branch');
     expect(runAgent).not.toHaveBeenCalled();
@@ -647,7 +649,7 @@ describe('SdlcHomeViewModel navigation', () => {
     const { vm, transport } = setup();
     vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({
       current: 'main',
-      default_base: 'main',
+      default_base: 'main', switchable: true, base_refusal: null,
       others: [
         { branch: 'feat/PROJ-123-password-reset', change: '2026-11-02-password-reset' },
         { branch: 'change/2026-10-17-product-notes', change: '2026-10-17-product-notes' },
@@ -694,7 +696,7 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
     const { vm, transport, openWorkspace } = setup();
     await vm.init();
     const first = vm.workspaces()[0];
-    const second = { id: 'second', name: 'second', folder: '/second', last_opened: 1 };
+    const second = { id: 'second', name: 'second', folder: '/second', last_opened: 1, layout: 'workspace' as const };
     vm.workspaces.set([first, second]);
     const appVersions = vi.spyOn(transport, 'appVersions');
     openWorkspace.mockResolvedValue({ workspaces: [first, { ...second, last_opened: 99 }], current: 'second' });
@@ -709,7 +711,7 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
     const { vm, transport, openWorkspace } = setup();
     await vm.init();
     const before = vm.workspaces();
-    vm.workspaces.set([...before, { id: 'second', name: 'second', folder: '/second', last_opened: 1 }]);
+    vm.workspaces.set([...before, { id: 'second', name: 'second', folder: '/second', last_opened: 1, layout: 'workspace' }]);
     const shown = vm.workspaces();
     const appVersions = vi.spyOn(transport, 'appVersions');
     openWorkspace.mockRejectedValue(new Error('disk full'));
@@ -739,7 +741,7 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
     await vm.init();
     const first = vm.workspaces()[0];
-    const added = { id: 'backend-chose-this', name: 'new-ws', folder: NEW_FOLDER, last_opened: 77 };
+    const added = { id: 'backend-chose-this', name: 'new-ws', folder: NEW_FOLDER, last_opened: 77, layout: 'workspace' as const };
     addWorkspace.mockResolvedValue({ workspaces: [first, added], current: added.id });
     await vm.addWorkspace();
     await vm.confirmAddWorkspace();
@@ -754,7 +756,7 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
     const versions = TestBed.inject(VersionsStore);
     const answer = await transport.appVersions();
     const appVersions = vi.spyOn(transport, 'appVersions').mockResolvedValue({ ...answer, copy: 'second workspace' });
-    const second = { id: 'second', name: 'second', folder: '/second', last_opened: 1 };
+    const second = { id: 'second', name: 'second', folder: '/second', last_opened: 1, layout: 'workspace' as const };
     vm.workspaces.set([...vm.workspaces(), second]);
     openWorkspace.mockResolvedValue({ workspaces: [...vm.workspaces()], current: 'second' });
     await vm.selectWorkspace('second');
@@ -945,6 +947,7 @@ const stateOf = (change: string): ChangeState => ({
   buildLogs: {},
   review: { committed: 0, draft: 'none' },
   fix: null,
+  apps: null,
   ready: { spec: gate, plan: gate, build: gate, review: gate, done: gate, reject: gate },
 });
 const viewOf = (change: string, text: string, readiness: Readiness): ChangeView => ({
@@ -968,7 +971,7 @@ const systemViewOf = (n: number, readiness: Readiness = READY): SystemView => ({
 /** The backend's answer for a workspace of one system: the set may start a change exactly when that system may. */
 const oneSystem = (v: SystemView): WorkspaceView => ({ systems: [v], canStartChange: v.canStartChange, startChangeReason: v.startChangeReason });
 
-const second: WorkspaceEntry = { id: 'second', name: 'second', folder: '/second', last_opened: 1 };
+const second: WorkspaceEntry = { id: 'second', name: 'second', folder: '/second', last_opened: 1, layout: 'workspace' as const };
 
 describe('SdlcHomeViewModel changes list', () => {
   it('names show at once and every stage fills in from one state read (R1.4)', async () => {
@@ -1048,9 +1051,9 @@ describe('SdlcHomeViewModel changes list', () => {
   it('reads only the current workspace; the switcher has no counts (R3.1)', async () => {
     const { vm, transport } = setup();
     const three: WorkspaceEntry[] = [
-      { id: 'a', name: 'a', folder: '/a', last_opened: 30 },
-      { id: 'b', name: 'b', folder: '/b', last_opened: 20 },
-      { id: 'c', name: 'c', folder: '/c', last_opened: 10 },
+      { id: 'a', name: 'a', folder: '/a', last_opened: 30, layout: 'workspace' },
+      { id: 'b', name: 'b', folder: '/b', last_opened: 20, layout: 'workspace' },
+      { id: 'c', name: 'c', folder: '/c', last_opened: 10, layout: 'workspace' },
     ];
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue(three);
     vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('a');
@@ -1212,7 +1215,7 @@ describe('SdlcHomeViewModel naming at the start of a change', () => {
 
   it('a refusal names the base branch the backend resolves, not a stored one', async () => {
     const { vm, transport } = await opened({ kind: 'error', reason: 'unusable', message: 'no {slug}' });
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'main', others: [], default_base: 'develop' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'main', others: [], default_base: 'develop', switchable: true, base_refusal: null });
     await vm.selectWorkspace(vm.workspaces()[0].id);
     vm.openNewChange();
     await vi.waitFor(() => expect(vm.namingError()).toContain('committed to develop;'));
@@ -1707,6 +1710,94 @@ describe('SdlcHomeViewModel removing a merged change\'s copy', () => {
       expect(open.mock.calls[0][3]).toBe('action-ended');
     });
   }
+});
+
+describe('SdlcHomeViewModel single-repo repository', () => {
+  const demoAt = (query: string | null) => history.replaceState({}, '', query ? `/?${query}` : '/');
+  afterEach(() => demoAt(null));
+  /** The address names the demo before the transport is made, the way the browser reaches it. */
+  const opened = async (query = 'demo=single-repo', before: (made: ReturnType<typeof setup>) => void = () => undefined) => {
+    demoAt(query);
+    const made = setup({ home: 'listed' });
+    before(made);
+    await made.vm.init();
+    await flush();
+    return made;
+  };
+
+  it('a single-repo repository lists its system and its apps', async () => {
+    let rows: ReturnType<typeof vi.spyOn> | undefined;
+    const { vm } = await opened('demo=single-repo', ({ transport }) => {
+      rows = vi.spyOn(transport, 'sdlcAppRows');
+    });
+    expect(vm.current()?.name).toBe('kata');
+    expect(vm.state()).toBe('ready');
+    expect(vm.systems()).toEqual(['kata']);
+    expect(rows).toHaveBeenCalledWith('D:/kata', 'kata');
+    expect(vm.apps()?.map((a) => a.name)).toEqual(['engine', 'workbench']);
+    // One row per app and no master row: the table's repository rows stay empty.
+    expect(vm.repoRows()).toEqual([]);
+    expect(vm.instructions()).toBe('current');
+  });
+
+  it('the saved list marks a single-repo repository and not a workspace', async () => {
+    const { vm } = await opened();
+    expect(vm.workspaces().map((w) => [w.name, w.folder, w.layout])).toEqual([
+      ['workspaces', 'D:/workspaces', 'workspace'],
+      ['kata', 'D:/kata', 'single-repo'],
+    ]);
+  });
+
+  it('a refused single-repo repository offers nothing (R2.2)', async () => {
+    const { vm } = await opened('demo=single-repo&plugin=1.3.1');
+    expect(vm.state()).toBe('refused');
+    expect(vm.blockMessage()).toContain('1.3.1');
+    expect(vm.canWork()).toBe(false);
+    expect(vm.canStartChange()).toBe(false);
+    expect(vm.apps()).toBeNull();
+    expect(vm.instructions()).toBeNull();
+  });
+
+  it('no switch of the checkout is offered in a single-repo repository (R6.1)', async () => {
+    let branches: ReturnType<typeof vi.spyOn> | undefined;
+    let checkout: ReturnType<typeof vi.spyOn> | undefined;
+    const { vm, runAgent } = await opened('demo=single-repo', ({ transport }) => {
+      branches = vi.spyOn(transport, 'sdlcBranches');
+      checkout = vi.spyOn(transport, 'sdlcCheckout');
+    });
+    expect(branches).toHaveBeenCalledWith('D:/kata');
+    expect(vm.branches()?.switchable).toBe(false);
+    expect(vm.otherBranches()).toEqual([]);
+    await vm.openOtherBranch('2026-10-17-product-notes');
+    expect(checkout).not.toHaveBeenCalled();
+    // Off the base branch the context run is refused with the backend's text, and no switch is offered.
+    const text = 'Your checkout is on change/2026-11-12-x. Kata never switches it; check out main yourself and run this again.';
+    branches!.mockResolvedValue({ current: 'change/2026-11-12-x', others: [], default_base: 'main', switchable: false, base_refusal: text });
+    await vm.runContext('workbench');
+    expect(toastText()).toContain(text);
+    expect(vm.switchPrompt()).toBeNull();
+    expect(checkout).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+});
+
+describe('SdlcHomeViewModel master folder', () => {
+  const ELSEWHERE = 'E:/elsewhere/the-master';
+  /** The scan names the master's folder; the view model never joins the master's name onto the workspace folder. */
+  const withMasterFolder = (transport: MockTransport) => {
+    const real = transport.sdlcScan.bind(transport);
+    vi.spyOn(transport, 'sdlcScan').mockImplementation(async (folder) => ({ ...(await real(folder)), master_folder: ELSEWHERE }));
+  };
+
+  it('reads and switches the master at the folder the scan names', async () => {
+    const { vm, transport } = setup({ home: 'listed' });
+    withMasterFolder(transport);
+    const branches = vi.spyOn(transport, 'sdlcBranches');
+    await vm.init();
+    await flush();
+    expect(branches).toHaveBeenCalledWith(ELSEWHERE);
+    expect(branches.mock.calls.every(([master]) => master === ELSEWHERE)).toBe(true);
+  });
 });
 
 describe('New change and copy removal can be stopped', () => {

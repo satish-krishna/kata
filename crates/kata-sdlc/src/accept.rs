@@ -234,6 +234,7 @@ impl ChangeDocument {
 /// Where the plugin works for `change`: the master that holds it (its copy) in the workspace of `place`.
 fn copy_place(place: &Place, change: &ChangeState) -> Place {
     Place {
+        layout: place.layout,
         master: PathBuf::from(&change.master),
         workspace: place.workspace.clone(),
     }
@@ -456,6 +457,7 @@ if ({trigger}) {{
             }
             testutil::repo(&ws, "app");
             let place = Place {
+                layout: crate::layout::Layout::Workspace,
                 master: master.clone(),
                 workspace: ws.clone(),
             };
@@ -481,6 +483,7 @@ if ({trigger}) {{
 
         fn place(&self) -> Place {
             Place {
+                layout: crate::layout::Layout::Workspace,
                 master: self.master.clone(),
                 workspace: self.ws.clone(),
             }

@@ -1,5 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
+import type { AppHealth } from '@bindings/AppHealth';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { WorkspaceView } from '@bindings/WorkspaceView';
@@ -38,7 +39,6 @@ import {
   folderName,
   isSetUp,
   lastRunTimes,
-  masterPath,
   masterRepo,
   readContextStates,
   repoRows,
@@ -58,6 +58,7 @@ export type HomeState =
   | 'many-masters'
   | 'marker-error'
   | 'not-set-up'
+  | 'refused'
   | 'ready';
 
 /** The home page's progress entry, kept apart from the change page's. */
@@ -173,9 +174,10 @@ export class SdlcHomeViewModel {
     );
   });
   /** Whether a new change may be started across the workspace's systems, as the backend decided; false until the answer is in. */
-  readonly canStartChange = computed(() => this.listed()?.canStartChange ?? this.workspace()?.canStartChange ?? false);
+  readonly canStartChange = computed(() => !this.layoutRefused() && (this.listed()?.canStartChange ?? this.workspace()?.canStartChange ?? false));
   /** Why a new change may not be started, as the backend gave it; null when it may. */
   readonly startChangeReason = computed(() => {
+    if (this.layoutRefused()) return this.blockMessage();
     const l = this.listed();
     return l ? l.startChangeReason : (this.workspace()?.startChangeReason ?? null);
   });
@@ -194,19 +196,38 @@ export class SdlcHomeViewModel {
     const m = this.scan()?.master;
     return m?.kind === 'many' ? m.repos : [];
   });
+  /** The apps of a single-repo system with their context health; null in a workspace. */
+  readonly apps = signal<AppHealth[] | null>(null);
+  /** The message of a blocked readiness; null when the mode can run. */
+  readonly blockMessage = computed<string | null>(() => {
+    const r = this.readiness();
+    return r.kind === 'blocked' ? r.message : null;
+  });
+  /** The backend refused the layout of this folder on this machine: nothing else is offered. */
+  private readonly layoutRefused = computed(() => {
+    const r = this.readiness();
+    return r.kind === 'blocked' && r.reason === 'layoutNeedsNewerPlugin';
+  });
   readonly masterBranch = computed(() => this.branches()?.current ?? null);
-  readonly otherBranches = computed(() => (this.branches()?.others ?? []).map((o) => o.change));
+  /** Never offered where the backend says the checkout cannot be switched. */
+  readonly otherBranches = computed(() => {
+    const info = this.branches();
+    return info?.switchable === false ? [] : (info?.others ?? []).map((o) => o.change);
+  });
   readonly systems = computed(() => {
     const s = this.scan();
     return s ? systemNames(s) : [];
   });
+  /** A single-repo repository has no repository rows: its apps are listed instead, with no master row. */
   readonly repoRows = computed(() => {
     const s = this.scan();
-    return s ? repoRows(s, this.contexts()) : [];
+    return s && s.layout !== 'single-repo' ? repoRows(s, this.contexts()) : [];
   });
+  readonly singleRepo = computed(() => this.scan()?.layout === 'single-repo');
   readonly markerLine = computed(() => {
     const s = this.scan();
     if (!s?.marker) return '';
+    if (s.layout === 'single-repo') return `${plural(this.systems().length, 'system', 'systems')} · this repository is its own master`;
     return `.ai-sdlc.json in ${masterRepo(s) ?? 'the master repo'} · ${plural(this.systems().length, 'system', 'systems')}`;
   });
 
@@ -217,6 +238,7 @@ export class SdlcHomeViewModel {
     if (this.scanError() !== null) return 'folder-missing';
     const scan = this.scan();
     if (scan === null) return 'loading';
+    if (this.layoutRefused()) return 'refused';
     if (scan.master.kind === 'none') return 'master-gone';
     if (scan.master.kind === 'many') return 'many-masters';
     if (scan.marker_error !== null) return 'marker-error';
@@ -391,8 +413,7 @@ export class SdlcHomeViewModel {
 
   private readonly masterDir = computed(() => {
     const w = this.current();
-    const repo = this.scan() ? masterRepo(this.scan()!) : null;
-    return w && repo ? masterPath(w.folder, repo) : null;
+    return w ? (this.scan()?.master_folder ?? null) : null;
   });
 
   /** `demo` is the `?demo=` query value: `sdlc-setup` opens the add-workspace flow on a folder that needs setup, and `start` triages a described change with a scripted run. Browser only. `context` is the `?context=` query value, a repo the context screen handed over to run or refresh its context. */
@@ -838,7 +859,7 @@ export class SdlcHomeViewModel {
   /** Check the change's branch out, then open the change. Git refuses on a dirty tree; its message is shown as is. */
   async openOtherBranch(change: string): Promise<void> {
     const master = this.masterDir();
-    if (!master || this.refuseWhileLocked()) return;
+    if (!master || this.branches()?.switchable === false || this.refuseWhileLocked()) return;
     try {
       // The branch is the one the list read: a recorded branch is not named after its change.
       const branch = this.branches()?.others.find((o) => o.change === change)?.branch ?? `change/${change}`;
@@ -1006,7 +1027,7 @@ export class SdlcHomeViewModel {
   /** Run first-time setup for a folder. Returns the rescanned workspace, or null when it did not end set up. */
   private async runSetup(folder: string, scan: WorkspaceScan): Promise<WorkspaceScan | null> {
     const repo = masterRepo(scan);
-    const master = repo ? masterPath(folder, repo) : null;
+    const master = scan.master_folder;
     if (master && repo && !(await this.onBase(master, repo))) return null;
     const built = specFor('setup', null, { folder, system: '', change: null }, await this.currentSettings(), this.catalog() ?? []);
     const spec = await this.confirm(built);
@@ -1053,6 +1074,11 @@ export class SdlcHomeViewModel {
     }
     const target = info.default_base;
     if (target === null || info.current === target) return true;
+    if (!info.switchable) {
+      // The checkout is never switched here: the backend's reason is shown instead of an offer.
+      this.toasts.error(info.base_refusal ?? `${repo} is not on ${target}, and Kata does not switch it.`);
+      return false;
+    }
     if (!(await this.confirmSwitch(`Switch ${repo} to ${target} first?`))) return false;
     try {
       await this.transport.sdlcCheckout(master, target);
@@ -1247,6 +1273,7 @@ export class SdlcHomeViewModel {
     this.contexts.set({});
     this.lastRuns.set({});
     this.instructions.set(null);
+    this.apps.set(null);
   }
 
   /** Read the current workspace from disk. A newer call supersedes an older one still in flight. */
@@ -1283,9 +1310,9 @@ export class SdlcHomeViewModel {
     } catch {
       // Nothing decided the plugin is usable, so the notice says to install it.
     }
-    if (isSetUp(scan) && repo !== null) {
+    const master = scan.master_folder;
+    if (isSetUp(scan) && repo !== null && master !== null) {
       try {
-        const master = masterPath(w.folder, repo);
         let home: { list: HomeList; views: WorkspaceView | null };
         [branches, home, lastRuns] = await Promise.all([
           this.transport.sdlcBranches(master),
@@ -1314,7 +1341,20 @@ export class SdlcHomeViewModel {
     // The change list is on screen with its labels; the slower reads below do not hold it up.
     let contexts: Record<string, ContextState> = {};
     let instructions: InstructionsState | null = null;
-    if (isSetUp(scan) && repo !== null) {
+    let apps: AppHealth[] | null = null;
+    if (isSetUp(scan) && repo !== null && scan.layout === 'single-repo') {
+      // The apps and the instructions state are the workflow's answer; there are no repositories to read.
+      const system = systemNames(scan)[0];
+      if (readiness.kind === 'ready' && system !== undefined) {
+        try {
+          const rows = await this.transport.sdlcAppRows(w.folder, system);
+          apps = rows.apps;
+          instructions = rows.instructions;
+        } catch (e) {
+          this.toasts.error(`Could not read the apps: ${message(e)}`);
+        }
+      }
+    } else if (isSetUp(scan) && repo !== null) {
       try {
         contexts = await this.readContexts(w.folder, scan);
       } catch (e) {
@@ -1331,6 +1371,7 @@ export class SdlcHomeViewModel {
     if (seq !== this.loadSeq) return;
     this.contexts.set(contexts);
     this.instructions.set(instructions);
+    this.apps.set(apps);
     await opened;
     if (isSetUp(scan)) await this.readOldChecks(w.folder, systemNames(scan));
   }

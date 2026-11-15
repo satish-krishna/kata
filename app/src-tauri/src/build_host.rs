@@ -18,7 +18,10 @@ use kata_sdlc::coordinator::{
 };
 use kata_sdlc::format::{self, ParsedPlan, ReadResult};
 use kata_sdlc::git;
-use kata_sdlc::holds::{needed_repos, review_repos, ChangeKey, HoldTable, Purpose, RepoKey};
+use kata_sdlc::holds::{
+    keys_for, needed_repos, review_repos, ChangeKey, HoldTable, Purpose, RepoKey,
+};
+use kata_sdlc::layout::Layout;
 use kata_sdlc::permissions::{RunKind, RunPlace};
 use kata_sdlc::review::{self, ReviewCurrency, ReviewRecord};
 use kata_sdlc::round::{self, RoundOffer, RoundPicks, RoundPlan, RoundRequest};
@@ -202,16 +205,7 @@ pub struct RunEnd {
 
 /// The id the Workbench's workspace list keeps `folder` under.
 pub fn workspace_id_in_store(folder: &Path) -> Option<String> {
-    let norm = |t: &str| {
-        t.replace('\\', "/")
-            .trim_end_matches('/')
-            .to_ascii_lowercase()
-    };
-    let wanted = norm(&folder.display().to_string());
-    kata_sdlc::store::load_workspaces()
-        .into_iter()
-        .find(|w| norm(&w.folder) == wanted)
-        .map(|w| w.id)
+    kata_sdlc::store::saved_entry(folder).map(|w| w.id)
 }
 
 /// The id of a run's transcript: the stem of the path in its first `transcript: <path>` log event.
@@ -443,7 +437,23 @@ fn live_runs(build: &Build) -> Vec<BuildRunRef> {
         .collect()
 }
 
+/// The repositories a round may go to: the change's product repositories, and in the workspace layout the
+/// master. The single-repo layout has only its apps.
+fn offered_repos(place: &Place, state: &ChangeState) -> Vec<String> {
+    let master = master_name(place);
+    let mut repos = review_repos(state, &master);
+    if place.layout == Layout::Workspace {
+        repos.push(master);
+    }
+    repos
+}
+
 fn master_name(place: &Place) -> String {
+    // The single-repo layout has no product repositories beside the master: its tasks belong to apps, and
+    // no app is the master.
+    if place.layout == Layout::SingleRepo {
+        return String::new();
+    }
     place
         .master
         .file_name()
@@ -459,6 +469,9 @@ struct LiveRun {
     run_id: Option<u64>,
     /// A cancel arrived while the launch was under way.
     cancel_asked: bool,
+    /// Ends the program step the launch is in (the app's `build.start`); cancelled with the run. The
+    /// launches of the first drive of a start share the start's step token, so its Stop reaches them too.
+    token: CancelToken,
 }
 
 /// One change's build.
@@ -522,10 +535,12 @@ fn strings(value: &Value) -> Vec<String> {
 
 /// The folders of the product repositories a change's review reads.
 fn review_folders(place: &Place, state: &ChangeState) -> Vec<RepoKey> {
-    review_repos(state, &master_name(place))
-        .iter()
-        .map(|r| RepoKey::of(&place.workspace.join(r)))
-        .collect()
+    keys_for(
+        place.layout,
+        &place.master,
+        &place.workspace,
+        &review_repos(state, &master_name(place)),
+    )
 }
 
 fn now_ms() -> u64 {
@@ -728,6 +743,8 @@ impl BuildHost {
         let run_place = RunPlace {
             kind: run_kind,
             system: change.system.clone(),
+            layout: exec.place.layout,
+            apps: RunPlace::apps_of(&state),
             state,
             workspace: exec.place.workspace.clone(),
             checkout: exec.place.master.clone(),
@@ -857,9 +874,7 @@ impl BuildHost {
         let record = self
             .tools
             .review_record(&place, &change.system, &snapshot.state)?;
-        let master = master_name(&place);
-        let mut repos = review_repos(&snapshot.state, &master);
-        repos.push(master);
+        let repos = offered_repos(&place, &snapshot.state);
         Ok(round::offer(record.as_ref(), &repos))
     }
 
@@ -1038,6 +1053,8 @@ impl BuildHost {
         let place = RunPlace {
             kind,
             system: exec.system.clone(),
+            layout: exec.place.layout,
+            apps: RunPlace::apps_of(&snapshot.state),
             state: snapshot.state.clone(),
             workspace: exec.place.workspace.clone(),
             checkout: exec.place.master.clone(),
@@ -1075,9 +1092,7 @@ impl BuildHost {
         let record = self
             .tools
             .review_record(&place, &change.system, &snapshot.state)?;
-        let master = master_name(&place);
-        let mut repos = review_repos(&snapshot.state, &master);
-        repos.push(master);
+        let repos = offered_repos(&place, &snapshot.state);
         let rows = match &record {
             Some(r) => round::review_rows_in(r, &repos),
             None => round::rows_of(&[], &repos),
@@ -1239,6 +1254,12 @@ impl BuildHost {
             Ok(s) => s,
             Err(output) => return StartOutcome::CouldNotRun { output, repo: None },
         };
+        // A change that lives in the engineer's checkout is never built there (R6.3): nothing is taken.
+        if place.layout == Layout::SingleRepo && !snapshot.state.in_copy {
+            return StartOutcome::Refused {
+                problems: vec!["Single-repo changes are built only in their own copy".into()],
+            };
+        }
         let master = master_name(place);
         let rounds: Vec<String> = form.rounds.iter().map(|r| r.repo.clone()).collect();
         let needed: Vec<String> = match only {
@@ -1251,10 +1272,7 @@ impl BuildHost {
             }
             _ => needed_repos(&plan, &snapshot.state, &rounds, &master),
         };
-        let folders: Vec<RepoKey> = needed
-            .iter()
-            .map(|r| RepoKey::of(&place.workspace.join(r)))
-            .collect();
+        let folders = keys_for(place.layout, &place.master, &place.workspace, &needed);
         // The one step that must be atomic: the first change to ask for a repository gets it.
         let taken = {
             let mut guard = self.inner.lock().unwrap();
@@ -1297,8 +1315,14 @@ impl BuildHost {
                 Ok(Some(record)) => review::currency(&record, &heads),
                 _ => ReviewCurrency::None,
             };
-            Some(Coordinator::new(currency, heads))
+            Some(Coordinator::new(
+                currency,
+                heads,
+                place.layout == Layout::SingleRepo,
+            ))
         };
+        // The build a continue found stopped, kept so a refused continue can put it back.
+        let mut replaced: Option<Build> = None;
         let generation = {
             let mut guard = self.inner.lock().unwrap();
             if live_build {
@@ -1315,7 +1339,7 @@ impl BuildHost {
                 };
                 guard.next_generation += 1;
                 let generation = guard.next_generation;
-                guard.builds.insert(
+                replaced = guard.builds.insert(
                     key.clone(),
                     Build {
                         generation,
@@ -1361,7 +1385,28 @@ impl BuildHost {
         if let Some(build) = self.inner.lock().unwrap().builds.get_mut(key) {
             build.form = form;
         }
-        self.drive(key, Some(generation), input);
+        let driven = self.drive_in(key, Some(generation), input, Some(step.token()));
+        if let Some(outcome) = driven.refusal {
+            // Nothing launched for the start: it is refused as the program said, and takes nothing.
+            let mut guard = self.inner.lock().unwrap();
+            if guard.builds.get(key).is_none_or(|b| b.live.is_empty()) {
+                if !live_build {
+                    // A refused first start leaves no build; a refused start leaves the earlier one.
+                    match replaced.take() {
+                        Some(stopped) => {
+                            guard.builds.insert(key.clone(), stopped);
+                        }
+                        None => {
+                            guard.builds.remove(key);
+                        }
+                    }
+                }
+                guard.holds.release(key, Purpose::Build);
+            }
+            return outcome;
+        }
+        let mut uncommitted = uncommitted;
+        uncommitted.extend(driven.uncommitted);
         StartOutcome::Started { uncommitted }
     }
 
@@ -1387,6 +1432,15 @@ impl BuildHost {
 
     /// The commit each product repository of the change is on; one that cannot be read is left out.
     fn heads(&self, place: &Place, state: &ChangeState) -> BTreeMap<String, String> {
+        if place.layout == Layout::SingleRepo {
+            // An app's head is the workflow's answer; nothing is read from the checkout.
+            return state
+                .apps
+                .iter()
+                .flatten()
+                .filter_map(|(app, facts)| Some((app.clone(), facts.head.clone()?)))
+                .collect();
+        }
         review_repos(state, &master_name(place))
             .into_iter()
             .filter_map(|repo| {
@@ -1468,6 +1522,10 @@ impl BuildHost {
         if let Some(outcome) = failure(answer.outcome, &[]) {
             return Err(outcome);
         }
+        if place.layout == Layout::SingleRepo {
+            // One app is built at a time: each app is started just before it launches.
+            return Ok(uncommitted);
+        }
         let mut prepared: Vec<String> = Vec::new();
         for repo in repos {
             if token.is_cancelled() {
@@ -1493,7 +1551,20 @@ impl BuildHost {
     /// is taken under the lock; the commands (reading the plugin and the repositories, starting runs) run
     /// with the lock released, and what they found is applied at the next step. A step of a coordinator
     /// that has been replaced since `generation` is dropped.
-    fn drive(self: &Arc<Self>, key: &ChangeKey, generation: Option<u64>, first: Input) {
+    fn drive(self: &Arc<Self>, key: &ChangeKey, generation: Option<u64>, first: Input) -> Driven {
+        self.drive_in(key, generation, first, None)
+    }
+
+    /// `drive`, for a start whose step is still running: `step` is the token its Stop cancels, which the
+    /// launches this call makes carry as their own.
+    fn drive_in(
+        self: &Arc<Self>,
+        key: &ChangeKey,
+        generation: Option<u64>,
+        first: Input,
+        step: Option<&CancelToken>,
+    ) -> Driven {
+        let mut driven = Driven::default();
         let mut inputs = VecDeque::from([first]);
         let mut update = Update::default();
         let mut generation = generation;
@@ -1507,10 +1578,10 @@ impl BuildHost {
                     ..
                 } = &mut *guard;
                 let Some(build) = builds.get_mut(key) else {
-                    return;
+                    return driven;
                 };
                 if generation.is_some_and(|g| g != build.generation) {
-                    return;
+                    return driven;
                 }
                 generation = Some(build.generation);
                 let mut cancels: Vec<u64> = Vec::new();
@@ -1570,6 +1641,7 @@ impl BuildHost {
                                     key: launch_key.clone(),
                                     run_id: None,
                                     cancel_asked: false,
+                                    token: step.cloned().unwrap_or_default(),
                                 },
                             );
                         }
@@ -1577,7 +1649,10 @@ impl BuildHost {
                             if let Some(run) = build.live.get_mut(instance) {
                                 match run.run_id {
                                     Some(id) => cancels.push(id),
-                                    None => run.cancel_asked = true,
+                                    None => {
+                                        run.cancel_asked = true;
+                                        run.token.cancel();
+                                    }
                                 }
                             }
                         }
@@ -1619,7 +1694,7 @@ impl BuildHost {
                 self.launcher.announce_running();
             }
             if commands.is_empty() && cancels.is_empty() {
-                return;
+                return driven;
             }
             for run_id in cancels {
                 self.launcher.cancel(run_id);
@@ -1674,6 +1749,23 @@ impl BuildHost {
                                 }
                             }
                         }
+                        if launch_key != REVIEW && exec.place.layout == Layout::SingleRepo {
+                            // One app at a time: the program starts the app just before it launches.
+                            match self.start_app(&exec, key, instance, &launch_key) {
+                                Ok(files) => {
+                                    if !files.is_empty() {
+                                        driven.uncommitted.insert(launch_key.clone(), files);
+                                    }
+                                }
+                                Err(outcome) => {
+                                    update
+                                        .launched
+                                        .push((instance, Err(outcome_text(&outcome))));
+                                    driven.refusal.get_or_insert(outcome);
+                                    continue;
+                                }
+                            }
+                        }
                         if exec.system_repos.is_none() {
                             let repos = self.system_repos(&exec);
                             exec.system_repos = Some(repos.clone());
@@ -1696,6 +1788,42 @@ impl BuildHost {
                     Command::CancelRun { .. } => {}
                 }
             }
+        }
+    }
+
+    /// `build.start --repo <app>` for the app about to launch in a single-repo build: the uncommitted
+    /// files the program named, or the outcome to give when it did not pass.
+    fn start_app(
+        &self,
+        exec: &Exec,
+        key: &ChangeKey,
+        instance: u64,
+        app: &str,
+    ) -> Result<Vec<String>, StartOutcome> {
+        let token = self
+            .inner
+            .lock()
+            .unwrap()
+            .builds
+            .get(key)
+            .and_then(|b| b.live.get(&instance))
+            .map(|run| run.token.clone())
+            .unwrap_or_default();
+        let command = [
+            "run",
+            "build.start",
+            "--json",
+            "--system",
+            &exec.system,
+            "--change",
+            &exec.change,
+            "--repo",
+            app,
+        ];
+        let answer = self.tools.step_long(&command, &exec.place, &token, None);
+        match failure(answer.outcome, &[]) {
+            Some(outcome) => Err(outcome),
+            None => Ok(strings(&answer.json["details"]["uncommitted"])),
         }
     }
 
@@ -1793,8 +1921,30 @@ impl BuildHost {
             .ok()
             .and_then(|v| v["repos"].as_object().map(|o| o.keys().cloned().collect()))
             .unwrap_or_default();
-        repos.push(master_name(&exec.place));
+        if exec.place.layout == Layout::Workspace {
+            repos.push(master_name(&exec.place));
+        }
         repos
+    }
+}
+
+/// What a drive of the coordinator found out for the start that began it.
+#[derive(Default)]
+struct Driven {
+    /// Why an app could not be started, as the program said it.
+    refusal: Option<StartOutcome>,
+    /// The uncommitted files the program named for each app it started.
+    uncommitted: BTreeMap<String, Vec<String>>,
+}
+
+/// The text of a start that did not pass, for the stop it leaves in the build.
+fn outcome_text(outcome: &StartOutcome) -> String {
+    match outcome {
+        StartOutcome::Refused { problems } | StartOutcome::Failed { problems, .. } => {
+            problems.join(" ")
+        }
+        StartOutcome::CouldNotRun { output, .. } => output.clone(),
+        other => format!("{other:?}"),
     }
 }
 
@@ -1949,6 +2099,10 @@ mod tests {
         /// the call ends only once the token is cancelled; `stop_after` stops once that call has passed.
         stop_in: Mutex<Option<String>>,
         stop_after: Mutex<Option<String>>,
+        /// The repository whose call hangs until its token is cancelled; what the call saw, in order
+        /// (`entered`, then `cancelled` or `never cancelled`).
+        hang_in: Mutex<Option<String>>,
+        hung: Mutex<Vec<String>>,
         /// Stops the change under test, through the step table, as the page's Stop does.
         stopper: Mutex<Option<Box<dyn Fn() + Send>>>,
         /// Called at the start of every long call, to see what the host had registered by then.
@@ -1974,6 +2128,8 @@ mod tests {
                 delay: Mutex::new(std::time::Duration::ZERO),
                 stop_in: Mutex::new(None),
                 stop_after: Mutex::new(None),
+                hang_in: Mutex::new(None),
+                hung: Mutex::new(Vec::new()),
                 stopper: Mutex::new(None),
                 probe: Mutex::new(None),
                 lines: Mutex::new(HashMap::new()),
@@ -2110,6 +2266,20 @@ mod tests {
             }
             if let Some(probe) = self.probe.lock().unwrap().as_ref() {
                 probe();
+            }
+            if self.hang_in.lock().unwrap().as_deref() == Some(which.as_str()) {
+                self.hung.lock().unwrap().push("entered".into());
+                let began = std::time::Instant::now();
+                while !token.is_cancelled() && began.elapsed() < std::time::Duration::from_secs(3) {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                let seen = if token.is_cancelled() {
+                    "cancelled"
+                } else {
+                    "never cancelled"
+                };
+                self.hung.lock().unwrap().push(seen.into());
+                return answer_of(Err(ExecError::Stopped));
             }
             if self.stop_in.lock().unwrap().as_deref() == Some(which.as_str()) {
                 self.stop_now();
@@ -2387,6 +2557,7 @@ mod tests {
 
     fn fake_place() -> Place {
         Place {
+            layout: kata_sdlc::layout::Layout::Workspace,
             master: PathBuf::from("D:/ws/ai-sdlc"),
             workspace: PathBuf::from(WS),
         }
@@ -4127,6 +4298,363 @@ mod tests {
         assert!(matches!(outcome, StartOutcome::Started { .. }));
         let run = r.launcher.launched("kata")[0];
         assert_eq!(r.launcher.task_of(run), "T3");
+    }
+
+    const ROOT: &str = "D:/ws/kata";
+
+    fn single_place() -> Place {
+        Place {
+            layout: kata_sdlc::layout::Layout::SingleRepo,
+            master: PathBuf::from(ROOT),
+            workspace: PathBuf::from(WS),
+        }
+    }
+
+    fn single_rig() -> Rig {
+        rig_with(FakeTools::new(single_place()))
+    }
+
+    impl Rig {
+        /// A change of the single-repo layout with the apps `engine` and `workbench`, in its own copy or in
+        /// the engineer's checkout; `tasks` and `rows` as for `change`.
+        fn app_change(
+            &self,
+            change: &str,
+            in_copy: bool,
+            tasks: &[(&str, &[&str], &[&str])],
+            rows: &[(&str, &str, &[&str])],
+        ) {
+            let master = if in_copy {
+                copy_of(change)
+            } else {
+                ROOT.to_string()
+            };
+            self.tools.add_change(change, &master, in_copy, tasks, rows);
+            let mut states = self.tools.states.lock().unwrap();
+            let state = states.iter_mut().find(|s| s.change == change).unwrap();
+            state.apps = Some(
+                ["engine", "workbench"]
+                    .iter()
+                    .map(|a| {
+                        (
+                            a.to_string(),
+                            kata_sdlc::ai_sdlc::state::AppFacts {
+                                folder: a.to_string(),
+                                touched: true,
+                                head: Some(format!("head-of-{a}")),
+                            },
+                        )
+                    })
+                    .collect(),
+            );
+        }
+
+        /// The change builds engine first, then workbench.
+        fn two_apps(&self, change: &str) {
+            self.app_change(
+                change,
+                true,
+                &[("engine", &["T1"], &[]), ("workbench", &["T2"], &[])],
+                &[("T1", "engine", &[]), ("T2", "workbench", &[])],
+            );
+        }
+
+        fn root_holder(&self) -> Option<ChangeKey> {
+            self.host
+                .inner
+                .lock()
+                .unwrap()
+                .holds
+                .holder(&RepoKey::of(Path::new(ROOT)))
+                .cloned()
+        }
+    }
+
+    // R4.6
+    #[test]
+    fn a_second_change_of_the_same_repository_is_held() {
+        let r = single_rig();
+        r.two_apps("A");
+        r.two_apps("B");
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        let StartOutcome::Held { held } = r.host.start(&cref("B"), form()) else {
+            panic!("B should be held");
+        };
+        assert_eq!(held.len(), 1);
+        assert_eq!(held[0].holder, key("A"));
+        assert_eq!(held[0].repo, "kata", "the repository, not an app");
+        assert_eq!(r.launcher.count(), 1, "nothing of B starts");
+        assert!(r.tools.calls_for("B").is_empty(), "nothing prepared for B");
+        // A ends; B does not start by itself.
+        r.launcher.finish(r.launcher.launched("engine")[0], 1);
+        assert!(r.host.state(&cref("B")).is_none());
+        assert_eq!(r.launcher.count(), 1);
+    }
+
+    /// Waits, bounded, until the hanging call of `tools` has entered.
+    fn wait_until_hung(tools: &FakeTools) {
+        let began = std::time::Instant::now();
+        while !tools.hung.lock().unwrap().contains(&"entered".to_string()) {
+            assert!(
+                began.elapsed() < std::time::Duration::from_secs(5),
+                "the app start never began"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    // Stop on a single-repo build reaches `build.start --repo <app>` of the app about to launch, as it
+    // reaches the other long steps: the step is cancelled and the build ends stopped.
+    #[test]
+    fn stopping_a_build_cancels_the_app_start_under_way() {
+        let r = single_rig();
+        r.two_apps("A");
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        r.tools.log("A", "engine", "T1");
+        *r.tools.hang_in.lock().unwrap() = Some("workbench".into());
+        let engine = r.launcher.launched("engine")[0];
+        let finisher = {
+            let launcher = r.launcher.clone();
+            std::thread::spawn(move || launcher.finish(engine, 0))
+        };
+        wait_until_hung(&r.tools);
+        r.host.cancel(&cref("A"));
+        let began = std::time::Instant::now();
+        while !finisher.is_finished() && began.elapsed() < std::time::Duration::from_secs(6) {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(
+            *r.tools.hung.lock().unwrap(),
+            strs(&["entered", "cancelled"]),
+            "Stop cancelled the app start"
+        );
+        finisher.join().unwrap();
+        let state = r.host.state(&cref("A")).unwrap();
+        assert!(
+            matches!(state.phase, BuildPhase::Stopped | BuildPhase::Cancelled),
+            "{:?}",
+            state.phase
+        );
+        assert_eq!(r.launcher.launched("workbench").len(), 0);
+    }
+
+    // The same for the first app, which starts inside the start itself: stopping the change's step
+    // (the page's Stop while it starts) cancels the program step.
+    #[test]
+    fn stopping_the_step_cancels_the_first_app_start() {
+        let r = single_rig();
+        r.two_apps("A");
+        *r.tools.hang_in.lock().unwrap() = Some("engine".into());
+        let starter = {
+            let host = r.host.clone();
+            std::thread::spawn(move || host.start(&cref("A"), form()))
+        };
+        wait_until_hung(&r.tools);
+        assert!(r.steps.stop(&key("A")));
+        let began = std::time::Instant::now();
+        while !starter.is_finished() && began.elapsed() < std::time::Duration::from_secs(6) {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(
+            *r.tools.hung.lock().unwrap(),
+            strs(&["entered", "cancelled"]),
+            "Stop cancelled the app start"
+        );
+        assert!(matches!(
+            starter.join().unwrap(),
+            StartOutcome::Stopped { .. }
+        ));
+    }
+
+    // R6.3
+    #[test]
+    fn a_single_repo_change_in_the_checkout_is_not_built() {
+        let r = single_rig();
+        r.app_change(
+            "A",
+            false,
+            &[("engine", &["T1"], &[])],
+            &[("T1", "engine", &[])],
+        );
+        assert_eq!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Refused {
+                problems: strs(&["Single-repo changes are built only in their own copy"])
+            }
+        );
+        assert!(r.tools.calls_for("A").is_empty(), "nothing prepared");
+        assert_eq!(r.launcher.count(), 0, "nothing launched");
+        assert_eq!(r.root_holder(), None, "nothing taken");
+        assert!(r.host.state(&cref("A")).is_none());
+    }
+
+    // R9.2
+    #[test]
+    fn a_refusal_to_build_one_app_is_shown_as_it_is() {
+        let text = "`engine` is being built in this copy; build one app at a time";
+        let refusal = json!({"event": "build.start", "repo": "workbench", "outcome": "refused",
+            "problems": [text], "details": {}});
+        // The first app to launch is refused: the start gives the program's text.
+        let r = single_rig();
+        r.app_change(
+            "A",
+            true,
+            &[("engine", &["T1"], &["T1"]), ("workbench", &["T2"], &[])],
+            &[("T1", "engine", &[]), ("T2", "workbench", &[])],
+        );
+        r.tools.start_answer("workbench", refusal.clone());
+        assert_eq!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Refused {
+                problems: strs(&[text])
+            }
+        );
+        assert_eq!(r.launcher.count(), 0);
+        assert_eq!(r.root_holder(), None);
+        // A later app is refused when its turn comes: the build stops with the program's text.
+        let r = single_rig();
+        r.two_apps("B");
+        r.tools.start_answer("workbench", refusal);
+        assert!(matches!(
+            r.host.start(&cref("B"), form()),
+            StartOutcome::Started { .. }
+        ));
+        r.tools.log("B", "engine", "T1");
+        r.launcher.finish(r.launcher.launched("engine")[0], 0);
+        let state = r.host.state(&cref("B")).unwrap();
+        assert!(
+            state.stopped["workbench"].reason.contains(text),
+            "{:?}",
+            state.stopped
+        );
+    }
+
+    // T13: a refusal while continuing leaves the build in place, stopped.
+    #[test]
+    fn a_refused_continue_leaves_the_stopped_build_in_place() {
+        let text = "`engine` is being built in this copy; build one app at a time";
+        let refusal = json!({"event": "build.start", "repo": "workbench", "outcome": "refused",
+            "problems": [text], "details": {}});
+        let r = single_rig();
+        r.two_apps("B");
+        r.tools.start_answer("workbench", refusal);
+        assert!(matches!(
+            r.host.start(&cref("B"), form()),
+            StartOutcome::Started { .. }
+        ));
+        r.tools.log("B", "engine", "T1");
+        r.launcher.finish(r.launcher.launched("engine")[0], 0);
+        let stopped = r.host.state(&cref("B")).unwrap().stopped;
+        assert!(stopped["workbench"].reason.contains(text), "{stopped:?}");
+        // Continuing with nothing live starts afresh; the plugin refuses again.
+        assert_eq!(
+            r.host.continue_with(&cref("B"), "workbench", None),
+            StartOutcome::Refused {
+                problems: strs(&[text])
+            }
+        );
+        let after = r.host.state(&cref("B")).unwrap();
+        assert_eq!(after.stopped, stopped, "the stopped build is still shown");
+        assert_eq!(r.root_holder(), None, "nothing is held");
+    }
+
+    // T13: a refused fresh start leaves the earlier build in place, as in the workspace layout.
+    #[test]
+    fn a_refused_fresh_start_leaves_the_earlier_build_in_place() {
+        let text = "`engine` is being built in this copy; build one app at a time";
+        let refusal = json!({"event": "build.start", "repo": "workbench", "outcome": "refused",
+            "problems": [text], "details": {}});
+        let r = single_rig();
+        r.two_apps("B");
+        r.tools.start_answer("workbench", refusal);
+        assert!(matches!(
+            r.host.start(&cref("B"), form()),
+            StartOutcome::Started { .. }
+        ));
+        r.tools.log("B", "engine", "T1");
+        r.launcher.finish(r.launcher.launched("engine")[0], 0);
+        let stopped = r.host.state(&cref("B")).unwrap().stopped;
+        assert!(stopped["workbench"].reason.contains(text), "{stopped:?}");
+        // Starting again with nothing live begins afresh; the plugin refuses again.
+        assert_eq!(
+            r.host.start(&cref("B"), form()),
+            StartOutcome::Refused {
+                problems: strs(&[text])
+            }
+        );
+        let after = r.host.state(&cref("B")).unwrap();
+        assert_eq!(after.stopped, stopped, "the earlier build is still shown");
+        assert_eq!(r.root_holder(), None, "nothing is held");
+    }
+
+    // T13: a refused first start leaves no build.
+    #[test]
+    fn a_refused_first_start_leaves_no_build() {
+        let text = "`engine` is being built in this copy; build one app at a time";
+        let refusal = json!({"event": "build.start", "repo": "engine", "outcome": "refused",
+            "problems": [text], "details": {}});
+        let r = single_rig();
+        r.two_apps("B");
+        r.tools.start_answer("engine", refusal);
+        assert_eq!(
+            r.host.start(&cref("B"), form()),
+            StartOutcome::Refused {
+                problems: strs(&[text])
+            }
+        );
+        assert!(r.host.state(&cref("B")).is_none(), "no build remains");
+        assert_eq!(r.root_holder(), None, "nothing is held");
+    }
+
+    // R4.2
+    #[test]
+    fn single_repo_prepares_each_app_just_before_it_launches() {
+        let r = single_rig();
+        r.two_apps("A");
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        assert_eq!(r.tools.checks("A").len(), 1, "one check for the change");
+        assert_eq!(r.tools.real_starts("A"), strs(&["engine"]));
+        assert_eq!(
+            r.launcher.live_dirs(),
+            BTreeSet::from([format!("{}/engine", copy_of("A"))])
+        );
+        assert!(r.launcher.launched("workbench").is_empty());
+        r.tools.log("A", "engine", "T1");
+        r.launcher.finish(r.launcher.launched("engine")[0], 0);
+        assert_eq!(r.tools.real_starts("A"), strs(&["engine", "workbench"]));
+        assert_eq!(r.tools.checks("A").len(), 1, "no second check");
+        assert_eq!(r.launcher.launched("workbench").len(), 1);
+        assert_eq!(
+            r.launcher.live_dirs(),
+            BTreeSet::from([format!("{}/workbench", copy_of("A"))])
+        );
+    }
+
+    #[test]
+    fn a_single_repo_round_offers_only_the_apps() {
+        let r = single_rig();
+        r.two_apps("A");
+        let offer = r.host.round_offer(&cref("A")).unwrap();
+        assert_eq!(offer.repos, strs(&["engine", "workbench"]));
+        let view = r.host.review_view(&cref("A")).unwrap();
+        assert!(
+            view.rows
+                .groups
+                .iter()
+                .all(|g| g.repo.as_deref() != Some("")),
+            "{:?}",
+            view.rows.groups
+        );
+        assert!(view.groups.iter().all(|g| g.repo.as_deref() != Some("")));
     }
 
     // The tests below run the vendored 1.1.0 program against temp git repositories.

@@ -6,9 +6,11 @@ import { AddWorkspaceDialog } from './add-workspace-dialog';
 
 const SCAN: WorkspaceScan = {
   folder: 'D:/Work/acme-commerce',
+  layout: 'workspace',
   repos: ['commerce-docs', 'customer-portal'],
   master: { kind: 'one', repo: 'commerce-docs', committed: true },
   marker: { version: 1, systems: { commerce: { repos: ['customer-portal', 'billing-api'] } } },
+  master_folder: null,
   marker_error: null,
 };
 const candidate = (scan: Partial<WorkspaceScan> = {}): WorkspaceCandidate => ({

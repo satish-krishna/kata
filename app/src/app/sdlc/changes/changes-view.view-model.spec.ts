@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
-import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_MASTER, MOCK_SINGLE_CHANGE, MOCK_SINGLE_FOLDER, MOCK_SINGLE_SYSTEM, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { ChangesViewModel } from './changes-view.view-model';
 
 const REF = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE };
@@ -113,5 +113,58 @@ describe('the Changes view follows the change reference (R2.2)', () => {
     const master = vm.repos().find((r) => r.repo === MOCK_MASTER)!;
     expect(master.path).toBe(`${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${MOCK_DONE_CHANGE}`);
     expect(master.branch).toBe(`change/${MOCK_DONE_CHANGE}`);
+  });
+});
+
+describe('the Changes view of a single-repo change (R5.3, R5.4)', () => {
+  const demoAt = (query: string | null) => history.replaceState({}, '', query ? `/?${query}` : '/');
+  afterEach(() => demoAt(null));
+  const SINGLE = { ref: { workspace: MOCK_SINGLE_FOLDER, system: MOCK_SINGLE_SYSTEM, change: MOCK_SINGLE_CHANGE }, masterRepo: MOCK_SINGLE_SYSTEM };
+  const opened = async (query = 'demo=single-repo') => {
+    demoAt(query);
+    const made = setup();
+    await made.vm.open(SINGLE);
+    return made;
+  };
+
+  it("single-repo groups keep the backend's order", async () => {
+    const { vm } = await opened();
+    expect(vm.repos().map((r) => r.repo)).toEqual(['engine', 'workbench', 'repository root']);
+    expect(vm.active()?.repo).toBe('engine');
+  });
+
+  it('lists each group with its own files', async () => {
+    const { vm } = await opened();
+    expect(vm.groups().find((g) => g.repo === 'engine')!.files.map((f) => f.path)).toEqual(['crates/engine/src/run.rs']);
+    expect(vm.groups().find((g) => g.repo === 'repository root')!.files.map((f) => f.path)).toEqual(['README.md']);
+    expect(vm.fileCount()).toBe(3);
+  });
+
+  it('a finding in a root file opens under repository root', async () => {
+    const { vm } = await opened();
+    await vm.showAt({ file: 'README.md', line: 3, text: 'x', n: 1 });
+    expect(vm.selected()).toEqual({ repo: 'repository root', path: 'README.md' });
+    expect(vm.mark()?.line).toBe(3);
+  });
+
+  it("shows the backend's listing of the part on show and never reads a group's files itself", async () => {
+    const { vm, transport } = await opened();
+    const read = vi.spyOn(transport, 'sdlcDiffFiles');
+    const listing = (path: string) => ({ files: [{ path, oldPath: null, status: 'modified' as const, binary: false, added: 7, removed: 1, uncommitted: false }], loc: [{ extension: 'zz', files: 9, added: 7, removed: 1 }] });
+    const [first, ...rest] = vm.repos();
+    vi.spyOn(transport, 'sdlcChangeRepos').mockResolvedValue([
+      { ...first, parts: { whole: listing('whole.rs'), committed: listing('committed.rs'), uncommitted: listing('uncommitted.rs') } },
+      ...rest,
+    ]);
+    await vm.setPart('uncommitted');
+    expect(vm.groups().find((g) => g.repo === first.repo)!.files.map((f) => f.path)).toEqual(['uncommitted.rs']);
+    expect(vm.loc()).toContainEqual({ extension: 'zz', files: 9, added: 7, removed: 1 });
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('a single app at the repository root lists its files under that app', async () => {
+    const { vm } = await opened('demo=single-repo-root');
+    expect(vm.repos().map((r) => r.repo)).toEqual(['kata']);
+    expect(vm.groups()[0].files.length).toBeGreaterThan(0);
   });
 });

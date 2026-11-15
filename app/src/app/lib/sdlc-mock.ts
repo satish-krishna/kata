@@ -4,12 +4,15 @@
 import type { RepoBoard } from '@bindings/RepoBoard';
 import type { ReviewScope } from '@bindings/ReviewScope';
 import type { ReviewStanding } from '@bindings/ReviewStanding';
+import type { AppTurn } from '@bindings/AppTurn';
 import type { Situation } from '@bindings/Situation';
 import type { Stop } from '@bindings/Stop';
 import type { TaskState } from '@bindings/TaskState';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
+import type { AppRows } from '@bindings/AppRows';
 import type { BaseInfo } from '@bindings/BaseInfo';
+import type { Layout } from '@bindings/Layout';
 import type { BuildState } from '@bindings/BuildState';
 import type { BuildPhase } from '@bindings/BuildPhase';
 import type { StopReport } from '@bindings/StopReport';
@@ -36,6 +39,7 @@ import type { BuildStatus } from '@bindings/BuildStatus';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { ChangedFile } from '@bindings/ChangedFile';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
+import type { PartListings } from '@bindings/PartListings';
 import type { CheckView } from '@bindings/CheckView';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
@@ -98,11 +102,20 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { DEMO_SETUP_FOLDER, DEMO_WORKSPACE_FOLDER } from './demo';
 import { PENDING_PERMISSION, type ScriptStep } from './mock';
+import { masterPath } from './sdlc-workspace';
 
 export const MOCK_WORKSPACE_FOLDER = DEMO_WORKSPACE_FOLDER;
 /** A folder the demo can add that has repos but no committed `.ai-sdlc.json`, so adding it runs setup. */
 export const MOCK_SETUP_FOLDER = DEMO_SETUP_FOLDER;
 export const MOCK_MASTER = 'commerce-docs';
+/** The single-repo repository of `?demo=single-repo` and `?demo=single-repo-root`: its folder, its one system and the change it has open in a copy. */
+export const MOCK_SINGLE_FOLDER = 'D:/kata';
+export const MOCK_SINGLE_SYSTEM = 'kata';
+export const MOCK_SINGLE_CHANGE = '2026-11-12-single-repo-workbench';
+/** The workspace the single-repo demos list beside the repository. */
+export const MOCK_SINGLE_WORKSPACE = 'D:/workspaces';
+/** The error the backend gives for switching the engineer's checkout in a single-repo repository. */
+export const MOCK_NOT_SWITCHABLE = 'Single-repo changes are never switched into your checkout.';
 /** The engineer's checkout of the master repository, which a change started before copies existed lives in. */
 export const MOCK_CHECKOUT = `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`;
 /** What the plugin no longer lists: the message the backend gives for a change it cannot place. */
@@ -372,14 +385,13 @@ const TASK_SECTIONS: Record<string, ParsedSection[]> = {
 };
 const dependsBody = (t: PlanTask): string => (t.dependsOn.length ? t.dependsOn.join(', ') : 'none');
 /** One demo task's section of the plan: its heading, then Depends on and the field bullets. */
-function taskText(t: PlanTask): string {
+function taskText(t: PlanTask, sections: ParsedSection[] = TASK_SECTIONS[t.id] ?? []): string {
   const field = (title: string, body: string) =>
     body.includes('\n') ? `- **${title}:**\n${body.split('\n').map((l) => `  ${l}`).join('\n')}` : `- **${title}:** ${body}`;
-  const sections = TASK_SECTIONS[t.id] ?? [];
   return [`### ${t.id}: ${t.name} (\`${t.repo}\`)`, '', field('Depends on', dependsBody(t)), ...sections.map((x) => field(x.title, x.body))].join('\n');
 }
 /** The demo plan as the format program reads it (layout 1: the field bullets are the sections). */
-const parsedTasks = (plan: PlanTask[]): ParsedTask[] => plan.map((t, i) => ({
+const parsedTasks = (plan: PlanTask[], plain = false): ParsedTask[] => plan.map((t, i) => ({
   id: t.id,
   name: t.name,
   repo: t.repo,
@@ -388,8 +400,8 @@ const parsedTasks = (plan: PlanTask[]): ParsedTask[] => plan.map((t, i) => ({
   files: [],
   covers: [],
   supports: [],
-  sections: [{ title: 'Depends on', body: dependsBody(t) }, ...(TASK_SECTIONS[t.id] ?? [])],
-  text: taskText(t),
+  sections: [{ title: 'Depends on', body: dependsBody(t) }, ...(plain ? [] : (TASK_SECTIONS[t.id] ?? []))],
+  text: plain ? taskText(t, []) : taskText(t),
   line: 10 + i * 10,
 }));
 const BUILD_TASKS: ParsedTask[] = parsedTasks(BUILD_PLAN);
@@ -434,6 +446,18 @@ function gherkinOf(reqs: ParsedRequirement[]): string {
   return [...lines, '```', ''].join('\n');
 }
 const BUILD_REPOS = ['commerce-core', 'customer-portal'];
+/** The plan of `?demo=single-repo`: three tasks in the app engine, then two in the app workbench, whose tasks change no file. */
+const SINGLE_PLAN: PlanTask[] = [
+  { id: 'T1', name: 'Parse the app layout', repo: 'engine', dependsOn: [] },
+  { id: 'T2', name: 'Order the apps', repo: 'engine', dependsOn: [] },
+  { id: 'T3', name: 'Expose the app order', repo: 'engine', dependsOn: [] },
+  { id: 'T4', name: 'Confirm the app rows read the new order', repo: 'workbench', dependsOn: [] },
+  { id: 'T5', name: 'Confirm the app lanes read the new order', repo: 'workbench', dependsOn: [] },
+];
+/** The plan of `?demo=single-repo-root`: one task in the one app, which sits at the repository root. */
+const SINGLE_ROOT_PLAN: PlanTask[] = [{ id: 'T1', name: 'Add the flag', repo: MOCK_SINGLE_SYSTEM, dependsOn: [] }];
+/** The findings of the single-repo review: with the severities in turn, engine gets a high and a medium one, workbench a medium and a low one. */
+const SINGLE_REVIEW_FINDINGS = ['The app order is read twice.', 'The app lane has no test.', 'The app order is not checked for duplicates.', 'The lane name is not trimmed.'];
 /** The tasks whose rows record a departure from the plan. */
 const DEPARTED_TASKS = ['T2'];
 /** The long demo's departures: enough, with its findings, to overflow the findings area. */
@@ -627,6 +651,7 @@ export function changeViewOf(
       documents: { intent: stateDocument(c.intent), spec: stateDocument(c.spec), plan: stateDocument(c.plan) },
       scenarios: null, tasks, buildLogs: {}, review: { committed: 0, draft: 'none' },
       fix: shown.track === 'fix' && shown.fix_row !== null ? { row: shown.fix_row, facts: FIX_FACTS } : null,
+      apps: null,
       ready: { spec: GATE, plan: GATE, build: stop === null ? GATE : { candidate: false, stop, accept: [] }, review: GATE, done: GATE, reject: GATE },
     },
     offer: offerOf(shown, refused),
@@ -673,6 +698,12 @@ export class SdlcMock {
 
   constructor(long = false, demo: string | null = null, earlier = 0) {
     this.demo = demo;
+    if (this.singleRepo() !== null) {
+      this.workspaces = [
+        { id: 'workspaces', name: 'workspaces', folder: MOCK_SINGLE_WORKSPACE, last_opened: 1792281500, layout: 'workspace' },
+        { id: 'kata', name: 'kata', folder: MOCK_SINGLE_FOLDER, last_opened: 1792281600, layout: 'single-repo' },
+      ];
+    }
     if (demo === 'sessions') {
       // `?demo=sessions&earlier=<n>` (browser only): the demo build runs in one repository, which has `earlier` sessions behind it.
       this.links = earlierSessions(earlier).map((r) => ({
@@ -681,14 +712,22 @@ export class SdlcMock {
       this.earlierRecords = earlierSessions(earlier);
     }
     this.unreadable = long ? '2026-10-09-merchant-reassign' : null;
-    this.plan = long ? [...BUILD_PLAN, ...LONG_PLAN] : BUILD_PLAN;
-    this.repos = demo === 'sessions' ? ['commerce-core'] : long ? [...BUILD_REPOS, 'billing-api'] : BUILD_REPOS;
-    this.planTasks = long ? parsedTasks(this.plan) : BUILD_TASKS;
+    const single = this.singleRepo();
+    this.plan = single === 'apps' ? SINGLE_PLAN : single === 'root' ? SINGLE_ROOT_PLAN : long ? [...BUILD_PLAN, ...LONG_PLAN] : BUILD_PLAN;
+    this.repos = single !== null ? [...new Set(this.plan.map((t) => t.repo))] : demo === 'sessions' ? ['commerce-core'] : long ? [...BUILD_REPOS, 'billing-api'] : BUILD_REPOS;
+    this.planTasks = long || single !== null ? parsedTasks(this.plan, single !== null) : BUILD_TASKS;
     this.departed = new Set(long ? LONG_DEPARTED_TASKS : DEPARTED_TASKS);
     this.diff = long ? [...DIFF_FILES, ...LONG_DIFF_FILES] : DIFF_FILES;
     this.pairs = long ? LONG_DIFF_PAIRS : DIFF_PAIRS;
-    this.reviewFindings = long ? LONG_REVIEW_FINDINGS : REVIEW_FINDINGS;
+    this.reviewFindings = single !== null ? SINGLE_REVIEW_FINDINGS : long ? LONG_REVIEW_FINDINGS : REVIEW_FINDINGS;
   }
+
+  /** The change the demo builds: the one open change of a single-repo repository, else the build demo's. */
+  private buildChange(): string { return this.singleRepo() !== null ? MOCK_SINGLE_CHANGE : MOCK_BUILD_CHANGE; }
+  /** True for the change the scripted build sequences by its build log. */
+  hasBuildLog(changeName: string): boolean { return changeName === this.buildChange(); }
+  /** True in a single-repo repository, whose apps build one after another. */
+  oneAtATime(): boolean { return this.singleRepo() !== null; }
 
   /** Systems whose old checks file the mock engineer has been told about. */
   private readonly oldChecksTold = new Set<string>();
@@ -700,9 +739,11 @@ export class SdlcMock {
   oldChecksSeen(systems: string[]): void { for (const s of systems) this.oldChecksTold.add(s); }
 
   private settings: Settings = { mode: 'workbench', remember: true, permission_mode: 'auto' };
-  private workspaces: WorkspaceEntry[] = [{
-    id: 'acme-commerce', name: 'acme-commerce', folder: MOCK_WORKSPACE_FOLDER, last_opened: 1792281600,
-  }];
+  /** `?demo=single-repo` (apps engine and workbench) and `?demo=single-repo-root` (one app at the repository root): the saved list holds a workspace and the single-repo repository. */
+  private singleRepo(): 'apps' | 'root' | null {
+    return this.demo === 'single-repo' ? 'apps' : this.demo === 'single-repo-root' ? 'root' : null;
+  }
+  private workspaces: WorkspaceEntry[] = [{ id: 'acme-commerce', name: 'acme-commerce', folder: MOCK_WORKSPACE_FOLDER, last_opened: 1792281600, layout: 'workspace' }];
   private links: RunLink[] = [];
   /** The first demo task is linked to its run; the others are not, so both the known and the unknown session show in the browser. */
   private taskLinksList: TaskLink[] = [{
@@ -760,7 +801,7 @@ export class SdlcMock {
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'workspace';
     let id = slug;
     for (let n = 2; this.workspaces.some((w) => w.id === id); n++) id = `${slug}-${n}`;
-    this.workspaces.push({ id, name, folder, last_opened: this.stamp(id) });
+    this.workspaces.push({ id, name, folder, last_opened: this.stamp(id), layout: 'workspace' });
     return this.choice();
   }
 
@@ -770,19 +811,34 @@ export class SdlcMock {
   }
 
   scan(folder: string): WorkspaceScan {
+    if (folder === MOCK_SINGLE_FOLDER) {
+      return {
+        folder,
+        layout: 'single-repo',
+        repos: [],
+        master: { kind: 'one', repo: MOCK_SINGLE_SYSTEM, committed: true },
+        master_folder: folder,
+        marker: { version: 2, systems: { [MOCK_SINGLE_SYSTEM]: { repos: [] } } },
+        marker_error: null,
+      };
+    }
     if (folder === MOCK_SETUP_FOLDER) {
       return {
         folder,
+        layout: 'workspace',
         repos: MOCK_SETUP_REPOS,
         master: { kind: 'one', repo: 'billing-intent', committed: true },
+        master_folder: masterPath(folder, 'billing-intent'),
         marker: this.setupDone ? { version: 1, systems: { billing: { repos: MOCK_SETUP_REPOS } } } : null,
         marker_error: null,
       };
     }
     return {
       folder,
+      layout: 'workspace',
       repos: MOCK_REPOS,
       master: { kind: 'one', repo: MOCK_MASTER, committed: true },
+      master_folder: masterPath(folder, MOCK_MASTER),
       marker: { version: 1, systems: { [MOCK_SYSTEM]: { repos: MOCK_REPOS }, ...(this.demo === 'finished-many' || this.threeSystems() ? { [MOCK_SECOND_SYSTEM]: { repos: ['commerce-core'] } } : {}), ...(this.threeSystems() ? { [MOCK_THIRD_SYSTEM]: { repos: ['commerce-core'] } } : {}) } },
       marker_error: null,
     };
@@ -791,6 +847,18 @@ export class SdlcMock {
   /** `?demo=slow-read&systems=3`: the workspace shows three systems. */
   private threeSystems(): boolean {
     return this.demo === 'slow-read' && typeof location !== 'undefined' && new URLSearchParams(location.search).get('systems') === '3';
+  }
+
+  /** Like the backend's `sdlc_app_rows`: the apps in the program's order with their context health, and the instructions in the root file. */
+  appRows(): AppRows {
+    if (this.singleRepo() === 'root') return { apps: [{ name: MOCK_SINGLE_SYSTEM, folder: '.', context: { kind: 'current' }, action: 'refresh', canView: true }], instructions: 'current' };
+    return {
+      apps: [
+        { name: 'engine', folder: 'crates/kata-core', context: { kind: 'behind', commits: 12 }, action: 'refresh', canView: true },
+        { name: 'workbench', folder: 'app', context: { kind: 'missing' }, action: 'build', canView: false },
+      ],
+      instructions: 'current',
+    };
   }
 
   contextHealth(repo: string): ContextState {
@@ -807,6 +875,7 @@ export class SdlcMock {
   }
 
   listChanges(): ChangeInfo[] {
+    if (this.singleRepo() !== null) return [change(MOCK_SINGLE_CHANGE, doc('accepted'), doc('accepted'), doc('accepted'), 'build-ready')];
     return this.changes.map((c) => {
       // Like the backend, a change whose every task is in the build log has finished its build.
       if (c.change === MOCK_BUILD_CHANGE) return { ...c, stage: this.rows.size >= this.plan.length ? 'build-finished' : c.stage, build: { tasks: this.plan.length, finished: this.rows.size, repos: this.repos.length } };
@@ -862,6 +931,8 @@ export class SdlcMock {
   }
   // ---- the home (open changes alone) ----
 
+  /** The system whose open changes the home lists. */
+  private homeSystem(): string { return this.singleRepo() === null ? MOCK_SYSTEM : MOCK_SINGLE_SYSTEM; }
   /** The system the engineer picked last, like the saved workspace's `last_system`. */
   private rememberedSystem: string | null = null;
   /** The open changes whose merge check has answered, like the backend's memory of the last check. */
@@ -884,7 +955,7 @@ export class SdlcMock {
   homeList(systems: string[], readiness: Readiness): HomeList {
     if (this.demo === 'old-plugin') return { kind: 'legacy' };
     const system = this.shownSystem(systems);
-    const open = system === MOCK_SYSTEM ? this.stagePass().map((c) => ({ change: c.change, title: null })) : [];
+    const open = system === this.homeSystem() ? this.stagePass().map((c) => ({ change: c.change, title: null })) : [];
     const finished = system === null ? [] : this.finishedChanges(system);
     const blocked = readiness.kind === 'blocked';
     return { kind: 'listed', system, systems, open, finished, finishedCount: finished.length, canStartChange: !blocked, startChangeReason: blocked ? readiness.message : null };
@@ -904,7 +975,7 @@ export class SdlcMock {
     return { label: { step: 'done', text: 'Done · pull requests open', tone: 'success' }, action: 'open' };
   }
   private homeRows(system: string, readiness: Readiness): HomeRow[] {
-    if (system !== MOCK_SYSTEM) return [];
+    if (system !== this.homeSystem()) return [];
     return this.systemView(system, readiness).changes.map((view) => ({ view, reading: this.homeReading(view) }));
   }
   /** Like `sdlc_home_open`: every open change as a row. The merge check is asked about the declared ones, except on a focus refresh; the light list is read again when the names on screen differ. */
@@ -928,6 +999,7 @@ export class SdlcMock {
 
   /** The copy folder of a change that has one, else null. */
   private copyOf(changeName: string): string | null {
+    if (this.singleRepo() !== null) return changeName === MOCK_SINGLE_CHANGE ? `D:/.ai-sdlc/copies/${changeName}` : null;
     if (changeName === MOCK_COPY_CHANGE) return COPY_ONLY_PATH;
     if (changeName === MOCK_COPY_FIX) return COPY_FIX_PATH;
     return this.copies.has(changeName) ? `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${changeName}` : null;
@@ -950,7 +1022,7 @@ export class SdlcMock {
 
   /** What the plugin reports for the build and the finished change: each repository's tasks, the commits that name each, and the commits that name none. Other changes have no plan to report. */
   private tasksOf(c: ChangeInfo): ChangeState['tasks'] {
-    if (c.change !== MOCK_BUILD_CHANGE && c.change !== MOCK_DONE_CHANGE) return null;
+    if (!this.hasBuildLog(c.change) && c.change !== MOCK_DONE_CHANGE) return null;
     const done = c.change === MOCK_DONE_CHANGE;
     const sha = (id: string) => `${id.toLowerCase()}c0ffee`.padEnd(40, '0');
     const out: NonNullable<ChangeState['tasks']> = {};
@@ -972,7 +1044,14 @@ export class SdlcMock {
   patch(changeName: string, patch: Partial<ChangeInfo>): void {
     this.changes = this.changes.map((c) => (c.change === changeName ? { ...c, ...patch } : c));
   }
-  branches(): BranchInfo { return { current: this.current, others: this.others.map((change) => ({ branch: `change/${change}`, change })), default_base: MOCK_BASE }; }
+  /** Like `branch_info_in`: a single-repo repository is never switched, lists no other branches and says why the base is out of reach when the checkout is off it. */
+  branches(layout: Layout = 'workspace'): BranchInfo {
+    if (layout === 'single-repo') {
+      const refusal = this.current === MOCK_BASE ? null : `Your checkout is on ${this.current}. Kata never switches it; check out ${MOCK_BASE} yourself and run this again.`;
+      return { current: this.current, others: [], default_base: MOCK_BASE, switchable: false, base_refusal: refusal };
+    }
+    return { current: this.current, others: this.others.map((change) => ({ branch: `change/${change}`, change })), default_base: MOCK_BASE, switchable: true, base_refusal: null };
+  }
   /** Like the backend's `read_doc`: the document is named by its stem; anything else is a caller bug. */
   readDoc(changeName: string, docName: string): string | null {
     if (!DOC_STEMS.has(docName)) throw new Error(`read_doc takes a document stem (intent, spec or plan), not "${docName}"`);
@@ -1097,15 +1176,15 @@ export class SdlcMock {
   // ---- the build ----
 
   /** The repositories `change` builds in; `?demo=sessions` narrows the demo build to the one it has sessions in, on this mock only. */
-  buildRepos(change: string): string[] { return this.demo === 'sessions' && change === MOCK_BUILD_CHANGE ? [...this.repos] : (BUILD_REPOS_OF[change] ?? []); }
+  buildRepos(change: string): string[] { return (this.demo === 'sessions' || this.singleRepo() !== null) && this.hasBuildLog(change) ? [...this.repos] : (BUILD_REPOS_OF[change] ?? []); }
 
   buildStatus(changeName: string): BuildStatus {
     this.homeOf(changeName);
-    if (changeName !== MOCK_BUILD_CHANGE && changeName !== MOCK_DONE_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] };
+    if (!this.hasBuildLog(changeName) && changeName !== MOCK_DONE_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] };
     // The finished change has every task built; the demo build commits its rows one run at a time.
     const rowOf = (t: PlanTask): BuildRow | null =>
       changeName === MOCK_DONE_CHANGE ? { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } : (this.rows.get(t.id) ?? null);
-    const tasks: TaskStatus[] = this.plan.map((t) => ({ ...t, dependsOn: [...t.dependsOn], text: taskText(t), row: rowOf(t) }));
+    const tasks: TaskStatus[] = this.plan.map((t) => ({ ...t, dependsOn: [...t.dependsOn], text: this.singleRepo() !== null ? taskText(t, []) : taskText(t), row: rowOf(t) }));
     const departures = tasks.flatMap((t) => (t.row?.departure ? [{ task: t.id, repo: t.repo, planText: t.name, departure: t.row.departure }] : []));
     return { tasks, repos: this.repos.map((r) => (changeName === MOCK_DONE_CHANGE ? this.doneRepoStatus(r) : this.repoStatus(r))), departures, hasTasks: true, problems: [], logLayouts: [] };
   }
@@ -1146,7 +1225,7 @@ export class SdlcMock {
   /** Like the backend's `review::record`: null until a review run has finished, then one review for each run. */
   reviewRecord(): ReviewRecord | null {
     if (this.reviewRuns === 0) return null;
-    const commits = this.heads([MOCK_MASTER, ...this.repos]);
+    const commits = this.heads(this.singleRepo() !== null ? this.repos : [MOCK_MASTER, ...this.repos]);
     // Each finding names its repository and what it concerns; a convention finding names the rule it breaks.
     const findings = this.reviewFindings.map((text, i): ParsedFinding => {
       const concern = CONCERNS[i % CONCERNS.length];
@@ -1183,7 +1262,12 @@ export class SdlcMock {
     const base = this.diffBase();
     // The copy is the master repository's own worktree: the master's entry carries the copy's folder when the change lives in one.
     const copy = this.copyOf(changeName);
-    return [MOCK_MASTER, ...this.repos].map((repo) => ({ repo, path: repo === MOCK_MASTER && copy !== null ? copy : `${folder}/${repo}`, branch: `change/${changeName}`, base }));
+    const single = this.singleRepo();
+    if (single !== null && copy !== null) {
+      const groups = single === 'root' ? { [MOCK_SINGLE_SYSTEM]: SINGLE_ROOT_APP_FILES } : SINGLE_GROUP_FILES;
+      return Object.entries(groups).map(([repo, files]) => ({ repo, path: copy, branch: `change/${changeName}`, base, layout: 'single-repo' as const, parts: groupParts(files) }));
+    }
+    return [MOCK_MASTER, ...this.repos].map((repo) => ({ repo, path: repo === MOCK_MASTER && copy !== null ? copy : `${folder}/${repo}`, branch: `change/${changeName}`, base, layout: 'workspace' as const, parts: null }));
   }
 
   diffFiles(part: Part): DiffListing {
@@ -1251,6 +1335,8 @@ export class SdlcMock {
           return 'The checks have not run yet.';
         case 'stale':
           return `Checks last ran at ${v.head}.`;
+        case 'noChanges':
+          return 'No changes to check';
         case 'passed':
           return 'The checks passed.';
         case 'failedFix':
@@ -1261,6 +1347,14 @@ export class SdlcMock {
           return `${v.id} could not run on this machine. That is a fault of the machine, not of the code.`;
       }
     };
+    if (this.singleRepo() !== null) {
+      // Each app's checks ran when its own tasks were recorded; workbench's tasks change no file, so there is nothing to check there.
+      return this.repos.map((repo): RepoCheckView => {
+        const recorded = this.plan.filter((t) => t.repo === repo).every((t) => this.rows.has(t.id));
+        const v: CheckView = !recorded ? { kind: 'notRunYet' } : repo === 'workbench' ? { kind: 'noChanges' } : { kind: 'passed', hooks: [{ id: 'unit', outcome: 'passed' }] };
+        return { repo, view: v, summary: summary(v) };
+      });
+    }
     return this.repos.map((repo): RepoCheckView => {
       const id = repo === 'billing-api' ? 'integration' : 'unit';
       const v: CheckView = repo === 'customer-portal' ? { kind: 'noChecks' } : view(repo, id);
@@ -1317,10 +1411,18 @@ export class SdlcMock {
           };
         }
     }
+    if (this.singleRepo() !== null) {
+      // One pull request for the whole repository, naming the apps the change touched and the one the plan named but nothing touched.
+      this.published.add(MOCK_SINGLE_SYSTEM);
+      return {
+        view: { kind: 'done', pullRequests: [link(MOCK_SINGLE_SYSTEM, 7)], warnings: [], apps: ['engine'], untouched: ['workbench'] },
+        steps: reported,
+      };
+    }
     const all = [...this.repos, MOCK_MASTER];
     all.forEach((repo) => this.published.add(repo));
     const warnings = this.demo === 'done-warnings' ? ['after hook announce failed with exit code 1; nothing was undone'] : [];
-    return { view: { kind: 'done', pullRequests: all.map((repo, i) => link(repo, 7 + i)), warnings }, steps: reported };
+    return { view: { kind: 'done', pullRequests: all.map((repo, i) => link(repo, 7 + i)), warnings, apps: [], untouched: [] }, steps: reported };
   }
 
   /**
@@ -1355,6 +1457,32 @@ const COMMIT_FILES: Record<string, string[]> = {
   T2: ['assets/sample.png'],
   T3: ['src/store.rs'],
 };
+
+/** Like the backend's `PartListings`: a group's files for each part, with the line counts by file type. */
+function groupParts(files: ChangedFile[]): PartListings {
+  const listing = (of: ChangedFile[]): DiffListing => {
+    const byType = new Map<string, { extension: string; files: number; added: number; removed: number }>();
+    for (const f of of.filter((x) => !x.binary)) {
+      const extension = f.path.includes('.') ? f.path.slice(f.path.lastIndexOf('.') + 1) : '(none)';
+      const t = byType.get(extension) ?? { extension, files: 0, added: 0, removed: 0 };
+      byType.set(extension, { extension, files: t.files + 1, added: t.added + f.added, removed: t.removed + f.removed });
+    }
+    return { files: of, loc: [...byType.values()] };
+  };
+  return { whole: listing(files), committed: listing(files.filter((f) => !f.uncommitted)), uncommitted: listing(files.filter((f) => f.uncommitted)) };
+}
+
+/** What `?demo=single-repo` changed, by the group the backend puts each file in: apps in their order, then the repository root. */
+const SINGLE_GROUP_FILES: Record<string, ChangedFile[]> = {
+  engine: [{ path: 'crates/engine/src/run.rs', oldPath: null, status: 'modified', binary: false, added: 12, removed: 4, uncommitted: false }],
+  workbench: [{ path: 'app/src/app/changes.ts', oldPath: null, status: 'added', binary: false, added: 30, removed: 0, uncommitted: false }],
+  'repository root': [{ path: 'README.md', oldPath: null, status: 'modified', binary: false, added: 5, removed: 1, uncommitted: false }],
+};
+/** What `?demo=single-repo-root` changed: its one app sits at the repository root, so every file is the app's. */
+const SINGLE_ROOT_APP_FILES: ChangedFile[] = [
+  { path: 'src/main.rs', oldPath: null, status: 'modified', binary: false, added: 8, removed: 2, uncommitted: false },
+  { path: 'README.md', oldPath: null, status: 'modified', binary: false, added: 5, removed: 1, uncommitted: false },
+];
 
 /** The canned diff: one file of each kind the Changes view tells apart. */
 const DIFF_FILES: ChangedFile[] = [
@@ -1547,6 +1675,8 @@ interface MockBuild {
   waiting: WaitingRepo[];
   report: StopReport | null;
   changedMs: number;
+  /** The app a one-at-a-time build is waiting for before the next app launches; null when nothing waits. */
+  appTurn: AppTurn | null;
   /** The form the build started with, for a start again. */
   form: StartForm;
 }
@@ -1563,6 +1693,8 @@ export interface MockBuildIo {
   now(): number;
   /** The repositories a change builds in. */
   repos(change: ChangeRef): string[];
+  /** True when the change's apps build one after another, as in a single-repo repository. */
+  oneAtATime(change: ChangeRef): boolean;
 }
 
 const NO_FORM: StartForm = { timeoutSecs: 7200 };
@@ -1593,6 +1725,7 @@ export class MockBuildHost {
       rounds: Object.fromEntries(build.rounds),
       waiting: build.waiting,
       report: build.report,
+      appTurn: build.appTurn,
     };
   }
 
@@ -1652,6 +1785,28 @@ export class MockBuildHost {
     return state?.kind === 'done' || state === undefined ? '' : state.task;
   }
 
+  /**
+   * The coordinator's one-app-at-a-time rule: nothing launches while an app goes or one has stopped, else the first ready app in
+   * plan order launches. `appTurn` names the app whose turn it is while another app is waiting for it.
+   */
+  private oneApp(build: MockBuild, status: BuildStatus, ready: string[]): string[] {
+    const apps = status.repos.map((r) => r.repo);
+    const going = apps.find((a) => build.going.has(a));
+    const stopped = apps.find((a) => build.stopped.has(a) && status.repos.find((r) => r.repo === a)?.state.kind !== 'done');
+    const another = (app: string) => apps.some((a) => a !== app && (ready.includes(a) || build.stopped.has(a)));
+    if (going !== undefined) {
+      build.appTurn = { app: going, stopped: false };
+      return [];
+    }
+    if (stopped !== undefined) {
+      build.appTurn = { app: stopped, stopped: true };
+      return [];
+    }
+    const next = apps.find((a) => ready.includes(a));
+    build.appTurn = next !== undefined && another(next) ? { app: next, stopped: false } : null;
+    return next === undefined ? [] : [next];
+  }
+
   /** Start what is ready, or settle the build: the coordinator's loop in miniature. */
   private look(build: MockBuild, status: BuildStatus): void {
     if (build.cancelledAll) {
@@ -1674,8 +1829,9 @@ export class MockBuildHost {
       ready.push(r.repo);
     }
     build.waiting = waiting;
-    for (const repo of ready) this.launch(build, repo);
-    if (ready.length > 0) {
+    const launching = this.io.oneAtATime(build.ref) ? this.oneApp(build, status, ready) : ready;
+    for (const repo of launching) this.launch(build, repo);
+    if (launching.length > 0) {
       build.phase = 'building';
       this.announce(build);
       return;
@@ -1713,7 +1869,7 @@ export class MockBuildHost {
     const rounds = new Map((form.rounds ?? []).map((r) => [r.repo, r.instructions]));
     return {
       key, ref, going: new Map(), stopped: new Map(), rounds, phase: 'building', reviewing: false, cancelling: new Set(), cancelledAll: false,
-      reviewedRows: null, changed: false, waiting: [], report: null, changedMs: this.io.now(), form,
+      reviewedRows: null, changed: false, waiting: [], report: null, appTurn: null, changedMs: this.io.now(), form,
     };
   }
 
@@ -1897,9 +2053,9 @@ export function mockRoundPlan(offer: RoundOffer, picks: RoundPicks): RoundPlan {
 
 /**
  * Like the backend's `sdlc_build_board` (`kata_sdlc::board::board`), for the browser fixtures: a live run first, then a stop the
- * host recorded, then the build log. The backend's tests own the table; this stands in for it where no backend runs.
+ * host recorded, then the build log, then another app's turn. The backend's tests own the table; this stands in for it where no backend runs.
  */
-export function mockBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }): RepoBoard[] {
+export function mockBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }, appTurn: AppTurn | null = null): RepoBoard[] {
   return repos.map((repo) => {
     const state = status.repos.find((r) => r.repo === repo)?.state;
     const stop = stopped[repo];
@@ -1913,7 +2069,9 @@ export function mockBoard(repos: string[], status: BuildStatus, going: string[],
             ? { kind: 'finished' }
             : state.kind === 'waiting'
               ? { kind: 'waiting', task: state.task, onTask: state.onTask, onRepo: state.onRepo }
-              : { kind: 'not-started', task: state.task };
+              : appTurn !== null && appTurn.app !== repo
+                ? { kind: 'waiting-for-app', task: state.task, app: appTurn.app, stopped: appTurn.stopped }
+                : { kind: 'not-started', task: state.task };
     const tasks = status.tasks.filter((t) => t.repo === repo).map((t) => ({ id: t.id, state: mockTaskState(t, situation) }));
     return { repo, situation, tasks };
   });

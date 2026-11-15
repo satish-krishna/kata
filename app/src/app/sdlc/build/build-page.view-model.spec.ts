@@ -1,4 +1,4 @@
-import { Component, effect, signal } from '@angular/core';
+import { Component, Injector, effect, signal } from '@angular/core';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type { BuildEvent } from '@bindings/BuildEvent';
@@ -22,12 +22,14 @@ import type { TaskLink } from '@bindings/TaskLink';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { ProgressStore } from '../../core/progress/progress.store';
+import { ToastStore } from '../../core/toast/toast.store';
 import { ChangeDraftStore } from '../../core/sdlc/change-draft.store';
 import { RunStore } from '../../core/run/run.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { GivenStore } from '../../core/given/given.store';
-import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_MASTER, MOCK_SINGLE_CHANGE, MOCK_SINGLE_FOLDER, MOCK_SINGLE_SYSTEM, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
+import { ChangesViewModel } from '../changes/changes-view.view-model';
 import { IDLE, type RunSnapshot } from '../../core/run/reduce';
 import { BuildLayoutViewModel } from './build-layout.view-model';
 import { BuildPageViewModel, findingsAreaOf, type BuildContext, type Departure, type FindingsView, type ReviewEntry } from './build-page.view-model';
@@ -91,7 +93,7 @@ async function drive(vm: BuildPageViewModel, runs: RunStore, done: () => boolean
 const group = (vm: BuildPageViewModel, repo: string) => vm.view().groups.find((g) => g.repo === repo)!;
 const finished = (vm: BuildPageViewModel) => () => vm.phase() === 'finished' && vm.findings().length > 0;
 const keyOf = (change: string): ChangeKey => ({ workspace: { key: FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system: 'commerce', change });
-const state = (over: Partial<BuildState> = {}): BuildState => ({ phase: 'building', going: ['commerce-core'], stopped: {}, rounds: {}, waiting: [], report: null, ...over });
+const state = (over: Partial<BuildState> = {}): BuildState => ({ phase: 'building', going: ['commerce-core'], stopped: {}, rounds: {}, waiting: [], report: null, appTurn: null, ...over });
 
 /** The page opened on the mock build change, as the change page would give it. */
 async function opened(s: ReturnType<typeof setup>, over: { stage?: OfferStage; built?: boolean; review?: ReviewRecord | null; done?: boolean } = {}) {
@@ -1030,7 +1032,7 @@ describe('the tasks area folds, filters and shows a departure with its task', ()
 describe('the build page reads the backend\'s build and starts it through the host\'s commands', () => {
   const REF = { workspace: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE };
   const keyOf = (change: string): ChangeKey => ({ workspace: { key: FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system: 'commerce', change });
-  const state = (over: Partial<BuildState> = {}): BuildState => ({ phase: 'building', going: ['commerce-core'], stopped: {}, rounds: {}, waiting: [], report: null, ...over });
+  const state = (over: Partial<BuildState> = {}): BuildState => ({ phase: 'building', going: ['commerce-core'], stopped: {}, rounds: {}, waiting: [], report: null, appTurn: null, ...over });
   const heldBy = (change: string) => [{ repo: 'commerce-core', holder: keyOf(change) }];
 
   /** A page opened on the mock build change, with nothing hosted by the backend yet. */
@@ -1309,6 +1311,94 @@ describe('the build page reads the backend\'s build and starts it through the ho
   });
 });
 
+describe('opening the round and the preview', () => {
+  const offer: RoundOffer = { review: 1, repos: ['commerce-core'], findings: [] };
+  const view = { rows: { counts: [], total: 0, groups: [] }, groups: [] };
+  const picks: RoundPicks = { picked: [], assigned: {}, notes: {} };
+
+  /** A round offer that answers when told to, so the click can be watched while the page waits. */
+  function slowOffer(s: Awaited<ReturnType<typeof opened>>) {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const asked = vi.spyOn(s.transport, 'sdlcRoundOffer').mockImplementation(async () => {
+      await gate;
+      return [offer, picks];
+    });
+    vi.spyOn(s.transport, 'sdlcReviewView').mockResolvedValue(view);
+    return { release, asked };
+  }
+
+  it('Another round shows progress from the click until the dialog opens', async () => {
+    const s = await opened(setup());
+    await s.load();
+    const { release } = slowOffer(s);
+    let dialogOpened!: () => void;
+    const shown = new Promise<void>((resolve) => (dialogOpened = resolve));
+    vi.spyOn(s.preview, 'openBuild').mockImplementation(() => {
+      dialogOpened();
+      return new Promise(() => {});
+    });
+    const progress = TestBed.inject(ProgressStore);
+    void s.vm.openRound();
+    await advance(600);
+    expect(progress.view('build')()?.label).toBe('Preparing the round');
+    release();
+    await shown;
+    expect(progress.view('build')()).toBeNull();
+  });
+
+  it('a second click while the round is opening is ignored, and the first still opens', async () => {
+    const s = await opened(setup());
+    await s.load();
+    const { release, asked } = slowOffer(s);
+    const open = vi.spyOn(s.preview, 'openBuild').mockResolvedValue(null);
+    const first = s.vm.openRound();
+    const second = s.vm.openRound();
+    expect(await second).toBe(false);
+    release();
+    await first;
+    expect(asked).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it('a round that cannot be opened ends the progress and tells the engineer', async () => {
+    const s = await opened(setup());
+    await s.load();
+    vi.spyOn(s.transport, 'sdlcRoundOffer').mockRejectedValue(new Error('the review is unreadable'));
+    const error = vi.spyOn(TestBed.inject(ToastStore), 'error');
+    expect(await s.vm.openRound()).toBe(false);
+    expect(TestBed.inject(ProgressStore).view('build')()).toBeNull();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('the review is unreadable'));
+  });
+
+  it('a preview shows progress while it opens, ignores a second click, and ends the progress when it fails', async () => {
+    const s = await opened(setup());
+    await s.load();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const real = s.transport.sdlcPreviewBuild.bind(s.transport);
+    const previewed = vi.spyOn(s.transport, 'sdlcPreviewBuild').mockImplementation(async (...args) => {
+      await gate;
+      return real(...args);
+    });
+    vi.spyOn(s.preview, 'openBuild').mockResolvedValue(null);
+    const progress = TestBed.inject(ProgressStore);
+    const first = s.vm.openPreview('start');
+    void s.vm.openPreview('start');
+    await advance(600);
+    expect(progress.view('build')()?.label).toBe('Preparing the preview');
+    release();
+    await first;
+    expect(previewed).toHaveBeenCalledTimes(1);
+    expect(progress.view('build')()).toBeNull();
+    previewed.mockRejectedValue(new Error('no preview'));
+    const error = vi.spyOn(TestBed.inject(ToastStore), 'error');
+    expect(await s.vm.openPreview('start')).toBe(false);
+    expect(progress.view('build')()).toBeNull();
+    expect(error).toHaveBeenCalled();
+  });
+});
+
 describe('moving the page from one change to another (F1)', () => {
   const SECOND_CHANGE = '2026-10-12-product-photo-upload';
   it('nothing of change A shows on change B, and A\'s transcript arriving after the move is linked to A', async () => {
@@ -1584,5 +1674,130 @@ describe('the shown session follows the decision table', () => {
   it('with no sessions nothing is in view', async () => {
     const s = setup();
     expect(s.vm.shownSessions()).toEqual([]);
+  });
+});
+
+describe('the build page of a single-repo change', () => {
+  const demoAt = (query: string | null) => history.replaceState({}, '', query ? `/?${query}` : '/');
+  afterEach(() => demoAt(null));
+  const SINGLE_REF = { workspace: MOCK_SINGLE_FOLDER, system: MOCK_SINGLE_SYSTEM, change: MOCK_SINGLE_CHANGE };
+  const SINGLE_CTX: BuildContext = { workspaceId: 'kata', folder: MOCK_SINGLE_FOLDER, system: MOCK_SINGLE_SYSTEM, change: MOCK_SINGLE_CHANGE, systemRepos: [] };
+
+  /** The page opened on the single-repo change of the demo, as the change page would give it. */
+  async function openedSingle(query = 'demo=single-repo') {
+    demoAt(query);
+    const s = setup();
+    const status = await s.transport.sdlcBuildStatus(SINGLE_REF);
+    const [change] = (await readAllChanges(s.transport, MOCK_SINGLE_FOLDER, MOCK_SINGLE_SYSTEM)).filter((c) => c.state.change === MOCK_SINGLE_CHANGE);
+    const load = (ctx: BuildContext = SINGLE_CTX) => s.vm.load({ ctx, masterRepo: MOCK_SINGLE_SYSTEM, change, status, done: false, review: null });
+    return { ...s, load, status, change };
+  }
+  const label = (vm: BuildPageViewModel, repo: string) => group(vm, repo).status.label;
+
+  it('one lane per planned app and none for the master (R4.1)', async () => {
+    const s = await openedSingle();
+    await s.load();
+    expect(s.vm.view().groups.map((g) => g.repo)).toEqual(['engine', 'workbench']);
+    expect(s.vm.view().groups.map((g) => g.tasks.map((t) => t.id))).toEqual([['T1', 'T2', 'T3'], ['T4', 'T5']]);
+    expect(s.vm.view().groups.some((g) => g.repo === MOCK_SINGLE_SYSTEM)).toBe(false);
+  });
+
+  describe('what a waiting app says (R4.3)', () => {
+    it('engine working on its tasks: workbench reads waiting for "engine" of this change', async () => {
+      const s = await openedSingle();
+      await s.load();
+      expect(await s.vm.startBuild({ timeoutSecs: 5400 })).toBe('started');
+      await advance(500);
+      expect(label(s.vm, 'engine')).toBe('Working · T1');
+      expect(label(s.vm, 'workbench')).toBe('Waiting for engine of this change');
+    });
+
+    it('engine stopped because its run ran out of time: workbench reads waiting for "engine" of this change, which stopped; continue it first', async () => {
+      const s = await openedSingle();
+      await s.load();
+      await s.vm.startBuild({ timeoutSecs: 5400 });
+      await advance(500);
+      s.vm.repoAction({ repo: 'engine', action: 'cancel' });
+      await advance(500);
+      expect(label(s.vm, 'engine')).toBe('Stopped at T1');
+      expect(label(s.vm, 'workbench')).toBe('Waiting for engine of this change, which stopped; continue it first');
+      expect(group(s.vm, 'workbench').action).toBeNull();
+    });
+
+    it('engine finished, with team checks passed: workbench reads working', async () => {
+      const s = await openedSingle();
+      await s.load();
+      await s.vm.startBuild({ timeoutSecs: 5400 });
+      await drive(s.vm, s.runs, () => label(s.vm, 'workbench').startsWith('Working'));
+      expect(label(s.vm, 'engine')).toBe('Finished');
+      expect(group(s.vm, 'engine').checks?.view.kind).toBe('passed');
+      expect(label(s.vm, 'workbench')).toBe('Working · T4');
+    });
+
+    it('engine finished, with team checks sending it back: workbench reads waiting for "engine" of this change', async () => {
+      const s = await openedSingle();
+      const real = s.transport.sdlcChecksView.bind(s.transport);
+      vi.spyOn(s.transport, 'sdlcChecksView').mockImplementation(async (ref) =>
+        (await real(ref)).map((v) => (v.repo === 'engine' ? { repo: 'engine', view: { kind: 'failedFix' as const, id: 'unit', output: '1 failed' }, summary: "unit failed. The agent is sent back to fix it, up to the team's retry limit." } : v)),
+      );
+      await s.load();
+      await s.vm.startBuild({ timeoutSecs: 5400 });
+      await advance(500);
+      expect(group(s.vm, 'engine').checks?.view.kind).toBe('failedFix');
+      expect(label(s.vm, 'engine')).toBe('Working · T1');
+      expect(label(s.vm, 'workbench')).toBe('Waiting for engine of this change');
+    });
+  });
+
+  it('a task dependency on another app wins over the app turn (R4.5)', async () => {
+    const s = await openedSingle();
+    const real = s.transport.sdlcBuildStatus.bind(s.transport);
+    vi.spyOn(s.transport, 'sdlcBuildStatus').mockImplementation(async (ref) => {
+      const status = await real(ref);
+      return { ...status, repos: status.repos.map((r) => (r.repo === 'workbench' ? { ...r, state: { kind: 'waiting' as const, task: 'T4', onTask: 'T3', onRepo: 'engine' } } : r)) };
+    });
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
+    await advance(500);
+    expect(label(s.vm, 'workbench')).toBe('Waiting for T3 in engine');
+  });
+
+  it('findings group per app, most serious first (R5.1)', async () => {
+    const s = await openedSingle();
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
+    await drive(s.vm, s.runs, finished(s.vm));
+    const groups = s.vm.findingGroups();
+    expect(groups.map((g) => g.repo)).toEqual(['engine', 'workbench']);
+    expect(groups.map((g) => g.findings.map((f) => f.severity))).toEqual([['high', 'medium'], ['medium', 'low']]);
+  });
+
+  it('checks show per app, and an app with nothing to check says so (R5.2)', async () => {
+    const s = await openedSingle();
+    await s.load();
+    await s.vm.startBuild({ timeoutSecs: 5400 });
+    await drive(s.vm, s.runs, finished(s.vm));
+    expect(s.vm.view().groups.map((g) => [g.repo, g.checks?.view.kind, g.checks?.summary])).toEqual([
+      ['engine', 'passed', 'The checks passed.'],
+      ['workbench', 'noChanges', 'No changes to check'],
+    ]);
+  });
+
+  it('a repository with one app at its root has one lane and one group (R9.3)', async () => {
+    const s = await openedSingle('demo=single-repo-root');
+    await s.load();
+    expect(s.vm.view().groups.map((g) => g.repo)).toEqual(['kata']);
+    const changes = Injector.create({ providers: [ChangesViewModel], parent: TestBed.inject(Injector) }).get(ChangesViewModel);
+    await changes.open(s.vm.changesContext()!);
+    expect(changes.repos().map((r) => r.repo)).toEqual(['kata']);
+    expect(changes.groups()[0].files.map((f) => f.path)).toEqual(['src/main.rs', 'README.md']);
+  });
+
+  it('knows its apps run one after another from the layout of the repository', async () => {
+    const s = await openedSingle();
+    await s.load();
+    expect(s.vm.oneAtATime()).toBe(false);
+    await s.load({ ...SINGLE_CTX, layout: 'single-repo' });
+    expect(s.vm.oneAtATime()).toBe(true);
   });
 });

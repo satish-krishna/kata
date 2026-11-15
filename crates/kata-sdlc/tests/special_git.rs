@@ -251,6 +251,7 @@ fn goes_through_every_step(need: Need) {
 
     // The change starts: its branch and its copy of the master.
     let place = Place {
+        layout: kata_sdlc::layout::Layout::Workspace,
         master: master.clone(),
         workspace: ws.clone(),
     };
@@ -269,6 +270,7 @@ fn goes_through_every_step(need: Need) {
     );
     let copy = ws.join(".ai-sdlc").join("copies").join(CHANGE);
     let at = Place {
+        layout: kata_sdlc::layout::Layout::Workspace,
         master: copy.clone(),
         workspace: ws.clone(),
     };

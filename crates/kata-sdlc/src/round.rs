@@ -300,6 +300,24 @@ pub fn plan(offer: &RoundOffer, picks: &RoundPicks) -> RoundPlan {
         };
     }
 
+    // A pick for a repository the round does not offer has no run to go to: say so, never drop it.
+    let unoffered: Vec<String> = picked
+        .iter()
+        .filter_map(|(f, repo)| {
+            let repo = (*repo)?;
+            (!offer.repos.contains(repo)).then(|| format!("{} (`{repo}`)", f.key))
+        })
+        .collect();
+    if !unoffered.is_empty() {
+        return RoundPlan {
+            blocked: Some(format!(
+                "This round does not offer the repository of {}.",
+                unoffered.join(", ")
+            )),
+            requests: Vec::new(),
+        };
+    }
+
     let mut requests = Vec::new();
     for repo in &offer.repos {
         let mine: Vec<&RoundFinding> = picked
@@ -624,6 +642,24 @@ mod tests {
 
     fn picked_keys(p: &RoundPicks) -> Vec<&str> {
         p.picked.iter().map(String::as_str).collect()
+    }
+
+    #[test]
+    fn a_pick_on_a_repository_the_round_does_not_offer_blocks_and_names_the_finding() {
+        let o = offer_review();
+        let key = o
+            .findings
+            .iter()
+            .find(|f| f.repo.is_none())
+            .expect("an unassigned finding")
+            .key
+            .clone();
+        let p = assign(picks(&[&key]), &key, "ghost");
+        let plan = plan(&o, &p);
+        let reason = plan.blocked.expect("blocked, not dropped");
+        assert!(reason.contains(&key), "{reason}");
+        assert!(reason.contains("ghost"), "{reason}");
+        assert!(plan.requests.is_empty());
     }
 
     // build-round.spec.ts

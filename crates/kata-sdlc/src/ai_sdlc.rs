@@ -75,6 +75,8 @@ const PLACED: &[&str] = &[
 /// Where an ai-sdlc command works: the master repository and the workspace around it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Place {
+    /// The layout of the master repository: how the folders around it are read.
+    pub layout: crate::layout::Layout,
     pub master: PathBuf,
     pub workspace: PathBuf,
 }
@@ -383,19 +385,22 @@ impl Program {
         self.call(&args, &place.workspace)
     }
 
-    /// Runs `command` in `workspace` with no master given, so the program finds the master in process as
-    /// `resolve` does: one Node start where [`Program::resolve`] then [`Program::run`] takes two. For a command
-    /// that takes `--workspace` (`list`, `state`); the answer is read as `run` reads it.
-    pub fn run_in(&self, command: &[&str], workspace: &Path) -> Result<Value, ProgramError> {
+    /// Runs `command` for the saved `folder` in one Node start, the program finding the master itself, in the
+    /// form of a call for `layout`, the folder's saved layout ([`crate::layout::for_folder`]). For a command that
+    /// finds its own place (`list`, `state`); the answer is read as `run` reads it.
+    pub fn run_in(
+        &self,
+        command: &[&str],
+        folder: &Path,
+        layout: crate::layout::Layout,
+    ) -> Result<Value, ProgramError> {
         if !self.entry.is_file() {
             return Err(ProgramError::TooOld {
                 found: format!("{} does not exist", self.entry.display()),
             });
         }
-        let ws = workspace.display().to_string();
-        let mut args = command.to_vec();
-        args.extend(["--workspace", &ws]);
-        self.call(&args, workspace)
+        let named = folder.display().to_string();
+        self.call(&in_form(command, &named, layout), folder)
     }
 
     /// Runs a step (`command`) in `place` and reads its answer through [`answer_of`].
@@ -475,11 +480,13 @@ impl Program {
         }
     }
 
-    /// Finds the master repository of `workspace` as the program's `resolve` does, with no master given.
-    /// A workspace with no master, or with several, is `CouldNotRun` with the program's reason.
-    pub fn resolve(&self, workspace: &Path) -> Result<Place, ProgramError> {
-        let ws = workspace.display().to_string();
-        let found = self.call(&["resolve", "--json", "--workspace", &ws], workspace)?;
+    /// Finds the master repository and the workspace of a saved `folder` as the program's `resolve` does, asked in
+    /// the form of the folder's saved layout. This is the one place a saved folder becomes a [`Place`];
+    /// [`crate::layout::open`] reads the same answer through [`crate::layout::placed`], which reads the saved
+    /// layout and fills one not known yet. A folder with no master, or with several, is `CouldNotRun` with the
+    /// program's reason.
+    pub fn resolve(&self, folder: &Path) -> Result<Place, ProgramError> {
+        let (found, layout) = crate::layout::placed(self, folder)?;
         let path = |key: &str| {
             found[key]
                 .as_str()
@@ -487,7 +494,11 @@ impl Program {
                 .map(PathBuf::from)
         };
         match (path("master"), path("workspace")) {
-            (Some(master), Some(workspace)) => Ok(Place { master, workspace }),
+            (Some(master), Some(workspace)) => Ok(Place {
+                layout,
+                master,
+                workspace,
+            }),
             _ => {
                 let problems: Vec<&str> = found["problems"]
                     .as_array()
@@ -500,6 +511,38 @@ impl Program {
                 }))
             }
         }
+    }
+
+    /// The program's own `resolve --json` answer for `folder`, asked in the form of `layout`, the folder's saved
+    /// layout, in one Node start. A layout not known yet (a folder being added, a saved one added while no program
+    /// could answer, or a folder that is not saved, such as a workspace's master) is the program's to say, and no
+    /// one form places every such folder: a workspace that is a git root needs `--workspace`, a workspace's master
+    /// or product repository needs none. So the workspace form is asked first and its answer stands unless it
+    /// names the single-repo layout or places nothing; then the form with no flag is asked, and when neither
+    /// places the folder the first, which names it, is the refusal. A refusal is an answer too, left for the
+    /// caller to read.
+    pub(crate) fn resolve_from(
+        &self,
+        folder: &Path,
+        layout: Option<crate::layout::Layout>,
+    ) -> Result<Value, ProgramError> {
+        use crate::layout::Layout;
+        let named = folder.display().to_string();
+        let ask = |layout| self.call(&in_form(&["resolve", "--json"], &named, layout), folder);
+        if let Some(layout) = layout {
+            return ask(layout);
+        }
+        let placed = |v: &Value| {
+            ["master", "workspace"]
+                .iter()
+                .all(|k| v[k].as_str().is_some_and(|s| !s.is_empty()))
+        };
+        let first = ask(Layout::Workspace)?;
+        if placed(&first) && first["layout"] != "single-repo" {
+            return Ok(first);
+        }
+        let second = ask(Layout::SingleRepo)?;
+        Ok(if placed(&second) { second } else { first })
     }
 
     /// Runs the program with `args` as given, in `cwd`, within [`TIMEOUT`], and reads the answer as
@@ -520,6 +563,19 @@ impl Program {
         };
         read_value(reply)
     }
+}
+
+/// `command` in the form of a call for a saved folder (`named`) of `layout`: the one owner of that mapping. A
+/// workspace gets `--workspace <folder>`, since from its own folder the program would take the parent of a
+/// workspace that is a git root as the workspace. A single-repo repository is called from its folder with no
+/// flag, since `--workspace` would name the repository itself as the workspace and the program would find no
+/// changes.
+fn in_form<'a>(command: &[&'a str], named: &'a str, layout: crate::layout::Layout) -> Vec<&'a str> {
+    let mut args = command.to_vec();
+    if layout == crate::layout::Layout::Workspace {
+        args.extend(["--workspace", named]);
+    }
+    args
 }
 
 impl Failure {
@@ -687,6 +743,7 @@ mod tests {
         let master = testutil::repo(dir.path(), "ai-sdlc");
         testutil::commit_file(&master, ".ai-sdlc.json", "{}\n", "marker");
         let place = Place {
+            layout: crate::layout::Layout::Workspace,
             master,
             workspace: dir.path().to_path_buf(),
         };
@@ -713,6 +770,7 @@ mod tests {
         assert_eq!(found["problems"], serde_json::json!([]));
 
         let nowhere = Place {
+            layout: crate::layout::Layout::Workspace,
             master: place.workspace.join("missing"),
             workspace: place.workspace.clone(),
         };
@@ -767,6 +825,7 @@ mod tests {
         let entry = dir.join("scripted.js");
         std::fs::write(&entry, body).unwrap();
         let place = Place {
+            layout: crate::layout::Layout::Workspace,
             master: dir.to_path_buf(),
             workspace: dir.to_path_buf(),
         };

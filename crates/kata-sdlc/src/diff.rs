@@ -7,6 +7,7 @@
 use crate::branch::{branch_exists, change_branch};
 use crate::changes::{is_change_name, is_safe_system};
 use crate::git::{GitError, Repo};
+use crate::layout::Layout;
 use crate::workspace::{self, system_repos};
 use git2::{Delta, DiffFindOptions, DiffOptions};
 use serde::{Deserialize, Serialize};
@@ -459,6 +460,22 @@ pub struct ChangeRepo {
     pub path: String,
     pub branch: String,
     pub base: BaseInfo,
+    /// How the change's repository is laid out: a single-repo entry is a group of one copy.
+    pub layout: Layout,
+    /// The group's files for each part, in a single-repo change; `null` in a workspace change, where
+    /// the files are read from `path`.
+    pub parts: Option<PartListings>,
+}
+
+/// The listing of each part of a change for one group of a single-repo change.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct PartListings {
+    pub whole: DiffListing,
+    pub committed: DiffListing,
+    pub uncommitted: DiffListing,
 }
 
 /// The master first, read at `master` (the change's copy, or the checkout for an older change), then every
@@ -484,6 +501,8 @@ pub fn change_repos(
             path: path.to_string_lossy().into_owned(),
             branch: branch.clone(),
             base: base_info(path).map_err(|e| e.to_string())?,
+            layout: Layout::Workspace,
+            parts: None,
         })
     };
     let mut out = vec![entry(master_repo, master)?];
@@ -501,6 +520,241 @@ pub fn change_repos(
         }
     }
     Ok(out)
+}
+
+/// Which group of the single-repo view a changed file belongs to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FileGroup {
+    /// The app whose folder is the longest that contains the file.
+    App(String),
+    /// A file outside every app's folder.
+    Root,
+}
+
+/// The label of the group of files outside every app.
+pub const ROOT_LABEL: &str = "repository root";
+
+/// One group of the single-repo view of what changed: an app, or the repository root.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct ChangeGroup {
+    /// The app's name, or `root` for the files outside every app.
+    pub group: String,
+    /// What the view shows: the app's name, or "repository root".
+    pub label: String,
+    /// The copy the files are read in.
+    pub path: String,
+    pub files: Vec<ChangedFile>,
+}
+
+/// The group a file belongs to, given the apps as (name, folder relative to the root).
+pub fn group_of(path: &str, apps: &[(String, String)]) -> FileGroup {
+    let path = path.trim_start_matches("./");
+    apps.iter()
+        .filter_map(|(name, folder)| {
+            let folder = folder.trim_start_matches("./").trim_end_matches('/');
+            let depth = if folder.is_empty() || folder == "." {
+                0
+            } else if path
+                .strip_prefix(folder)
+                .is_some_and(|r| r.starts_with('/'))
+            {
+                folder.split('/').count()
+            } else {
+                return None;
+            };
+            Some((depth, name))
+        })
+        .max_by_key(|(depth, _)| *depth)
+        .map_or(FileGroup::Root, |(_, name)| FileGroup::App(name.clone()))
+}
+
+/// One diff of `copy` against its base, split into one group per app with a changed file, in the
+/// order of `apps`, then the repository root last. Empty groups are left out.
+pub fn change_groups(
+    copy: &Path,
+    apps: &[(String, String)],
+    part: Part,
+) -> Result<Vec<ChangeGroup>, String> {
+    let files = changed_files(copy, part).map_err(|e| e.to_string())?;
+    let path = copy.to_string_lossy().into_owned();
+    let mut groups: Vec<ChangeGroup> = apps
+        .iter()
+        .map(|(name, _)| ChangeGroup {
+            group: name.clone(),
+            label: name.clone(),
+            path: path.clone(),
+            files: Vec::new(),
+        })
+        .collect();
+    let mut root = ChangeGroup {
+        group: "root".to_string(),
+        label: ROOT_LABEL.to_string(),
+        path,
+        files: Vec::new(),
+    };
+    for file in files {
+        match group_of(&file.path, apps) {
+            FileGroup::App(name) => match groups.iter_mut().find(|g| g.group == name) {
+                Some(g) => g.files.push(file),
+                None => root.files.push(file),
+            },
+            FileGroup::Root => root.files.push(file),
+        }
+    }
+    groups.push(root);
+    groups.retain(|g| !g.files.is_empty());
+    Ok(groups)
+}
+
+/// The Changes view's entries for a single-repo change: one per group of `change_groups`, each at the
+/// copy, on the change's branch, carrying its files.
+pub fn change_group_repos(
+    copy: &Path,
+    system: &str,
+    change: &str,
+    apps: &[(String, String)],
+) -> Result<Vec<ChangeRepo>, String> {
+    if !is_safe_system(system) || !is_change_name(change) {
+        return Err(format!("invalid system or change name: {system}, {change}"));
+    }
+    let branch = change_branch(copy, system, change)?;
+    let base = base_info(copy).map_err(|e| e.to_string())?;
+    let committed = change_groups(copy, apps, Part::Committed)?;
+    let uncommitted = change_groups(copy, apps, Part::Uncommitted)?;
+    // A group a part does not touch has no files in that part.
+    let listing_in = |groups: &[ChangeGroup], group: &str| {
+        let files = groups
+            .iter()
+            .find(|g| g.group == group)
+            .map(|g| g.files.clone())
+            .unwrap_or_default();
+        DiffListing {
+            loc: loc_by_file_type(&files),
+            files,
+        }
+    };
+    Ok(change_groups(copy, apps, Part::Whole)?
+        .into_iter()
+        .map(|g| {
+            let parts = PartListings {
+                committed: listing_in(&committed, &g.group),
+                uncommitted: listing_in(&uncommitted, &g.group),
+                whole: DiffListing {
+                    loc: loc_by_file_type(&g.files),
+                    files: g.files,
+                },
+            };
+            ChangeRepo {
+                repo: g.label,
+                path: g.path,
+                branch: branch.clone(),
+                base: base.clone(),
+                layout: Layout::SingleRepo,
+                parts: Some(parts),
+            }
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod change_groups_tests {
+    use super::*;
+    use crate::git;
+    use crate::testutil::{checkout, commit_file, repo};
+
+    fn apps() -> Vec<(String, String)> {
+        vec![
+            ("engine".into(), "engine".into()),
+            ("workbench".into(), "app".into()),
+        ]
+    }
+
+    fn summary(groups: &[ChangeGroup]) -> Vec<(String, Vec<String>)> {
+        groups
+            .iter()
+            .map(|g| {
+                (
+                    g.label.clone(),
+                    g.files.iter().map(|f| f.path.clone()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    fn copy_with_a_seed(d: &Path) -> std::path::PathBuf {
+        let r = repo(d, "copy");
+        git::run(&r, &["config", "core.autocrlf", "false"]).unwrap();
+        commit_file(&r, "seed.txt", "s\n", "seed");
+        checkout(&r, "change/x", true);
+        r
+    }
+
+    #[test]
+    fn groups_per_app_with_the_root_last() {
+        let d = tempfile::tempdir().unwrap();
+        let r = copy_with_a_seed(d.path());
+        commit_file(&r, "README.md", "r\n", "root");
+        commit_file(&r, "app/src/b.ts", "b\n", "workbench");
+        commit_file(&r, "engine/src/a.rs", "a\n", "engine");
+        let groups = change_groups(&r, &apps(), Part::Whole).unwrap();
+        assert_eq!(
+            summary(&groups),
+            vec![
+                ("engine".to_string(), vec!["engine/src/a.rs".to_string()]),
+                ("workbench".to_string(), vec!["app/src/b.ts".to_string()]),
+                (ROOT_LABEL.to_string(), vec!["README.md".to_string()]),
+            ]
+        );
+        assert_eq!(groups[0].path, r.to_string_lossy());
+        assert_eq!(groups[2].group, "root");
+    }
+
+    #[test]
+    fn an_app_with_nothing_changed_is_not_listed() {
+        let d = tempfile::tempdir().unwrap();
+        let r = copy_with_a_seed(d.path());
+        commit_file(&r, "engine/src/a.rs", "a\n", "engine");
+        let groups = change_groups(&r, &apps(), Part::Whole).unwrap();
+        assert_eq!(
+            summary(&groups),
+            vec![("engine".to_string(), vec!["engine/src/a.rs".to_string()])]
+        );
+    }
+}
+
+#[cfg(test)]
+mod group_of_tests {
+    use super::*;
+
+    fn app(n: &str) -> FileGroup {
+        FileGroup::App(n.to_string())
+    }
+
+    fn pairs(rows: &[(&str, &str)]) -> Vec<(String, String)> {
+        rows.iter()
+            .map(|(n, f)| (n.to_string(), f.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn group_of_rows() {
+        let nested = pairs(&[("outer", "app"), ("inner", "app/sub")]);
+        assert_eq!(group_of("app/sub/x.rs", &nested), app("inner"));
+        assert_eq!(group_of("app/x.rs", &nested), app("outer"));
+        assert_eq!(group_of("README.md", &nested), FileGroup::Root);
+        let at_root = pairs(&[("only", ".")]);
+        assert_eq!(group_of("README.md", &at_root), app("only"));
+        assert_eq!(group_of("a/b/c.rs", &at_root), app("only"));
+        let mixed = pairs(&[("all", "."), ("app", "app")]);
+        assert_eq!(group_of("app/x", &mixed), app("app"));
+        assert_eq!(group_of("other/x", &mixed), app("all"));
+        let one = pairs(&[("app", "app")]);
+        assert_eq!(group_of("application/x", &one), FileGroup::Root);
+        assert_eq!(group_of("app", &one), FileGroup::Root);
+    }
 }
 
 #[cfg(test)]
@@ -1173,6 +1427,43 @@ mod change_repos_tests {
         assert!(files.iter().any(|f| f.path == "pending.txt"), "{files:?}");
         assert_eq!(repos[1].repo, "app");
         assert_eq!(repos[1].path, fx.folder.join("app").to_string_lossy());
+    }
+
+    #[test]
+    fn change_group_repos_carries_each_groups_files_at_the_copy() {
+        let fx = fixture();
+        let apps = vec![("only".to_string(), ".".to_string())];
+        let repos = change_group_repos(&fx.copy, SYS, CHG, &apps).unwrap();
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].repo, "only");
+        assert_eq!(repos[0].path, fx.copy.to_string_lossy());
+        assert_eq!(repos[0].branch, "feat/x");
+        assert_eq!(repos[0].layout, Layout::SingleRepo);
+        let parts = repos[0].parts.as_ref().unwrap();
+        let paths = |l: &DiffListing| l.files.iter().map(|f| f.path.clone()).collect::<Vec<_>>();
+        let record = format!("intent/{SYS}/{CHG}/change.yml");
+        assert_eq!(
+            paths(&parts.whole),
+            vec![record.clone(), "pending.txt".to_string()]
+        );
+        assert_eq!(paths(&parts.committed), vec![record]);
+        assert_eq!(paths(&parts.uncommitted), vec!["pending.txt".to_string()]);
+        // The line counts by file type are the backend's, for each part.
+        assert_eq!(
+            parts.uncommitted.loc,
+            loc_by_file_type(&parts.uncommitted.files)
+        );
+        assert_eq!(parts.uncommitted.loc.len(), 1);
+        assert_eq!(parts.uncommitted.loc[0].extension, "txt");
+    }
+
+    #[test]
+    fn a_workspace_entry_has_the_workspace_layout_and_no_parts() {
+        let fx = fixture();
+        let repos = change_repos(&fx.folder, &fx.copy, "m", SYS, CHG).unwrap();
+        assert!(repos
+            .iter()
+            .all(|r| r.layout == Layout::Workspace && r.parts.is_none()));
     }
 
     #[test]

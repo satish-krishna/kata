@@ -13,6 +13,7 @@ describe('CheckResults shows what the plugin recorded, in its words (R5.1)', () 
     ['no checks', view('kata', { kind: 'noChecks' }, 'This repository has no checks.'), 'idle'],
     ['not run yet', view('kata', { kind: 'notRunYet' }, 'The checks have not run yet.'), 'idle'],
     ['stale', view('kata', { kind: 'stale', head: 'abc1234' }, 'Checks last ran at abc1234.'), 'idle'],
+    ['no changes to check (single-repo app)', view('docs', { kind: 'noChanges' }, 'No changes to check'), 'idle'],
     ['passed', view('kata', { kind: 'passed', hooks: [{ id: 'unit', outcome: 'passed' }] }, 'The checks passed.'), 'success'],
     ['failed, to be fixed', view('kata', { kind: 'failedFix', id: 'unit', output: OUTPUT }, FIX), 'error'],
     ['failed, to stop', view('kata', { kind: 'failedStop', id: 'unit', output: OUTPUT }, 'unit failed. The build stopped here.'), 'error'],
@@ -21,7 +22,7 @@ describe('CheckResults shows what the plugin recorded, in its words (R5.1)', () 
   ] as const)('%s: the sentence and its color', async (_name, v, tone) => {
     const { container } = await render(CheckResults, { views: [v] });
     expect(text(container)).toContain(v.summary);
-    expect(text(container)).toContain('kata');
+    expect(text(container)).toContain(v.repo);
     const status = container.querySelector(`.k-status--${tone}`);
     expect(status).not.toBeNull();
     expect(status!.querySelector('.k-status__dot')).not.toBeNull();

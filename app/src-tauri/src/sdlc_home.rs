@@ -6,12 +6,14 @@ use kata_sdlc::ai_sdlc::list::ChangeList;
 use kata_sdlc::ai_sdlc::state::{ChangeState, SystemState};
 use kata_sdlc::ai_sdlc::{Place, Program, ProgramError};
 use kata_sdlc::copy_removal::CopyRemoval;
+use kata_sdlc::layout::{AppHealth, Layout};
 use kata_sdlc::offer::{home_reading, LiveFacts};
 use kata_sdlc::open_changes::{
     relist, shown_system, split, to_check, HomeChecked, HomeList, HomeOpen, HomeRow, Refresh,
 };
 use kata_sdlc::plugin::Readiness;
 use kata_sdlc::view::ChangeView;
+use kata_sdlc::workspace::InstructionsState;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -19,9 +21,14 @@ use std::sync::{Arc, Mutex};
 /// Where the home's answers come from; the plugin's program in the app, a fake in tests.
 pub trait HomeSource: Sync {
     /// The light list of every change of `system`, open and finished.
-    fn list(&self, folder: &Path, system: &str) -> Result<ChangeList, String>;
+    fn list(&self, folder: &Path, layout: Layout, system: &str) -> Result<ChangeList, String>;
     /// The open changes of `system`, read alone.
-    fn open_states(&self, folder: &Path, system: &str) -> Result<SystemState, String>;
+    fn open_states(
+        &self,
+        folder: &Path,
+        layout: Layout,
+        system: &str,
+    ) -> Result<SystemState, String>;
     /// Whether `change` was declared done, read on this machine with no network.
     fn declared(&self, folder: &Path, system: &str, change: &str) -> Result<bool, String>;
     /// Whether the declared change's pull requests are all merged and its copy may be removed (asks GitHub).
@@ -69,17 +76,26 @@ fn in_place<T>(
 }
 
 impl HomeSource for Program {
-    // The list and the open read name only the folder: the program finds the master in the same Node start, as
-    // cheaply as when it is given, so they need no `resolve` and no cache.
-    fn list(&self, folder: &Path, system: &str) -> Result<ChangeList, String> {
+    // The list and the open read name only the folder and its saved layout: the program finds the master in the
+    // same Node start, as cheaply as when it is given, so they need no `resolve` and no cache.
+    fn list(&self, folder: &Path, layout: Layout, system: &str) -> Result<ChangeList, String> {
         let answer = self
-            .run_in(&["list", "--json", "--system", system], folder)
+            .run_in(&["list", "--json", "--system", system], folder, layout)
             .map_err(program_error)?;
         kata_sdlc::ai_sdlc::list::read_list(answer).map_err(program_error)
     }
-    fn open_states(&self, folder: &Path, system: &str) -> Result<SystemState, String> {
+    fn open_states(
+        &self,
+        folder: &Path,
+        layout: Layout,
+        system: &str,
+    ) -> Result<SystemState, String> {
         let answer = self
-            .run_in(&["state", "--json", "--system", system, "--open"], folder)
+            .run_in(
+                &["state", "--json", "--system", system, "--open"],
+                folder,
+                layout,
+            )
             .map_err(program_error)?;
         kata_sdlc::ai_sdlc::state::read_state(answer).map_err(program_error)
     }
@@ -126,6 +142,7 @@ pub fn home_list(
     readiness: &Readiness,
     remembered: Option<&str>,
     folder: &Path,
+    layout: Layout,
     systems: &[String],
 ) -> Result<HomeList, String> {
     if !kata_sdlc::plugin::lists_changes(readiness) {
@@ -133,7 +150,7 @@ pub fn home_list(
     }
     let system = shown_system(remembered, systems);
     let (open, finished) = match &system {
-        Some(system) => split(source.list(folder, system)?),
+        Some(system) => split(source.list(folder, layout, system)?),
         None => (Vec::new(), Vec::new()),
     };
     let (can_start_change, start_change_reason) = match readiness {
@@ -151,6 +168,31 @@ pub fn home_list(
     })
 }
 
+/// What the home lists in place of repositories for a single-repo folder: the system's apps in the
+/// program's order with their context health, and the instructions in the repository's root file.
+#[derive(serde::Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct AppRows {
+    pub apps: Vec<AppHealth>,
+    pub instructions: InstructionsState,
+}
+
+/// The app rows of `system` for the single-repo `folder`.
+pub fn app_rows(program: &Program, folder: &Path, system: &str) -> Result<AppRows, String> {
+    let opened = kata_sdlc::layout::open(program, folder).map_err(|e| e.to_string())?;
+    let place = Place {
+        layout: opened.layout,
+        master: opened.root,
+        workspace: opened.workspace,
+    };
+    Ok(AppRows {
+        apps: kata_sdlc::layout::apps(program, &place, system).map_err(program_error)?,
+        instructions: kata_sdlc::layout::instructions(program, &place).map_err(program_error)?,
+    })
+}
+
 fn key(folder: &Path, system: &str, change: &str) -> Key {
     (folder.display().to_string(), system.into(), change.into())
 }
@@ -162,6 +204,7 @@ pub fn home_open(
     readiness: &Readiness,
     live: &dyn Fn(&str, &str) -> LiveFacts,
     folder: &Path,
+    layout: Layout,
     system: &str,
     shown: &[String],
     trigger: Refresh,
@@ -170,7 +213,7 @@ pub fn home_open(
     if !kata_sdlc::plugin::lists_changes(readiness) {
         return Err("the installed ai-sdlc plugin cannot read open changes alone".into());
     }
-    let found = source.open_states(folder, system)?;
+    let found = source.open_states(folder, layout, system)?;
     let mut problems = found.problems.clone();
     // Declaring done needs a committed review and every task logged, which is what the candidate means, so
     // any other change is not declared and costs no read.
@@ -348,7 +391,7 @@ mod tests {
     }
 
     impl HomeSource for Fake {
-        fn list(&self, _: &Path, system: &str) -> Result<ChangeList, String> {
+        fn list(&self, _: &Path, _: Layout, system: &str) -> Result<ChangeList, String> {
             self.lists.fetch_add(1, Ordering::SeqCst);
             Ok(ChangeList {
                 system: system.into(),
@@ -367,7 +410,7 @@ mod tests {
                 problems: vec![],
             })
         }
-        fn open_states(&self, _: &Path, system: &str) -> Result<SystemState, String> {
+        fn open_states(&self, _: &Path, _: Layout, system: &str) -> Result<SystemState, String> {
             self.opens.fetch_add(1, Ordering::SeqCst);
             if let Some(words) = &self.open_fails {
                 return Err(words.clone());
@@ -414,6 +457,7 @@ mod tests {
             &ready("1.3.1"),
             &no_live,
             Path::new("/ws"),
+            Layout::Workspace,
             "kata",
             &names(shown),
             trigger,
@@ -484,10 +528,10 @@ mod tests {
     fn an_older_plugin_answers_legacy_without_asking() {
         struct Panics;
         impl HomeSource for Panics {
-            fn list(&self, _: &Path, _: &str) -> Result<ChangeList, String> {
+            fn list(&self, _: &Path, _: Layout, _: &str) -> Result<ChangeList, String> {
                 panic!("asked")
             }
-            fn open_states(&self, _: &Path, _: &str) -> Result<SystemState, String> {
+            fn open_states(&self, _: &Path, _: Layout, _: &str) -> Result<SystemState, String> {
                 panic!("asked")
             }
             fn declared(&self, _: &Path, _: &str, _: &str) -> Result<bool, String> {
@@ -504,6 +548,7 @@ mod tests {
                 &readiness,
                 Some("kata"),
                 Path::new("/ws"),
+                Layout::Workspace,
                 &names(&["kata"]),
             )
             .unwrap();
@@ -539,6 +584,7 @@ mod tests {
             &ready("1.3.1"),
             Some("kata"),
             Path::new("/ws"),
+            Layout::Workspace,
             &names(&["bob", "kata"]),
         )
         .unwrap();
@@ -561,7 +607,15 @@ mod tests {
             }
             HomeList::Legacy => panic!("expected a listed home"),
         }
-        let none = home_list(&fake, &ready("1.3.1"), None, Path::new("/ws"), &[]).unwrap();
+        let none = home_list(
+            &fake,
+            &ready("1.3.1"),
+            None,
+            Path::new("/ws"),
+            Layout::Workspace,
+            &[],
+        )
+        .unwrap();
         assert!(matches!(none, HomeList::Listed { system: None, ref open, .. } if open.is_empty()));
     }
 
@@ -668,31 +722,67 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
 
     #[test]
     fn the_cold_list_and_open_start_one_program_each_and_no_resolve() {
-        let dir = tempfile::tempdir().unwrap();
-        let program = recording_program(dir.path(), false);
-        let readiness = ready("1.3.1");
-        let folder = dir.path();
-        home_list(&program, &readiness, None, folder, &names(&["kata"])).unwrap();
-        let started = calls(dir.path());
-        assert_eq!(started.len(), 1, "the cold list is one start: {started:?}");
-        assert!(started[0].starts_with("list "), "{started:?}");
-        assert!(started[0].contains(" --workspace "), "{started:?}");
-        assert!(!started[0].contains(" --master "), "{started:?}");
-        home_open(
-            &program,
-            &readiness,
-            &no_live,
-            folder,
-            "kata",
-            &names(&["a"]),
-            Refresh::Open,
-            &HomeMemory::default(),
-        )
-        .unwrap();
-        let started = calls(dir.path());
-        assert_eq!(started.len(), 2, "the open read is one start: {started:?}");
-        assert!(started[1].starts_with("state "), "{started:?}");
-        assert_eq!(resolves(dir.path()), 0, "{started:?}");
+        // A saved workspace-layout entry is read with `--workspace <folder>`, a single-repo one from its folder
+        // with no flag, in one Node start each way. The layout is the saved entry's, so nothing probes.
+        for (layout, workspace_flag) in [(Layout::Workspace, true), (Layout::SingleRepo, false)] {
+            let dir = tempfile::tempdir().unwrap();
+            let program = recording_program(dir.path(), false);
+            let readiness = ready("1.3.1");
+            let folder = dir.path();
+            home_list(
+                &program,
+                &readiness,
+                None,
+                folder,
+                layout,
+                &names(&["kata"]),
+            )
+            .unwrap();
+            let started = calls(dir.path());
+            assert_eq!(
+                started.len(),
+                1,
+                "{layout:?}: the cold list is one start: {started:?}"
+            );
+            assert!(started[0].starts_with("list "), "{started:?}");
+            assert_eq!(
+                started[0].contains("--workspace"),
+                workspace_flag,
+                "{layout:?}: {started:?}"
+            );
+            if workspace_flag {
+                assert!(
+                    started[0].contains(&folder.display().to_string()),
+                    "{started:?}"
+                );
+            }
+            assert!(!started[0].contains(" --master "), "{started:?}");
+            home_open(
+                &program,
+                &readiness,
+                &no_live,
+                folder,
+                layout,
+                "kata",
+                &names(&["a"]),
+                Refresh::Open,
+                &HomeMemory::default(),
+            )
+            .unwrap();
+            let started = calls(dir.path());
+            assert_eq!(
+                started.len(),
+                2,
+                "{layout:?}: the open read is one start: {started:?}"
+            );
+            assert!(started[1].starts_with("state "), "{started:?}");
+            assert_eq!(
+                started[1].contains("--workspace"),
+                workspace_flag,
+                "{layout:?}: {started:?}"
+            );
+            assert_eq!(resolves(dir.path()), 0, "{started:?}");
+        }
     }
 
     #[test]
@@ -708,6 +798,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
                 &readiness,
                 &no_live,
                 folder,
+                Layout::Workspace,
                 "kata",
                 &names(&["a"]),
                 Refresh::Open,
@@ -754,6 +845,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
             &ready("1.3.1"),
             &no_live,
             dir.path(),
+            Layout::Workspace,
             "kata",
             &names(&["a", "b", "c"]),
             Refresh::Open,
@@ -888,7 +980,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
         systems: &[String],
         finished: usize,
     ) -> Vec<String> {
-        let listed = home_list(program, readiness, None, ws, systems).unwrap();
+        let listed = home_list(program, readiness, None, ws, Layout::Workspace, systems).unwrap();
         let shown: Vec<String> = match &listed {
             HomeList::Listed {
                 open, finished: f, ..
@@ -925,6 +1017,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
                 &readiness,
                 &no_live,
                 ws,
+                Layout::Workspace,
                 "kata",
                 &names,
                 Refresh::Open,
@@ -978,5 +1071,109 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
             || stage(&big_ws, 97),
         );
         assert!(misses.is_empty(), "speed targets missed: {misses:?}");
+    }
+
+    fn single_repo_change(name: &str) -> ChangeState {
+        let mut state = change(name, true);
+        state.apps = Some(BTreeMap::new());
+        state
+    }
+
+    #[test]
+    fn a_single_repo_done_change_reads_like_any_other() {
+        let memory = HomeMemory::default();
+        let mut fake = Fake {
+            open: vec![single_repo_change("a")],
+            declared: names(&["a"]),
+            ..Default::default()
+        };
+        let read = |fake: &Fake, trigger| {
+            home_open(
+                fake,
+                &ready("1.4.0"),
+                &no_live,
+                Path::new("/kata"),
+                Layout::Workspace,
+                "kata",
+                &names(&["a"]),
+                trigger,
+                &memory,
+            )
+            .unwrap()
+        };
+        // Pull requests open: the merge check has not run.
+        let answer = read(&fake, Refresh::Open);
+        assert_eq!(text(&answer, "a"), "Done · pull requests open");
+        for (check, reading) in [
+            (CopyRemoval::Offer, "Done · merged, remove the copy"),
+            (
+                CopyRemoval::Keep {
+                    uncommitted: vec!["engine/x.rs".into()],
+                },
+                "Done · merged, copy has changes",
+            ),
+        ] {
+            fake.merge.insert("a".into(), Ok(check));
+            let checked = home_pull_requests(
+                &fake,
+                &ready("1.4.0"),
+                Path::new("/kata"),
+                "kata",
+                &names(&["a"]),
+                &memory,
+            )
+            .unwrap();
+            assert_eq!(checked.rows[0].reading.label.text, reading);
+            assert_eq!(text(&read(&fake, Refresh::Focus), "a"), reading);
+        }
+    }
+
+    #[test]
+    fn app_rows_follow_the_program() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().join("ai-sdlc.ts");
+        let root = dir.path().display().to_string().replace("\\", "/");
+        let script = format!(
+            r#"const args = process.argv.slice(2);
+const command = args[0];
+if (command === 'resolve') {{
+  console.log(JSON.stringify({{ master: '{root}', workspace: '{root}', layout: 'single-repo', problems: [] }}));
+}} else if (command === 'stale') {{
+  console.log(JSON.stringify({{ repos: [
+    {{ repo: 'workbench', path: '{root}/app', reason: 'missing' }},
+    {{ repo: 'engine', path: '{root}/crates', reason: 'behind', behind: 3 }},
+  ] }}));
+}} else if (command === 'instructions') {{
+  console.log(JSON.stringify({{ workspaceMd: 'present', claudeMd: 'stale' }}));
+}} else {{
+  console.error('unexpected ' + command);
+  process.exit(2);
+}}
+"#
+        );
+        std::fs::write(&entry, script).unwrap();
+        let program = Program {
+            node: "node".into(),
+            entry,
+        };
+        let rows = app_rows(&program, dir.path(), "kata").unwrap();
+        assert_eq!(
+            rows,
+            AppRows {
+                apps: vec![
+                    AppHealth::new(
+                        "workbench".into(),
+                        "app".into(),
+                        kata_sdlc::layout::ContextHealth::Missing,
+                    ),
+                    AppHealth::new(
+                        "engine".into(),
+                        "crates".into(),
+                        kata_sdlc::layout::ContextHealth::Behind { commits: 3 },
+                    ),
+                ],
+                instructions: InstructionsState::OutOfDate,
+            }
+        );
     }
 }

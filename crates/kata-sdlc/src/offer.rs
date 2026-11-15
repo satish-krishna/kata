@@ -527,6 +527,7 @@ mod tests {
         ChangeState {
             change: "2026-11-01-a".into(),
             finished: None,
+            apps: None,
             master: "/ws/ai-sdlc".into(),
             folder: "/ws/ai-sdlc/intent/demo/2026-11-01-a".into(),
             in_copy: false,

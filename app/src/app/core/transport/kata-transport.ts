@@ -1,5 +1,6 @@
 import type { RepoBoard } from '@bindings/RepoBoard';
 import type { ReviewStanding } from '@bindings/ReviewStanding';
+import type { AppTurn } from '@bindings/AppTurn';
 import type { Stop } from '@bindings/Stop';
 import type { ReviewScope } from '@bindings/ReviewScope';
 import type { RunSpec } from '@bindings/RunSpec';
@@ -16,6 +17,7 @@ import type { InstructionsState } from '@bindings/InstructionsState';
 import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { ChangeView } from '@bindings/ChangeView';
 import type { BranchInfo } from '@bindings/BranchInfo';
+import type { AppRows } from '@bindings/AppRows';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
@@ -182,7 +184,10 @@ export abstract class KataTransport {
   /** The merge check for the named open changes, side by side. */
   abstract sdlcHomePullRequests(folder: string, system: string, changes: string[]): Promise<HomeChecked>;
   abstract sdlcMissingFolders(folders: string[]): Promise<string[]>;
+  /** The master's branches. `layout` is the saved folder's; the backend refuses switching in a single-repo repository and says so in `switchable` and `base_refusal`. */
   abstract sdlcBranches(master: string): Promise<BranchInfo>;
+  /** The apps of a single-repo system with each one's context health, and the instructions in the repository's root file. */
+  abstract sdlcAppRows(folder: string, system: string): Promise<AppRows>;
   /** A change opened from one resolution of where it lives: its view, the document asked for, and the build and review when it has a plan. Rejects with the reason when the change cannot be placed. */
   abstract sdlcOpenChange(ref: ChangeRef, doc: string): Promise<OpenedChange>;
   /** A change's document and, for the spec and plan, the format program's read of it, from one resolution of where the change lives. Rejects with the reason when the change cannot be placed. */
@@ -229,7 +234,7 @@ export abstract class KataTransport {
   abstract sdlcWaitRunExit(runId: string, timeoutMs: number): Promise<boolean>;
   abstract sdlcBuildStatus(ref: ChangeRef): Promise<BuildStatus>;
   /** The tasks area for `repos`: where each stands and what each task's row shows, decided from the build log's status and the host's live runs and stops. */
-  abstract sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }): Promise<RepoBoard[]>;
+  abstract sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }, appTurn?: AppTurn | null): Promise<RepoBoard[]>;
   /** Whether the change's latest review covers its current work, decided from what the page read. */
   abstract sdlcReviewStanding(input: ReviewStandingInput): Promise<ReviewStanding>;
   /** The change's review document as committed, or null when it has none. */

@@ -5,6 +5,8 @@ mod history;
 mod rename_change;
 mod running;
 mod runs;
+#[cfg(test)]
+mod saved_folder_e2e;
 mod sdlc_home;
 mod sdlc_state;
 mod start_change;
@@ -745,12 +747,30 @@ async fn sdlc_open_workspace(id: String) -> Result<sdlc::store::WorkspaceChoice,
     sdlc::store::open_workspace(&id, now_secs()).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-async fn sdlc_add_workspace(
+#[tauri::command(async)]
+fn sdlc_add_workspace(
     name: String,
     folder: String,
 ) -> Result<sdlc::store::WorkspaceChoice, String> {
-    sdlc::store::add_workspace(&name, &folder, now_secs()).map_err(|e| e.to_string())
+    let (root, layout) = resolve_added(state_inputs(&folder).0.as_ref(), &folder)?;
+    sdlc::store::add_workspace(&name, &root, layout, now_secs()).map_err(|e| e.to_string())
+}
+
+/// The folder to save for an added `folder` and its layout: the program's root for it. Without a program
+/// (the mode is not ready) the folder is saved as it is, with no layout: it may be a single-repo repository,
+/// and the program's first answer for it fills the layout in (`sdlc::layout::for_folder`).
+fn resolve_added(
+    program: Option<&sdlc::ai_sdlc::Program>,
+    folder: &str,
+) -> Result<(String, Option<sdlc::layout::Layout>), String> {
+    let Some(program) = program else {
+        return Ok((folder.to_string(), None));
+    };
+    let opened = sdlc::layout::open(program, Path::new(folder)).map_err(|e| e.to_string())?;
+    Ok((
+        opened.root.to_string_lossy().into_owned(),
+        Some(opened.layout),
+    ))
 }
 
 #[tauri::command]
@@ -760,6 +780,16 @@ async fn sdlc_remove_workspace(id: String) -> Result<sdlc::store::WorkspaceChoic
 
 #[tauri::command(async)]
 fn sdlc_scan(folder: String) -> Result<sdlc::workspace::WorkspaceScan, String> {
+    // Ask the program first. A single-repo repository scans as itself; everything else, including a
+    // refusal or a mode that is not ready, scans the folder as before, so the home shows its setup state.
+    let (program, _) = state_inputs(&folder);
+    if let Some(program) = program {
+        if let Ok(opened) = sdlc::layout::open(&program, Path::new(&folder)) {
+            if opened.layout == sdlc::layout::Layout::SingleRepo {
+                return Ok(sdlc::workspace::scan_single_repo(&opened.root));
+            }
+        }
+    }
     sdlc::workspace::scan(Path::new(&folder)).map_err(|e| e.to_string())
 }
 
@@ -794,9 +824,49 @@ fn sdlc_missing_folders(folders: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+/// The layout of `master` as the program places it. Without a program, or when the program cannot place the
+/// folder, nothing is known about it and the answer is the refusal; the caller never says.
+fn master_layout(
+    program: Option<&sdlc::ai_sdlc::Program>,
+    master: &str,
+) -> Result<sdlc::layout::Layout, String> {
+    let program = program.ok_or("the ai-sdlc plugin is not ready")?;
+    sdlc::layout::open(program, Path::new(master))
+        .map(|opened| opened.layout)
+        .map_err(|e| e.to_string())
+}
+
+/// The layout of `master`, or the refusal when that layout does not let its checkout be switched.
+fn switch_layout(
+    program: Option<&sdlc::ai_sdlc::Program>,
+    master: &str,
+) -> Result<sdlc::layout::Layout, String> {
+    let layout = master_layout(program, master)?;
+    if sdlc::branch::switchable(layout) {
+        Ok(layout)
+    } else {
+        Err(sdlc::branch::BranchError::NotSwitchable.to_string())
+    }
+}
+
+/// The branches of `master` in the layout the program places it in. A folder that cannot be placed reads as
+/// the layout that may not be switched.
+fn branches_in(program: Option<&sdlc::ai_sdlc::Program>, master: &str) -> sdlc::branch::BranchInfo {
+    let layout = master_layout(program, master).unwrap_or(sdlc::layout::Layout::SingleRepo);
+    sdlc::branch::branch_info_in(Path::new(master), layout)
+}
+
 #[tauri::command(async)]
 fn sdlc_branches(master: String) -> sdlc::branch::BranchInfo {
-    sdlc::branch::branch_info(Path::new(&master))
+    branches_in(state_inputs(&master).0.as_ref(), &master)
+}
+
+/// The apps of a single-repo folder with their context health, and its instructions state.
+#[tauri::command(async)]
+fn sdlc_app_rows(folder: String, system: String) -> Result<sdlc_home::AppRows, String> {
+    let (program, _) = state_inputs(&folder);
+    let program = program.ok_or("the ai-sdlc plugin is not ready")?;
+    sdlc_home::app_rows(&program, Path::new(&folder), &system)
 }
 
 #[tauri::command(async)]
@@ -961,9 +1031,7 @@ fn sdlc_start_change(
     branch: Option<String>,
 ) -> Result<start_change::ChangeStart, String> {
     let program = sdlc::ai_sdlc::Program::locate(&ai_sdlc_dir_in(&folder)?);
-    let place = program
-        .resolve(Path::new(&folder))
-        .map_err(|e| e.to_string())?;
+    let place = start_change::place_for(&program, Path::new(&folder))?;
     start_change::start_change(
         &program,
         &place,
@@ -1083,9 +1151,11 @@ fn sdlc_checkout(
     master: String,
     branch: String,
 ) -> Result<(), String> {
+    let layout = switch_layout(state_inputs(&master).0.as_ref(), &master)?;
     let table = control.state.lock().unwrap();
     table.may_switch(Path::new(&master))?;
-    let out = sdlc::branch::checkout(Path::new(&master), &branch).map_err(|e| e.to_string());
+    let out =
+        sdlc::branch::checkout_in(layout, Path::new(&master), &branch).map_err(|e| e.to_string());
     drop(table);
     out
 }
@@ -1284,8 +1354,9 @@ fn sdlc_build_board(
     status: sdlc::build::BuildStatus,
     going: std::collections::BTreeSet<String>,
     stopped: std::collections::BTreeMap<String, sdlc::coordinator::Stop>,
+    app_turn: Option<sdlc::coordinator::AppTurn>,
 ) -> Vec<sdlc::board::RepoBoard> {
-    sdlc::board::board(&repos, &status, &going, &stopped)
+    sdlc::board::board(&repos, &status, &going, &stopped, app_turn.as_ref())
 }
 
 /// Whether the change's latest review covers its current work, from the inputs the page read: the run links, the run
@@ -1423,11 +1494,14 @@ fn sdlc_home_list(
     let Some(program) = program else {
         return Ok(sdlc::open_changes::HomeList::Legacy);
     };
+    let folder = Path::new(&entry.folder);
+    let layout = sdlc::layout::for_folder(&program, folder).map_err(|e| e.to_string())?;
     sdlc_home::home_list(
         &program,
         &readiness,
         entry.last_system.as_deref(),
-        Path::new(&entry.folder),
+        folder,
+        layout,
         &systems,
     )
 }
@@ -1458,11 +1532,14 @@ fn sdlc_home_open(
 ) -> Result<sdlc::open_changes::HomeOpen, String> {
     let (program, readiness) = state_inputs(&folder);
     let program = program.ok_or_else(|| "the AI-SDLC mode cannot run here".to_string())?;
+    let layout =
+        sdlc::layout::for_folder(&program, Path::new(&folder)).map_err(|e| e.to_string())?;
     sdlc_home::home_open(
         &program,
         &readiness,
         &|s, c| live_facts(&control, s, c),
         Path::new(&folder),
+        layout,
         &system,
         &shown,
         trigger,
@@ -1587,9 +1664,28 @@ fn ai_sdlc_readiness(workdir: Option<&str>) -> sdlc::plugin::Readiness {
     let roots = catalog::roots_for_workdir(workdir);
     let found = catalog::discover(&roots);
     let plugin = ai_sdlc_entry(&found);
-    sdlc::plugin::readiness(&sdlc::plugin::Machine::detect(
+    let machine = sdlc::plugin::readiness(&sdlc::plugin::Machine::detect(
         plugin.map(|e| e.path.as_path()),
-    ))
+    ));
+    // For an opened folder, the layout the program reports decides whether this plugin is new enough.
+    // A plugin refused as too old (a pre-release too) is asked as well: for a single-repo folder it reads as
+    // needing 1.4.0.
+    let askable = matches!(
+        machine,
+        sdlc::plugin::Readiness::Ready { .. }
+            | sdlc::plugin::Readiness::Blocked {
+                reason: sdlc::plugin::BlockReason::PluginTooOld,
+                ..
+            }
+    );
+    let (Some(folder), Some(plugin), true) = (workdir, plugin, askable) else {
+        return machine;
+    };
+    let program = sdlc::ai_sdlc::Program::locate(&plugin.path);
+    match sdlc::layout::open(&program, Path::new(folder)) {
+        Ok(opened) => sdlc::plugin::for_layout(&machine, opened.layout),
+        Err(_) => machine,
+    }
 }
 
 /// The ai-sdlc plugin folder the format program is read from, or why the build cannot be read. It is
@@ -1833,7 +1929,20 @@ fn sdlc_open_change(
 
 #[tauri::command(async)]
 fn sdlc_change_repos(change: build_host::ChangeRef) -> Result<Vec<sdlc::diff::ChangeRepo>, String> {
-    let (_, home) = resolved(&change)?;
+    let (plugin, home) = resolved(&change)?;
+    if home.place.layout == sdlc::layout::Layout::SingleRepo {
+        // The program's app order, not the state's map: the groups follow it.
+        let apps: Vec<(String, String)> = sdlc::layout::apps(
+            &sdlc::ai_sdlc::Program::locate(&plugin),
+            &home.place,
+            &change.system,
+        )
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|a| (a.name, a.folder))
+        .collect();
+        return sdlc::diff::change_group_repos(&home.master, &change.system, &change.change, &apps);
+    }
     sdlc::diff::change_repos(
         &home.place.workspace,
         &home.master,
@@ -1938,10 +2047,11 @@ fn declare_in(
     };
     // A change that lives in a copy is declared done from its copy.
     let at = sdlc::ai_sdlc::Place {
+        layout: place.layout,
         master: std::path::PathBuf::from(&state.master),
         workspace: place.workspace,
     };
-    sdlc::done::declare(
+    let view = sdlc::done::declare(
         program,
         &at,
         readiness,
@@ -1952,7 +2062,19 @@ fn declare_in(
             Arc::new(move |progress| steps.report(&key, None, Some(progress)))
         },
         step.token(),
-    )
+    );
+    if !matches!(view, sdlc::done::DeclareView::Done { .. }) {
+        return view;
+    }
+    // The state after the event says which apps the change touched; the program's order is the app order.
+    let facts = sdlc::ai_sdlc::state::one(program, &at, &change.system, &change.change)
+        .ok()
+        .flatten()
+        .and_then(|state| state.apps);
+    let order: Vec<String> = sdlc::layout::apps(program, &at, &change.system)
+        .map(|apps| apps.into_iter().map(|app| app.name).collect())
+        .unwrap_or_default();
+    view.with_apps(sdlc::done::touched_apps(facts.as_ref(), &order))
 }
 
 /// The change's pull requests as the page shows them: the plugin's record in `change.yml` first, else what an
@@ -2439,6 +2561,7 @@ pub fn run() {
             sdlc_instructions,
             sdlc_missing_folders,
             sdlc_branches,
+            sdlc_app_rows,
             sdlc_read_doc,
             sdlc_read_document,
             sdlc_snapshot,
@@ -2551,6 +2674,31 @@ fn warns(next: Next, step: &Step) -> bool {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// R1.3: adding an app folder of a single-repo repository saves the repository, marked single-repo.
+    #[test]
+    fn adding_an_app_folder_saves_its_repository() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("kata");
+        let app = repo.join("engine");
+        std::fs::create_dir_all(&app).unwrap();
+        let plugin = tmp.path().join("plugin");
+        std::fs::create_dir_all(plugin.join("tools")).unwrap();
+        let answer = serde_json::json!({
+            "master": repo,
+            "workspace": tmp.path(),
+            "layout": "single-repo",
+        });
+        std::fs::write(
+            plugin.join("tools").join("ai-sdlc.ts"),
+            format!("console.log(JSON.stringify({answer}));\n"),
+        )
+        .unwrap();
+        let program = sdlc::ai_sdlc::Program::locate(&plugin);
+        let (root, layout) = resolve_added(Some(&program), app.to_str().unwrap()).unwrap();
+        assert_eq!(Path::new(&root), repo);
+        assert_eq!(layout, Some(sdlc::layout::Layout::SingleRepo));
+    }
 
     #[test]
     fn relay_ends_per_table() {
@@ -3153,6 +3301,7 @@ name: build
             let folder = fx.copy.join("intent").join(SYSTEM).join(CHANGE);
             ChangeHome {
                 place: sdlc::ai_sdlc::Place {
+                    layout: kata_sdlc::layout::Layout::Workspace,
                     master: fx.checkout.clone(),
                     workspace: fx.checkout.parent().unwrap().to_path_buf(),
                 },
@@ -3455,6 +3604,7 @@ mod steps_commands {
         git(&ws.join("app"), &["add", "."]);
         git(&ws.join("app"), &["commit", "-q", "-m", "init"]);
         let place = Place {
+            layout: kata_sdlc::layout::Layout::Workspace,
             master,
             workspace: ws.clone(),
         };

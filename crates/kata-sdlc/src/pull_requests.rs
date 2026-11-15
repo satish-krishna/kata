@@ -591,6 +591,7 @@ mod tests {
             testutil::commit_file(&master, ".ai-sdlc.json", MARKER, "marker");
             testutil::repo(&ws, "app");
             let place = Place {
+                layout: crate::layout::Layout::Workspace,
                 master,
                 workspace: ws.clone(),
             };

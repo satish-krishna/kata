@@ -80,7 +80,7 @@ import { section } from '../../lib/doc';
 import { fullPipelineIdea } from '../../lib/sdlc-fix';
 import { inTauri } from '../../lib/mock';
 import { taskRecord, withRows, type TaskView } from '../../lib/task-view';
-import { masterPath, masterRepo } from '../../lib/sdlc-workspace';
+import { masterRepo } from '../../lib/sdlc-workspace';
 import { namingRefusal } from '../../lib/sdlc-naming';
 
 export type ChangeState = 'loading' | 'ready' | 'not-found';
@@ -720,7 +720,7 @@ export class ChangePageViewModel {
     const master = scan ? masterRepo(scan) : null;
     const system = this.system();
     const systemRepos = (scan?.marker?.systems[system]?.repos ?? []).filter((r) => r !== master);
-    return { workspaceId: w.id, folder: w.folder, system, change: this.changeName(), systemRepos };
+    return { workspaceId: w.id, folder: w.folder, system, change: this.changeName(), systemRepos, ...(scan?.layout === 'single-repo' ? { layout: scan.layout } : {}) };
   });
   /**
    * Pick a new name for the change's branch, from a refusal or from the done dialog. The rename covers every repository that has the
@@ -1396,9 +1396,7 @@ export class ChangePageViewModel {
 
   private masterDir(): string | null {
     const w = this.current();
-    const scan = this.scan();
-    const repo = scan ? masterRepo(scan) : null;
-    return w && repo ? masterPath(w.folder, repo) : null;
+    return w ? (this.scan()?.master_folder ?? null) : null;
   }
 
   /** Accept a document of the change the page shows: the plugin commits it and runs the team's accepting hooks. */
@@ -1725,7 +1723,11 @@ export class ChangePageViewModel {
         finish('not-found', null, null);
         return;
       }
-      const master = masterPath(w.folder, repo);
+      const master = scan.master_folder;
+      if (master === null) {
+        finish('not-found', null, null);
+        return;
+      }
       const ref: ChangeRef = { workspace: w.folder, system, change: name };
       const [branches, opening, links, records, catalog, recorded] = await Promise.all([
         this.transport.sdlcBranches(master),

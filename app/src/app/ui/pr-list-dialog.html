@@ -55,6 +55,12 @@
             }
           </ul>
         }
+        @if (links().length > 0 && apps().length > 0) {
+          <p class="k-left__note">Apps: <span class="k-mono">{{ apps().join(', ') }}</span></p>
+        }
+        @for (app of untouched(); track app) {
+          <p class="k-left__note">Planned but not touched: <span class="k-mono">{{ app }}</span>.</p>
+        }
         @if (leftBehind().length > 0) {
           <section class="k-left__group" aria-labelledby="pr-left-behind">
             <h3 id="pr-left-behind" class="k-left__head">Left behind under an earlier name</h3>

@@ -153,6 +153,7 @@ mod tests {
         git(&ws.join("app"), &["add", "."]);
         git(&ws.join("app"), &["commit", "-q", "-m", "init"]);
         let place = Place {
+            layout: kata_sdlc::layout::Layout::Workspace,
             master,
             workspace: ws.clone(),
         };

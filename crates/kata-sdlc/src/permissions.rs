@@ -5,6 +5,7 @@
 //! `//d/ws`; the proofs in `crates/kata-core/tests/run_it.rs` take their rule strings from [`rule_path`].
 
 use crate::ai_sdlc::state::ChangeState;
+use crate::layout::Layout;
 use std::path::{Path, PathBuf};
 
 /// What a run is.
@@ -27,6 +28,10 @@ pub struct RunPlace {
     pub kind: RunKind,
     /// The system the change belongs to.
     pub system: String,
+    /// How the opened folder holds its system.
+    pub layout: Layout,
+    /// The change's apps in a single-repo layout: name and folder in the repository (`.` for the root).
+    pub apps: Vec<(String, String)>,
     /// Where the change stands: its master (a copy or the engineer's checkout) and its documents' folder.
     pub state: ChangeState,
     /// The folder that holds the master repository and the product repositories.
@@ -77,6 +82,17 @@ impl RunPlace {
         PathBuf::from(&self.state.master)
     }
 
+    /// The apps a change touched, as name and folder, in the plugin's order of names; none for a change
+    /// that has no `apps`.
+    pub fn apps_of(state: &ChangeState) -> Vec<(String, String)> {
+        state
+            .apps
+            .iter()
+            .flatten()
+            .map(|(name, facts)| (name.clone(), facts.folder.clone()))
+            .collect()
+    }
+
     /// The folder name of the master repository's checkout.
     pub fn master_name(&self) -> String {
         self.checkout
@@ -87,6 +103,9 @@ impl RunPlace {
 
     /// The system's repositories and the master, once each, in order.
     fn all_repos(&self) -> Vec<String> {
+        if self.layout == Layout::SingleRepo {
+            return self.apps.iter().map(|(name, _)| name.clone()).collect();
+        }
         let mut seen: Vec<String> = Vec::new();
         for r in self
             .system_repos
@@ -116,9 +135,18 @@ pub fn rules(place: &RunPlace) -> Rules {
         let master_name = place.master_name();
         // Every product repository: a system repository other than the master.
         let mut product: Vec<(&str, String)> = Vec::new();
-        for repo in &place.system_repos {
-            if *repo != master_name && !product.iter().any(|(r, _)| r == repo) {
-                product.push((repo, edit_tree(&Path::new(&root).join(repo))));
+        if place.layout == Layout::SingleRepo {
+            // An app is a folder of the copy; an app at the root has no folder of its own to deny.
+            for (name, folder) in &place.apps {
+                if folder != "." {
+                    product.push((name, edit_tree(&place.master_path().join(folder))));
+                }
+            }
+        } else {
+            for repo in &place.system_repos {
+                if *repo != master_name && !product.iter().any(|(r, _)| r == repo) {
+                    product.push((repo, edit_tree(&Path::new(&root).join(repo))));
+                }
             }
         }
         allow.push(format!("Read({}/**)", rule_path(Path::new(&root))));
@@ -217,6 +245,7 @@ pub(crate) mod fixtures {
         ChangeState {
             change: change.into(),
             finished: None,
+            apps: None,
             master: master.into(),
             folder: format!("{master}/intent/commerce/{change}"),
             in_copy,
@@ -257,6 +286,8 @@ pub(crate) mod fixtures {
         RunPlace {
             kind,
             system: "commerce".into(),
+            layout: Layout::Workspace,
+            apps: Vec::new(),
             state: change_state(CHANGE, "/home/u/ws/master", false),
             workspace: PathBuf::from("/home/u/ws"),
             checkout: PathBuf::from("/home/u/ws/master"),
@@ -360,6 +391,60 @@ mod tests {
         // A document run has no rules, and a change with no copy has no checkout to protect.
         let doc = rules(&place(RunKind::Document));
         assert!(doc.deny.is_empty() && doc.allow.is_empty());
+    }
+
+    const COPY_DOCS: &str =
+        "//home/u/ws/.ai-sdlc/copies/2026-10-12-photos/intent/commerce/2026-10-12-photos";
+
+    fn single_repo(apps: &[(&str, &str)], repo: &str) -> RunPlace {
+        let mut p = place_in_copies(RunKind::Build { repo: repo.into() });
+        p.layout = Layout::SingleRepo;
+        p.system_repos = Vec::new();
+        p.apps = apps
+            .iter()
+            .map(|(n, f)| (n.to_string(), f.to_string()))
+            .collect();
+        p
+    }
+
+    #[test]
+    fn an_apps_run_stays_out_of_the_other_apps() {
+        let p = single_repo(&[("engine", "engine"), ("workbench", "app")], "engine");
+        let r = rules(&p);
+        let want = vec![
+            "Bash(git push:*)".to_string(),
+            "Bash(gh:*)".to_string(),
+            "Bash(git remote:*)".to_string(),
+            "Edit(//home/u/ws/.ai-sdlc/copies/2026-10-12-photos/app/**)".to_string(),
+            "Edit(//home/u/.kata/workbench/parse-cache/**)".to_string(),
+            format!("Edit({COPY_DOCS}/build/workbench.md)"),
+            format!("Edit({COPY_DOCS}/build/review.md)"),
+            "Edit(//home/u/ws/master/**)".to_string(),
+            "Edit(//home/u/ws/.ai-sdlc/copies/2026-10-13-other/**)".to_string(),
+        ];
+        assert_eq!(sorted(r.deny), sorted(want));
+        assert_eq!(
+            r.allow,
+            vec![
+                "Read(//home/u/ws/**)".to_string(),
+                format!("Edit({COPY_DOCS}/build/engine.md)")
+            ]
+        );
+    }
+
+    #[test]
+    fn a_root_app_denies_no_app_folder() {
+        let r = rules(&single_repo(&[("engine", ".")], "engine"));
+        let want = vec![
+            "Bash(git push:*)".to_string(),
+            "Bash(gh:*)".to_string(),
+            "Bash(git remote:*)".to_string(),
+            "Edit(//home/u/.kata/workbench/parse-cache/**)".to_string(),
+            format!("Edit({COPY_DOCS}/build/review.md)"),
+            "Edit(//home/u/ws/master/**)".to_string(),
+            "Edit(//home/u/ws/.ai-sdlc/copies/2026-10-13-other/**)".to_string(),
+        ];
+        assert_eq!(sorted(r.deny), sorted(want));
     }
 
     #[test]

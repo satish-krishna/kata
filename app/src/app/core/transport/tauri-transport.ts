@@ -4,6 +4,7 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 import type { Versions } from '@bindings/Versions';
 import type { RepoBoard } from '@bindings/RepoBoard';
 import type { ReviewStanding } from '@bindings/ReviewStanding';
+import type { AppTurn } from '@bindings/AppTurn';
 import type { Stop } from '@bindings/Stop';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
@@ -19,6 +20,7 @@ import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ChangeView } from '@bindings/ChangeView';
 import type { WorkspaceView } from '@bindings/WorkspaceView';
 import type { BranchInfo } from '@bindings/BranchInfo';
+import type { AppRows } from '@bindings/AppRows';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
@@ -125,6 +127,7 @@ export class TauriTransport extends KataTransport {
   sdlcHomePullRequests(folder: string, system: string, changes: string[]) { return this.ipc.invoke<HomeChecked>('sdlc_home_pull_requests', { folder, system, changes }); }
   sdlcMissingFolders(folders: string[]) { return this.ipc.invoke<string[]>('sdlc_missing_folders', { folders }); }
   sdlcBranches(master: string) { return this.ipc.invoke<BranchInfo>('sdlc_branches', { master }); }
+  sdlcAppRows(folder: string, system: string) { return this.ipc.invoke<AppRows>('sdlc_app_rows', { folder, system }); }
   sdlcOpenChange(change: ChangeRef, doc: string) { return this.ipc.invoke<OpenedChange>('sdlc_open_change', { change, doc }); }
   sdlcReadDocument(change: ChangeRef, doc: string) { return this.ipc.invoke<DocumentRead>('sdlc_read_document', { change, doc }); }
   sdlcReadDoc(change: ChangeRef, doc: string) { return this.ipc.invoke<string | null>('sdlc_read_doc', { change, doc }); }
@@ -167,7 +170,7 @@ export class TauriTransport extends KataTransport {
   sdlcTaskLinks() { return this.ipc.invoke<TaskLink[]>('sdlc_task_links'); }
   sdlcWaitRunExit(runId: string, timeoutMs: number) { return this.ipc.invoke<boolean>('sdlc_wait_run_exit', { runId, timeoutMs }); }
   sdlcBuildStatus(change: ChangeRef) { return this.ipc.invoke<BuildStatus>('sdlc_build_status', { change }); }
-  sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }) { return this.ipc.invoke<RepoBoard[]>('sdlc_build_board', { repos, status, going, stopped }); }
+  sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }, appTurn?: AppTurn | null) { return this.ipc.invoke<RepoBoard[]>('sdlc_build_board', { repos, status, going, stopped, ...(appTurn ? { appTurn } : {}) }); }
   sdlcReviewStanding(input: ReviewStandingInput) { return this.ipc.invoke<ReviewStanding>('sdlc_review_standing', { ...input }); }
   sdlcReviewRecord(change: ChangeRef) { return this.ipc.invoke<ReviewRecord | null>('sdlc_review_record', { change }); }
   sdlcBuildHeads(change: ChangeRef, repos: string[]) { return this.ipc.invoke<Record<string, string>>('sdlc_build_heads', { change, repos }); }

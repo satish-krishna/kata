@@ -106,6 +106,7 @@ mod tests {
             testutil::commit_file(&master, ".ai-sdlc.json", MARKER, "marker");
             testutil::repo(&ws, "app");
             let place = Place {
+                layout: crate::layout::Layout::Workspace,
                 master: master.clone(),
                 workspace: ws.clone(),
             };
@@ -233,6 +234,7 @@ status: accepted
     fn opening_a_change_asks_the_plugin_about_that_change_only() {
         let fx = Fx::new();
         let place = Place {
+            layout: crate::layout::Layout::Workspace,
             master: fx.master.clone(),
             workspace: fx.ws.clone(),
         };

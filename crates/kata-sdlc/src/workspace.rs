@@ -57,9 +57,15 @@ pub enum MasterState {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct WorkspaceScan {
+    /// How the folder holds its system. A single-repo scan has no sibling repositories to list.
+    #[serde(default)]
+    pub layout: crate::layout::Layout,
     pub folder: String,
     pub repos: Vec<String>,
     pub master: MasterState,
+    /// The absolute folder of the master repository, when there is exactly one: the repository
+    /// itself in a single-repo layout, the master's folder in the workspace otherwise. The frontend never joins a path.
+    pub master_folder: Option<String>,
     pub marker: Option<Marker>,
     pub marker_error: Option<String>,
 }
@@ -92,6 +98,33 @@ pub fn is_committed(repo: &Path, rel: &str) -> bool {
 }
 
 /// Scan a workspace folder: immediate child git repos, the master, and the marker.
+/// The scan of a single-repo repository at `root`: it is its own master, and there are no sibling
+/// repositories to list, so `repos` is empty.
+pub fn scan_single_repo(root: &Path) -> WorkspaceScan {
+    let (marker, marker_error) = match std::fs::read_to_string(root.join(MARKER)) {
+        Ok(text) => match serde_json::from_str::<Marker>(&text) {
+            Ok(m) => (Some(m), None),
+            Err(e) => (None, Some(e.to_string())),
+        },
+        Err(e) => (None, Some(e.to_string())),
+    };
+    WorkspaceScan {
+        layout: crate::layout::Layout::SingleRepo,
+        folder: root.to_string_lossy().into_owned(),
+        repos: Vec::new(),
+        master: MasterState::One {
+            repo: root
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            committed: is_committed(root, MARKER),
+        },
+        master_folder: Some(root.to_string_lossy().into_owned()),
+        marker,
+        marker_error,
+    }
+}
+
 pub fn scan(folder: &Path) -> Result<WorkspaceScan, ScanError> {
     let mut repos = Vec::new();
     for entry in std::fs::read_dir(folder)? {
@@ -131,10 +164,16 @@ pub fn scan(folder: &Path) -> Result<WorkspaceScan, ScanError> {
         },
     };
 
+    let master_folder = match &master {
+        MasterState::One { repo, .. } => Some(folder.join(repo).to_string_lossy().into_owned()),
+        _ => None,
+    };
     Ok(WorkspaceScan {
+        layout: crate::layout::Layout::Workspace,
         folder: folder.to_string_lossy().into_owned(),
         repos,
         master,
+        master_folder,
         marker,
         marker_error,
     })
@@ -142,6 +181,9 @@ pub fn scan(folder: &Path) -> Result<WorkspaceScan, ScanError> {
 
 /// The repos of `system`: the marker's list, or every repo except the master when empty or missing.
 pub fn system_repos(scan: &WorkspaceScan, system: &str) -> Vec<String> {
+    if scan.layout == crate::layout::Layout::SingleRepo {
+        return Vec::new();
+    }
     let listed = scan
         .marker
         .as_ref()
@@ -265,6 +307,23 @@ fn normalize(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::testutil::{commit_file, repo};
+
+    #[test]
+    fn system_repos_lists_nothing_for_a_single_repo_scan() {
+        let scan = WorkspaceScan {
+            layout: crate::layout::Layout::SingleRepo,
+            folder: "/p/kata".into(),
+            repos: vec!["engine".into(), "app".into()],
+            master: MasterState::One {
+                repo: "kata".into(),
+                committed: true,
+            },
+            master_folder: None,
+            marker: None,
+            marker_error: None,
+        };
+        assert!(system_repos(&scan, "kata").is_empty());
+    }
 
     const WS_TEXT: &str = "# ai-sdlc workspace\n\nRules here.\n";
     const GEN: &str =
@@ -397,6 +456,35 @@ mod tests {
         bare_repo(&tmp.path().join("c"), "deep");
         std::fs::create_dir(tmp.path().join("d")).unwrap();
         assert_eq!(scan(tmp.path()).unwrap().repos, vec!["a", "b"]);
+    }
+
+    /// Compared resolved when both exist: a temp folder can be spelled with an 8.3 short name (CI's
+    /// `RUNNER~1`) that the program answers in its long form.
+    fn same(a: &str, b: &Path) -> bool {
+        if let (Ok(x), Ok(y)) = (Path::new(a).canonicalize(), b.canonicalize()) {
+            return x == y;
+        }
+        let norm = |p: &str| p.replace('\\', "/").to_lowercase();
+        norm(a) == norm(&b.display().to_string())
+    }
+
+    /// The scan carries the master's absolute folder: the repository itself for a single-repo folder, the
+    /// master's folder inside the workspace otherwise, and none while there is not exactly one master.
+    #[test]
+    fn a_scan_names_the_folder_of_its_master() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::testutil::single_repo(tmp.path(), "kata", &[("engine", "engine")]);
+        let single = scan_single_repo(&root);
+        assert!(same(single.master_folder.as_deref().unwrap(), &root));
+
+        let ws = tmp.path().join("ws");
+        std::fs::create_dir(&ws).unwrap();
+        let master = repo(&ws, "ai-sdlc");
+        repo(&ws, "app");
+        assert_eq!(scan(&ws).unwrap().master_folder, None);
+        commit_file(&master, MARKER, r#"{"version":1,"systems":{}}"#, "marker");
+        let found = scan(&ws).unwrap();
+        assert!(same(found.master_folder.as_deref().unwrap(), &master));
     }
 
     #[test]

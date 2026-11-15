@@ -142,6 +142,19 @@ fn classify(problems: &[String]) -> StartRefusal {
     }
 }
 
+/// The place a change starts in for `folder`: the repository root and its parent for a single-repo
+/// repository, the program's own master and workspace for a workspace.
+pub fn place_for(program: &Program, folder: &std::path::Path) -> Result<Place, String> {
+    match kata_sdlc::layout::open(program, folder).map_err(|e| e.to_string())? {
+        opened if opened.layout == kata_sdlc::layout::Layout::SingleRepo => Ok(Place {
+            layout: opened.layout,
+            master: opened.root,
+            workspace: opened.workspace,
+        }),
+        _ => program.resolve(folder).map_err(|e| e.to_string()),
+    }
+}
+
 /// Asks the plugin to start a change named from `date` and the title, and reads its answer through
 /// `ai_sdlc::answer_of`. An `Err` is an answer that passed but named no branch or copy.
 pub fn start_change(
@@ -342,6 +355,7 @@ mod tests {
         (
             dir,
             Place {
+                layout: kata_sdlc::layout::Layout::Workspace,
                 master,
                 workspace: ws,
             },
@@ -424,6 +438,84 @@ mod tests {
             assert_eq!(checkout_state(&place), before, "{label}");
             assert!(!place.master.join("intent").exists(), "{label}");
         }
+    }
+
+    /// A single-repo repository `<dir>/kata` on `main`, its marker committed, with one app folder.
+    fn single_repo() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("kata");
+        std::fs::create_dir_all(root.join("app")).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["config", "user.name", "Test"]);
+        git(&root, &["config", "user.email", "test@example.com"]);
+        git(&root, &["config", "commit.gpgsign", "false"]);
+        let marker =
+            r#"{"version":1,"layout":"single-repo","systems":{"kata":{"apps":{"kata":"app"}}}}"#;
+        std::fs::write(root.join(".ai-sdlc.json"), format!("{marker}\n")).unwrap();
+        std::fs::write(root.join("app/README.md"), "app\n").unwrap();
+        std::fs::create_dir_all(root.join("intent/kata/context")).unwrap();
+        std::fs::write(root.join("intent/kata/policies.md"), "# Policies\n").unwrap();
+        std::fs::write(root.join("intent/kata/context/.gitkeep"), "").unwrap();
+        git(&root, &["add", "-A"]);
+        git(&root, &["commit", "-q", "-m", "single-repo layout"]);
+        (dir, root)
+    }
+
+    /// What the engineer's checkout holds: its head and every status entry, read through libgit2.
+    fn root_state(root: &Path) -> (String, usize) {
+        let repo = kata_sdlc::git::Repo::open(root).unwrap();
+        (repo.head_sha().unwrap(), repo.status("").unwrap().len())
+    }
+
+    /// R3.1: the copy of a single-repo repository is made beside it, on the change's branch, and the
+    /// engineer's own checkout keeps its branch, head and files.
+    #[test]
+    fn a_single_repo_change_starts_in_its_own_copy() {
+        let (dir, root) = single_repo();
+        let before = (root_state(&root), git(&root, &["branch", "--show-current"]));
+        assert_eq!(before.1, "main");
+        let copies = dir.path().join(".ai-sdlc").join("copies");
+        // Compared resolved: a temp folder can be spelled with an 8.3 short name (CI's `RUNNER~1`) the program
+        // answers in its long form.
+        let same = |a: &Path, b: &Path| a.canonicalize().unwrap() == b.canonicalize().unwrap();
+        let check = |change: &str, branch: &str, copy: &Path| {
+            assert!(same(copy, &copies.join(change)), "{change}: {copy:?}");
+            assert!(copy.is_dir(), "{change}");
+            assert_eq!(git(copy, &["branch", "--show-current"]), branch);
+            assert_eq!(branch, format!("change/{change}"));
+            assert_eq!(
+                (root_state(&root), git(&root, &["branch", "--show-current"])),
+                before,
+                "{change}"
+            );
+        };
+
+        // Letting the workflow pick the track: the triage run's own `change start`, run from the root.
+        let change = "2026-11-12-triaged";
+        let out = Command::new("node")
+            .arg(program().entry)
+            .args(["change", "start", "--json", "--system", "kata"])
+            .args(["--change", change, "--type", "fix", "--scope", "kata"])
+            .args(["--title", "Triaged"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let answer: serde_json::Value =
+            serde_json::from_slice(out.stdout.trim_ascii()).expect("one JSON answer");
+        let copy = PathBuf::from(answer["details"]["copy"].as_str().unwrap());
+        check(change, answer["details"]["branch"].as_str().unwrap(), &copy);
+
+        // Going straight to the full pipeline: the backend's own start, from the root.
+        let place = place_for(&program(), &root).expect("the root places");
+        assert_eq!(place.layout, kata_sdlc::layout::Layout::SingleRepo);
+        let mut req = request("", None);
+        req.system = "kata";
+        let (change, branch, copy) =
+            started(start_change(&program(), &place, DATE, &req, &no_steps(), &root).unwrap());
+        check(&change, &branch, &copy);
+        // The intent run works in the copy: its folder is the one the start named.
+        assert!(same(&copy, &copies.join(CHANGE)), "{copy:?}");
     }
 
     #[test]

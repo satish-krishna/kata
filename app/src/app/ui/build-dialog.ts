@@ -91,6 +91,8 @@ export class BuildDialog {
   /** What the round would start for the picks now made, as the backend answers; null until it has. */
   readonly plan = input<RoundPlan | null>(null);
   readonly state = input.required<BuildFormState>();
+  /** The apps of a single-repo change build one after another, so the preview says so. */
+  readonly oneAtATime = input(false);
 
   protected readonly round = computed(() => this.mode() === 'round');
   private readonly seen = computed(() => this.offer() ?? NO_OFFER);
@@ -120,6 +122,11 @@ export class BuildDialog {
   protected assign(key: string, repo: string | string[] | null | undefined): void {
     if (typeof repo !== 'string') return;
     this.state().model.update((m) => ({ ...m, assigned: { ...m.assigned, [key]: repo } }));
+  }
+
+  /** The apps of a one-at-a-time round in the order the plan gives them, "then" between them. */
+  protected orderOf(requests: { summary: string }[]): string {
+    return requests.map((r) => r.summary).join(' then ');
   }
 
   protected summaryOf(text: string): string {

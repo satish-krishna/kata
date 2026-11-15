@@ -1,3 +1,39 @@
+@if (apps(); as list) {
+  <div hlmTableContainer>
+    <table hlmTable>
+      <thead hlmTableHeader>
+        <tr hlmTableRow>
+          <th hlmTableHead>App</th>
+          <th hlmTableHead>Context</th>
+          <th hlmTableHead><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody hlmTableBody>
+        @for (a of list; track a.name) {
+          <tr hlmTableRow>
+            <td hlmTableCell class="k-mono">{{ a.name }}</td>
+            <td hlmTableCell class="whitespace-normal">
+              <span [class]="'k-status k-status--' + appState(a).tone">
+                <span class="k-status__dot"></span>{{ appState(a).text }}
+              </span>
+            </td>
+            <td hlmTableCell class="k-cell-end">
+              @if (a.canView) {
+                <button hlmBtn variant="ghost" size="sm" type="button" [attr.aria-label]="'View context of ' + a.name" (click)="viewContext.emit(a.name)">View context</button>
+              }
+              @if (a.action === 'refresh') {
+                <button hlmBtn variant="secondary" size="sm" type="button" [attr.aria-label]="'Refresh context for ' + a.name" [disabled]="disabled()" (click)="runContext.emit(a.name)">Refresh context</button>
+              }
+              @if (a.action === 'build') {
+                <button hlmBtn variant="secondary" size="sm" type="button" [attr.aria-label]="'Build context for ' + a.name" [disabled]="disabled()" (click)="runContext.emit(a.name)">Build context</button>
+              }
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+} @else {
 <div hlmTableContainer>
   <table hlmTable>
     <thead hlmTableHeader>
@@ -50,6 +86,7 @@
     </tbody>
   </table>
 </div>
+}
 @if (marker()) {
   <p class="k-marker">{{ marker() }}</p>
 }

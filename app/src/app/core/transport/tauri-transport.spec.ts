@@ -137,6 +137,7 @@ const rows: Row[] = [
   ['sdlcDiffFiles', (t) => t.sdlcDiffFiles('/r', 'whole'), 'sdlc_diff_files', { repoPath: '/r', part: 'whole' }],
   ['sdlcDiffPair', (t) => t.sdlcDiffPair('/r', 'committed', 'a.ts'), 'sdlc_diff_pair', { repoPath: '/r', part: 'committed', path: 'a.ts' }],
   ['sdlcDiffBase', (t) => t.sdlcDiffBase('/r'), 'sdlc_diff_base', { repoPath: '/r' }],
+  ['sdlcAppRows', (t) => t.sdlcAppRows('/w', 's'), 'sdlc_app_rows', { folder: '/w', system: 's' }],
   ['sdlcChecksView', (t) => t.sdlcChecksView(change), 'sdlc_checks_view', { change }],
   ['sdlcOldChecks', (t) => t.sdlcOldChecks('/w', ['s', 't']), 'sdlc_old_checks', { folder: '/w', systems: ['s', 't'] }],
   ['sdlcOldChecksSeen', (t) => t.sdlcOldChecksSeen(['s']), 'sdlc_old_checks_seen', { systems: ['s'] }],
@@ -226,7 +227,7 @@ describe('TauriTransport', () => {
   });
 
   it.each([
-    ['onBuildState', 'sdlc://build', { change: { workspace: { key: 'w', name: 'w' }, system: 's', change: 'c' }, state: { phase: 'building', going: [], stopped: {}, rounds: {}, waiting: [], report: null }, reviewWaiting: [], runs: [] } as BuildEvent],
+    ['onBuildState', 'sdlc://build', { change: { workspace: { key: 'w', name: 'w' }, system: 's', change: 'c' }, state: { phase: 'building', going: [], stopped: {}, rounds: {}, waiting: [], report: null, appTurn: null }, reviewWaiting: [], runs: [] } as BuildEvent],
     ['onRunning', 'sdlc://running', { shown: [], all: [] } as RunningStrip],
     ['onCloseAsked', 'sdlc://close-asked', { type: 'ask', running: [{ change: 'c', what: 'building in kata' }] } as CloseOutcome],
   ] as const)('%s hands the payload of %s over as it is', async (method, channel, payload) => {

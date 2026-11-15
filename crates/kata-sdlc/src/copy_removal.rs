@@ -245,6 +245,7 @@ if ({trigger}) {{
             testutil::commit_file(&master, ".ai-sdlc.json", MARKER, "marker");
             testutil::repo(&ws, "app");
             let place = Place {
+                layout: crate::layout::Layout::Workspace,
                 master: master.clone(),
                 workspace: ws.clone(),
             };
@@ -279,6 +280,7 @@ if ({trigger}) {{
 
         fn place(&self) -> Place {
             Place {
+                layout: crate::layout::Layout::Workspace,
                 master: self.master.clone(),
                 workspace: self.ws.clone(),
             }

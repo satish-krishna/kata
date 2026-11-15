@@ -65,6 +65,18 @@ describe('ContextPage', () => {
     expect(read).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'commerce', 'customer-portal');
   });
 
+  it('reads the master at the folder the scan names, not at the workspace folder joined with its name', async () => {
+    const ELSEWHERE = 'E:/elsewhere/the-master';
+    const transport = new MockTransport();
+    const real = transport.sdlcScan.bind(transport);
+    vi.spyOn(transport, 'sdlcScan').mockImplementation(async (folder) => ({ ...(await real(folder)), master_folder: ELSEWHERE }));
+    const branches = vi.spyOn(transport, 'sdlcBranches');
+    const read = vi.spyOn(transport, 'sdlcReadContext');
+    await mount('customer-portal', transport);
+    expect(branches).toHaveBeenCalledWith(ELSEWHERE);
+    expect(read).toHaveBeenCalledWith(ELSEWHERE, 'commerce', 'customer-portal');
+  });
+
   it('lists every product repo with its context state, marks the one shown, and opens another on click', async () => {
     const { container, navigate } = await mount('customer-portal');
     const rows = repoButtons(container);

@@ -28,11 +28,15 @@
             <p class="k-round__blocked k-status k-status--warning"><span class="k-status__dot" aria-hidden="true"></span>{{ blocked }}</p>
           } @else {
             <p>Starts {{ shown.requests.length }} {{ shown.requests.length === 1 ? 'agent' : 'agents' }}</p>
-            <ul class="k-left__list">
-              @for (r of shown.requests; track r.repo) {
-                <li class="k-mono">{{ r.summary }}</li>
-              }
-            </ul>
+            @if (oneAtATime()) {
+              <p class="k-mono" data-round-order>{{ orderOf(shown.requests) }}</p>
+            } @else {
+              <ul class="k-left__list">
+                @for (r of shown.requests; track r.repo) {
+                  <li class="k-mono">{{ r.summary }}</li>
+                }
+              </ul>
+            }
           }
         }
       </div>

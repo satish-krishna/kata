@@ -67,7 +67,7 @@ const groupsOf = (offer: RoundOffer): RoundGroup[] => {
 };
 
 /** The form is made by whoever owns the preview; the component only draws it. */
-async function open(mode: BuildDialogMode, offer: RoundOffer | null = null, plan: RoundPlan | null = null, groups: RoundGroup[] | null = null) {
+async function open(mode: BuildDialogMode, offer: RoundOffer | null = null, plan: RoundPlan | null = null, groups: RoundGroup[] | null = null, oneAtATime = false) {
   TestBed.configureTestingModule({ imports: [BuildDialog] });
   const state: BuildFormState = createBuildForm(TestBed.inject(Injector), offer ?? undefined, offer === null ? undefined : picksFor(offer));
   const fixture = TestBed.createComponent(BuildDialog);
@@ -77,6 +77,7 @@ async function open(mode: BuildDialogMode, offer: RoundOffer | null = null, plan
   fixture.componentRef.setInput('groups', groups ?? (offer === null ? [] : groupsOf(offer)));
   fixture.componentRef.setInput('plan', plan);
   fixture.componentRef.setInput('state', state);
+  fixture.componentRef.setInput('oneAtATime', oneAtATime);
   await fixture.whenStable();
   await settle();
   return { fixture, state, request: () => buildRequest(state), picks: () => picksOf(state.model()), valid: () => state.form().valid() };
@@ -260,5 +261,28 @@ describe('BuildDialog shows the backend\'s plan', () => {
     fixture.componentRef.setInput('plan', { blocked: 'Pick a finding or write a note.', requests: [] });
     await fixture.whenStable();
     expect(summary.textContent).toContain('Pick a finding or write a note.');
+  });
+});
+
+describe('BuildDialog of a single-repo change (R5.5)', () => {
+  const APPS = ['engine', 'workbench'];
+  const OFFER_APPS: RoundOffer = { review: 1, repos: APPS, findings: [finding('F1', 'high', 'engine'), finding('F2', 'medium', 'workbench')] };
+  const PLAN: RoundPlan = {
+    blocked: null,
+    requests: [
+      { repo: 'engine', instructions: 'x', summary: 'engine · F1' },
+      { repo: 'workbench', instructions: 'y', summary: 'workbench · F2 · with a note' },
+    ],
+  };
+
+  it('lists the chosen apps in the order of the plan with "then" between them', async () => {
+    await open('round', OFFER_APPS, PLAN, null, true);
+    expect(summary()).toContain('Starts 2 agents');
+    expect(summary()).toContain('engine · F1 then workbench · F2 · with a note');
+  });
+
+  it('a workspace round has no "then": its agents start together', async () => {
+    await open('round', OFFER_APPS, PLAN, null, false);
+    expect(summary()).not.toContain(' then ');
   });
 });

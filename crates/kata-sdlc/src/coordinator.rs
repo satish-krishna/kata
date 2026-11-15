@@ -141,6 +141,18 @@ pub struct Stop {
     pub held: bool,
 }
 
+/// The app a one-at-a-time build is waiting for before the next app launches.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct AppTurn {
+    /// The app whose turn it is: going, stopped short of finished, or about to launch.
+    pub app: String,
+    /// That app stopped and has to be continued first.
+    pub stopped: bool,
+}
+
 /// What the screens read.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -154,6 +166,8 @@ pub struct BuildState {
     pub rounds: BTreeMap<String, String>,
     pub waiting: Vec<WaitingRepo>,
     pub report: Option<StopReport>,
+    /// With one app at a time: the app the others wait for. `None` in the workspace layout.
+    pub app_turn: Option<AppTurn>,
 }
 
 /// A repository with the state the coordinator reads it in.
@@ -508,12 +522,18 @@ pub struct Coordinator {
     seq: u64,
     queue: VecDeque<Job>,
     busy: Option<Busy>,
+    /// Launch at most one app per look (the single-repo layout).
+    one_at_a_time: bool,
 }
 
 impl Coordinator {
     /// A new session. With a current committed review the compared heads are the heads now, so the
     /// review does not run again by itself.
-    pub fn new(currency: ReviewCurrency, heads: BTreeMap<String, String>) -> Self {
+    pub fn new(
+        currency: ReviewCurrency,
+        heads: BTreeMap<String, String>,
+        one_at_a_time: bool,
+    ) -> Self {
         let compare = matches!(currency, ReviewCurrency::Current { .. }).then_some(heads);
         Coordinator {
             state: BuildState {
@@ -523,6 +543,7 @@ impl Coordinator {
                 rounds: BTreeMap::new(),
                 waiting: Vec::new(),
                 report: None,
+                app_turn: None,
             },
             timeout_secs: 0,
             choices: BuildChoices {
@@ -539,6 +560,7 @@ impl Coordinator {
             seq: 0,
             queue: VecDeque::new(),
             busy: None,
+            one_at_a_time,
         }
     }
 
@@ -803,18 +825,15 @@ impl Coordinator {
             }
         }
 
-        let launched = !ready.is_empty();
-        for (repo, task) in ready {
-            let instructions = if self.is_round_launch(&repo) {
-                self.state.rounds.get(&repo).cloned()
-            } else {
-                None
-            };
-            if instructions.is_some() {
-                self.rounds_started.insert(repo.clone());
+        let launched = if self.one_at_a_time {
+            self.pick_one_app(status, ready, out)
+        } else {
+            let any = !ready.is_empty();
+            for (repo, task) in ready {
+                self.launch_ready(&repo, &task, out);
             }
-            self.launch(&repo, &task, instructions, out);
-        }
+            any
+        };
         if launched {
             self.state.phase = BuildPhase::Building;
             return;
@@ -833,6 +852,67 @@ impl Coordinator {
         }
         self.busy = Some(Busy::HeadsForReview);
         out.push(Command::ReadHeads);
+    }
+
+    /// Launches a ready repository, carrying its pending round's instructions when this is the round's launch.
+    fn launch_ready(&mut self, repo: &str, task: &str, out: &mut Vec<Command>) {
+        let instructions = if self.is_round_launch(repo) {
+            self.state.rounds.get(repo).cloned()
+        } else {
+            None
+        };
+        if instructions.is_some() {
+            self.rounds_started.insert(repo.to_string());
+        }
+        self.launch(repo, task, instructions, out);
+    }
+
+    /// One app at a time: launches the first launchable app in plan order, unless an app is going or
+    /// stopped short of finished, and records in `app_turn` the app the others wait for. Returns whether
+    /// an app launched.
+    fn pick_one_app(
+        &mut self,
+        status: &BuildFacts,
+        mut ready: Vec<(String, String)>,
+        out: &mut Vec<Command>,
+    ) -> bool {
+        if ready.is_empty() {
+            return false;
+        }
+        // Plan order: the place of each app's first unfinished task; a round on a finished app, or on an app
+        // the plan names no task for, goes by the app's first task, then last.
+        let place = |repo: &str, task: &str| {
+            let at = |pred: &dyn Fn(&TaskFact) -> bool| status.tasks.iter().position(pred);
+            at(&|t| !task.is_empty() && t.id == task)
+                .or_else(|| at(&|t| t.repo == repo))
+                .unwrap_or(usize::MAX)
+        };
+        ready.sort_by_key(|(repo, task)| place(repo, task));
+        if let Some(going) = self.state.going.iter().next() {
+            self.state.app_turn = Some(AppTurn {
+                app: going.clone(),
+                stopped: false,
+            });
+            return false;
+        }
+        let stopped = self
+            .state
+            .stopped
+            .iter()
+            .filter(|(k, _)| k.as_str() != REVIEW)
+            .min_by_key(|(k, s)| place(k, &s.task))
+            .map(|(k, _)| k.clone());
+        if let Some(app) = stopped {
+            self.state.app_turn = Some(AppTurn { app, stopped: true });
+            return false;
+        }
+        let (repo, task) = ready.remove(0);
+        self.state.app_turn = (!ready.is_empty()).then(|| AppTurn {
+            app: repo.clone(),
+            stopped: false,
+        });
+        self.launch_ready(&repo, &task, out);
+        true
     }
 
     fn launch(
@@ -1103,8 +1183,14 @@ mod tests {
             started: Vec::new(),
             log: Vec::new(),
             status_failures: 0,
-            co: Coordinator::new(currency, heads),
+            co: Coordinator::new(currency, heads, false),
         }
+    }
+
+    fn world_one(plan: Vec<Pt>, rows: &[&str]) -> World {
+        let mut w = world(plan, rows);
+        w.co = Coordinator::new(ReviewCurrency::None, BTreeMap::new(), true);
+        w
     }
 
     impl World {
@@ -2389,5 +2475,143 @@ mod tests {
         w.begin(3600);
         assert_eq!(w.log, strs(&["review"]));
         assert_eq!(w.phase(), BuildPhase::Reviewing);
+    }
+
+    // ---- one app at a time (the single-repo layout) ----
+
+    fn turn(app: &str, stopped: bool) -> Option<AppTurn> {
+        Some(AppTurn {
+            app: app.into(),
+            stopped,
+        })
+    }
+
+    fn instr(w: &World, idx: usize) -> Option<&str> {
+        w.started[idx].instructions.as_deref()
+    }
+
+    #[test]
+    fn single_repo_builds_apps_one_after_another_r4_2() {
+        let mut w = world_one(vec![t("T1", "engine"), t("T2", "workbench")], &[]);
+        w.begin(3600);
+        assert_eq!(w.log, strs(&["engine"]));
+        assert_eq!(w.going(), strs(&["engine"]));
+        assert_eq!(w.co.state().app_turn, turn("engine", false));
+        w.end_ok(0, &["T1"]);
+        assert_eq!(w.log, strs(&["engine", "workbench"]));
+        assert_eq!(w.going(), strs(&["workbench"]));
+        assert_eq!(w.co.state().app_turn, None);
+    }
+
+    #[test]
+    fn a_single_repo_round_runs_apps_one_after_another_r5_5() {
+        let mut w = world_one(vec![t("T1", "engine"), t("T2", "workbench")], &["T1", "T2"]);
+        w.begin_rounds(
+            3600,
+            &[("engine", "fix E1"), ("workbench", "fix W1 and the note")],
+        );
+        assert_eq!(w.log, strs(&["engine"]));
+        assert_eq!(instr(&w, 0), Some("fix E1"));
+        assert_eq!(w.co.state().app_turn, turn("engine", false));
+        assert_eq!(w.pending(), strs(&["engine", "workbench"]));
+        w.set_head("engine", "h2");
+        w.end_ok(0, &[]);
+        assert_eq!(w.log, strs(&["engine", "workbench"]));
+        assert_eq!(instr(&w, 1), Some("fix W1 and the note"));
+        assert_eq!(w.co.state().app_turn, None);
+        assert_eq!(reviews(&w.log), 0);
+        w.end_ok(1, &[]);
+        assert_eq!(w.log, strs(&["engine", "workbench", "review"]));
+        assert_eq!(reviews(&w.log), 1);
+        assert_eq!(w.phase(), BuildPhase::Reviewing);
+        assert!(w.pending().is_empty());
+    }
+
+    #[test]
+    fn a_single_repo_round_with_one_app_r5_6() {
+        let mut w = world_one(vec![t("T1", "engine"), t("T2", "workbench")], &["T1", "T2"]);
+        w.begin_rounds(3600, &[("workbench", "fix W1")]);
+        assert_eq!(w.log, strs(&["workbench"]));
+        assert_eq!(instr(&w, 0), Some("fix W1"));
+        assert_eq!(w.co.state().app_turn, None);
+        w.set_head("workbench", "w2");
+        w.end_ok(0, &[]);
+        assert_eq!(w.log, strs(&["workbench", "review"]));
+    }
+
+    #[test]
+    fn one_at_a_time_launch_rows() {
+        // Row 1 (done, no round): "docs" is finished and never launches; the turn is not touched by it.
+        let mut w = world_one(
+            vec![t("T1", "docs"), t("T2", "engine"), t("T3", "workbench")],
+            &["T1"],
+        );
+        w.begin(3600);
+        assert_eq!(w.log, strs(&["engine"]));
+        assert_eq!(w.co.state().app_turn, turn("engine", false));
+
+        // Row 2 (waits on an unfinished task): "docs" waits on workbench's T2; not launched, listed as waiting.
+        let mut w = world_one(
+            vec![
+                t("T1", "engine"),
+                t("T2", "workbench"),
+                td("T3", "docs", &["T2"]),
+            ],
+            &[],
+        );
+        w.begin(3600);
+        assert_eq!(w.log, strs(&["engine"]));
+        assert_eq!(w.waiting_repos(), strs(&["docs"]));
+        assert_eq!(w.co.state().app_turn, turn("engine", false));
+
+        // Row 3 (another app going): a later look does not launch workbench and names the going app.
+        let mut w = world_one(vec![t("T1", "engine"), t("T2", "workbench")], &[]);
+        w.begin(3600);
+        w.continue_all();
+        assert_eq!(w.log, strs(&["engine"]));
+        assert_eq!(w.going(), strs(&["engine"]));
+        assert_eq!(w.co.state().app_turn, turn("engine", false));
+
+        // Row 4 (another app stopped short of finished): workbench waits, the turn names the stopped app.
+        w.end(0, &[], Some(1), None);
+        assert_eq!(w.log, strs(&["engine"]));
+        assert!(w.going().is_empty());
+        assert!(w.stopped("engine").is_some());
+        assert_eq!(w.co.state().app_turn, turn("engine", true));
+        assert_eq!(w.phase(), BuildPhase::Stopped);
+
+        // Row 5 (an earlier launchable app): continuing launches engine, not workbench; workbench waits on it.
+        w.continue_repo("engine");
+        assert_eq!(w.log, strs(&["engine", "engine"]));
+        assert_eq!(w.going(), strs(&["engine"]));
+        assert_eq!(w.co.state().app_turn, turn("engine", false));
+
+        // Row 5, plan position: the order is the first unfinished task's place in the plan, not the app's
+        // first appearance. Engine's T1 is logged, so workbench (T2) comes before engine (T3).
+        let mut w = world_one(
+            vec![t("T1", "engine"), t("T2", "workbench"), t("T3", "engine")],
+            &["T1"],
+        );
+        w.begin(3600);
+        assert_eq!(w.log, strs(&["workbench"]));
+        assert_eq!(w.co.state().app_turn, turn("workbench", false));
+
+        // Row 6 (nothing earlier, nothing going, nothing stopped): launched, no turn while it is the one going.
+        let mut w = world_one(vec![t("T1", "engine"), t("T2", "workbench")], &["T1"]);
+        w.begin(3600);
+        assert_eq!(w.log, strs(&["workbench"]));
+        assert_eq!(w.going(), strs(&["workbench"]));
+        assert_eq!(w.co.state().app_turn, None);
+
+        // Row 7 (stopped at the same task, not continued): the look after engine's failed run does not
+        // launch it again, and workbench (done) is not launched either.
+        let mut w = world_one(vec![t("T1", "engine"), t("T2", "workbench")], &["T2"]);
+        w.begin(3600);
+        w.end(0, &[], Some(1), None);
+        assert_eq!(w.log, strs(&["engine"]));
+        assert!(w.stopped("engine").is_some());
+        assert!(w.going().is_empty());
+        assert_eq!(w.phase(), BuildPhase::Stopped);
+        assert_eq!(w.co.state().app_turn, None);
     }
 }

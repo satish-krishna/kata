@@ -4,6 +4,7 @@
 //! names the state the page shows, in the words it shows.
 use crate::ai_sdlc::status::{Hooks, OnFailure, Status};
 use crate::ai_sdlc::{Place, Program, ProgramError};
+use crate::layout::Layout;
 use serde::Serialize;
 
 /// The event whose hooks are a repository's checks.
@@ -37,6 +38,8 @@ pub enum CheckView {
     NotRunYet,
     /// The checks last ran at an earlier head; `head` is that head, shortened.
     Stale { head: String },
+    /// The app was not touched by the change, so `build.finish` passed as a no-op at its head.
+    NoChanges,
     /// The checks ran at the head and passed.
     Passed { hooks: Vec<HookShown> },
     /// A check failed at the head and the team marked it to be fixed.
@@ -66,13 +69,14 @@ pub struct RepoCheckView {
 /// | 2 | some | none | `NotRunYet` |
 /// | 3 | some | at an earlier head | `Stale` |
 /// | 4 | some | at the head, passed | `Passed` |
+/// | 4b | some | at the head, passed as a no-op for an untouched app | `NoChanges` |
 /// | 5 | some | at the head, failed on a check marked to be fixed | `FailedFix` |
 /// | 6 | some | at the head, failed on a check marked to stop | `FailedStop` |
 /// | 7 | some | at the head, could not run | `CouldNotRun` |
 ///
 /// A run the plugin refused checked nothing, and a failure that names no check has nothing to show; both
 /// read as `NotRunYet`.
-pub fn of(status: &Status, repo: &str, head: &str, hooks: &Hooks) -> CheckView {
+pub fn of(status: &Status, repo: &str, head: &str, hooks: &Hooks, layout: Layout) -> CheckView {
     if !hooks.problems.is_empty() {
         return CheckView::ConfigBroken {
             output: hooks.problems.join(
@@ -81,11 +85,17 @@ pub fn of(status: &Status, repo: &str, head: &str, hooks: &Hooks) -> CheckView {
             ),
         };
     }
+    // A hook applies to a repository by its `repos` list in the workspace layout and to an app by its
+    // `apps` list in the single-repo layout; no list means every one.
     let configured = hooks.hooks.iter().any(|h| {
+        let names = match layout {
+            Layout::Workspace => &h.repos,
+            Layout::SingleRepo => &h.apps,
+        };
         h.event == EVENT
-            && h.repos
+            && names
                 .as_ref()
-                .is_none_or(|repos| repos.iter().any(|r| r == repo))
+                .is_none_or(|names| names.iter().any(|n| n == repo))
     });
     if !configured {
         return CheckView::NoChecks;
@@ -118,6 +128,9 @@ pub fn of(status: &Status, repo: &str, head: &str, hooks: &Hooks) -> CheckView {
             })
     };
     match (run.outcome.as_str(), &run.failed) {
+        ("passed", _) if run.details.as_ref().is_some_and(|d| d["untouched"] == true) => {
+            CheckView::NoChanges
+        }
         ("passed", _) => CheckView::Passed {
             hooks: run
                 .hooks
@@ -151,6 +164,7 @@ pub fn summary(view: &CheckView) -> String {
         CheckView::NoChecks => "This repository has no checks.".to_string(),
         CheckView::NotRunYet => "The checks have not run yet.".to_string(),
         CheckView::Stale { head } => format!("Checks last ran at {head}."),
+        CheckView::NoChanges => "No changes to check".to_string(),
         CheckView::Passed { .. } => "The checks passed.".to_string(),
         CheckView::FailedFix { id, .. } => {
             format!("{id} failed. The agent is sent back to fix it, up to the team's retry limit.")
@@ -174,16 +188,30 @@ pub fn for_change(
 ) -> Result<Vec<RepoCheckView>, ProgramError> {
     let status = program.status(place, change)?;
     let hooks = program.hooks(place, system, Some(EVENT))?;
+    // In the single-repo layout an app's head is the one the change's `apps` give.
+    let app_heads = match place.layout {
+        Layout::SingleRepo => {
+            crate::ai_sdlc::state::one(program, place, system, change)?
+                .ok_or_else(|| ProgramError::CouldNotRun {
+                    message: format!("the state answer has no change {change}"),
+                })?
+                .apps
+        }
+        Layout::Workspace => None,
+    };
     Ok(repos
         .iter()
         .map(|repo| {
-            let head = status
-                .repos
-                .iter()
-                .find(|r| &r.repo == repo)
-                .and_then(|r| r.head.clone())
-                .unwrap_or_default();
-            let view = of(&status, repo, &head, &hooks);
+            let head = match &app_heads {
+                Some(apps) => apps.get(repo).and_then(|a| a.head.clone()),
+                None => status
+                    .repos
+                    .iter()
+                    .find(|r| &r.repo == repo)
+                    .and_then(|r| r.head.clone()),
+            }
+            .unwrap_or_default();
+            let view = of(&status, repo, &head, &hooks, place.layout);
             RepoCheckView {
                 repo: repo.clone(),
                 summary: summary(&view),
@@ -258,6 +286,7 @@ mod tests {
 
         fn place(&self) -> Place {
             Place {
+                layout: crate::layout::Layout::Workspace,
                 master: self.master.clone(),
                 workspace: self.ws.clone(),
             }
@@ -485,5 +514,115 @@ mod tests {
         let b = view_in(with_old.path());
         assert_eq!(a, b, "two machines, one master, one view");
         assert!(matches!(a.view, CheckView::Passed { .. }));
+    }
+
+    /// R5.2: in the single-repo layout each app's checks are read at the app's own head, a hook applies
+    /// when its `apps` list names the app or is null, and an untouched app's no-op reads "No changes".
+    #[test]
+    fn single_repo_checks_are_read_per_app() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = testutil::single_repo(
+            dir.path(),
+            "kata",
+            &[
+                ("engine", "crates/engine"),
+                ("workbench", "app"),
+                ("docs", "docs"),
+                ("cli", "cli"),
+            ],
+        );
+        let marker = json!({"version": 1, "layout": "single-repo",
+        "systems": {"kata": {"apps": {"engine": "crates/engine", "workbench": "app", "docs": "docs", "cli": "cli"}}},
+        "hooks": {"build.finish": [
+            {"id": "unit", "run": ["node", "-v"], "apps": ["engine", "workbench"]},
+            {"id": "lint", "run": ["node", "-v"], "apps": ["docs"]}
+        ]}});
+        testutil::commit_file(&root, ".ai-sdlc.json", &marker.to_string(), "hooks");
+        let place = Place {
+            layout: crate::layout::Layout::SingleRepo,
+            master: root.clone(),
+            workspace: dir.path().to_path_buf(),
+        };
+        let started = program()
+            .step_long(
+                &[
+                    "change", "start", "--json", "--system", "kata", "--change", CHANGE, "--type",
+                    "feat", "--scope", "demo", "--title", "Greeting",
+                ],
+                &place,
+                &kata_core::proc::CancelToken::new(),
+                None,
+            )
+            .json;
+        assert_eq!(started["outcome"], "passed", "{started}");
+        // The change holds its intent in its copy, which is what makes `state` find it.
+        let doc = std::path::PathBuf::from(started["details"]["copy"].as_str().unwrap())
+            .join("intent/kata")
+            .join(CHANGE);
+        std::fs::create_dir_all(&doc).unwrap();
+        std::fs::write(doc.join("intent.md"), "# Greeting\n").unwrap();
+        let state = crate::ai_sdlc::state::one(&program(), &place, "kata", CHANGE)
+            .unwrap()
+            .unwrap();
+        let head_of = |app: &str| state.apps.as_ref().unwrap()[app].head.clone().unwrap();
+        let write = |app: &str, key: &str, outcome: &str, extra: Value| {
+            let mut entry = run("build.finish", key, outcome, json!([]), Value::Null);
+            entry["repo"] = json!(app);
+            for (k, v) in extra.as_object().unwrap() {
+                entry[k] = v.clone();
+            }
+            let folder = root.join(".git").join("ai-sdlc").join("kata").join(CHANGE);
+            std::fs::create_dir_all(&folder).unwrap();
+            let ledger = json!({"version": 1, "system": "kata", "change": CHANGE, "repo": app,
+                "path": root, "runs": [entry], "gateBlocks": {}});
+            std::fs::write(folder.join(format!("{app}.json")), ledger.to_string()).unwrap();
+        };
+        write(
+            "engine",
+            &head_of("engine"),
+            "passed",
+            json!({"hooks": [hook("passed", "ok")]}),
+        );
+        write(
+            "workbench",
+            &head_of("workbench"),
+            "failed",
+            json!({"hooks": [hook("failed", "2 tests failed")],
+                "failed": {"id": "unit", "onFailure": "fix"}}),
+        );
+        write(
+            "docs",
+            &head_of("docs"),
+            "passed",
+            json!({"details": {"untouched": true}}),
+        );
+        let views = for_change(
+            &program(),
+            &place,
+            "kata",
+            CHANGE,
+            &["engine", "workbench", "docs", "cli"].map(String::from),
+        )
+        .unwrap();
+        let by = |app: &str| views.iter().find(|v| v.repo == app).unwrap().clone();
+        assert_eq!(
+            by("engine").view,
+            CheckView::Passed {
+                hooks: vec![HookShown {
+                    id: "unit".into(),
+                    outcome: "passed".into()
+                }]
+            }
+        );
+        assert_eq!(
+            by("workbench").view,
+            CheckView::FailedFix {
+                id: "unit".into(),
+                output: "2 tests failed".into()
+            }
+        );
+        assert_eq!(by("docs").view, CheckView::NoChanges);
+        assert_eq!(by("docs").summary, "No changes to check");
+        assert_eq!(by("cli").view, CheckView::NoChecks);
     }
 }

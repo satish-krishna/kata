@@ -352,9 +352,11 @@ describe("triage and fix run-specs (T8)", () => {
   const restricted: Restricted = { workspaceFolder: WS, masterRepo: "intent-repo", systemRepos: ["kata", "api"] };
   const scan = (over: Partial<WorkspaceScan> = {}): WorkspaceScan => ({
     folder: WS,
+    layout: 'workspace',
     repos: ["intent-repo", "kata", "api"],
     master: { kind: "one", repo: "intent-repo", committed: true },
     marker: null,
+    master_folder: null,
     marker_error: null,
     ...over,
   });
@@ -455,5 +457,15 @@ describe("triage and fix run-specs (T8)", () => {
     expect(restrictedFor(WS, scan())).toEqual(restricted);
     expect(() => restrictedFor(WS, scan({ master: { kind: "none" } }))).toThrow();
     expect(() => restrictedFor(WS, scan({ master: { kind: "many", repos: ["a", "b"] } }))).toThrow();
+  });
+
+  it("restrictedFor takes a single-repo scan whose master is the root itself, with no product repository to deny", () => {
+    const root = "D:/kata";
+    const single = scan({ folder: root, layout: "single-repo", repos: [], master: { kind: "one", repo: "kata", committed: true } });
+    const r = restrictedFor(root, single);
+    expect(r).toEqual({ workspaceFolder: root, masterRepo: "kata", systemRepos: [] });
+    const spec = specFor("triage", null, { ...startCtx, folder: root }, bypass, both, r);
+    expect(spec.workdir).toBe(root);
+    expect(spec.permissions.deny).toEqual(["Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)"]);
   });
 });

@@ -1944,3 +1944,31 @@ describe("the build page shows each repository's checks under its heading (R5.1)
     expect(billing.querySelector('[data-checks]')).toBeNull();
   });
 });
+
+describe('a waiting app names no other change (R4.4)', () => {
+  const WORKING: StatusText = { tone: 'success', label: 'Working · T1' };
+  const WAITING_APP: StatusText = { tone: 'idle', label: 'Waiting for engine of this change' };
+  afterEach(() => history.replaceState({}, '', '/'));
+
+  it('the page shows no held panel and no link to another change', async () => {
+    const { el } = await mount(
+      base({ groups: [group('engine', WORKING, 'cancel', [task('T1', RUNNING)]), group('workbench', WAITING_APP, null, [task('T4', NOT_STARTED)])] }),
+    );
+    expect(norm(el.querySelector<HTMLElement>('[data-area="tasks"]')!.textContent)).toContain('Waiting for engine of this change');
+    expect(el.querySelector('[data-held-build]')).toBeNull();
+    expect(el.querySelector('[data-held-review]')).toBeNull();
+    expect(el.querySelector('a[href^="/sdlc"]')).toBeNull();
+    expect(norm(el.textContent)).not.toContain('held by');
+  });
+
+  it('the top bar entry is the change itself, never held by another change', async () => {
+    history.replaceState({}, '', '/?demo=single-repo');
+    const transport = new MockTransport();
+    const ref = { workspace: 'D:/kata', system: 'kata', change: '2026-11-12-single-repo-workbench' };
+    expect(await transport.sdlcBuildStart(ref, { timeoutSecs: 5400 })).toMatchObject({ kind: 'started' });
+    const strip = await transport.sdlcRunning();
+    expect(strip.all.map((e) => [e.change.change, e.state])).toEqual([[ref.change, 'working']]);
+    expect(strip.all.some((e) => 'holder' in e)).toBe(false);
+    await transport.sdlcBuildCancel(ref, null);
+  });
+});

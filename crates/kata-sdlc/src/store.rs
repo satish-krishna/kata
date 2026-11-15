@@ -60,6 +60,56 @@ pub struct WorkspaceEntry {
     /// The system the home showed last; no screen reads it.
     #[cfg_attr(feature = "ts", ts(skip))]
     pub last_system: Option<String>,
+    /// How the saved folder is laid out, and so the form every program call for it takes (see
+    /// [`crate::ai_sdlc::Program::run_in`]). The saved entry is the one owner of it: it is written once, from the
+    /// program's first answer for the folder ([`crate::layout::for_folder`]), and never detected again, so a
+    /// folder whose layout changes (the ai-sdlc setup skill run on it) must be removed from the saved list and
+    /// added again. `None` (written as `null`) is a folder added while no program could answer, its layout not
+    /// known yet; an entry saved before this field existed reads as a workspace, as every entry then was.
+    #[serde(default = "saved_before_layouts")]
+    pub layout: Option<crate::layout::Layout>,
+}
+
+/// The layout of an entry saved before entries had one: a workspace.
+fn saved_before_layouts() -> Option<crate::layout::Layout> {
+    Some(crate::layout::Layout::Workspace)
+}
+
+/// `folder` spelled the way two spellings of one saved folder compare equal.
+fn folder_key(folder: &str) -> String {
+    folder
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_ascii_lowercase()
+}
+
+/// The saved entry for `folder`, when it is saved.
+pub fn saved_entry(folder: &std::path::Path) -> Option<WorkspaceEntry> {
+    let wanted = folder_key(&folder.display().to_string());
+    load_workspaces()
+        .into_iter()
+        .find(|w| folder_key(&w.folder) == wanted)
+}
+
+/// Stores `layout` for the saved `folder` when its entry has none yet. A layout already saved is never replaced,
+/// and a folder that is not saved writes nothing.
+pub fn fill_layout(
+    folder: &std::path::Path,
+    layout: crate::layout::Layout,
+) -> Result<(), StoreError> {
+    if saved_entry(folder).is_none_or(|w| w.layout.is_some()) {
+        return Ok(());
+    }
+    let wanted = folder_key(&folder.display().to_string());
+    update_workspaces(|list| {
+        for entry in list.iter_mut() {
+            if folder_key(&entry.folder) == wanted && entry.layout.is_none() {
+                entry.layout = Some(layout);
+            }
+        }
+        Ok(())
+    })
+    .map(|_| ())
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -220,10 +270,29 @@ fn workspace_id(name: &str, list: &[WorkspaceEntry]) -> String {
     id
 }
 
-/// Save a new workspace called `name` for `folder`, with an id made from the name and stamped as opened
-/// at `now`. Answers the saved list and the workspace now opened on.
-pub fn add_workspace(name: &str, folder: &str, now: u64) -> Result<WorkspaceChoice, StoreError> {
+/// Save a new workspace called `name` for `folder`, laid out as `layout` (`None` when no program could say), with
+/// an id made from the name and stamped as opened at `now`. A folder already saved is picked, and takes `layout`
+/// only when it has none yet; a saved layout stays as it is. Answers the saved list and the workspace now opened on.
+pub fn add_workspace(
+    name: &str,
+    folder: &str,
+    layout: Option<crate::layout::Layout>,
+    now: u64,
+) -> Result<WorkspaceChoice, StoreError> {
     update_workspaces(|list| {
+        let key = crate::holds::RepoKey::of(std::path::Path::new(folder));
+        if let Some(saved) = list
+            .iter()
+            .find(|w| crate::holds::RepoKey::of(std::path::Path::new(&w.folder)) == key)
+        {
+            let id = saved.id.clone();
+            let at = stamp(list, &id, now);
+            if let Some(entry) = list.iter_mut().find(|w| w.id == id) {
+                entry.last_opened = at;
+                entry.layout = entry.layout.or(layout);
+            }
+            return Ok(());
+        }
         let id = workspace_id(name, list);
         let last_opened = stamp(list, &id, now);
         list.push(WorkspaceEntry {
@@ -232,6 +301,7 @@ pub fn add_workspace(name: &str, folder: &str, now: u64) -> Result<WorkspaceChoi
             folder: folder.to_string(),
             last_opened,
             last_system: None,
+            layout,
         });
         Ok(())
     })
@@ -313,6 +383,7 @@ pub fn save_build_layout(v: &serde_json::Value) -> Result<(), StoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layout::Layout;
     use serial_test::serial;
 
     fn entry(id: &str, last_opened: u64) -> WorkspaceEntry {
@@ -322,6 +393,7 @@ mod tests {
             folder: format!("/{id}"),
             last_opened,
             last_system: None,
+            layout: Default::default(),
         }
     }
 
@@ -454,12 +526,12 @@ mod tests {
     #[serial]
     fn add_workspace_makes_a_unique_id() {
         let _home = with_home();
-        add_workspace("My Repo", "/one", 10).unwrap();
-        let second = add_workspace("My Repo", "/two", 10).unwrap();
+        add_workspace("My Repo", "/one", Some(Layout::Workspace), 10).unwrap();
+        let second = add_workspace("My Repo", "/two", Some(Layout::Workspace), 10).unwrap();
         let ids: Vec<&str> = second.workspaces.iter().map(|w| w.id.as_str()).collect();
         assert_eq!(ids, ["my-repo", "my-repo-2"]);
         assert_eq!(second.current.as_deref(), Some("my-repo-2"));
-        let odd = add_workspace("!!!", "/three", 10).unwrap();
+        let odd = add_workspace("!!!", "/three", Some(Layout::Workspace), 10).unwrap();
         assert_eq!(odd.workspaces.last().unwrap().id, "workspace");
     }
 
@@ -482,6 +554,40 @@ mod tests {
         let prev = std::env::var_os("KATA_HOME");
         std::env::set_var("KATA_HOME", temp.path());
         HomeGuard { temp, prev }
+    }
+
+    #[test]
+    #[serial]
+    fn a_single_repo_entry_keeps_its_layout() {
+        let _home = with_home();
+        add_workspace("workspaces", "D:/workspaces", Some(Layout::Workspace), 10).unwrap();
+        add_workspace("kata", "D:/tmp/kata", Some(Layout::SingleRepo), 20).unwrap();
+        let list = load_workspaces();
+        let seen: Vec<(&str, Option<Layout>)> =
+            list.iter().map(|w| (w.folder.as_str(), w.layout)).collect();
+        assert_eq!(
+            seen,
+            vec![
+                ("D:/workspaces", Some(Layout::Workspace)),
+                ("D:/tmp/kata", Some(Layout::SingleRepo))
+            ]
+        );
+        // A file written before the field existed reads as a workspace.
+        let old = r#"[{"id":"old","name":"old","folder":"/old","last_opened":3}]"#;
+        std::fs::write(workbench_dir().unwrap().join("workspaces.json"), old).unwrap();
+        assert_eq!(load_workspaces()[0].layout, Some(Layout::Workspace));
+    }
+
+    #[test]
+    #[serial]
+    fn adding_a_saved_root_selects_that_entry() {
+        let _home = with_home();
+        add_workspace("kata", "D:/tmp/kata", Some(Layout::SingleRepo), 10).unwrap();
+        add_workspace("other", "D:/tmp/other", Some(Layout::Workspace), 20).unwrap();
+        let choice =
+            add_workspace("kata again", "d:/tmp/kata/", Some(Layout::SingleRepo), 30).unwrap();
+        assert_eq!(choice.workspaces.len(), 2);
+        assert_eq!(choice.current.as_deref(), Some("kata"));
     }
 
     fn link(run_id: &str) -> RunLink {
@@ -607,6 +713,25 @@ mod tests {
         assert_eq!(w[0].id, "w1");
         assert_eq!(w[0].folder, "D:/acme");
         assert_eq!(w[0].last_opened, 0);
+    }
+
+    #[test]
+    fn an_entry_without_a_layout_is_a_workspace_and_a_null_layout_is_not_known() {
+        let w: Vec<WorkspaceEntry> = serde_json::from_str(
+            r#"[{"id":"old","name":"old","folder":"/old","last_opened":3},
+                {"id":"new","name":"new","folder":"/new","last_opened":4,"layout":null},
+                {"id":"one","name":"one","folder":"/one","last_opened":5,"layout":"single-repo"}]"#,
+        )
+        .unwrap();
+        let layouts: Vec<Option<Layout>> = w.iter().map(|e| e.layout).collect();
+        assert_eq!(
+            layouts,
+            [Some(Layout::Workspace), None, Some(Layout::SingleRepo)]
+        );
+        // A layout that is not known yet is written as null, so it reads back as not known.
+        let again: Vec<WorkspaceEntry> =
+            serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
+        assert_eq!(again, w);
     }
 
     #[test]

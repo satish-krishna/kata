@@ -30,7 +30,7 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/given';
 import { safetyRules, type StageAction } from '../../lib/sdlc';
-import { MOCK_BUILD_CHANGE, MOCK_COPY_CHANGE, MOCK_COPY_FIX, MOCK_DONE_CHANGE, MOCK_NOT_LISTED, MOCK_REFUSED_CHANGE, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_COPY_CHANGE, MOCK_COPY_FIX, MOCK_DONE_CHANGE, MOCK_NOT_LISTED, MOCK_REFUSED_CHANGE, MOCK_SINGLE_CHANGE, MOCK_SINGLE_SYSTEM, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePageViewModel } from './change-page.view-model';
 
@@ -44,8 +44,8 @@ const NO_PLACE = 'Could not find where this change lives: the ai-sdlc program co
 const toastText = () => toastState.toasts().map((t) => String(t.title)).join(' | ');
 
 /** `confirm` (the default) lets the preview confirm every run at once, so a test about something else never meets it; `real` leaves it to the test. */
-function setup(change = PHOTOS_CHANGE, transport = new MockTransport(), preview: 'confirm' | 'real' = 'confirm') {
-  const params = new BehaviorSubject(convertToParamMap({ system: 'commerce', change }));
+function setup(change = PHOTOS_CHANGE, transport = new MockTransport(), preview: 'confirm' | 'real' = 'confirm', system = 'commerce') {
+  const params = new BehaviorSubject(convertToParamMap({ system, change }));
   TestBed.configureTestingModule({
     providers: [
       provideRouter([]),
@@ -616,8 +616,8 @@ describe('ChangePageViewModel', () => {
   it('the current workspace is the one the backend names, not the newest last_opened', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([
-      { id: 'old', name: 'old', folder: MOCK_WORKSPACE_FOLDER, last_opened: 5 },
-      { id: 'new', name: 'new', folder: MOCK_WORKSPACE_FOLDER, last_opened: 50 },
+      { id: 'old', name: 'old', folder: MOCK_WORKSPACE_FOLDER, last_opened: 5, layout: 'workspace' },
+      { id: 'new', name: 'new', folder: MOCK_WORKSPACE_FOLDER, last_opened: 50, layout: 'workspace' },
     ]);
     vi.spyOn(transport, 'sdlcCurrentWorkspace').mockResolvedValue('old');
     const { vm } = setup(PHOTOS_CHANGE, transport);
@@ -800,7 +800,7 @@ describe('ChangePageViewModel', () => {
 
     it('hides the branch chip when the master repository is on the change branch', async () => {
       const transport = new MockTransport();
-      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: `change/${PHOTOS_CHANGE}`, others: [], default_base: 'main' });
+      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: `change/${PHOTOS_CHANGE}`, others: [], default_base: 'main', switchable: true, base_refusal: null });
       const { vm } = setup(PHOTOS_CHANGE, transport);
       await ready(vm);
       expect(vm.masterBranch()).toBe(`change/${PHOTOS_CHANGE}`);
@@ -811,7 +811,7 @@ describe('ChangePageViewModel', () => {
       const RECORDED = 'feat/PROJ-123-password-reset';
       const recorded = (current: string) => {
         const transport = new MockTransport();
-        vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current, others: [], default_base: 'main' });
+        vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current, others: [], default_base: 'main', switchable: true, base_refusal: null });
         const real = transport.sdlcChangeRepos.bind(transport);
         vi.spyOn(transport, 'sdlcChangeRepos').mockImplementation(async (...args) => (await real(...args)).map((r) => ({ ...r, branch: RECORDED })));
         return transport;
@@ -1902,6 +1902,50 @@ describe('ChangePageViewModel: where the change lives', () => {
     await vm.showDoc('intent');
     expect(vm.resolutionError()).toBeNull();
     expect(vm.doc()).toContain('The copy holds this intent.');
+  });
+});
+
+describe('ChangePageViewModel of a single-repo repository', () => {
+  const demoAt = (query: string | null) => history.replaceState({}, '', query ? `/?${query}` : '/');
+  afterEach(() => demoAt(null));
+  const opened = async () => {
+    demoAt('demo=single-repo');
+    const transport = new MockTransport();
+    const branches = vi.spyOn(transport, 'sdlcBranches');
+    const checkout = vi.spyOn(transport, 'sdlcCheckout');
+    const open = vi.spyOn(transport, 'sdlcOpenCopyFolder');
+    const made = setup(MOCK_SINGLE_CHANGE, transport, 'confirm', MOCK_SINGLE_SYSTEM);
+    await ready(made.vm);
+    return { ...made, branches, checkout, open };
+  };
+
+  it('a single-repo change shows its copy folder and branch', async () => {
+    const { vm, open } = await opened();
+    await vi.waitFor(() => expect(vm.copy()).toEqual({ folder: `D:/.ai-sdlc/copies/${MOCK_SINGLE_CHANGE}`, branch: `change/${MOCK_SINGLE_CHANGE}` }));
+    await vm.openCopyFolder();
+    expect(open).toHaveBeenCalledWith({ workspace: 'D:/kata', system: MOCK_SINGLE_SYSTEM, change: MOCK_SINGLE_CHANGE });
+  });
+
+  it('no switch of the checkout is offered for a single-repo change (R6.1)', async () => {
+    const { vm, branches, checkout } = await opened();
+    expect(branches).toHaveBeenCalledWith('D:/kata');
+    expect(branches.mock.calls.every((args) => args.length === 1)).toBe(true);
+    expect(vm.state()).toBe('ready');
+    expect(checkout).not.toHaveBeenCalled();
+  });
+});
+
+describe('ChangePageViewModel master folder', () => {
+  it('reads the master at the folder the scan names, not at the workspace folder joined with its name', async () => {
+    const ELSEWHERE = 'E:/elsewhere/the-master';
+    const transport = new MockTransport();
+    const real = transport.sdlcScan.bind(transport);
+    vi.spyOn(transport, 'sdlcScan').mockImplementation(async (folder) => ({ ...(await real(folder)), master_folder: ELSEWHERE }));
+    const branches = vi.spyOn(transport, 'sdlcBranches');
+    const { vm } = setup(PHOTOS_CHANGE, transport);
+    await ready(vm);
+    expect(branches).toHaveBeenCalledWith(ELSEWHERE);
+    expect(branches.mock.calls.every(([master]) => master === ELSEWHERE)).toBe(true);
   });
 });
 

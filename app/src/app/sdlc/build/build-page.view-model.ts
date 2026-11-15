@@ -10,6 +10,7 @@ import type { ReviewStanding } from '@bindings/ReviewStanding';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import type { ChangeView } from '@bindings/ChangeView';
+import type { Layout } from '@bindings/Layout';
 import type { HeldRepo } from '@bindings/HeldRepo';
 import type { Readiness } from '@bindings/Readiness';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
@@ -62,6 +63,8 @@ export type BuildContext = {
   change: string;
   /** Every product repository the system names, whether or not the plan does. */
   systemRepos: string[];
+  /** The layout of the repository the change is in; a single-repo repository builds one app at a time. */
+  layout?: Layout;
 };
 
 /** One run of the selected repository, as the observe pane shows it. */
@@ -594,6 +597,8 @@ export class BuildPageViewModel {
 
   /** What the Changes view reads, once the page is loaded. */
   readonly changesContext = this.changes.asReadonly();
+  /** True when the change is in a single-repo repository: its apps build one after another. */
+  readonly oneAtATime = computed(() => this.loaded()?.ctx.layout === 'single-repo');
   /** Turns taken by every run of the build, so the Changes view reads again as the agents work. */
   readonly turns = computed(() => this.log().reduce((n, e) => n + this.snapOf(e.id).events.filter((ev) => ev.type === 'turn').length, 0));
   /** Bash calls finished by every run of the build; each one may have committed a build log row. */
@@ -1404,7 +1409,7 @@ export class BuildPageViewModel {
     const ctx = this.ctx;
     const seq = ++this.boardSeq;
     try {
-      const board = await this.transport.sdlcBuildBoard(repos, status, state?.going ?? [], state?.stopped ?? {});
+      const board = await this.transport.sdlcBuildBoard(repos, status, state?.going ?? [], state?.stopped ?? {}, state?.appTurn ?? null);
       if (seq === this.boardSeq && ctx !== null && this.shows(ctx)) this.board.set(board);
     } catch (e) {
       if (seq === this.boardSeq) this.toasts.error(`Could not read where the build stands: ${message(e)}`);
@@ -1606,6 +1611,22 @@ export class BuildPageViewModel {
     this.refusal.set(null);
   }
 
+  /** True from the click on a preview or the round until its dialog opens or fails; a click in between is ignored. */
+  private opening = false;
+
+  /** Show the page's progress line while a dialog is being prepared; the returned function ends it, once, when the dialog opens or the attempt ends. */
+  private startOpening(step: ProgressStepId, label: string): () => void {
+    this.opening = true;
+    this.progress.begin(step, label, 'build');
+    let open = true;
+    return () => {
+      if (!open) return;
+      open = false;
+      this.opening = false;
+      this.progress.end('build');
+    };
+  }
+
   /** Which preview is the latest; a preview that another has superseded neither opens nor changes the page. */
   private previewSeq = 0;
 
@@ -1644,17 +1665,19 @@ export class BuildPageViewModel {
    */
   async openPreview(which: 'start' | 'continue' | 'review'): Promise<boolean> {
     const ref = this.ref();
-    if (ref === null) return false;
+    if (ref === null || this.opening) return false;
     const limit = which === 'review' ? REVIEW_TIMEOUT_SECS : DEFAULT_BUILD_SECS;
     const form: StartForm = { timeoutSecs: this.lastForm?.timeoutSecs ?? limit };
     const kind = { start: 'start', continue: 'continue-all', review: 'manual-review' } as const;
     const title = { start: 'Start build', continue: 'Continue build', review: 'Run review' } as const;
     const seq = ++this.previewSeq;
     this.dialogMode.set(which === 'review' ? null : which);
+    const opened = this.startOpening('opening-preview', progressLabels.openingPreview());
     let result;
     try {
       const sections = await this.sections(kind[which], null, form);
       if (seq !== this.previewSeq) return false;
+      opened();
       result = await this.preview.openBuild({ title: title[which], kind: kind[which], sections, from: this.previewFrom(), limitSecs: limit });
     } catch (e) {
       if (seq === this.previewSeq) {
@@ -1662,6 +1685,8 @@ export class BuildPageViewModel {
         this.dialogMode.set(null);
       }
       return false;
+    } finally {
+      opened();
     }
     if (seq !== this.previewSeq) return false;
     this.dialogMode.set(null);
@@ -1674,8 +1699,9 @@ export class BuildPageViewModel {
   /** Open the round dialog from the backend's offer and, once the engineer confirms the plan it shows, start the round. True when it started. */
   async openRound(): Promise<boolean> {
     const ref = this.ref();
-    if (ref === null) return false;
+    if (ref === null || this.opening) return false;
     const seq = ++this.previewSeq;
+    const opened = this.startOpening('opening-preview', progressLabels.openingRound());
     let result;
     try {
       const [[offer, backendPicks], view] = await Promise.all([this.transport.sdlcRoundOffer(ref), this.transport.sdlcReviewView(ref)]);
@@ -1687,6 +1713,7 @@ export class BuildPageViewModel {
       const form: StartForm = { timeoutSecs: this.lastForm?.timeoutSecs ?? DEFAULT_BUILD_SECS, rounds: offer.repos.map((repo) => ({ repo, instructions: '', summary: '' })) };
       const sections = await this.sections('round', null, form);
       if (seq !== this.previewSeq) return false;
+      opened();
       result = await this.preview.openBuild({
         title: 'Start round',
         kind: 'round',
@@ -1703,6 +1730,8 @@ export class BuildPageViewModel {
         this.closeRound();
       }
       return false;
+    } finally {
+      opened();
     }
     if (seq !== this.previewSeq) return false;
     this.closeRound();

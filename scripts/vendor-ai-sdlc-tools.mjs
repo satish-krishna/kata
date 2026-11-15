@@ -48,5 +48,13 @@ function copyNormalized(from, to) {
 }
 
 copyNormalized(source, target);
+// The program reads its workspace instructions templates from <plugin>/references/templates, which is
+// tests/references/templates relative to the vendored tools.
+const templates = join(repo, 'crates', 'kata-sdlc', 'tests', 'references', 'templates');
+rmSync(templates, { recursive: true, force: true });
+mkdirSync(templates, { recursive: true });
+for (const name of ['workspace.md', 'workspace-single-repo.md']) {
+  copyNormalized(join(plugin, 'references', 'templates', name), join(templates, name));
+}
 writeFileSync(join(target, 'VERSION'), manifest.version + '\n');
 console.log(`vendored ai-sdlc tools ${manifest.version} from ${source}`);
