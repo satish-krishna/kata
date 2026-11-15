@@ -46,8 +46,7 @@ pub fn read_list(answer: Value) -> Result<ChangeList, ProgramError> {
 }
 
 impl Program {
-    /// The changes of `system` with the few facts a list row needs, open and finished. Needs hoshin
-    /// 1.3.0 or later.
+    /// The changes of `system` with the few facts a list row needs, open and finished.
     pub fn list(&self, place: &Place, system: &str) -> Result<ChangeList, ProgramError> {
         read_list(self.run(&["list", "--json", "--system", system], place)?)
     }

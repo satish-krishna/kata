@@ -155,8 +155,8 @@ fn saved(folder: &Path) -> Option<Layout> {
 
 /// The program's `resolve --json` answer for `folder` and the folder's layout: the one place the saved layout is
 /// read and one not known yet is filled. A saved layout is the answer, whatever the program says, and the
-/// program is asked in its form. Otherwise the program's answer names the layout (a program before 1.4.0 prints
-/// none; then, and only then, the marker's `layout` field says it), and a saved entry that has none stores it
+/// program is asked in its form. Otherwise the program's answer names the layout (an answer that names none leaves
+/// it to the marker's `layout` field, and only then), and a saved entry that has none stores it
 /// once, when the program placed the folder.
 pub(crate) fn placed(program: &Program, folder: &Path) -> Result<(Value, Layout), ProgramError> {
     let saved = saved(folder);
@@ -195,7 +195,7 @@ fn repository_root(folder: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// The layout `resolve --json` names. A plugin before 1.4.0 prints none, which reads as the workspace layout.
+/// The layout `resolve --json` names. An answer that names none reads as the workspace layout.
 pub(crate) fn read(layout: &Value) -> Result<Layout, ProgramError> {
     if layout.is_null() {
         return Ok(Layout::Workspace);

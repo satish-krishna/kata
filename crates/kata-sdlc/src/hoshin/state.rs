@@ -154,7 +154,7 @@ pub struct ChangeState {
     pub review: ReviewState,
     pub fix: Option<crate::format::FixState>,
     pub ready: Ready,
-    /// Null when the change is open; answers before hoshin 1.3.0 have no such field.
+    /// Null when the change is open; an answer that predates the field has none.
     #[serde(default)]
     #[cfg_attr(feature = "ts", ts(skip))]
     pub finished: Option<Finished>,
