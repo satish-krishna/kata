@@ -270,14 +270,16 @@ mod tests {
                 head,
             };
             let started = program()
-                .run(
+                .step_long(
                     &[
                         "change", "start", "--json", "--system", SYSTEM, "--change", CHANGE,
                         "--type", "feat", "--scope", "demo", "--title", "Greeting",
                     ],
                     &fx.place(),
+                    &kata_core::proc::CancelToken::new(),
+                    None,
                 )
-                .unwrap();
+                .json;
             assert_eq!(started["outcome"], "passed", "{started}");
             fx
         }
@@ -542,14 +544,16 @@ mod tests {
             workspace: dir.path().to_path_buf(),
         };
         let started = program()
-            .run(
+            .step_long(
                 &[
                     "change", "start", "--json", "--system", "kata", "--change", CHANGE, "--type",
                     "feat", "--scope", "demo", "--title", "Greeting",
                 ],
                 &place,
+                &kata_core::proc::CancelToken::new(),
+                None,
             )
-            .unwrap();
+            .json;
         assert_eq!(started["outcome"], "passed", "{started}");
         // The change holds its intent in its copy, which is what makes `state` find it.
         let doc = std::path::PathBuf::from(started["details"]["copy"].as_str().unwrap())

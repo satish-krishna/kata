@@ -374,7 +374,7 @@ mod tests {
         };
         let change = "2026-11-01-greeting";
         let started = program()
-            .run(
+            .step_long(
                 &[
                     "change",
                     "start",
@@ -393,8 +393,10 @@ mod tests {
                     &ws.display().to_string(),
                 ],
                 &place,
+                &kata_core::proc::CancelToken::new(),
+                None,
             )
-            .unwrap();
+            .json;
         assert_eq!(started["outcome"], "passed", "{started}");
         let copy = started["details"]["copy"].as_str().unwrap().to_string();
         testutil::write(

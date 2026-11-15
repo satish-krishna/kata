@@ -84,15 +84,18 @@ fn workspace(parent: &Path) -> PathBuf {
 
 /// Starts the change through the program in `place`, then commits an intent in its copy so it is listed.
 fn start(program: &Program, place: &Place) {
+    // `change start` is a long step: it runs through `step_long`, never `run`.
     let started = program
-        .run(
+        .step_long(
             &[
                 "change", "start", "--json", "--system", SYSTEM, "--change", CHANGE, "--type",
                 "feat", "--scope", "X-1", "--title", "Saved",
             ],
             place,
+            &kata_core::proc::CancelToken::new(),
+            None,
         )
-        .unwrap();
+        .json;
     assert_eq!(started["outcome"], "passed", "{started}");
     let copy = place.workspace.join(".ai-sdlc/copies").join(CHANGE);
     let folder = copy.join(format!("intent/{SYSTEM}/{CHANGE}"));

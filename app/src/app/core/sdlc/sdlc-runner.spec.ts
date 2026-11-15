@@ -526,6 +526,19 @@ describe('SdlcRunner.newChange', () => {
       expect(toasts.error).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['with the workflow\'s answer', ['the plugin ran out of room']],
+      ['without an answer', []],
+    ])('a start stopped %s is handed back to the caller, which says it was stopped; no toast', async (_row, answer) => {
+      const { runner, fake, lock, navigate, toasts } = setup();
+      fake.started = { outcome: 'stopped', answer };
+      const outcome = await runner.newChange(target, 'commerce', 'flag prices', 'full');
+      expect(outcome).toEqual({ kind: 'startStopped', answer });
+      expect(toasts.info).not.toHaveBeenCalled();
+      expect(lock.runAgent).not.toHaveBeenCalled();
+      expect(navigate).not.toHaveBeenCalled();
+    });
+
     it("the team's naming setting is broken: the plugin's reason is shown and nothing is asked for", async () => {
       const { runner, fake, lock, toasts } = setup();
       const problems = ['the team naming on the base branch: a naming setting needs both a branch pattern and a pull request title pattern'];

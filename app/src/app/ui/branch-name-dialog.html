@@ -18,6 +18,11 @@
       </div>
     }
     <hlm-dialog-footer>
+      @if (step(); as running) {
+        <button hlmBtn variant="secondary" size="sm" type="button" [attr.aria-label]="running.stop" data-testid="stop-step" (click)="stop.emit()">
+          <ng-icon name="lucideSquare" />Stop
+        </button>
+      }
       <button hlmBtn variant="ghost" size="sm" type="button" (click)="cancel.emit()">Cancel</button>
       <button hlmBtn variant="primary" size="sm" type="button" [disabled]="!ready()" (click)="submit()">Accept</button>
     </hlm-dialog-footer>

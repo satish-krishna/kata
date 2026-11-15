@@ -16,4 +16,4 @@ apps: Array<string>,
 /**
  * The apps the plan named that the change did not touch; empty when the answer has none.
  */
-untouched: Array<string>, } | { "kind": "notReady", problems: Array<string>, } | { "kind": "partial", pushed: Array<string>, opened: Array<RecordedPullRequest>, failed: Array<string>, } | { "kind": "couldNotRun", message: string, };
+untouched: Array<string>, } | { "kind": "notReady", problems: Array<string>, } | { "kind": "partial", pushed: Array<string>, opened: Array<RecordedPullRequest>, failed: Array<string>, } | { "kind": "couldNotRun", message: string, } | { "kind": "stopped", pullRequests: Array<RecordedPullRequest>, };

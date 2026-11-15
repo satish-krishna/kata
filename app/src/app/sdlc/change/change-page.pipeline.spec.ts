@@ -178,6 +178,26 @@ describe('ChangePage: the full pipeline instead of a drafted fix', () => {
     expect(error).not.toHaveBeenCalled();
   });
 
+  it('a stopped start of the new change is said in a toast and leaves the fix open', async () => {
+    const { container, reject, newChange, error } = await mountFix();
+    const info = vi.spyOn(TestBed.inject(ToastStore), 'info');
+    newChange.mockResolvedValue({ kind: 'startStopped', answer: ['the plugin ran out of room'] });
+    await take(container);
+    await start();
+    await vi.waitFor(() => expect(info).toHaveBeenCalledWith('Stopped. The start did not finish: the plugin ran out of room'));
+    expect(reject).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('a stopped rejection of the fix names the fix, not the intent', async () => {
+    const { container, reject } = await mountFix();
+    const info = vi.spyOn(TestBed.inject(ToastStore), 'info');
+    reject.mockResolvedValue({ outcome: 'stopped', rejected: true });
+    await take(container);
+    await start();
+    await vi.waitFor(() => expect(info).toHaveBeenCalledWith(`Stopped. The fix is rejected; its copy was not removed (the fix ${FIX})`));
+  });
+
   it('a new change that throws leaves the fix open and says so (R7.1)', async () => {
     const { container, reject, newChange, error } = await mountFix();
     newChange.mockRejectedValue(new Error('boom'));

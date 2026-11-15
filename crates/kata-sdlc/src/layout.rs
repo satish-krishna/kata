@@ -580,14 +580,16 @@ if (args[0] === 'resolve') {
         // Which apps a change touched, and each app's head.
         let base = testutil::run(&root, &["rev-parse", "HEAD"]).unwrap();
         let started = program
-            .run(
+            .step_long(
                 &[
                     "change", "start", "--json", "--system", "kata", "--change", CHANGE, "--type",
                     "feat", "--scope", "demo", "--title", "Greeting",
                 ],
                 &place,
+                &kata_core::proc::CancelToken::new(),
+                None,
             )
-            .unwrap();
+            .json;
         assert_eq!(started["outcome"], "passed", "{started}");
         let copy = tmp.path().join(".ai-sdlc").join("copies").join(CHANGE);
         testutil::commit_file(
@@ -636,7 +638,7 @@ if (args[0] === 'resolve') {
 
         // Whether an app may start building now: the program refuses a second app.
         let build = |app: &str| {
-            program.step(
+            program.step_long(
                 &[
                     "run",
                     "build.start",
@@ -649,6 +651,8 @@ if (args[0] === 'resolve') {
                     app,
                 ],
                 &place,
+                &kata_core::proc::CancelToken::new(),
+                None,
             )
         };
         assert_eq!(

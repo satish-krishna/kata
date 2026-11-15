@@ -90,6 +90,11 @@ impl RepoKey {
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    /// The normalized path the key was made from, for ordering.
+    pub fn path(&self) -> &str {
+        &self.key
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

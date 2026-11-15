@@ -3,4 +3,4 @@
 /**
  * What confirming the removal came to.
  */
-export type RemoveOutcome = { "outcome": "removed", kept: Array<string>, } | { "outcome": "keep", uncommitted: Array<string>, } | { "outcome": "refused", problems: Array<string>, } | { "outcome": "couldNotRun", message: string, };
+export type RemoveOutcome = { "outcome": "removed", kept: Array<string>, } | { "outcome": "keep", uncommitted: Array<string>, } | { "outcome": "refused", problems: Array<string>, } | { "outcome": "stopped", kept: Array<string>, } | { "outcome": "couldNotRun", message: string, };

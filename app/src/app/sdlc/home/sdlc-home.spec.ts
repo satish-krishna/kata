@@ -181,6 +181,22 @@ describe('SdlcHome', () => {
   });
 });
 
+describe('SdlcHome stopped step', () => {
+  it('R16.1: a stopped start stays on the page as a note with a warning dot, not a toast', async () => {
+    const { container, fixture, transport } = await mount();
+    const vm = fixture.debugElement.injector.get(SdlcHomeViewModel);
+    vi.spyOn(transport, 'sdlcStartChange').mockResolvedValue({ outcome: 'stopped', answer: [] });
+    const starting = vm.newChange('commerce', 'flag prices', 'full');
+    await confirmPreview();
+    await starting;
+    await settle();
+    const note = container.querySelector('[data-testid="step-stopped"]')!;
+    expect(note.getAttribute('role')).toBe('status');
+    expect(note.querySelector('.k-status--warning .k-status__dot')).not.toBeNull();
+    expect(note.textContent!.trim()).toBe('Stopped. The start did not finish');
+  });
+});
+
 describe('SdlcHome old per-machine checks', () => {
   afterEach(() => history.replaceState({}, '', '/'));
 

@@ -1,11 +1,14 @@
 //! How the Workbench and kata start a child process: hidden on Windows, and never `git` or `gh`:
 //! the ai-sdlc plugin starts those itself.
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::io::{Read, Write};
+use std::marker::PhantomData;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -36,46 +39,50 @@ pub fn hidden_command(program: impl AsRef<OsStr>) -> Result<Command, SpawnRefuse
     Ok(new_hidden(program))
 }
 
-/// The programs started while a [`SpawnLog`] is open; `None` when none is.
-static SPAWNS: Mutex<Option<Vec<String>>> = Mutex::new(None);
+thread_local! {
+    /// The programs this thread started while a [`SpawnLog`] is open on it; `None` when none is.
+    static SPAWNS: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+}
 
-/// A test hook: while it is held, every child process made through this module records its program,
-/// as the file name without its extension in lowercase (`C:\nodejs\node.exe` records `node`). Nothing is
-/// recorded while no log is open. One log at a time: opening one starts an empty record.
-pub struct SpawnLog(());
+/// A test hook: while it is held, every child process this thread makes through this module records its
+/// program, as the file name without its extension in lowercase (`C:\nodejs\node.exe` records `node`).
+/// Nothing is recorded while no log is open. The log belongs to the thread that opened it and sees only
+/// what that thread starts, so tests running in parallel do not land in each other's logs. A program
+/// started from another thread is not seen: every flow a log watches starts its programs on the calling
+/// thread (`run_limited` starts its child before it hands anything to a reader thread). One log per
+/// thread at a time: opening one starts an empty record.
+pub struct SpawnLog(PhantomData<*const ()>);
 
 impl SpawnLog {
     pub fn open() -> SpawnLog {
-        *SPAWNS.lock().unwrap_or_else(|e| e.into_inner()) = Some(Vec::new());
-        SpawnLog(())
+        SPAWNS.with(|log| *log.borrow_mut() = Some(Vec::new()));
+        SpawnLog(PhantomData)
     }
 
-    /// The programs started since the log opened, in the order they started.
+    /// The programs this thread started since the log opened, in the order they started.
     pub fn programs(&self) -> Vec<String> {
-        SPAWNS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-            .unwrap_or_default()
+        SPAWNS.with(|log| log.borrow().clone().unwrap_or_default())
     }
 }
 
 impl Drop for SpawnLog {
     fn drop(&mut self) {
-        *SPAWNS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        SPAWNS.with(|log| *log.borrow_mut() = None);
     }
 }
 
 /// The one place a child process is created: no console window on Windows. [`hidden_command`] refuses first.
 fn new_hidden(program: &OsStr) -> Command {
-    if let Some(log) = SPAWNS.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-        let name = Path::new(program)
-            .file_stem()
-            .unwrap_or(program)
-            .to_string_lossy()
-            .to_lowercase();
-        log.push(name);
-    }
+    SPAWNS.with(|log| {
+        if let Some(log) = log.borrow_mut().as_mut() {
+            let name = Path::new(program)
+                .file_stem()
+                .unwrap_or(program)
+                .to_string_lossy()
+                .to_lowercase();
+            log.push(name);
+        }
+    });
     #[allow(unused_mut)] // `creation_flags` needs it on Windows
     #[allow(clippy::disallowed_methods)] // the one place a child process is started
     let mut command = Command::new(program);
@@ -98,6 +105,55 @@ pub enum StartError {
     Io(#[from] std::io::Error),
 }
 
+/// A flag one thread raises to stop a call another thread is waiting on. Clones share the flag.
+#[derive(Clone, Debug, Default)]
+pub struct CancelToken(Arc<AtomicBool>);
+
+impl CancelToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Raises the flag; the call it was given to ends its wait and kills the child's tree.
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// What ends a [`Limited`] call before the child exits on its own. There is no variant with neither a
+/// time limit nor a token, so no call can be both unbounded and unstoppable.
+#[derive(Clone, Debug)]
+pub enum Bound {
+    /// A time limit.
+    Within(Duration),
+    /// A token only: the call waits as long as the child runs, until the token is cancelled.
+    UntilCancelled(CancelToken),
+    /// Whichever comes first, the time limit or the token.
+    WithinOrCancelled(Duration, CancelToken),
+}
+
+impl Bound {
+    /// The time limit, when the bound has one.
+    pub fn limit(&self) -> Option<Duration> {
+        match self {
+            Bound::Within(limit) | Bound::WithinOrCancelled(limit, _) => Some(*limit),
+            Bound::UntilCancelled(_) => None,
+        }
+    }
+
+    /// The token, when the bound has one.
+    pub fn token(&self) -> Option<&CancelToken> {
+        match self {
+            Bound::UntilCancelled(token) | Bound::WithinOrCancelled(_, token) => Some(token),
+            Bound::Within(_) => None,
+        }
+    }
+}
+
 /// One command to run to completion within a time limit; see [`run_limited`].
 pub struct Limited<'a> {
     pub program: &'a Path,
@@ -106,7 +162,7 @@ pub struct Limited<'a> {
     pub env: &'a [(&'a str, &'a std::ffi::OsStr)],
     /// Bytes to write to the child's stdin; `None` gives it a null stdin.
     pub stdin: Option<&'a [u8]>,
-    pub limit: Duration,
+    pub bound: Bound,
     /// Keep all of stdout apart (in `Outcome::Exited::stdout`) and let the tail hold stderr only.
     pub keep_stdout: bool,
 }
@@ -122,6 +178,8 @@ pub enum Outcome {
     },
     /// It ran past the limit and its whole process tree was killed.
     TimedOut { tail: String },
+    /// Its [`CancelToken`] was cancelled and its whole process tree was killed.
+    Cancelled { tail: String },
     /// It could not be started.
     NotStarted(StartError),
     /// It was started but waiting for it failed; its tree was killed.
@@ -179,11 +237,16 @@ fn run_inner(spec: &Limited, on_line: Option<LineSink>) -> Outcome {
         readers.push(spawn_reader(stderr, Arc::clone(&tail)));
     }
 
-    let deadline = Instant::now() + spec.limit;
+    let deadline = spec.bound.limit().map(|limit| Instant::now() + limit);
+    let mut cancelled = false;
     let status = loop {
         match tree.try_wait() {
             Ok(Some(status)) => break Some(status),
-            Ok(None) if Instant::now() >= deadline => break None,
+            Ok(None) if spec.bound.token().is_some_and(CancelToken::is_cancelled) => {
+                cancelled = true;
+                break None;
+            }
+            Ok(None) if deadline.is_some_and(|deadline| Instant::now() >= deadline) => break None,
             Ok(None) => thread::sleep(POLL),
             Err(e) => {
                 tree.kill();
@@ -203,6 +266,7 @@ fn run_inner(spec: &Limited, on_line: Option<LineSink>) -> Outcome {
             tail,
             stdout: std::mem::take(&mut *kept.lock().unwrap_or_else(|e| e.into_inner())),
         },
+        None if cancelled => Outcome::Cancelled { tail },
         None => Outcome::TimedOut { tail },
     }
 }
@@ -520,13 +584,22 @@ mod tests {
         let _ = hidden_command("/opt/tools/Node.EXE");
         let _ = hidden_command("/usr/bin/claude");
         let seen = log.programs();
-        // Other tests of this binary may make commands while the log is open, so only membership is certain.
-        assert!(
-            seen.contains(&"node".to_string()) && seen.contains(&"claude".to_string()),
-            "{seen:?}"
-        );
+        assert_eq!(seen, ["node", "claude"]);
         drop(log);
         assert!(SpawnLog::open().programs().is_empty());
+    }
+
+    #[test]
+    fn a_spawn_log_does_not_record_what_another_thread_starts() {
+        let log = SpawnLog::open();
+        thread::spawn(|| {
+            let _ = hidden_command("node");
+        })
+        .join()
+        .unwrap();
+        assert!(log.programs().is_empty(), "{:?}", log.programs());
+        let _ = hidden_command("claude");
+        assert_eq!(log.programs(), ["claude"]);
     }
 
     /// A program name that is `AsRef<OsStr>` but not `AsRef<Path>`.
@@ -546,13 +619,13 @@ mod tests {
 
     #[cfg(windows)]
     fn fake_claude() -> std::path::PathBuf {
-        // The test binary lives in target/<profile>/deps; fake-claude one level up.
         let exe = std::env::current_exe().unwrap();
-        exe.parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("fake-claude.exe")
+        crate::fsutil::find_upward(exe.parent().unwrap(), "fake-claude.exe").unwrap_or_else(|| {
+            panic!(
+                "build fake-claude first (cargo build -p kata-core --bin fake-claude); none found above {}",
+                exe.display()
+            )
+        })
     }
 
     /// Starts `fake-claude` as a relay with no console of its own (DETACHED_PROCESS), so a child
@@ -649,7 +722,7 @@ mod tests {
                 cwd,
                 env: &[],
                 stdin: None,
-                limit: Duration::from_secs(limit_secs),
+                bound: Bound::Within(Duration::from_secs(limit_secs)),
                 keep_stdout: false,
             }
         }
@@ -751,6 +824,76 @@ mod tests {
                 !dir.path().join("late.txt").exists(),
                 "a child survived the timeout"
             );
+        }
+
+        /// A script that writes `late.txt` about three seconds after it starts, if it is still alive.
+        fn late_writer() -> (&'static str, Vec<OsString>) {
+            script(
+                "ping -n 4 127.0.0.1 >NUL& echo late> late.txt",
+                "sleep 3; touch late.txt",
+            )
+        }
+
+        fn cancel_after(token: &CancelToken, millis: u64) {
+            let token = token.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(millis));
+                token.cancel();
+            });
+        }
+
+        #[test]
+        fn cancelling_kills_the_tree() {
+            let dir = tempfile::tempdir().unwrap();
+            let token = CancelToken::new();
+            let (program, args) = late_writer();
+            let mut run = spec(program, args, dir.path(), 0);
+            run.bound = Bound::UntilCancelled(token.clone());
+            cancel_after(&token, 200);
+            let started = Instant::now();
+            let outcome = run_limited(&run);
+            assert!(
+                matches!(outcome, Outcome::Cancelled { .. }),
+                "expected Cancelled, got {outcome:?}"
+            );
+            assert!(started.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_secs(5));
+            assert!(
+                !dir.path().join("late.txt").exists(),
+                "a child survived the cancel"
+            );
+        }
+
+        #[test]
+        fn a_cancelled_and_limited_call_ends_on_whichever_comes_first() {
+            let dir = tempfile::tempdir().unwrap();
+            let (program, args) = script("ping -n 31 127.0.0.1 >NUL", "sleep 30");
+
+            // The token comes first.
+            let token = CancelToken::new();
+            let mut run = spec(program, args.clone(), dir.path(), 0);
+            run.bound = Bound::WithinOrCancelled(Duration::from_secs(20), token.clone());
+            cancel_after(&token, 200);
+            let started = Instant::now();
+            let outcome = run_limited(&run);
+            assert!(
+                matches!(outcome, Outcome::Cancelled { .. }),
+                "expected Cancelled, got {outcome:?}"
+            );
+            assert!(started.elapsed() < Duration::from_secs(5));
+
+            // The limit comes first.
+            let token = CancelToken::new();
+            let mut run = spec(program, args, dir.path(), 0);
+            run.bound = Bound::WithinOrCancelled(Duration::from_secs(1), token.clone());
+            cancel_after(&token, 20_000);
+            let started = Instant::now();
+            let outcome = run_limited(&run);
+            assert!(
+                matches!(outcome, Outcome::TimedOut { .. }),
+                "expected TimedOut, got {outcome:?}"
+            );
+            assert!(started.elapsed() < Duration::from_secs(10));
         }
 
         #[test]

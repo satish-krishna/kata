@@ -1,4 +1,6 @@
 import { Component, computed, input, output } from '@angular/core';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideSquare } from '@ng-icons/lucide';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import type { StepsView } from '../core/lock/lock.store';
 import type { ProgressView } from '../core/progress/progress.store';
@@ -8,7 +10,8 @@ import { ProgressLine } from './progress-line';
  * known: a done/total count for Kata's own checks and the elapsed clock. No percentage, no ETA. */
 @Component({
   selector: 'app-lock-panel',
-  imports: [HlmButtonImports, ProgressLine],
+  imports: [NgIcon, HlmButtonImports, ProgressLine],
+  providers: [provideIcons({ lucideSquare })],
   templateUrl: './lock-panel.html',
 })
 export class LockPanel {
@@ -17,7 +20,11 @@ export class LockPanel {
   /** What the running step reports, or null while nothing should show. */
   readonly stepProgress = input<ProgressView | null>(null);
 
+  /** What Stop says it stops while a long step of the plugin runs, or null while there is nothing to stop. */
+  readonly stopLabel = input<string | null>(null);
+
   readonly cancel = output<void>();
+  readonly stop = output<void>();
 
   /** "<done> / <total>", a count of finished checks. */
   protected readonly progress = computed(() => {

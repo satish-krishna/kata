@@ -3,4 +3,4 @@
 /**
  * What accepting a document came to.
  */
-export type AcceptOutcome = { "outcome": "accepted", warnings: Array<string>, } | { "outcome": "acceptedHookFailed", hook: string | null, output: string, problems: Array<string>, } | { "outcome": "acceptedHookCouldNotRun", output: string, } | { "outcome": "notCommitted", problems: Array<string>, } | { "outcome": "couldNotRun", message: string, };
+export type AcceptOutcome = { "outcome": "accepted", warnings: Array<string>, } | { "outcome": "acceptedHookFailed", hook: string | null, output: string, problems: Array<string>, } | { "outcome": "acceptedHookCouldNotRun", output: string, } | { "outcome": "notCommitted", problems: Array<string>, } | { "outcome": "stopped", accepted: boolean, } | { "outcome": "couldNotRun", message: string, };
