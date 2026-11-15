@@ -221,6 +221,8 @@
               @if (redRecord(); as rec) {
                 @if (rec === 'loading') {
                   <p class="k-state__body" data-red-loading>Reading the record.</p>
+                } @else if (rec === 'failed') {
+                  <p class="k-state__body" data-red-failed>Could not read the record.</p>
                 } @else {
                   @if (rec.stored; as stored) {
                     <p class="k-mono k-bp__red-commit" data-red-commit>{{ stored.commit.slice(0, 7) }} · {{ stored.outcome }}</p>

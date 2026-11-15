@@ -115,7 +115,7 @@ const planned = (id: string, name: string, repo: string, dependsOn: string[], se
   id, name, repo, depends_on: dependsOn, uses: [], files: [], covers: [], supports: [], sections, test: null, compile: null, text: `### ${id}: ${name}`, line: 1,
 });
 const task = (id: string, name: string, repo: string, dependsOn: string[], row: TaskStatus['row']): TaskStatus => ({
-  id, name, repo, dependsOn, text: `### ${id}: ${name}`, row, red: null,
+  id, name, repo, dependsOn, text: `### ${id}: ${name}`, row, red: null, redStandsOut: false,
 });
 /** What the format program reads from the plan, task by task. */
 const PLANNED: Record<string, ParsedTask> = {

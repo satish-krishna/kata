@@ -102,6 +102,8 @@ fn red_verdicts_come_from_the_plan_and_the_build_log() {
             Some(RedVerdict::NoTest),
         ]
     );
+    let stands_out: Vec<_> = status.tasks.iter().map(|t| t.red_stands_out).collect();
+    assert_eq!(stands_out, vec![false, true, false]);
 }
 
 #[test]
@@ -121,4 +123,5 @@ fn an_older_plan_and_log_show_no_red_at_all() {
     assert!(!status.red_shown);
     assert_eq!(status.tasks.len(), 2);
     assert!(status.tasks.iter().all(|t| t.red.is_none()));
+    assert!(status.tasks.iter().all(|t| !t.red_stands_out));
 }

@@ -235,6 +235,7 @@ mod tests {
             depends_on: vec![],
             text: String::new(),
             red: None,
+            red_stands_out: false,
             row: departure.map(|d| BuildRow {
                 task: id.into(),
                 repo: repo.into(),

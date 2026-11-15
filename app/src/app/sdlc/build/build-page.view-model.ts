@@ -137,22 +137,22 @@ export type TaskArea = {
 /** A status as the page shows it: an andon tone, drawn as a dot, and its label. */
 export type StatusText = { tone: 'success' | 'warning' | 'error' | 'idle'; label: string };
 
-/** What the build log says about a task's red, as one line. It stands out, with the warning status, when red was not observed or the log's value cannot be read. */
+/** What the build log says about a task's red, as one line; `standsOut` is the backend's word (`redStandsOut`), drawn with the warning status. */
 export type RedView = { label: string; standsOut: boolean };
 
-/** The line for a verdict the backend decided. */
-export function redViewOf(verdict: RedVerdict): RedView {
+/** The line for a verdict the backend decided, and whether the backend says it stands out. */
+export function redViewOf(verdict: RedVerdict, standsOut: boolean): RedView {
   switch (verdict.kind) {
     case 'observed':
-      return { label: 'red observed', standsOut: false };
+      return { label: 'red observed', standsOut };
     case 'notObserved':
-      return { label: `red not observed: ${verdict.reason}`, standsOut: true };
+      return { label: `red not observed: ${verdict.reason}`, standsOut };
     case 'unrecorded':
-      return { label: 'red not recorded', standsOut: false };
+      return { label: 'red not recorded', standsOut };
     case 'noTest':
-      return { label: 'no test', standsOut: false };
+      return { label: 'no test', standsOut };
     case 'unreadable':
-      return { label: `red: ${verdict.value}`, standsOut: true };
+      return { label: `red: ${verdict.value}`, standsOut };
   }
 }
 
@@ -427,8 +427,8 @@ export class BuildPageViewModel {
   /** The tasks area as the backend decided it from the build log's status and the host's live runs and stops. */
   private readonly board = signal<RepoBoard[]>([]);
   private boardSeq = 0;
-  /** The stored record behind the picked task's not-observed red: null when none is wanted, 'loading' while it is read. */
-  readonly redRecord = signal<RedRecord | null | 'loading'>(null);
+  /** The stored record behind the picked task's not-observed red: null when none is wanted, 'loading' while it is read, 'failed' when the read failed. */
+  readonly redRecord = signal<RedRecord | null | 'loading' | 'failed'>(null);
   private redSeq = 0;
   /** The final state of each earlier run whose transcript was read, by run id; 'unreadable' when it could not be. */
   private readonly details = signal<Readonly<Record<string, RunSnapshot | 'unreadable'>>>({});
@@ -670,7 +670,7 @@ export class BuildPageViewModel {
   private readonly reds = computed<ReadonlyMap<string, RedView>>(() => {
     const status = this.status();
     if (status === null || !status.redShown) return new Map();
-    return new Map(status.tasks.flatMap((t): [string, RedView][] => (t.red === null ? [] : [[t.id, redViewOf(t.red)]])));
+    return new Map(status.tasks.flatMap((t): [string, RedView][] => (t.red === null ? [] : [[t.id, redViewOf(t.red, t.redStandsOut)]])));
   });
   /** The picked task, when its verdict is red not observed: the one pick whose stored record the page shows. */
   private readonly redWanted = computed<{ id: string; repo: string } | null>(
@@ -1480,7 +1480,7 @@ export class BuildPageViewModel {
       if (seq === this.redSeq && this.shows(ctx)) this.redRecord.set(record);
     } catch (e) {
       if (seq === this.redSeq) {
-        this.redRecord.set(null);
+        this.redRecord.set('failed');
         this.toasts.error(`Could not read the record of ${wanted.id}: ${message(e)}`);
       }
     }

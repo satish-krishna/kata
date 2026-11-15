@@ -11,4 +11,8 @@ text: string, row: BuildRow | null,
  * Whether the task's test was seen to fail first; `None` when the plan has no tests or the
  * task is not built yet.
  */
-red: RedVerdict | null, };
+red: RedVerdict | null, 
+/**
+ * Whether `red` is a verdict that needs a look (`RedVerdict::stands_out`); false when `red` is `None`. Sent as data because the Workbench decides nothing.
+ */
+redStandsOut: boolean, };

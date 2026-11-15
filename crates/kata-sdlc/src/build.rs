@@ -50,6 +50,11 @@ impl RedVerdict {
     }
 }
 
+/// Whether a task's red verdict, when it has one, needs a look.
+fn red_stands_out(red: &Option<RedVerdict>) -> bool {
+    red.as_ref().is_some_and(RedVerdict::stands_out)
+}
+
 /// The verdict for one task, given whether the plan has tests at all, whether this task has one,
 /// and its build-log row, if any.
 fn red_verdict(
@@ -114,6 +119,8 @@ pub struct TaskStatus {
     /// Whether the task's test was seen to fail first; `None` when the plan has no tests or the
     /// task is not built yet.
     pub red: Option<RedVerdict>,
+    /// Whether `red` is a verdict that needs a look (`RedVerdict::stands_out`); false when `red` is `None`. Sent as data because the Workbench decides nothing.
+    pub red_stands_out: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -437,14 +444,18 @@ pub fn status_with(
     let tasks: Vec<TaskStatus> = committed
         .tasks
         .iter()
-        .map(|t| TaskStatus {
-            id: t.id.clone(),
-            name: t.name.clone(),
-            repo: t.repo.clone(),
-            depends_on: t.depends_on.clone(),
-            text: t.text.clone(),
-            row: row_of(&t.id).cloned(),
-            red: red_verdict(red_shown, t, row_of(&t.id)),
+        .map(|t| {
+            let red = red_verdict(red_shown, t, row_of(&t.id));
+            TaskStatus {
+                id: t.id.clone(),
+                name: t.name.clone(),
+                repo: t.repo.clone(),
+                depends_on: t.depends_on.clone(),
+                text: t.text.clone(),
+                row: row_of(&t.id).cloned(),
+                red_stands_out: red_stands_out(&red),
+                red,
+            }
         })
         .collect();
 
@@ -1035,18 +1046,25 @@ mod tests {
     fn red_is_none_when_no_task_has_a_test() {
         let t = red_task("T1", false);
         assert_eq!(red_verdict(false, &t, Some(&red_row(None))), None);
+        assert!(!red_stands_out(&red_verdict(
+            false,
+            &t,
+            Some(&red_row(None))
+        )));
     }
 
     #[test]
     fn red_no_test_when_the_plan_has_tests_but_this_task_has_none() {
         let t = red_task("T1", false);
         assert_eq!(red_verdict(true, &t, None), Some(RedVerdict::NoTest));
+        assert!(!red_stands_out(&red_verdict(true, &t, None)));
     }
 
     #[test]
     fn red_is_none_for_a_task_not_built_yet() {
         let t = red_task("T1", true);
         assert_eq!(red_verdict(true, &t, None), None);
+        assert!(!red_stands_out(&red_verdict(true, &t, None)));
     }
 
     #[test]
@@ -1056,6 +1074,7 @@ mod tests {
             red_verdict(true, &t, Some(&red_row(None))),
             Some(RedVerdict::Unrecorded)
         );
+        assert!(red_stands_out(&red_verdict(true, &t, Some(&red_row(None)))));
     }
 
     #[test]
@@ -1065,6 +1084,11 @@ mod tests {
             red_verdict(true, &t, Some(&red_row(Some("observed")))),
             Some(RedVerdict::Observed)
         );
+        assert!(!red_stands_out(&red_verdict(
+            true,
+            &t,
+            Some(&red_row(Some("observed")))
+        )));
     }
 
     #[test]
@@ -1076,6 +1100,11 @@ mod tests {
                 reason: "no test ran".into()
             })
         );
+        assert!(red_stands_out(&red_verdict(
+            true,
+            &t,
+            Some(&red_row(Some("not observed: no test ran")))
+        )));
     }
 
     #[test]
@@ -1087,6 +1116,11 @@ mod tests {
                 value: "seen".into()
             })
         );
+        assert!(red_stands_out(&red_verdict(
+            true,
+            &t,
+            Some(&red_row(Some("seen")))
+        )));
     }
 
     #[test]

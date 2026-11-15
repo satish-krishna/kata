@@ -6,6 +6,7 @@ import type { BuildState } from '@bindings/BuildState';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { ChangeKey } from '@bindings/ChangeKey';
 import type { OfferStage } from '@bindings/OfferStage';
+import type { RedRecord } from '@bindings/RedRecord';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { ReviewRows } from '@bindings/ReviewRows';
@@ -925,7 +926,7 @@ describe('the layout follows the real build page through a finish, whatever orde
 describe('the tasks area folds, filters and shows a departure with its task', () => {
   const row = (task: string, repo: string, departure: string | null = null) => ({ task, repo, commits: ['abc1234'], departure, red: null });
   const taskOf = (id: string, repo: string, finished: boolean, departure: string | null = null, dependsOn: string[] = []) => ({
-    id, name: `Task ${id}`, repo, dependsOn, text: `### ${id}`, row: finished ? row(id, repo, departure) : null, red: null,
+    id, name: `Task ${id}`, repo, dependsOn, text: `### ${id}`, row: finished ? row(id, repo, departure) : null, red: null, redStandsOut: false,
   });
   const CORE = 'commerce-core';
   const PORTAL = 'customer-portal';
@@ -1033,14 +1034,15 @@ describe('the tasks area folds, filters and shows a departure with its task', ()
 describe('the tasks area shows what the build log says about red', () => {
   type Red = NonNullable<BuildStatus['tasks'][number]['red']>;
   const CORE = 'commerce-core';
-  const taskOf = (id: string, red: Red | null) => ({ id, name: `Task ${id}`, repo: CORE, dependsOn: [] as string[], text: `### ${id}`, row: null, red });
-  const statusOf = (reds: [string, Red | null][], redShown = true): BuildStatus => ({
+  /** A task as the backend sends it: its verdict and the backend's word on whether the verdict stands out. */
+  const taskOf = (id: string, red: Red | null, redStandsOut = false) => ({ id, name: `Task ${id}`, repo: CORE, dependsOn: [] as string[], text: `### ${id}`, row: null, red, redStandsOut });
+  const statusOf = (reds: [string, Red | null, boolean?][], redShown = true): BuildStatus => ({
     hasTasks: true,
     problems: [],
     logLayouts: [],
     redShown,
     departures: [],
-    tasks: reds.map(([id, red]) => taskOf(id, red)),
+    tasks: reds.map(([id, red, out]) => taskOf(id, red, out)),
     repos: [{ repo: CORE, firstUnfinished: reds[0][0], state: { kind: 'ready', task: reds[0][0] }, tasks: reds.length, finished: 0 }],
   });
 
@@ -1062,19 +1064,19 @@ describe('the tasks area shows what the build log says about red', () => {
   }
   const redOf = (vm: BuildPageViewModel, id: string) => group(vm, CORE).tasks.find((t) => t.id === id)!.red;
 
-  it('each verdict has its label, and only the ones that stand out are marked', async () => {
+  it('each verdict has its label, and stands out exactly when the backend says it does', async () => {
     const { vm } = await openedOn(
       statusOf([
         ['T1', { kind: 'observed' }],
-        ['T2', { kind: 'notObserved', reason: 'the test passed at 3f2a9c1' }],
-        ['T3', { kind: 'unrecorded' }],
+        ['T2', { kind: 'notObserved', reason: 'the test passed at 3f2a9c1' }, true],
+        ['T3', { kind: 'unrecorded' }, true],
         ['T4', { kind: 'noTest' }],
-        ['T5', { kind: 'unreadable', value: 'maybe' }],
+        ['T5', { kind: 'unreadable', value: 'maybe' }, true],
       ]),
     );
     expect(redOf(vm, 'T1')).toEqual({ label: 'red observed', standsOut: false });
     expect(redOf(vm, 'T2')).toEqual({ label: 'red not observed: the test passed at 3f2a9c1', standsOut: true });
-    expect(redOf(vm, 'T3')).toEqual({ label: 'red not recorded', standsOut: false });
+    expect(redOf(vm, 'T3')).toEqual({ label: 'red not recorded', standsOut: true });
     expect(redOf(vm, 'T4')).toEqual({ label: 'no test', standsOut: false });
     expect(redOf(vm, 'T5')).toEqual({ label: 'red: maybe', standsOut: true });
   });
@@ -1087,7 +1089,7 @@ describe('the tasks area shows what the build log says about red', () => {
   });
 
   it('the list line carries the same verdict as the row', async () => {
-    const { vm } = await openedOn(statusOf([['T1', { kind: 'notObserved', reason: 'r' }]]));
+    const { vm } = await openedOn(statusOf([['T1', { kind: 'notObserved', reason: 'r' }, true]]));
     expect(vm.view().groups[0].list.rows[0].line.red).toEqual({ label: 'red not observed: r', standsOut: true });
   });
 
@@ -1115,6 +1117,32 @@ describe('the tasks area shows what the build log says about red', () => {
     vm.choose({ kind: 'task', task: 'T1' });
     await advance(100);
     expect(vm.redRecord()).toBeNull();
+  });
+
+  it('a record that cannot be read says so, toasts, and leaves no record', async () => {
+    const { vm, record } = await openedOn(statusOf([['T1', { kind: 'notObserved', reason: 'r' }, true]]));
+    record.mockRejectedValue(new Error('no program'));
+    const toasts = vi.spyOn(TestBed.inject(ToastStore), 'error');
+    vm.choose({ kind: 'task', task: 'T1' });
+    await advance(100);
+    expect(vm.redRecord()).toBe('failed');
+    expect(toasts).toHaveBeenCalledWith(expect.stringContaining('Could not read the record of T1'));
+  });
+
+  it('an earlier pick answer that arrives after a later pick answer is dropped', async () => {
+    const { vm, record } = await openedOn(statusOf([['T1', { kind: 'notObserved', reason: 'r' }, true], ['T2', { kind: 'notObserved', reason: 'r' }, true]]));
+    const answer = (output: string): RedRecord => ({ observed: false, reason: 'r', stored: { commit: 'abcdef0123', outcome: 'passed', output } });
+    let first!: (r: RedRecord) => void;
+    record.mockImplementationOnce(() => new Promise<RedRecord>((ok) => (first = ok)));
+    record.mockImplementationOnce(() => Promise.resolve(answer('second')));
+    vm.choose({ kind: 'task', task: 'T1' });
+    await advance(100);
+    vm.choose({ kind: 'task', task: 'T2' });
+    await advance(100);
+    expect(vm.redRecord()).toMatchObject({ stored: { output: 'second' } });
+    first(answer('first'));
+    await advance(100);
+    expect(vm.redRecord()).toMatchObject({ stored: { output: 'second' } });
   });
 });
 

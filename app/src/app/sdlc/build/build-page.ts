@@ -94,7 +94,7 @@ export class BuildPage {
   /** A request to bring the picked repository's open question into view and focus it. */
   readonly focus = input<{ repo: string; n: number } | null>(null);
   /** The stored record behind the picked task's not-observed red: null when none is wanted, 'loading' while it is read. */
-  readonly redRecord = input<RedRecord | null | 'loading'>(null);
+  readonly redRecord = input<RedRecord | null | 'loading' | 'failed'>(null);
 
   readonly pick = output<Pick>();
   readonly repoAction = output<{ repo: string; action: 'cancel' | 'continue' }>();

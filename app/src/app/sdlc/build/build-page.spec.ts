@@ -190,7 +190,7 @@ class Host {
   stopped: string[] = [];
   readonly focus = input<{ repo: string; n: number } | null>(null);
   readonly context = CHANGES;
-  redRecord: RedRecord | null | 'loading' = null;
+  redRecord: RedRecord | null | 'loading' | 'failed' = null;
   readonly rows: BuildRow[] = [];
   readonly picks: Pick[] = [];
   readonly repoActions: { repo: string; action: 'cancel' | 'continue' }[] = [];
@@ -231,7 +231,7 @@ const settle = async () => {
 };
 const norm = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
 
-async function mount(view: BuildPageView, extra: { stopped?: string[]; redRecord?: RedRecord | null | 'loading' } = {}) {
+async function mount(view: BuildPageView, extra: { stopped?: string[]; redRecord?: RedRecord | null | 'loading' | 'failed' } = {}) {
   TestBed.configureTestingModule({ imports: [Host], providers: [provideRouter([]), { provide: KataTransport, useValue: new MockTransport() }] });
   const fixture = TestBed.createComponent(Host);
   fixture.componentInstance.view = view;
@@ -2025,5 +2025,14 @@ describe('the build page shows red', () => {
   it('shows no record panel for a task whose red was not the picked not-observed one', async () => {
     const { el } = await open({ observed: false, reason: 'r', stored: null }, false);
     expect(el.querySelector('[data-pick-red]')).toBeNull();
+  });
+});
+
+describe('the build page when the record cannot be read', () => {
+  it('says so under the heading', async () => {
+    const rows = [{ ...task('T1', RUNNING), red: { label: 'red not observed: x', standsOut: true } }];
+    const { el } = await mount(base({ groups: [group('commerce-core', RUNNING, null, rows, false)], pick: { kind: 'task', task: 'T1' }, pickedRed: { task: 'T1' }, sessions: [session('r1')] }), { redRecord: 'failed' });
+    expect(norm(el.querySelector('[data-red-failed]')?.textContent)).toBe('Could not read the record.');
+    expect(el.querySelector('[data-red-none]')).toBeNull();
   });
 });

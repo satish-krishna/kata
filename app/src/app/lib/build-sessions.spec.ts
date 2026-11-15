@@ -44,7 +44,7 @@ const task = (id: string, repo: string, built: boolean): TaskStatus => ({
   name: id,
   repo,
   dependsOn: [],
-  text: '', red: null,
+  text: '', red: null, redStandsOut: false,
   row: built ? { task: id, repo, commits: [], departure: null, red: null } : null,
 });
 const status = (tasks: TaskStatus[]): BuildStatus => ({ tasks, repos: [], departures: [], hasTasks: true, problems: [], logLayouts: [], redShown: false });
