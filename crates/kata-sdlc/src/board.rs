@@ -234,11 +234,13 @@ mod tests {
             repo: repo.into(),
             depends_on: vec![],
             text: String::new(),
+            red: None,
             row: departure.map(|d| BuildRow {
                 task: id.into(),
                 repo: repo.into(),
                 commits: vec![],
                 departure: d.map(String::from),
+                red: None,
             }),
         }
     }
@@ -547,6 +549,7 @@ mod tests {
             has_tasks: true,
             problems: vec![],
             log_layouts: vec![],
+            red_shown: false,
         };
         let repos: Vec<String> = ["engine", "workbench"].map(String::from).to_vec();
         let turn = turn("engine", false);
@@ -577,6 +580,7 @@ mod tests {
             has_tasks: true,
             problems: vec![],
             log_layouts: vec![],
+            red_shown: false,
         };
         let repos: Vec<String> = ["b", "a", "master"].map(String::from).to_vec();
         let got = board(&repos, &status, &going(&["a"]), &BTreeMap::new(), None);

@@ -3,4 +3,8 @@
 /**
  * One row of a build log: a task recorded as finished.
  */
-export type BuildRow = { task: string, repo: string, commits: Array<string>, departure: string | null, };
+export type BuildRow = { task: string, repo: string, commits: Array<string>, departure: string | null, 
+/**
+ * The entry's `red` field as logged: `observed`, `not observed: <reason>`, or none.
+ */
+red: string | null, };

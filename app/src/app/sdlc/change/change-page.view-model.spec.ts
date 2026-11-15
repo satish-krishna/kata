@@ -866,7 +866,7 @@ describe('ChangePageViewModel', () => {
 
     it('draws no strip on the Build tab when there is no status, no facts and no action', async () => {
       const transport = await finished();
-      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({ tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] });
+      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({ tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [], redShown: false });
       const { vm } = setup(BUILD, transport);
       await ready(vm);
       await vm.showDoc('build');

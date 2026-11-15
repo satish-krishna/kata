@@ -5,11 +5,11 @@ import { linkRequirements, neededBy, shownSections, taskRecord, withRows } from 
 const plan = (id: string, dependsOn: string[], sections: ParsedTask['sections'] = []): ParsedTask => ({
   id, name: `Task ${id}`, repo: 'kata', depends_on: dependsOn, uses: [], files: [], covers: [], supports: [], sections, test: null, compile: null, text: `### ${id}`, line: 1,
 });
-const status = (id: string, row: TaskStatus['row']): TaskStatus => ({ id, name: `Task ${id}`, repo: 'kata', dependsOn: [], text: `### ${id}`, row });
+const status = (id: string, row: TaskStatus['row']): TaskStatus => ({ id, name: `Task ${id}`, repo: 'kata', dependsOn: [], text: `### ${id}`, row, red: null });
 
 describe('withRows', () => {
   it('gives each planned task the row the build status holds for it, and none to a task it does not list', () => {
-    const row = { task: 'T1', repo: 'kata', commits: ['abc1234'], departure: null };
+    const row = { task: 'T1', repo: 'kata', commits: ['abc1234'], departure: null, red: null };
     const got = withRows([plan('T1', []), plan('T2', ['T1']), plan('T3', [])], [status('T1', row), status('T2', null)]);
     expect(got.map((t) => [t.id, t.row])).toEqual([['T1', row], ['T2', null], ['T3', null]]);
   });
@@ -49,12 +49,12 @@ describe('taskRecord', () => {
   });
 
   it('reads a row with no departure as built as planned', () => {
-    const row = { task: 'T1', repo: 'kata', commits: ['abc1234'], departure: null };
+    const row = { task: 'T1', repo: 'kata', commits: ['abc1234'], departure: null, red: null };
     expect(taskRecord({ row })).toEqual({ kind: 'planned', label: 'As planned', text: null });
   });
 
   it('reads a row with a departure as differing from the plan, carrying the departure text', () => {
-    const row = { task: 'T1', repo: 'kata', commits: ['abc1234'], departure: 'Used a Map, not an array.' };
+    const row = { task: 'T1', repo: 'kata', commits: ['abc1234'], departure: 'Used a Map, not an array.', red: null };
     expect(taskRecord({ row })).toEqual({ kind: 'differs', label: 'Differs from plan', text: 'Used a Map, not an array.' });
   });
 });

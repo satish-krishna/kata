@@ -1180,13 +1180,13 @@ export class SdlcMock {
 
   buildStatus(changeName: string): BuildStatus {
     this.homeOf(changeName);
-    if (!this.hasBuildLog(changeName) && changeName !== MOCK_DONE_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] };
+    if (!this.hasBuildLog(changeName) && changeName !== MOCK_DONE_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [], redShown: false };
     // The finished change has every task built; the demo build commits its rows one run at a time.
     const rowOf = (t: PlanTask): BuildRow | null =>
-      changeName === MOCK_DONE_CHANGE ? { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } : (this.rows.get(t.id) ?? null);
-    const tasks: TaskStatus[] = this.plan.map((t) => ({ ...t, dependsOn: [...t.dependsOn], text: this.singleRepo() !== null ? taskText(t, []) : taskText(t), row: rowOf(t) }));
+      changeName === MOCK_DONE_CHANGE ? { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null, red: null } : (this.rows.get(t.id) ?? null);
+    const tasks: TaskStatus[] = this.plan.map((t) => ({ ...t, dependsOn: [...t.dependsOn], text: this.singleRepo() !== null ? taskText(t, []) : taskText(t), row: rowOf(t), red: null }));
     const departures = tasks.flatMap((t) => (t.row?.departure ? [{ task: t.id, repo: t.repo, planText: t.name, departure: t.row.departure }] : []));
-    return { tasks, repos: this.repos.map((r) => (changeName === MOCK_DONE_CHANGE ? this.doneRepoStatus(r) : this.repoStatus(r))), departures, hasTasks: true, problems: [], logLayouts: [] };
+    return { tasks, repos: this.repos.map((r) => (changeName === MOCK_DONE_CHANGE ? this.doneRepoStatus(r) : this.repoStatus(r))), departures, hasTasks: true, problems: [], logLayouts: [], redShown: false };
   }
 
   /** A repository of the finished change: every task of it is built. */
@@ -1248,7 +1248,7 @@ export class SdlcMock {
     for (const t of tasks) {
       this.rows.set(t.id, {
         task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`],
-        departure: this.departed.has(t.id) ? DEPARTURE_TEXT : null,
+        departure: this.departed.has(t.id) ? DEPARTURE_TEXT : null, red: null,
       });
     }
   }

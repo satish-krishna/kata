@@ -301,7 +301,7 @@ describe('the build page shows tasks and sessions from the build log, the run li
   const link = (stage: string, run_id: string, started_at: number): RunLink => ({ workspace_id: 'acme-commerce', system: 'commerce', change: MOCK_BUILD_CHANGE, stage, run_id, started_at });
   const taskLink = (task: string, run_id: string, repo = 'commerce-core'): TaskLink => ({ workspace_id: 'acme-commerce', system: 'commerce', change: MOCK_BUILD_CHANGE, repo, task, run_id });
   const record = (id: string, exit: number): RunRecord => ({ id, kata: 'build', started_at: 0, isolation: 'none', steered: false, ending: exit === 0 ? 'finished' : 'failed', exit, turns: 7, cost_usd: 0.5 });
-  const T1_ROW = { task: 'T1', repo: 'commerce-core', commits: ['aaaaaaa'], departure: null };
+  const T1_ROW = { task: 'T1', repo: 'commerce-core', commits: ['aaaaaaa'], departure: null, red: null };
 
   /** A page opened on a change with nothing running; T1 is in the build log when `built`. */
   async function page(over: { links?: RunLink[]; taskLinks?: TaskLink[]; records?: RunRecord[]; built?: boolean; stage?: OfferStage } = {}) {
@@ -923,9 +923,9 @@ describe('the layout follows the real build page through a finish, whatever orde
 });
 
 describe('the tasks area folds, filters and shows a departure with its task', () => {
-  const row = (task: string, repo: string, departure: string | null = null) => ({ task, repo, commits: ['abc1234'], departure });
+  const row = (task: string, repo: string, departure: string | null = null) => ({ task, repo, commits: ['abc1234'], departure, red: null });
   const taskOf = (id: string, repo: string, finished: boolean, departure: string | null = null, dependsOn: string[] = []) => ({
-    id, name: `Task ${id}`, repo, dependsOn, text: `### ${id}`, row: finished ? row(id, repo, departure) : null,
+    id, name: `Task ${id}`, repo, dependsOn, text: `### ${id}`, row: finished ? row(id, repo, departure) : null, red: null,
   });
   const CORE = 'commerce-core';
   const PORTAL = 'customer-portal';
@@ -935,6 +935,7 @@ describe('the tasks area folds, filters and shows a departure with its task', ()
     hasTasks: true,
     problems: [],
     logLayouts: [],
+    redShown: false,
     departures: [],
     tasks: [
       ...[1, 2, 3, 4, 5].map((n) => taskOf(`T${n}`, CORE, true, departed && n <= 3 ? `departure ${n}` : null)),

@@ -25,7 +25,7 @@ const holdLock = (lock: LockStore): void => void lock.runSteps('Checking', [{ la
 const BUILD = MOCK_BUILD_CHANGE;
 const RUN = `sdlc-commerce-${BUILD}-review-1`;
 const REPOS = ['commerce-core', 'customer-portal'];
-const DEPARTURE = { task: 'T2', repo: 'customer-portal', planText: 'Add the photo picker to the product form', departure: 'Reused the existing file picker.' };
+const DEPARTURE = { task: 'T2', repo: 'customer-portal', planText: 'Add the photo picker to the product form', departure: 'Reused the existing file picker.', red: null };
 const toastText = () => toastState.toasts().map((t) => String(t.title)).join(' | ');
 
 function setup(transport: MockTransport) {
@@ -209,7 +209,7 @@ describe('declaring done from the build page', () => {
     const status = transport.sdlcBuildStatus.bind(transport);
     vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (r) => {
       const got = await status(r);
-      return { ...got, repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })), tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } })), departures: [DEPARTURE] };
+      return { ...got, repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })), tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null, red: null } })), departures: [DEPARTURE] };
     });
     vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, ending: 'finished', exit: 0 }]);
     const heads = await transport.sdlcBuildHeads({ workspace: '', system: 'commerce', change: BUILD }, ['commerce-docs', ...REPOS]);

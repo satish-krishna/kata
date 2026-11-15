@@ -5,7 +5,7 @@ import type { Part } from '@bindings/Part';
 import { tieFiles } from './file-ties';
 
 const sha = (head: string): string => head.padEnd(40, '0');
-const row = (task: string, commits: string[], repo = 'api'): BuildRow => ({ task, repo, commits, departure: null });
+const row = (task: string, commits: string[], repo = 'api'): BuildRow => ({ task, repo, commits, departure: null, red: null });
 const commit = (head: string, files: string[]): CommitFiles => ({ sha: sha(head), files });
 const file = (path: string, oldPath: string | null = null): ChangedFile => ({
   path,

@@ -322,7 +322,7 @@ function allBuilt(transport: MockTransport, edit: (status: BuildStatus) => Build
     return edit({
       ...got,
       repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })),
-      tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } })),
+      tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null, red: null } })),
     });
   });
   return transport;
@@ -669,7 +669,7 @@ describe('ChangePage build page', () => {
     it('see departures from the plan', async () => {
       const transport = finished((got) => ({
         ...got,
-        tasks: got.tasks.map((t) => (t.id === 'T2' ? { ...t, row: { task: 'T2', repo: t.repo, commits: ['abc1234'], departure: 'Reused the existing file picker.' } } : t)),
+        tasks: got.tasks.map((t) => (t.id === 'T2' ? { ...t, row: { task: 'T2', repo: t.repo, commits: ['abc1234'], departure: 'Reused the existing file picker.', red: null } } : t)),
       }));
       const { container } = await mount(MOCK_BUILD_CHANGE, transport);
       alone(container);

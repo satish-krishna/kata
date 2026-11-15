@@ -115,7 +115,7 @@ const planned = (id: string, name: string, repo: string, dependsOn: string[], se
   id, name, repo, depends_on: dependsOn, uses: [], files: [], covers: [], supports: [], sections, test: null, compile: null, text: `### ${id}: ${name}`, line: 1,
 });
 const task = (id: string, name: string, repo: string, dependsOn: string[], row: TaskStatus['row']): TaskStatus => ({
-  id, name, repo, dependsOn, text: `### ${id}: ${name}`, row,
+  id, name, repo, dependsOn, text: `### ${id}: ${name}`, row, red: null,
 });
 /** What the format program reads from the plan, task by task. */
 const PLANNED: Record<string, ParsedTask> = {
@@ -135,12 +135,12 @@ const PLANNED: Record<string, ParsedTask> = {
   T4: planned('T4', 'Notes only', 'customer-portal', [], [{ title: '', body: 'Just do the thing described here.' }]),
 };
 const TASKS: TaskStatus[] = [
-  task('T1', 'Refuse an eleventh photo', 'commerce-core', [], { task: 'T1', repo: 'commerce-core', commits: ['aaa1111', 'bbb2222'], departure: null }),
-  task('T2', 'Add the picker', 'customer-portal', [], { task: 'T2', repo: 'customer-portal', commits: ['ccc3333'], departure: 'Reused the existing picker.' }),
+  task('T1', 'Refuse an eleventh photo', 'commerce-core', [], { task: 'T1', repo: 'commerce-core', commits: ['aaa1111', 'bbb2222'], departure: null, red: null }),
+  task('T2', 'Add the picker', 'customer-portal', [], { task: 'T2', repo: 'customer-portal', commits: ['ccc3333'], departure: 'Reused the existing picker.', red: null }),
   task('T3', 'Show the message', 'customer-portal', ['T1'], null),
   task('T4', 'Notes only', 'customer-portal', [], null),
 ];
-const status = (tasks: TaskStatus[]): BuildStatus => ({ tasks, repos: [], departures: [], hasTasks: tasks.length > 0, problems: [], logLayouts: [] });
+const status = (tasks: TaskStatus[]): BuildStatus => ({ tasks, repos: [], departures: [], hasTasks: tasks.length > 0, problems: [], logLayouts: [], redShown: false });
 
 /**
  * `tasks` are the build status's tasks (their rows); `parsed` overrides what the format program reads: by default the
@@ -304,7 +304,7 @@ describe('ChangePage plan views', () => {
   });
 
   it('picks the first task when every task is built', async () => {
-    const built = TASKS.map((t) => ({ ...t, row: t.row ?? { task: t.id, repo: t.repo, commits: ['x'], departure: null } }));
+    const built = TASKS.map((t) => ({ ...t, row: t.row ?? { task: t.id, repo: t.repo, commits: ['x'], departure: null, red: null } }));
     const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, built);
     expect(pickedOf(tasksNav(container))).toEqual(['T1']);
   });
@@ -359,7 +359,7 @@ describe('ChangePage plan views', () => {
   });
 
   it('renders markdown in a task name and in its departure', async () => {
-    const row = { task: 'T2', repo: 'customer-portal', commits: ['ccc3333'], departure: 'Reused **the existing** picker.\n\n- kept `onPick`' };
+    const row = { task: 'T2', repo: 'customer-portal', commits: ['ccc3333'], departure: 'Reused **the existing** picker.\n\n- kept `onPick`', red: null };
     const tasks = [task('T2', 'Add the `picker`', 'customer-portal', [], row)];
     const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, tasks, { plan: [planned('T2', 'Add the `picker` from [docs](https://example.com)', 'customer-portal', [], [])] });
     const nav = tasksNav(container)[0];
@@ -501,7 +501,7 @@ describe('ChangePage opens an existing change on the build page', () => {
     vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (r) => {
       const got = await status(r);
       const all = built.length === got.tasks.length;
-      return { ...got, repos: all ? got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })) : got.repos, tasks: got.tasks.map((t) => (built.includes(t.id) ? { ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } } : t)) };
+      return { ...got, repos: all ? got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })) : got.repos, tasks: got.tasks.map((t) => (built.includes(t.id) ? { ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null, red: null } } : t)) };
     });
     if (review) vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(REVIEW);
     if (built.length > 0) {

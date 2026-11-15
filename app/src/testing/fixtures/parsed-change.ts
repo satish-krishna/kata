@@ -73,7 +73,8 @@ export function builtTasks(): TaskStatus[] {
     repo: t.repo,
     dependsOn: t.depends_on,
     text: t.text,
-    row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null },
+    row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null, red: null },
+    red: null,
   }));
 }
 
