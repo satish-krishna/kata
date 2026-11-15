@@ -2067,6 +2067,10 @@ mod tests {
         /// the call ends only once the token is cancelled; `stop_after` stops once that call has passed.
         stop_in: Mutex<Option<String>>,
         stop_after: Mutex<Option<String>>,
+        /// The repository whose call hangs until its token is cancelled; what the call saw, in order
+        /// (`entered`, then `cancelled` or `never cancelled`).
+        hang_in: Mutex<Option<String>>,
+        hung: Mutex<Vec<String>>,
         /// Stops the change under test, through the step table, as the page's Stop does.
         stopper: Mutex<Option<Box<dyn Fn() + Send>>>,
         /// Called at the start of every long call, to see what the host had registered by then.
@@ -2092,6 +2096,8 @@ mod tests {
                 delay: Mutex::new(std::time::Duration::ZERO),
                 stop_in: Mutex::new(None),
                 stop_after: Mutex::new(None),
+                hang_in: Mutex::new(None),
+                hung: Mutex::new(Vec::new()),
                 stopper: Mutex::new(None),
                 probe: Mutex::new(None),
                 lines: Mutex::new(HashMap::new()),
@@ -2228,6 +2234,20 @@ mod tests {
             }
             if let Some(probe) = self.probe.lock().unwrap().as_ref() {
                 probe();
+            }
+            if self.hang_in.lock().unwrap().as_deref() == Some(which.as_str()) {
+                self.hung.lock().unwrap().push("entered".into());
+                let began = std::time::Instant::now();
+                while !token.is_cancelled() && began.elapsed() < std::time::Duration::from_secs(3) {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                let seen = if token.is_cancelled() {
+                    "cancelled"
+                } else {
+                    "never cancelled"
+                };
+                self.hung.lock().unwrap().push(seen.into());
+                return answer_of(Err(ExecError::Stopped));
             }
             if self.stop_in.lock().unwrap().as_deref() == Some(which.as_str()) {
                 self.stop_now();
@@ -4340,6 +4360,84 @@ mod tests {
         r.launcher.finish(r.launcher.launched("engine")[0], 1);
         assert!(r.host.state(&cref("B")).is_none());
         assert_eq!(r.launcher.count(), 1);
+    }
+
+    /// Waits, bounded, until the hanging call of `tools` has entered.
+    fn wait_until_hung(tools: &FakeTools) {
+        let began = std::time::Instant::now();
+        while !tools.hung.lock().unwrap().contains(&"entered".to_string()) {
+            assert!(
+                began.elapsed() < std::time::Duration::from_secs(5),
+                "the app start never began"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    // Stop on a single-repo build reaches `build.start --repo <app>` of the app about to launch, as it
+    // reaches the other long steps: the step is cancelled and the build ends stopped.
+    #[test]
+    fn stopping_a_build_cancels_the_app_start_under_way() {
+        let r = single_rig();
+        r.two_apps("A");
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        r.tools.log("A", "engine", "T1");
+        *r.tools.hang_in.lock().unwrap() = Some("workbench".into());
+        let engine = r.launcher.launched("engine")[0];
+        let finisher = {
+            let launcher = r.launcher.clone();
+            std::thread::spawn(move || launcher.finish(engine, 0))
+        };
+        wait_until_hung(&r.tools);
+        r.host.cancel(&cref("A"));
+        let began = std::time::Instant::now();
+        while !finisher.is_finished() && began.elapsed() < std::time::Duration::from_secs(6) {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(
+            *r.tools.hung.lock().unwrap(),
+            strs(&["entered", "cancelled"]),
+            "Stop cancelled the app start"
+        );
+        finisher.join().unwrap();
+        let state = r.host.state(&cref("A")).unwrap();
+        assert!(
+            matches!(state.phase, BuildPhase::Stopped | BuildPhase::Cancelled),
+            "{:?}",
+            state.phase
+        );
+        assert_eq!(r.launcher.launched("workbench").len(), 0);
+    }
+
+    // The same for the first app, which starts inside the start itself: stopping the change's step
+    // (the page's Stop while it starts) cancels the program step.
+    #[test]
+    fn stopping_the_step_cancels_the_first_app_start() {
+        let r = single_rig();
+        r.two_apps("A");
+        *r.tools.hang_in.lock().unwrap() = Some("engine".into());
+        let starter = {
+            let host = r.host.clone();
+            std::thread::spawn(move || host.start(&cref("A"), form()))
+        };
+        wait_until_hung(&r.tools);
+        assert!(r.steps.stop(&key("A")));
+        let began = std::time::Instant::now();
+        while !starter.is_finished() && began.elapsed() < std::time::Duration::from_secs(6) {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(
+            *r.tools.hung.lock().unwrap(),
+            strs(&["entered", "cancelled"]),
+            "Stop cancelled the app start"
+        );
+        assert!(matches!(
+            starter.join().unwrap(),
+            StartOutcome::Stopped { .. }
+        ));
     }
 
     // R6.3
