@@ -474,9 +474,12 @@ mod tests {
         let (dir, root) = single_repo();
         let before = (root_state(&root), git(&root, &["branch", "--show-current"]));
         assert_eq!(before.1, "main");
-        let copies = dir.path().join(".ai-sdlc/copies");
+        let copies = dir.path().join(".ai-sdlc").join("copies");
+        // Compared resolved: a temp folder can be spelled with an 8.3 short name (CI's `RUNNER~1`) the program
+        // answers in its long form.
+        let same = |a: &Path, b: &Path| a.canonicalize().unwrap() == b.canonicalize().unwrap();
         let check = |change: &str, branch: &str, copy: &Path| {
-            assert_eq!(copy, copies.join(change), "{change}");
+            assert!(same(copy, &copies.join(change)), "{change}: {copy:?}");
             assert!(copy.is_dir(), "{change}");
             assert_eq!(git(copy, &["branch", "--show-current"]), branch);
             assert_eq!(branch, format!("change/{change}"));
@@ -512,7 +515,7 @@ mod tests {
             started(start_change(&program(), &place, DATE, &req, &no_steps(), &root).unwrap());
         check(&change, &branch, &copy);
         // The intent run works in the copy: its folder is the one the start named.
-        assert_eq!(copy, copies.join(CHANGE));
+        assert!(same(&copy, &copies.join(CHANGE)), "{copy:?}");
     }
 
     #[test]
