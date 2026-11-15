@@ -748,6 +748,7 @@ export class SdlcMock {
         { id: 'kata', name: 'kata', folder: MOCK_SINGLE_FOLDER, last_opened: 1792281600, layout: 'single-repo' },
       ];
     }
+    if (demo === 'migrate') this.workspaces = [{ id: 'legacy-workspace', name: 'legacy-workspace', folder: MOCK_LEGACY_FOLDER, last_opened: 1792281700, layout: 'workspace' }];
     if (demo === 'sessions') {
       // `?demo=sessions&earlier=<n>` (browser only): the demo build runs in one repository, which has `earlier` sessions behind it.
       this.links = earlierSessions(earlier).map((r) => ({

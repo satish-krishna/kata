@@ -15,6 +15,7 @@ import type { Settings } from '@bindings/Settings';
 import type { WorkspaceChoice } from '@bindings/WorkspaceChoice';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
+import type { MigratePlan } from '@bindings/MigratePlan';
 import type { RunSpec } from '@bindings/RunSpec';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
@@ -57,6 +58,7 @@ export type HomeState =
   | 'master-gone'
   | 'many-masters'
   | 'marker-error'
+  | 'migrate'
   | 'not-set-up'
   | 'ready';
 
@@ -223,7 +225,7 @@ export class SdlcHomeViewModel {
     if (!this.loaded()) return 'loading';
     if (this.pluginMissing()) return 'plugin-missing';
     if (this.current() === null) return 'no-workspaces';
-    if (this.scanError() !== null) return 'folder-missing';
+    if (this.scanError() !== null) return this.migration() !== null ? 'migrate' : 'folder-missing';
     const scan = this.scan();
     if (scan === null) return 'loading';
     if (scan.master.kind === 'none') return 'master-gone';
@@ -238,6 +240,58 @@ export class SdlcHomeViewModel {
 
   // --- dialogs
   readonly candidate = signal<WorkspaceCandidate | null>(null);
+
+  // --- migrating an ai-sdlc workspace
+  /** The program's dry run for the current folder, when it failed to open and the program has a plan for it; null otherwise. */
+  readonly migration = signal<MigratePlan | null>(null);
+  readonly migrationOpen = signal(false);
+  private readonly migrationBusy = signal(false);
+  /** The sentence the migration was refused or failed with. */
+  readonly migrationError = signal<string | null>(null);
+  /** The program's answer to the migration, once it ran. */
+  private readonly migrated = signal<MigratePlan | null>(null);
+  readonly migrationDone = computed(() => this.migrated() !== null);
+  /** What the dialog lists: the written plan after the migration, the dry run before it. */
+  readonly shownMigration = computed(() => this.migrated() ?? this.migration());
+  /** Migrating is offered while the dry run has no problems, and not while it runs. */
+  readonly canMigrate = computed(() => (this.migration()?.problems.length ?? 1) === 0 && !this.migrationBusy());
+
+  reviewMigration(): void {
+    this.migrationError.set(null);
+    this.migrationOpen.set(true);
+  }
+
+  async runMigration(): Promise<void> {
+    const w = this.current();
+    if (w === null || !this.canMigrate()) return;
+    this.migrationBusy.set(true);
+    this.migrationError.set(null);
+    try {
+      this.migrated.set(await this.transport.sdlcMigrate(w.folder));
+    } catch (e) {
+      this.migrationError.set(message(e));
+    } finally {
+      this.migrationBusy.set(false);
+    }
+  }
+
+  /** Close the dialog; after a migration the workspace is read again, so the home page shows it as it now is. */
+  async closeMigration(): Promise<void> {
+    this.migrationOpen.set(false);
+    if (this.migrated() === null) return;
+    this.migrated.set(null);
+    this.migration.set(null);
+    await Promise.all([this.loadCurrent(), this.refreshMissing()]);
+  }
+
+  /** The dry run for a folder that failed to open; null when there is none or it could not be read, and the open error stands. */
+  private async readMigration(folder: string): Promise<MigratePlan | null> {
+    try {
+      return await this.transport.sdlcMigration(folder);
+    } catch {
+      return null;
+    }
+  }
   readonly newChangeOpen = signal(false);
   /** Set when a triage ended with no change; null otherwise. */
   readonly triageNotice = signal<{ idea: string; runId: string | null } | null>(null);
@@ -1279,7 +1333,10 @@ export class SdlcHomeViewModel {
       scan = await this.transport.sdlcScan(w.folder);
     } catch (e) {
       if (seq !== this.loadSeq) return;
+      const offered = await this.readMigration(w.folder);
+      if (seq !== this.loadSeq) return;
       this.clearDetail();
+      this.migration.set(offered);
       this.scanError.set(message(e));
       this.scanFailed.update((l) => (l.includes(w.id) ? l : [...l, w.id]));
       this.currentRead.set(true);

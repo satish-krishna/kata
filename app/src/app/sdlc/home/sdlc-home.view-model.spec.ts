@@ -18,6 +18,7 @@ import type { StepEvent } from '@bindings/StepEvent';
 import type { StepKind } from '@bindings/StepKind';
 import type { StepProgress } from '@bindings/StepProgress';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
+import type { MigratePlan } from '@bindings/MigratePlan';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { toastState } from '@spartan-ng/brain/sonner';
@@ -1994,5 +1995,106 @@ describe('SdlcHomeViewModel: a new triage clears the pane (R10.1)', () => {
     expect(vm.permissions()).toEqual([]);
     expect(vm.given()).toBeNull();
     TestBed.inject(LockStore).cancel();
+  });
+});
+
+describe('SdlcHomeViewModel migration', () => {
+  const plan = (over: Partial<MigratePlan> = {}): MigratePlan => ({
+    workspace: NEW_FOLDER,
+    master: `${NEW_FOLDER}/commerce-docs`,
+    write: false,
+    steps: [{ step: 'marker', path: 'a/.ai-sdlc.json', to: 'a/.hoshin.json', status: 'would', detail: null }],
+    kept: [],
+    manual: [],
+    problems: [],
+    ...over,
+  });
+  const legacy = async (offered: MigratePlan | null = plan()) => {
+    const s = setup();
+    vi.spyOn(s.transport, 'sdlcScan').mockRejectedValue('no marker');
+    const ask = vi.spyOn(s.transport, 'sdlcMigration').mockResolvedValue(offered);
+    const migrate = vi.spyOn(s.transport, 'sdlcMigrate');
+    await s.vm.init();
+    return { ...s, ask, migrate };
+  };
+
+  it('offers the migration in place of the error when the folder fails to open and has a plan', async () => {
+    const { vm, ask } = await legacy();
+    expect(ask).toHaveBeenCalledWith(vm.current()?.folder);
+    expect(vm.state()).toBe('migrate');
+    expect(vm.migration()?.steps).toHaveLength(1);
+  });
+
+  it('keeps the error when the folder has nothing to migrate', async () => {
+    const { vm } = await legacy(null);
+    expect(vm.state()).toBe('folder-missing');
+    expect(vm.migration()).toBeNull();
+  });
+
+  it('keeps the error when asking for the plan fails', async () => {
+    const s = setup();
+    vi.spyOn(s.transport, 'sdlcScan').mockRejectedValue('no marker');
+    vi.spyOn(s.transport, 'sdlcMigration').mockRejectedValue(new Error('node is missing'));
+    await s.vm.init();
+    expect(s.vm.state()).toBe('folder-missing');
+  });
+
+  it('opens the dialog on review and enables migrating while there are no problems', async () => {
+    const { vm } = await legacy();
+    expect(vm.migrationOpen()).toBe(false);
+    vm.reviewMigration();
+    expect(vm.migrationOpen()).toBe(true);
+    expect(vm.canMigrate()).toBe(true);
+  });
+
+  it('disables migrating when the plan has problems', async () => {
+    const { vm, migrate } = await legacy(plan({ problems: ['a change is mid-build'] }));
+    vm.reviewMigration();
+    expect(vm.canMigrate()).toBe(false);
+    await vm.runMigration();
+    expect(migrate).not.toHaveBeenCalled();
+  });
+
+  it('shows the written steps and the manual list after a successful migration', async () => {
+    const { vm, migrate } = await legacy();
+    migrate.mockResolvedValue(plan({ write: true, steps: [{ step: 'marker', path: 'a', to: 'b', status: 'done', detail: null }], manual: ['Push the branches.'] }));
+    vm.reviewMigration();
+    await vm.runMigration();
+    expect(vm.migrationDone()).toBe(true);
+    expect(vm.shownMigration()?.steps[0].status).toBe('done');
+    expect(vm.shownMigration()?.manual).toEqual(['Push the branches.']);
+    expect(vm.migrationError()).toBeNull();
+  });
+
+  it('shows the refusal of the backend as an error and keeps the plan', async () => {
+    const { vm, migrate } = await legacy();
+    migrate.mockRejectedValue('A run is working in this workspace.');
+    vm.reviewMigration();
+    await vm.runMigration();
+    expect(vm.migrationError()).toBe('A run is working in this workspace.');
+    expect(vm.migrationDone()).toBe(false);
+    expect(vm.shownMigration()?.write).toBe(false);
+  });
+
+  it('closing after a migration reloads the workspace', async () => {
+    const { vm, migrate, transport } = await legacy();
+    migrate.mockResolvedValue(plan({ write: true }));
+    vm.reviewMigration();
+    await vm.runMigration();
+    const scan = vi.spyOn(transport, 'sdlcScan').mockResolvedValue(scanOf({}));
+    await vm.closeMigration();
+    expect(vm.migrationOpen()).toBe(false);
+    expect(scan).toHaveBeenCalled();
+    expect(vm.migration()).toBeNull();
+  });
+
+  it('closing without migrating only closes the dialog', async () => {
+    const { vm, transport } = await legacy();
+    vm.reviewMigration();
+    const scan = vi.spyOn(transport, 'sdlcScan').mockClear();
+    await vm.closeMigration();
+    expect(vm.migrationOpen()).toBe(false);
+    expect(scan).not.toHaveBeenCalled();
+    expect(vm.state()).toBe('migrate');
   });
 });

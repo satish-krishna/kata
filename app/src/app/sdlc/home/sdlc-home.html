@@ -91,6 +91,15 @@
           </section>
         </main>
       }
+      @case ('migrate') {
+        <main class="k-home__state">
+          <section class="k-state" aria-labelledby="state-title">
+            <h1 id="state-title" class="k-state__title">This workspace was set up with ai-sdlc. Migrate it to hoshin?</h1>
+            <p class="k-state__body"><code class="k-mono">{{ vm.current()?.folder }}</code></p>
+            <button hlmBtn variant="primary" type="button" (click)="vm.reviewMigration()">Review</button>
+          </section>
+        </main>
+      }
       @case ('master-gone') {
         <main class="k-home__state">
           <section class="k-state" aria-labelledby="state-title">
@@ -271,6 +280,15 @@
       (cancel)="vm.closeSettings()"
     />
   }
+  <app-migrate-dialog
+    [open]="vm.migrationOpen()"
+    [plan]="vm.shownMigration()"
+    [done]="vm.migrationDone()"
+    [canMigrate]="vm.canMigrate()"
+    [error]="vm.migrationError()"
+    (migrate)="vm.runMigration()"
+    (close)="vm.closeMigration()"
+  />
   <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />
   <app-confirm-dialog
     [open]="vm.switchPrompt() !== null"

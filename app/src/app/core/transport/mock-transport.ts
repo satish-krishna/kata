@@ -148,6 +148,8 @@ export class MockTransport extends KataTransport {
   /** `?demo=build-long` (browser only) widens the build demo to three repositories, seventeen tasks, many files and findings, so every area of the build page overflows at 1280 by 800. */
   private readonly sdlc = new SdlcMock(demoParam() === 'build-long', demoParam(), earlierParam());
   private setupScanned = false;
+  /** Set once the legacy fixture folder is migrated; from then on it opens like any workspace. */
+  private migrated = false;
   /** The build layout a browser session has saved; a fresh session starts with none. */
   private buildLayout: Record<string, unknown> = {};
 
@@ -293,7 +295,7 @@ export class MockTransport extends KataTransport {
   }
 
   catalog(workdir: string | null): Promise<CatalogEntry[]> {
-    return Promise.resolve(workdir === MOCK_WORKSPACE_FOLDER || workdir === MOCK_SINGLE_FOLDER || workdir === MOCK_SINGLE_WORKSPACE ? [...seedCatalog, ...MOCK_SDLC_CATALOG] : seedCatalog);
+    return Promise.resolve(workdir === MOCK_WORKSPACE_FOLDER || workdir === MOCK_SINGLE_FOLDER || workdir === MOCK_SINGLE_WORKSPACE || workdir === MOCK_LEGACY_FOLDER ? [...seedCatalog, ...MOCK_SDLC_CATALOG] : seedCatalog);
   }
   listRuns(): Promise<RunRecord[]> { return Promise.resolve([...history, ...this.sdlc.sessionRecords()]); }
   loadRun(id: string): Promise<RunDetail> {
@@ -332,6 +334,7 @@ export class MockTransport extends KataTransport {
       this.setupScanned = true;
       return new Promise((ok) => setTimeout(() => ok(this.sdlc.scan(folder)), SETUP_SCAN_MS));
     }
+    if (folder === MOCK_LEGACY_FOLDER && !this.migrated) return Promise.reject(new Error('no repository of this folder holds .hoshin.json'));
     return Promise.resolve(this.sdlc.scan(folder));
   }
   sdlcContextHealth(_folder: string, _master: string, _system: string, repo: string): Promise<ContextState> { return Promise.resolve(this.sdlc.contextHealth(repo)); }
@@ -461,10 +464,11 @@ export class MockTransport extends KataTransport {
   sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }, appTurn?: AppTurn | null): Promise<RepoBoard[]> { return Promise.resolve(mockBoard(repos, status, going, stopped, appTurn ?? null)); }
   /** Only the legacy fixture folder is an ai-sdlc workspace. */
   sdlcMigration(folder: string): Promise<MigratePlan | null> {
-    return Promise.resolve(folder === MOCK_LEGACY_FOLDER ? mockMigrationPlan(false) : null);
+    return Promise.resolve(folder === MOCK_LEGACY_FOLDER && !this.migrated ? mockMigrationPlan(false) : null);
   }
   sdlcMigrate(folder: string): Promise<MigratePlan> {
-    return folder === MOCK_LEGACY_FOLDER ? Promise.resolve(mockMigrationPlan(true)) : Promise.reject(new Error('this folder has nothing to migrate'));
+    if (folder === MOCK_LEGACY_FOLDER) { this.migrated = true; return Promise.resolve(mockMigrationPlan(true)); }
+    return Promise.reject(new Error('this folder has nothing to migrate'));
   }
   sdlcReviewStanding(input: ReviewStandingInput): Promise<ReviewStanding> { return Promise.resolve(mockStanding(input)); }
   /** The fixture's parsed read; only the transport's own reads call it. */
