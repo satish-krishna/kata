@@ -111,6 +111,9 @@
               The master repo is the one that holds <code class="k-mono">.hoshin.json</code>. None of the repos in
               <code class="k-mono">{{ vm.current()?.folder }}</code> has it any more.
             </p>
+            @if (vm.migrationCheckError(); as why) {
+              <p class="k-state__body">Kata could not check whether this folder needs migrating: {{ why }}</p>
+            }
             <button hlmBtn variant="secondary" type="button" (click)="vm.askRemove()">Remove from list…</button>
           </section>
         </main>

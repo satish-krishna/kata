@@ -49,13 +49,12 @@ pub fn migration_blocked(
 /// that means "this folder is not a workspace", not a fault.
 const NO_MASTER: &str = "No master repository found";
 
-/// The migration to offer for `folder`: `None` when the folder opens as a hoshin workspace, when the program
-/// finds no master repository of either marker name there, or when nothing is left to do. Any other failure of
-/// the program is an error with its own words.
+/// The migration to offer for `folder`: `None` when the program finds no master repository of either marker
+/// name there, or when nothing is left to do. A folder that already opens as a hoshin workspace is asked all the
+/// same: a pull that renamed the marker leaves this machine's copies and git state under the ai-sdlc names, and a
+/// write the program refused part way is continued by a rerun. Any other failure of the program is an error
+/// with its own words.
 pub fn offer(program: &Program, folder: &Path) -> Result<Option<MigratePlan>, String> {
-    if kata_sdlc::layout::open(program, folder).is_ok() {
-        return Ok(None);
-    }
     match migrate::dry_run(program, folder) {
         Ok((plan, _)) => Ok(Some(plan).filter(MigratePlan::needed)),
         Err(ProgramError::CouldNotRun { message }) if message.contains(NO_MASTER) => Ok(None),
@@ -196,6 +195,60 @@ mod tests {
         assert_eq!(offer(&program(), dir.path()), Ok(None));
         let none = tempfile::tempdir().unwrap();
         assert_eq!(offer(&program(), none.path()), Ok(None));
+    }
+
+    #[test]
+    fn a_legacy_workspace_scans_without_a_master_and_is_still_offered() {
+        // What the home page meets for a folder set up with ai-sdlc: the scan does not fail, it finds no master,
+        // so the offer cannot depend on the scan failing.
+        let (dir, _) = workspace(".ai-sdlc.json");
+        let scan = kata_sdlc::workspace::scan(dir.path()).expect("the scan does not fail");
+        assert!(
+            matches!(scan.master, kata_sdlc::workspace::MasterState::None),
+            "{:?}",
+            scan.master
+        );
+        let plan = offer(&program(), dir.path()).unwrap().expect("offered");
+        assert!(plan.needed());
+    }
+
+    #[test]
+    fn a_single_repo_legacy_folder_is_offered() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-q", "-b", "main"]);
+        git(dir.path(), &["config", "user.name", "Test"]);
+        git(dir.path(), &["config", "user.email", "test@example.com"]);
+        git(dir.path(), &["config", "commit.gpgsign", "false"]);
+        std::fs::write(
+            dir.path().join(".ai-sdlc.json"),
+            "{\"version\":1,\"layout\":\"single-repo\",\"systems\":{\"kata\":{\"apps\":{\"app\":\".\"}}}}\n",
+        )
+        .unwrap();
+        git(dir.path(), &["add", "."]);
+        git(
+            dir.path(),
+            &["commit", "-q", "-m", "marker\n\nGenerated-By: ai-sdlc"],
+        );
+        let plan = offer(&program(), dir.path()).unwrap().expect("offered");
+        assert!(plan.needed());
+    }
+
+    #[test]
+    fn a_hoshin_workspace_with_only_local_steps_left_is_still_offered() {
+        // A pull renamed the marker; this machine's copies and git state are still under the ai-sdlc names.
+        let (dir, hub) = workspace(".hoshin.json");
+        std::fs::create_dir_all(hub.join(".git").join("ai-sdlc")).unwrap();
+        std::fs::write(hub.join(".git").join("ai-sdlc").join("state.json"), "{}").unwrap();
+        let plan = offer(&program(), dir.path()).unwrap().expect("offered");
+        assert!(plan.needed());
+        let would: Vec<&str> = plan
+            .steps
+            .iter()
+            .filter(|s| s.status == kata_sdlc::hoshin::migrate::StepStatus::Would)
+            .map(|s| s.step.as_str())
+            .collect();
+        assert!(!would.is_empty(), "{plan:?}");
+        assert!(!would.contains(&"marker"), "{would:?}");
     }
 
     #[test]

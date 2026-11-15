@@ -334,7 +334,8 @@ export class MockTransport extends KataTransport {
       this.setupScanned = true;
       return new Promise((ok) => setTimeout(() => ok(this.sdlc.scan(folder)), SETUP_SCAN_MS));
     }
-    if (folder === MOCK_LEGACY_FOLDER && !this.migrated) return Promise.reject(new Error('no repository of this folder holds .hoshin.json'));
+    // The real scan does not fail for an ai-sdlc folder: it finds no master repository, and the migration offer comes from `sdlcMigration`.
+    if (folder === MOCK_LEGACY_FOLDER && !this.migrated) return Promise.resolve({ folder, layout: 'workspace', repos: [], master: { kind: 'none' }, master_folder: null, marker: null, marker_error: null });
     return Promise.resolve(this.sdlc.scan(folder));
   }
   sdlcContextHealth(_folder: string, _master: string, _system: string, repo: string): Promise<ContextState> { return Promise.resolve(this.sdlc.contextHealth(repo)); }
@@ -462,7 +463,7 @@ export class MockTransport extends KataTransport {
     return Promise.resolve({ observed: false, reason: 'the test passed at 3f2a9c1, before the production code', stored: { commit: '3f2a9c1e0b7d3c5a8e6f1b2d4c7a9e0f3b5d8c1a', outcome: 'passed', output } });
   }
   sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }, appTurn?: AppTurn | null): Promise<RepoBoard[]> { return Promise.resolve(mockBoard(repos, status, going, stopped, appTurn ?? null)); }
-  /** Only the legacy fixture folder is an ai-sdlc workspace. */
+  /** Asked for every folder the home opens, as the backend is; only the legacy fixture folder has anything to migrate. */
   sdlcMigration(folder: string): Promise<MigratePlan | null> {
     return Promise.resolve(folder === MOCK_LEGACY_FOLDER && !this.migrated ? mockMigrationPlan(false) : null);
   }

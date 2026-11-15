@@ -237,7 +237,7 @@ export abstract class KataTransport {
   abstract sdlcBuildStatus(ref: ChangeRef): Promise<BuildStatus>;
   /** The red the program stored for one task of a repository, and whether it counts as observed. No record on this machine is an answer with no stored part. */
   abstract sdlcRedRecord(ref: ChangeRef, repo: string, task: string): Promise<RedRecord>;
-  /** What migrating an ai-sdlc workspace to hoshin would do; null when the folder is no ai-sdlc workspace or has nothing left to migrate. */
+  /** What migrating an ai-sdlc workspace to hoshin would do, asked for every folder the home opens (even one that opens as a hoshin workspace may have local steps left); null when the folder has no migration to offer. */
   abstract sdlcMigration(folder: string): Promise<MigratePlan | null>;
   /** Migrates the workspace; refused while a run works in it. */
   abstract sdlcMigrate(folder: string): Promise<MigratePlan>;

@@ -814,24 +814,21 @@ impl BuildHost {
             };
         }
         let folders = review_folders(&place, &snapshot.state);
-        if self
-            .inner
-            .lock()
-            .unwrap()
-            .migrating
-            .iter()
-            .any(|m| m.contains(&RepoKey::of(&place.workspace)))
-        {
-            return StartOutcome::Refused {
-                problems: vec![runs::MIGRATING.into()],
-            };
-        }
-        let taken = self
-            .inner
-            .lock()
-            .unwrap()
-            .holds
-            .take(&key, Purpose::Review, &folders);
+        // The migrating check and the hold are one step, as in a build's start: a migration that begins between
+        // two locks would otherwise find the review's hold already taken.
+        let taken = {
+            let mut guard = self.inner.lock().unwrap();
+            if guard
+                .migrating
+                .iter()
+                .any(|m| m.contains(&RepoKey::of(&place.workspace)))
+            {
+                return StartOutcome::Refused {
+                    problems: vec![runs::MIGRATING.into()],
+                };
+            }
+            guard.holds.take(&key, Purpose::Review, &folders)
+        };
         if let Err(held) = taken {
             return StartOutcome::Held {
                 held: held_repos(held),

@@ -501,11 +501,11 @@ function redVerdictOf(test: string[] | undefined, logged: string | null): RedVer
   return { kind: 'unreadable', value: logged };
 }
 
-/** A built task's verdict and whether it stands out, the way the backend sends them: not observed, not recorded and unreadable stand out. None for a task that is not built. */
-function redOf(test: string[] | undefined, row: BuildRow | null): { red: RedVerdict | null; redStandsOut: boolean } {
-  if (row === null) return { red: null, redStandsOut: false };
+/** A built task's verdict and whether it stands out, the way the backend sends them: not observed, not recorded and unreadable stand out, and only not observed wants its stored record. None for a task that is not built. */
+function redOf(test: string[] | undefined, row: BuildRow | null): { red: RedVerdict | null; redStandsOut: boolean; redRecordWanted: boolean } {
+  if (row === null) return { red: null, redStandsOut: false, redRecordWanted: false };
   const red = redVerdictOf(test, row.red);
-  return { red, redStandsOut: red.kind === 'notObserved' || red.kind === 'unrecorded' || red.kind === 'unreadable' };
+  return { red, redStandsOut: red.kind === 'notObserved' || red.kind === 'unrecorded' || red.kind === 'unreadable', redRecordWanted: red.kind === 'notObserved' };
 }
 
 const DOC_STEMS = new Set(['intent', 'spec', 'plan']);

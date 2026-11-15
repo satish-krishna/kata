@@ -2011,24 +2011,52 @@ describe('SdlcHomeViewModel migration', () => {
   });
   const legacy = async (offered: MigratePlan | null = plan()) => {
     const s = setup();
-    vi.spyOn(s.transport, 'sdlcScan').mockRejectedValue('no marker');
+    // The real scan does not fail for an ai-sdlc folder: it finds no master repository.
+    vi.spyOn(s.transport, 'sdlcScan').mockResolvedValue(scanOf({ master: { kind: 'none' }, marker: null }));
     const ask = vi.spyOn(s.transport, 'sdlcMigration').mockResolvedValue(offered);
     const migrate = vi.spyOn(s.transport, 'sdlcMigrate');
     await s.vm.init();
     return { ...s, ask, migrate };
   };
 
-  it('offers the migration in place of the error when the folder fails to open and has a plan', async () => {
+  it('offers the migration in place of "no master repo" when the scan finds no master and the backend has a plan', async () => {
     const { vm, ask } = await legacy();
     expect(ask).toHaveBeenCalledWith(vm.current()?.folder);
+    expect(vm.scanError()).toBeNull();
     expect(vm.state()).toBe('migrate');
     expect(vm.migration()?.steps).toHaveLength(1);
   });
 
-  it('keeps the error when the folder has nothing to migrate', async () => {
+  it('shows no master repo when the scan finds none and there is nothing to migrate', async () => {
     const { vm } = await legacy(null);
-    expect(vm.state()).toBe('folder-missing');
+    expect(vm.state()).toBe('master-gone');
     expect(vm.migration()).toBeNull();
+  });
+
+  it('offers the migration for a workspace that scans as set up, when only local steps are left', async () => {
+    const s = setup();
+    vi.spyOn(s.transport, 'sdlcMigration').mockResolvedValue(plan());
+    await s.vm.init();
+    expect(s.vm.scan()?.master.kind).toBe('one');
+    expect(s.vm.state()).toBe('migrate');
+  });
+
+  it('offers the migration over a scan that fails too, and keeps the open error', async () => {
+    const s = setup();
+    vi.spyOn(s.transport, 'sdlcScan').mockRejectedValue('no marker');
+    vi.spyOn(s.transport, 'sdlcMigration').mockResolvedValue(plan());
+    await s.vm.init();
+    expect(s.vm.state()).toBe('migrate');
+    expect(s.vm.scanError()).toContain('no marker');
+  });
+
+  it('keeps "no master repo" and shows why the folder could not be checked when the check fails', async () => {
+    const s = setup();
+    vi.spyOn(s.transport, 'sdlcScan').mockResolvedValue(scanOf({ master: { kind: 'none' }, marker: null }));
+    vi.spyOn(s.transport, 'sdlcMigration').mockRejectedValue(new Error('the marker cannot be read'));
+    await s.vm.init();
+    expect(s.vm.state()).toBe('master-gone');
+    expect(s.vm.migrationCheckError()).toBe('the marker cannot be read');
   });
 
   it('keeps the open error and shows why the folder could not be checked when asking for the plan fails', async () => {
@@ -2098,14 +2126,17 @@ describe('SdlcHomeViewModel migration', () => {
   });
 
   it('closing after a migration reloads the workspace', async () => {
-    const { vm, migrate, transport } = await legacy();
+    const { vm, migrate, transport, ask } = await legacy();
     migrate.mockResolvedValue(plan({ write: true }));
     vm.reviewMigration();
     await vm.runMigration();
+    // Migrated: the backend has nothing left to offer when the workspace is read again.
+    ask.mockResolvedValue(null);
     const scan = vi.spyOn(transport, 'sdlcScan').mockResolvedValue(scanOf({}));
     await vm.closeMigration();
     expect(vm.migrationOpen()).toBe(false);
     expect(scan).toHaveBeenCalled();
+    expect(ask).toHaveBeenCalledTimes(2);
     expect(vm.migration()).toBeNull();
   });
 

@@ -443,6 +443,8 @@ describe('MockTransport', () => {
 
     it('offers the migration for the legacy fixture folder only, with one would step of each kind, and migrates it', async () => {
       const t = new MockTransport();
+      // The scan does not fail for it, as the backend's does not: it finds no master repository.
+      expect((await t.sdlcScan(MOCK_LEGACY_FOLDER)).master).toEqual({ kind: 'none' });
       expect(await t.sdlcMigration('D:/elsewhere')).toBeNull();
       const plan = await t.sdlcMigration(MOCK_LEGACY_FOLDER);
       expect(plan?.write).toBe(false);

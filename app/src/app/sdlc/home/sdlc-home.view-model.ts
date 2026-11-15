@@ -225,7 +225,8 @@ export class SdlcHomeViewModel {
     if (!this.loaded()) return 'loading';
     if (this.pluginMissing()) return 'plugin-missing';
     if (this.current() === null) return 'no-workspaces';
-    if (this.scanError() !== null) return this.migration() !== null ? 'migrate' : 'folder-missing';
+    if (this.migration() !== null) return 'migrate';
+    if (this.scanError() !== null) return 'folder-missing';
     const scan = this.scan();
     if (scan === null) return 'loading';
     if (scan.master.kind === 'none') return 'master-gone';
@@ -242,7 +243,7 @@ export class SdlcHomeViewModel {
   readonly candidate = signal<WorkspaceCandidate | null>(null);
 
   // --- migrating an ai-sdlc workspace
-  /** The program's dry run for the current folder, when it failed to open and the program has a plan for it; null otherwise. */
+  /** The program's dry run for the current folder, when the backend says there is migration to offer (whatever the scan found); null otherwise. */
   readonly migration = signal<MigratePlan | null>(null);
   readonly migrationOpen = signal(false);
   readonly migrationBusy = signal(false);
@@ -287,7 +288,7 @@ export class SdlcHomeViewModel {
     await Promise.all([this.loadCurrent(), this.refreshMissing()]);
   }
 
-  /** The dry run for a folder that failed to open; null when there is none or it could not be read, and the open error stands. */
+  /** The backend's offer of the migration for a folder: a plan, or none; when the check itself failed, the program's words. */
   private async readMigration(folder: string): Promise<{ plan: MigratePlan | null; error: string | null }> {
     try {
       return { plan: await this.transport.sdlcMigration(folder), error: null };
@@ -1329,24 +1330,29 @@ export class SdlcHomeViewModel {
     this.migrationCheckError.set(null);
     if (!w) {
       this.clearDetail();
+      this.migration.set(null);
       this.currentRead.set(true);
       return;
     }
-    let scan: WorkspaceScan;
-    try {
-      scan = await this.transport.sdlcScan(w.folder);
-    } catch (e) {
-      if (seq !== this.loadSeq) return;
-      const offered = await this.readMigration(w.folder);
-      if (seq !== this.loadSeq) return;
+    // The scan and the migration check are asked together: the backend decides whether a migration is offered, whatever the scan finds.
+    const [scanned, offered] = await Promise.all([
+      this.transport.sdlcScan(w.folder).then(
+        (found) => ({ found }),
+        (e: unknown) => ({ failed: e }),
+      ),
+      this.readMigration(w.folder),
+    ]);
+    if (seq !== this.loadSeq) return;
+    this.migration.set(offered.plan);
+    this.migrationCheckError.set(offered.error);
+    if ('failed' in scanned) {
       this.clearDetail();
-      this.migration.set(offered.plan);
-      this.migrationCheckError.set(offered.error);
-      this.scanError.set(message(e));
+      this.scanError.set(message(scanned.failed));
       this.scanFailed.update((l) => (l.includes(w.id) ? l : [...l, w.id]));
       this.currentRead.set(true);
       return;
     }
+    const scan = scanned.found;
     let branches: BranchInfo | null = null;
     let views: WorkspaceView | null = null;
     let list: HomeList | null = null;
