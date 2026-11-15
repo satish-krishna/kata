@@ -58,7 +58,6 @@ export type HomeState =
   | 'many-masters'
   | 'marker-error'
   | 'not-set-up'
-  | 'refused'
   | 'ready';
 
 /** The home page's progress entry, kept apart from the change page's. */
@@ -174,10 +173,9 @@ export class SdlcHomeViewModel {
     );
   });
   /** Whether a new change may be started across the workspace's systems, as the backend decided; false until the answer is in. */
-  readonly canStartChange = computed(() => !this.layoutRefused() && (this.listed()?.canStartChange ?? this.workspace()?.canStartChange ?? false));
+  readonly canStartChange = computed(() => this.listed()?.canStartChange ?? this.workspace()?.canStartChange ?? false);
   /** Why a new change may not be started, as the backend gave it; null when it may. */
   readonly startChangeReason = computed(() => {
-    if (this.layoutRefused()) return this.blockMessage();
     const l = this.listed();
     return l ? l.startChangeReason : (this.workspace()?.startChangeReason ?? null);
   });
@@ -198,16 +196,6 @@ export class SdlcHomeViewModel {
   });
   /** The apps of a single-repo system with their context health; null in a workspace. */
   readonly apps = signal<AppHealth[] | null>(null);
-  /** The message of a blocked readiness; null when the mode can run. */
-  readonly blockMessage = computed<string | null>(() => {
-    const r = this.readiness();
-    return r.kind === 'blocked' ? r.message : null;
-  });
-  /** The backend refused the layout of this folder on this machine: nothing else is offered. */
-  private readonly layoutRefused = computed(() => {
-    const r = this.readiness();
-    return r.kind === 'blocked' && r.reason === 'layoutNeedsNewerPlugin';
-  });
   readonly masterBranch = computed(() => this.branches()?.current ?? null);
   /** Never offered where the backend says the checkout cannot be switched. */
   readonly otherBranches = computed(() => {
@@ -238,7 +226,6 @@ export class SdlcHomeViewModel {
     if (this.scanError() !== null) return 'folder-missing';
     const scan = this.scan();
     if (scan === null) return 'loading';
-    if (this.layoutRefused()) return 'refused';
     if (scan.master.kind === 'none') return 'master-gone';
     if (scan.master.kind === 'many') return 'many-masters';
     if (scan.marker_error !== null) return 'marker-error';

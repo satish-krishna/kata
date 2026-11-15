@@ -959,9 +959,6 @@ describe('MockTransport home listing', () => {
       if (again.kind !== 'listed') throw new Error('expected a listed home');
       expect(again.system).toBe('payments');
     });
-    await withDemo('old-plugin', async (t) => {
-      expect(await t.sdlcHomeList('acme-commerce', ['commerce'])).toEqual({ kind: 'legacy' });
-    });
   });
 });
 

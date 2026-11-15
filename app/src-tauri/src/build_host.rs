@@ -9,7 +9,7 @@ use crate::steps::{StepGuard, StepKind, StepTable};
 use kata_core::proc::{CancelToken, LineSink};
 use kata_core::spec::PermissionMode;
 use kata_core::RunSpec;
-use kata_sdlc::ai_sdlc::state::{self, read_state, ChangeState};
+use kata_sdlc::ai_sdlc::state::{self, ChangeState};
 use kata_sdlc::ai_sdlc::{
     progress_of, Answer, HookFailure, Place, Program, ProgramError, StepOutcome, StepProgressKind,
 };
@@ -299,21 +299,11 @@ pub trait Launcher: Send + Sync {
 /// [`Tools`] over one hoshin program.
 pub struct ProgramTools {
     program: Program,
-    /// Whether the plugin can list changes (1.3.0 or later), so the copies come from the light list.
-    lists: bool,
 }
 
 impl ProgramTools {
-    pub fn new(program: Program, lists: bool) -> Self {
-        ProgramTools { program, lists }
-    }
-
-    /// Every change of `system`, from the whole-system `state` read an older plugin needs.
-    fn states(&self, place: &Place, system: &str) -> Result<Vec<ChangeState>, ProgramError> {
-        let answer = self
-            .program
-            .run(&["state", "--json", "--system", system], place)?;
-        Ok(read_state(answer)?.changes)
+    pub fn new(program: Program) -> Self {
+        ProgramTools { program }
     }
 }
 
@@ -351,20 +341,12 @@ impl Tools for ProgramTools {
         system: &str,
         change: &str,
     ) -> Result<Vec<PathBuf>, ProgramError> {
-        if self.lists {
-            let list = self.program.list(place, system)?;
-            return Ok(list
-                .changes
-                .iter()
-                .filter(|c| c.in_copy && c.change != change)
-                .map(|c| PathBuf::from(&c.master))
-                .collect());
-        }
-        Ok(self
-            .states(place, system)?
+        let list = self.program.list(place, system)?;
+        Ok(list
+            .changes
             .iter()
-            .filter(|s| s.in_copy && s.change != change)
-            .map(|s| PathBuf::from(&s.master))
+            .filter(|c| c.in_copy && c.change != change)
+            .map(|c| PathBuf::from(&c.master))
             .collect())
     }
 
@@ -4844,7 +4826,7 @@ mod tests {
             );
         }
         let tools = Arc::new(RealRun {
-            real: ProgramTools::new(vendored(), true),
+            real: ProgramTools::new(vendored()),
             fake: fake.clone(),
         });
         let launcher = Arc::new(FakeLauncher::default());
@@ -4965,7 +4947,7 @@ process.exit(r.status ?? 1);
     }
 
     /// What `snapshot` of the first of two started changes reads, and the calls it made.
-    fn snapshot_with(lists: bool) -> (Snapshot, Vec<String>, String) {
+    fn snapshot_with() -> (Snapshot, Vec<String>, String) {
         let real = real_workspace(&["2026-11-01-a", "2026-11-02-b"]);
         let logs = tempfile::tempdir().unwrap();
         let (program, log) = recording_program(logs.path());
@@ -4975,7 +4957,7 @@ process.exit(r.status ?? 1);
             .unwrap()
             .insert("2026-11-01-a".into(), plan(&[("T1", "kata", &[])]));
         let tools = Arc::new(ReadsReal {
-            real: ProgramTools::new(program, lists),
+            real: ProgramTools::new(program),
             fake,
         });
         let host = BuildHost::new(
@@ -4997,7 +4979,7 @@ process.exit(r.status ?? 1);
     // R4.3
     #[test]
     fn build_reads_its_change_and_the_light_list() {
-        let (snapshot, calls, other) = snapshot_with(true);
+        let (snapshot, calls, other) = snapshot_with();
         assert_eq!(snapshot.state.change, "2026-11-01-a");
         assert_eq!(snapshot.others, vec![PathBuf::from(other)]);
         assert_eq!(
@@ -5011,21 +4993,6 @@ process.exit(r.status ?? 1);
             "{calls:?}"
         );
     }
-
-    // R4.3
-    #[test]
-    fn an_older_plugin_reads_copies_from_state() {
-        let (snapshot, calls, other) = snapshot_with(false);
-        assert_eq!(snapshot.others, vec![PathBuf::from(other)]);
-        assert!(!calls.iter().any(|c| c.starts_with("list")), "{calls:?}");
-        assert!(
-            calls
-                .iter()
-                .any(|c| c.starts_with("state --json --system") && !c.contains("--change")),
-            "{calls:?}"
-        );
-    }
-
     // R4.3
     #[test]
     fn a_refusal_in_one_repository_changes_no_repository() {

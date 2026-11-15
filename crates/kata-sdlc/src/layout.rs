@@ -686,7 +686,6 @@ if (args[0] === 'resolve') {
         use crate::holds::{keys_for, RepoKey};
         use crate::permissions::fixtures::place;
         use crate::permissions::RunKind;
-        use crate::plugin::{self, GhPresence, Plugin, Readiness};
         use crate::review::ReviewCurrency;
         use crate::runspec::build_workdir;
         use std::collections::BTreeMap;
@@ -705,17 +704,6 @@ if (args[0] === 'resolve') {
 
         // The layout of the opened folder and the repository it opens as.
         assert_opened(open(&program(), &ws), &ws, &ws, Layout::Workspace);
-
-        // The readiness comes back unchanged on 1.1.0.
-        let ready = Readiness::Ready {
-            plugin: Plugin {
-                dir: ws.join("plugin"),
-                version: "1.1.0".into(),
-                layouts: vec![1],
-            },
-            gh: GhPresence::Present,
-        };
-        assert_eq!(plugin::for_layout(&ready, Layout::Workspace), ready);
 
         // The master checkout can be switched.
         assert!(branch::switchable(Layout::Workspace));

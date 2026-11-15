@@ -141,7 +141,7 @@ const RUNS: Record<Exclude<StageAction, HandledAction>, StageRun> = {
 };
 /** The fix runs, which need a plugin that has the light track. */
 const FIX_RUNS: readonly StageAction[] = ['finish-fix-draft', 'change-fix', 'reopen-fix', 'accept-fix'];
-const NEEDS_LIGHT_TRACK = 'Needs ai-sdlc 1.1.0 or later.';
+const NEEDS_LIGHT_TRACK = 'Needs hoshin 1.0.0 or later.';
 
 /** The document each accepting action records. */
 const ACCEPTS: Partial<Record<StageAction, ChangeDocument>> = {

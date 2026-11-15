@@ -392,10 +392,7 @@ struct PluginTools;
 impl PluginTools {
     fn program(workspace: &Path) -> Result<build_host::ProgramTools, sdlc::ai_sdlc::ProgramError> {
         match state_inputs(&workspace.display().to_string()) {
-            (Some(program), readiness) => Ok(build_host::ProgramTools::new(
-                program,
-                sdlc::plugin::lists_changes(&readiness),
-            )),
+            (Some(program), _) => Ok(build_host::ProgramTools::new(program)),
             (None, sdlc::plugin::Readiness::Blocked { message, .. }) => {
                 Err(sdlc::ai_sdlc::ProgramError::CouldNotRun { message })
             }
@@ -1480,7 +1477,7 @@ fn sdlc_state(
 }
 
 /// The home's list for a saved workspace: the system shown (the one used last, else the first) with its open and
-/// finished changes, or `Legacy` where the plugin cannot list changes.
+/// finished changes, or `Legacy` where the plugin cannot be used.
 #[tauri::command(async)]
 fn sdlc_home_list(
     workspace_id: String,
@@ -1555,16 +1552,9 @@ fn sdlc_home_pull_requests(
     system: String,
     changes: Vec<String>,
 ) -> Result<sdlc::open_changes::HomeChecked, String> {
-    let (program, readiness) = state_inputs(&folder);
+    let (program, _) = state_inputs(&folder);
     let program = program.ok_or_else(|| "the AI-SDLC mode cannot run here".to_string())?;
-    sdlc_home::home_pull_requests(
-        &program,
-        &readiness,
-        Path::new(&folder),
-        &system,
-        &changes,
-        &memory,
-    )
+    sdlc_home::home_pull_requests(&program, Path::new(&folder), &system, &changes, &memory)
 }
 
 /// One change of a system, as [`sdlc_state`] shows it.
@@ -1664,28 +1654,9 @@ fn ai_sdlc_readiness(workdir: Option<&str>) -> sdlc::plugin::Readiness {
     let roots = catalog::roots_for_workdir(workdir);
     let found = catalog::discover(&roots);
     let plugin = ai_sdlc_entry(&found);
-    let machine = sdlc::plugin::readiness(&sdlc::plugin::Machine::detect(
+    sdlc::plugin::readiness(&sdlc::plugin::Machine::detect(
         plugin.map(|e| e.path.as_path()),
-    ));
-    // For an opened folder, the layout the program reports decides whether this plugin is new enough.
-    // A plugin refused as too old (a pre-release too) is asked as well: for a single-repo folder it reads as
-    // needing 1.4.0.
-    let askable = matches!(
-        machine,
-        sdlc::plugin::Readiness::Ready { .. }
-            | sdlc::plugin::Readiness::Blocked {
-                reason: sdlc::plugin::BlockReason::PluginTooOld,
-                ..
-            }
-    );
-    let (Some(folder), Some(plugin), true) = (workdir, plugin, askable) else {
-        return machine;
-    };
-    let program = sdlc::ai_sdlc::Program::locate(&plugin.path);
-    match sdlc::layout::open(&program, Path::new(folder)) {
-        Ok(opened) => sdlc::plugin::for_layout(&machine, opened.layout),
-        Err(_) => machine,
-    }
+    ))
 }
 
 /// The hoshin plugin folder the format program is read from, or why the build cannot be read. It is

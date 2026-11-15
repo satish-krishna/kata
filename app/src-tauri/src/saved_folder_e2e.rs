@@ -135,7 +135,7 @@ fn found_again(program: &Program, saved: &str, layout: Layout) {
     assert!(home.in_copy);
 
     // (c) The build host resolves the folder, then reads the change's state in the place it got.
-    let tools = ProgramTools::new(program.clone(), true);
+    let tools = ProgramTools::new(program.clone());
     let place = tools.resolve(folder).unwrap();
     let state = tools
         .change_state(&place, SYSTEM, CHANGE)

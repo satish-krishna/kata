@@ -155,7 +155,7 @@ mod tests {
         Readiness::Ready {
             plugin: Plugin {
                 dir: PathBuf::from("plugin"),
-                version: "1.1.0".into(),
+                version: "1.0.0".into(),
                 layouts: vec![],
             },
             gh: GhPresence::Present,
@@ -375,7 +375,7 @@ mod tests {
         let source = counting(2);
         let blocked = Readiness::Blocked {
             reason: kata_sdlc::plugin::BlockReason::PluginTooOld,
-            message: "The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 1.0.0.".into(),
+            message: "The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.0.".into(),
         };
         let view =
             system_view(Some(&source), &blocked, &no_live, Path::new("/ws"), "demo").unwrap();
@@ -385,52 +385,13 @@ mod tests {
             .start_change_reason
             .as_deref()
             .unwrap()
-            .contains("1.1.0"));
+            .contains("0.9.0"));
         for c in &view.changes {
             assert!(!c.offer.label.text.is_empty());
             assert!(!c.offer.actions.is_empty());
             for a in &c.offer.actions {
                 assert!(!a.enabled, "{:?}", a.action);
-                assert!(a.reason.as_deref().unwrap().contains("1.0.0"));
-            }
-        }
-    }
-
-    /// R2.2: a single-repo folder on a plugin below 1.0.0 offers nothing, setup included.
-    #[test]
-    fn a_blocked_single_repo_offers_nothing() {
-        let source = counting(2);
-        let readiness = kata_sdlc::plugin::for_layout(
-            &Readiness::Ready {
-                plugin: Plugin {
-                    dir: PathBuf::from("plugin"),
-                    version: "0.9.1".into(),
-                    layouts: vec![],
-                },
-                gh: GhPresence::Present,
-            },
-            kata_sdlc::layout::Layout::SingleRepo,
-        );
-        let view = system_view(
-            Some(&source),
-            &readiness,
-            &no_live,
-            Path::new("/ws"),
-            "demo",
-        )
-        .unwrap();
-        assert!(!view.can_start_change);
-        assert!(view
-            .start_change_reason
-            .as_deref()
-            .unwrap()
-            .contains("0.9.1"));
-        assert_eq!(view.changes.len(), 2);
-        for c in &view.changes {
-            assert!(!c.offer.actions.is_empty());
-            for a in &c.offer.actions {
-                assert!(!a.enabled, "{:?}", a.action);
-                assert!(a.reason.as_deref().unwrap().contains("1.0.0"));
+                assert!(a.reason.as_deref().unwrap().contains("0.9.0"));
             }
         }
     }

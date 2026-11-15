@@ -11,7 +11,7 @@
     (remove)="vm.askRemove()"
     (openSettings)="vm.openSettings()"
   >
-    @if (vm.canWork() || vm.state() === 'refused') {
+    @if (vm.canWork()) {
       <button
         hlmBtn
         variant="primary"
@@ -122,15 +122,6 @@
           <section class="k-state" aria-labelledby="state-title">
             <h1 id="state-title" class="k-state__title">.ai-sdlc.json could not be read</h1>
             <p class="k-state__body">{{ vm.scan()?.marker_error }}</p>
-          </section>
-        </main>
-      }
-      @case ('refused') {
-        <main class="k-home__state">
-          <section class="k-state" aria-labelledby="state-title">
-            <h1 id="state-title" class="k-state__title">The single-repo layout needs a newer ai-sdlc</h1>
-            <p class="k-state__body">{{ vm.blockMessage() }}</p>
-            <p class="k-state__body">Nothing else in this folder works until the plugin is updated. There is no action on this screen.</p>
           </section>
         </main>
       }

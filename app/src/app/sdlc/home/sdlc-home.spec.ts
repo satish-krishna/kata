@@ -291,20 +291,6 @@ describe('SdlcHome of a single-repo repository', () => {
     expect(run.mock.calls[0][0].name).toBe('sdlc-kata-context');
   });
 
-  it('a refused repository shows the message and offers nothing (R2.2)', async () => {
-    demoAt('demo=single-repo&plugin=1.3.1');
-    const { container } = await mount();
-    expect(text(container)).toContain('this machine has 1.3.1');
-    const all = labels(container);
-    for (const gone of ['Add system', 'Run setup', 'Refresh instructions', 'Write instructions']) expect(all).not.toContain(gone);
-    expect(container.querySelector('app-repos-table')).toBeNull();
-    expect(container.querySelector('app-instructions-row')).toBeNull();
-    expect(container.querySelector('button[aria-label^="View context"]')).toBeNull();
-    expect(container.querySelector('button[aria-label^="Build context"]')).toBeNull();
-    const start = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'New change');
-    expect(start === undefined || start.disabled).toBe(true);
-  });
-
   it('offers no way to open another branch in a single-repo repository (R6.1)', async () => {
     demoAt('demo=single-repo');
     const { container } = await mount();

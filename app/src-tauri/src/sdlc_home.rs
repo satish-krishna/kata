@@ -135,8 +135,7 @@ pub struct HomeMemory {
     rows: Mutex<BTreeMap<Key, Remembered>>,
 }
 
-/// The home's list for the saved workspace: the shown system's open and finished changes. A plugin older than
-/// 1.3.0 answers `Legacy`, and the program is not asked.
+/// The home's list for the saved workspace: the shown system's open and finished changes.
 pub fn home_list(
     source: &dyn HomeSource,
     readiness: &Readiness,
@@ -145,9 +144,6 @@ pub fn home_list(
     layout: Layout,
     systems: &[String],
 ) -> Result<HomeList, String> {
-    if !kata_sdlc::plugin::lists_changes(readiness) {
-        return Ok(HomeList::Legacy);
-    }
     let system = shown_system(remembered, systems);
     let (open, finished) = match &system {
         Some(system) => split(source.list(folder, layout, system)?),
@@ -210,9 +206,6 @@ pub fn home_open(
     trigger: Refresh,
     memory: &HomeMemory,
 ) -> Result<HomeOpen, String> {
-    if !kata_sdlc::plugin::lists_changes(readiness) {
-        return Err("the installed hoshin plugin cannot read open changes alone".into());
-    }
     let found = source.open_states(folder, layout, system)?;
     let mut problems = found.problems.clone();
     // Declaring done needs a committed review and every task logged, which is what the candidate means, so
@@ -285,15 +278,11 @@ pub fn home_open(
 /// read is skipped; a check that fails leaves its row out, so it keeps its last reading.
 pub fn home_pull_requests(
     source: &dyn HomeSource,
-    readiness: &Readiness,
     folder: &Path,
     system: &str,
     changes: &[String],
     memory: &HomeMemory,
 ) -> Result<HomeChecked, String> {
-    if !kata_sdlc::plugin::lists_changes(readiness) {
-        return Err("the installed hoshin plugin cannot read open changes alone".into());
-    }
     let views: Vec<ChangeView> = {
         let remembered = memory.rows.lock().unwrap();
         changes
@@ -454,7 +443,7 @@ mod tests {
     ) -> Result<HomeOpen, String> {
         home_open(
             fake,
-            &ready("1.3.1"),
+            &ready("1.0.0"),
             &no_live,
             Path::new("/ws"),
             Layout::Workspace,
@@ -493,15 +482,8 @@ mod tests {
 
         let mut fake = three();
         fake.merge.insert("a".into(), Ok(CopyRemoval::Offer));
-        let checked = home_pull_requests(
-            &fake,
-            &ready("1.3.1"),
-            Path::new("/ws"),
-            "kata",
-            &names(&["a"]),
-            &memory,
-        )
-        .unwrap();
+        let checked =
+            home_pull_requests(&fake, Path::new("/ws"), "kata", &names(&["a"]), &memory).unwrap();
         assert_eq!(
             checked.rows[0].reading.label.text,
             "Done · merged, remove the copy"
@@ -522,38 +504,6 @@ mod tests {
         let asked = fake.declared_asked.lock().unwrap();
         assert!(asked.iter().all(|c| c == "a" || c == "b"), "{asked:?}");
         assert!(!asked.iter().any(|c| c == "c"));
-    }
-
-    #[test]
-    fn an_older_plugin_answers_legacy_without_asking() {
-        struct Panics;
-        impl HomeSource for Panics {
-            fn list(&self, _: &Path, _: Layout, _: &str) -> Result<ChangeList, String> {
-                panic!("asked")
-            }
-            fn open_states(&self, _: &Path, _: Layout, _: &str) -> Result<SystemState, String> {
-                panic!("asked")
-            }
-            fn declared(&self, _: &Path, _: &str, _: &str) -> Result<bool, String> {
-                panic!("asked")
-            }
-            fn merge_check(&self, _: &Path, _: &ChangeState) -> Result<CopyRemoval, String> {
-                panic!("asked")
-            }
-        }
-        let blocked = Readiness::missing();
-        for readiness in [ready("0.9.0"), blocked] {
-            let answer = home_list(
-                &Panics,
-                &readiness,
-                Some("kata"),
-                Path::new("/ws"),
-                Layout::Workspace,
-                &names(&["kata"]),
-            )
-            .unwrap();
-            assert_eq!(answer, HomeList::Legacy);
-        }
     }
 
     #[test]
@@ -581,7 +531,7 @@ mod tests {
         };
         let answer = home_list(
             &fake,
-            &ready("1.3.1"),
+            &ready("1.0.0"),
             Some("kata"),
             Path::new("/ws"),
             Layout::Workspace,
@@ -609,7 +559,7 @@ mod tests {
         }
         let none = home_list(
             &fake,
-            &ready("1.3.1"),
+            &ready("1.0.0"),
             None,
             Path::new("/ws"),
             Layout::Workspace,
@@ -637,7 +587,6 @@ mod tests {
         fake.merge.insert("b".into(), Ok(CopyRemoval::Offer));
         let checked = home_pull_requests(
             &fake,
-            &ready("1.3.1"),
             Path::new("/ws"),
             "kata",
             &names(&["a", "b"]),
@@ -727,7 +676,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
         for (layout, workspace_flag) in [(Layout::Workspace, true), (Layout::SingleRepo, false)] {
             let dir = tempfile::tempdir().unwrap();
             let program = recording_program(dir.path(), false);
-            let readiness = ready("1.3.1");
+            let readiness = ready("1.0.0");
             let folder = dir.path();
             home_list(
                 &program,
@@ -789,7 +738,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
     fn a_read_that_needs_the_master_resolves_once_and_again_after_an_error() {
         let dir = tempfile::tempdir().unwrap();
         let program = recording_program(dir.path(), true);
-        let readiness = ready("1.3.1");
+        let readiness = ready("1.0.0");
         let memory = HomeMemory::default();
         let folder = dir.path();
         let open = || {
@@ -842,7 +791,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
         std::fs::write(dir.path().join("state.json"), state.to_string()).unwrap();
         let answer = home_open(
             &program,
-            &ready("1.3.1"),
+            &ready("1.0.0"),
             &no_live,
             dir.path(),
             Layout::Workspace,
@@ -988,7 +937,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
                 assert_eq!(f.len(), finished);
                 open.iter().map(|c| c.change.clone()).collect()
             }
-            HomeList::Legacy => panic!("a 1.3.1 plugin answered Legacy"),
+            HomeList::Legacy => panic!("a ready plugin answered Legacy"),
         };
         assert_eq!(shown.len(), 3, "{shown:?}");
         shown
@@ -1005,7 +954,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
             entry: Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../crates/kata-sdlc/tests/hoshin-tools/hoshin.ts"),
         };
-        let readiness = ready("1.3.1");
+        let readiness = ready("1.0.0");
         let systems = names(&["kata"]);
         let mut misses = Vec::new();
         // The list call and the open call from one start, on the workspace it is given.
@@ -1090,7 +1039,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
         let read = |fake: &Fake, trigger| {
             home_open(
                 fake,
-                &ready("1.4.0"),
+                &ready("1.0.0"),
                 &no_live,
                 Path::new("/kata"),
                 Layout::Workspace,
@@ -1114,15 +1063,9 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
             ),
         ] {
             fake.merge.insert("a".into(), Ok(check));
-            let checked = home_pull_requests(
-                &fake,
-                &ready("1.4.0"),
-                Path::new("/kata"),
-                "kata",
-                &names(&["a"]),
-                &memory,
-            )
-            .unwrap();
+            let checked =
+                home_pull_requests(&fake, Path::new("/kata"), "kata", &names(&["a"]), &memory)
+                    .unwrap();
             assert_eq!(checked.rows[0].reading.label.text, reading);
             assert_eq!(text(&read(&fake, Refresh::Focus), "a"), reading);
         }

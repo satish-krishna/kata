@@ -953,9 +953,8 @@ export class SdlcMock {
       return { change: `2026-09-${n}-finished-change-${n}`, title: `Finished change ${n}`, finished: i % 2 === 0 ? 'merged' : 'rejected' };
     });
   }
-  /** Like the backend's `sdlc_home_list`: `legacy` on a plugin older than 1.3.0 (`?demo=old-plugin`), else the shown system's open and finished changes. */
+  /** Like the backend's `sdlc_home_list`: the shown system's open and finished changes. */
   homeList(systems: string[], readiness: Readiness): HomeList {
-    if (this.demo === 'old-plugin') return { kind: 'legacy' };
     const system = this.shownSystem(systems);
     const open = system === this.homeSystem() ? this.stagePass().map((c) => ({ change: c.change, title: null })) : [];
     const finished = system === null ? [] : this.finishedChanges(system);
@@ -982,7 +981,6 @@ export class SdlcMock {
   }
   /** Like `sdlc_home_open`: every open change as a row. The merge check is asked about the declared ones, except on a focus refresh; the light list is read again when the names on screen differ. */
   homeOpen(system: string, shown: string[], trigger: Refresh, readiness: Readiness): HomeOpen {
-    if (this.demo === 'old-plugin') throw new Error('the installed ai-sdlc plugin cannot read open changes alone');
     const rows = this.homeRows(system, readiness);
     const names = new Set(rows.map((r) => r.view.state.change));
     const check = trigger === 'focus' ? [] : rows.filter((r) => r.reading.action !== 'workflow').map((r) => r.view.state.change);

@@ -167,17 +167,17 @@ describe('App version line', () => {
   }, 15000);
 
   it('an ai-sdlc older than the minimum shows its version while the home keeps its message', async () => {
-    const tooOld = { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 1.0.3.' } as const;
+    const tooOld = { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.3.' } as const;
     const base = new MockTransport();
     vi.spyOn(base, 'appVersions').mockResolvedValue(found('1.3.0'));
     vi.spyOn(base, 'sdlcPluginReadiness').mockResolvedValue(tooOld);
     const baseline = (await open(base, '/sdlc')).querySelector('.k-home')?.textContent;
     TestBed.resetTestingModule();
     const transport = new MockTransport();
-    vi.spyOn(transport, 'appVersions').mockResolvedValue(found('1.0.3'));
+    vi.spyOn(transport, 'appVersions').mockResolvedValue(found('0.9.3'));
     vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(tooOld);
     const container = await open(transport, '/sdlc');
-    expect(container.querySelector('.wb-statusbar')?.textContent).toContain('ai-sdlc 1.0.3');
+    expect(container.querySelector('.wb-statusbar')?.textContent).toContain('ai-sdlc 0.9.3');
     await vi.waitFor(() => expect(container.querySelector('.k-home')?.textContent).toBe(baseline), { timeout: 5000 });
   }, 15000);
 });

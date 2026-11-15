@@ -345,7 +345,7 @@ export class MockTransport extends KataTransport {
   }
   /** A test or a demo changes what the workspace holds for a change; the next `sdlcChangeState` and `sdlcState` show it. */
   patchChange(change: string, patch: Partial<ChangeInfo>): void { this.sdlc.patch(change, patch); }
-  /** Scripted from the home fixtures; `?demo=old-plugin` answers `legacy`, `?demo=finished-many` adds a second system and sixty finished changes. */
+  /** Scripted from the home fixtures; `?demo=finished-many` adds a second system and sixty finished changes. */
   async sdlcHomeList(_workspaceId: string, systems: string[]): Promise<HomeList> { return this.sdlc.homeList(systems, await this.sdlcPluginReadiness(null)); }
   async sdlcHomePick(_workspaceId: string, system: string, systems: string[]): Promise<HomeList> { return this.sdlc.homePick(system, systems, await this.sdlcPluginReadiness(null)); }
   async sdlcHomeOpen(folder: string, system: string, shown: string[], trigger: Refresh): Promise<HomeOpen> {
@@ -454,15 +454,8 @@ export class MockTransport extends KataTransport {
   sdlcReadParsed(ref: ChangeRef, doc: string): Promise<ParsedRead | null> { return settled(() => this.sdlc.readParsed(ref.change, doc)); }
   sdlcReviewRecord(ref: ChangeRef): Promise<ReviewRecord | null> { return settled(() => { this.sdlc.homeOf(ref.change); return this.sdlc.reviewRecord(); }); }
   sdlcBuildHeads(ref: ChangeRef, repos: string[]): Promise<Record<string, string>> { return settled(() => { this.sdlc.homeOf(ref.change); return this.sdlc.heads(repos); }); }
-  /** `?demo=single-repo&plugin=<version>` gives the readiness of a machine whose plugin is older than the single-repo layout; the single-repo demos otherwise run on 1.4.0. */
   sdlcPluginReadiness(_workdir: string | null): Promise<Readiness> {
-    const demo = demoParam();
-    const single = demo === 'single-repo' || demo === 'single-repo-root';
-    const asked = single && typeof location !== 'undefined' ? new URLSearchParams(location.search).get('plugin') : null;
-    if (asked !== null && asked < '1.4.0') {
-      return Promise.resolve({ kind: 'blocked', reason: 'layoutNeedsNewerPlugin', message: `The single-repo layout needs ai-sdlc 1.4.0 or later; this machine has ${asked}.` });
-    }
-    return Promise.resolve({ kind: 'ready', plugin: { dir: '~/.claude/plugins/ai-sdlc', version: single ? '1.4.0' : MOCK_PLUGIN_VERSION, layouts: MOCK_LAYOUTS }, gh: 'present' });
+    return Promise.resolve({ kind: 'ready', plugin: { dir: '~/.claude/plugins/ai-sdlc', version: MOCK_PLUGIN_VERSION, layouts: MOCK_LAYOUTS }, gh: 'present' });
   }
   sdlcChangeRepos(ref: ChangeRef): Promise<ChangeRepo[]> { return settled(() => this.sdlc.changeRepos(ref.workspace, ref.change)); }
   sdlcMissingChangeBranches(ref: ChangeRef): Promise<string[]> { return settled(() => { this.sdlc.homeOf(ref.change); return []; }); }
