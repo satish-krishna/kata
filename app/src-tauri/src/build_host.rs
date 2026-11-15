@@ -3402,7 +3402,13 @@ mod tests {
             ));
             let review = r.launcher.reviews();
             assert_eq!(review.len(), 1);
-            assert!(r.launcher.spec_of(review[0]).contains("--review --master"));
+            let spec = r.launcher.spec_of(review[0]);
+            assert!(
+                spec.contains("hoshin review skill"),
+                "row 3: names the review skill"
+            );
+            assert!(spec.contains("--master"), "row 3: carries the master");
+            assert!(!spec.contains("--review"), "row 3: no --review flag");
             assert_eq!(r.holder("kata"), Some(key("A")), "row 3: hold kept");
             // The hold goes when the run ends, whatever its outcome.
             r.launcher.finish(review[0], 1);

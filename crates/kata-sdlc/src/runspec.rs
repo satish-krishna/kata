@@ -126,22 +126,24 @@ pub fn change_spec(place: &RunPlace, form: RunForm) -> RunSpec {
     let master = slashes(&place.master_path());
     let (name, task, workdir) = match &place.kind {
         RunKind::Build { .. } | RunKind::Review => {
-            let (flag, name, workdir) = match &place.kind {
+            let (mut task, name, workdir) = match &place.kind {
                 RunKind::Build { repo } => (
-                    format!("--repo {repo}"),
+                    format!(
+                        "Use the hoshin build skill for system {} on change folder {} with --repo {repo} --master {master}.",
+                        place.system, place.state.change
+                    ),
                     format!("sdlc-{}-{}-build-{repo}", place.system, place.state.change),
                     slashes(&build_workdir(place, repo)),
                 ),
                 _ => (
-                    "--review".to_string(),
+                    format!(
+                        "Use the hoshin review skill for system {} on change folder {} with --master {master}.",
+                        place.system, place.state.change
+                    ),
                     format!("sdlc-{}-{}-review", place.system, place.state.change),
                     master.clone(),
                 ),
             };
-            let mut task = format!(
-                "Use the hoshin build skill for system {} on change folder {} with {flag} --master {master}.",
-                place.system, place.state.change
-            );
             if form.continue_on_leftovers {
                 task.push_str(" The engineer has already confirmed continuing on top of the uncommitted edits the previous run left; do not ask again.");
             }
@@ -287,9 +289,10 @@ mod tests {
         assert_eq!(s.permissions.mode, PermissionMode::Auto);
 
         let r = change_spec(&place_in_copies(RunKind::Review), form(false));
-        assert!(r
-            .task
-            .ends_with(&format!("with --review --master {COPY_A}.")));
+        assert_eq!(
+            r.task,
+            format!("Use the hoshin review skill for system commerce on change folder 2026-10-12-photos with --master {COPY_A}.")
+        );
         assert_eq!(r.workdir, COPY_A);
         assert_eq!(r.name, "sdlc-commerce-2026-10-12-photos-review");
     }
