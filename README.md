@@ -33,7 +33,7 @@ Before any run starts, Run opens a preview of what the run will start with: its 
 
 ## AI-SDLC mode
 
-The same app has a second mode for taking a change from an idea to open pull requests inside a workspace of git repos: one master repo holds the intents, specs, plans, build logs and reviews, and the product repos hold the code they describe. Kata drives the `ai-sdlc` plugin through the same `kata run` path and shows what a stopped run left behind before anything is discarded. The plugin (1.1.0 or later) owns the workflow itself: it starts, renames and removes changes, commits, accepts documents, finishes builds and declares changes done. Kata starts the agent runs, shows the plugin's answers and keeps the rules a run is held to. Pick the mode on first launch and switch any time from the toolbar.
+The same app has a second mode for taking a change from an idea to open pull requests inside a workspace of git repos: one master repo holds the intents, specs, plans, build logs and reviews, and the product repos hold the code they describe. Kata drives the `hoshin` plugin through the same `kata run` path and shows what a stopped run left behind before anything is discarded. The plugin (1.1.0 or later) owns the workflow itself: it starts, renames and removes changes, commits, accepts documents, finishes builds and declares changes done. Kata starts the agent runs, shows the plugin's answers and keeps the rules a run is held to. Pick the mode on first launch and switch any time from the toolbar.
 
 The workspace home lists your workspaces (add or remove one, switch between them) and each system's changes; the AI-SDLC settings dialog holds the mode's own preferences. One change has one page, and it follows the change through these steps:
 
@@ -59,7 +59,7 @@ The workspace home lists your workspaces (add or remove one, switch between them
 
 Building and declaring a change done have prerequisites beyond an authenticated `claude` on your `PATH`:
 
-- The `ai-sdlc` plugin at version 1.1.0 or later, and Node.js 22.18 or later on your `PATH`. Kata reads and changes a change through the plugin's program, which runs on Node. Below that version the mode is blocked and says why.
+- The `hoshin` plugin at version 1.0.0 or later, and Node.js 22.18 or later on your `PATH`. Kata reads and changes a change through the plugin's program, which runs on Node. Below that version the mode is blocked and says why.
 - `git` and `gh` on your `PATH`, signed in to GitHub. The plugin starts them for commits, pushes and pull requests as you, and Kata stores no token. The Workbench mode needs neither.
 
 A build runs one agent per repository, inside that repository, with several running at once. Each run has its own time limit. Builds always run under `permissions.mode = "auto"` with deny rules (no `git push`, `gh` or `git remote`, no edits to another repository's work), whatever permission setting the rest of the app uses, because deny rules do not exist under the default bypass posture. The build runs in the Workbench's backend, so leaving the build page does not stop it.

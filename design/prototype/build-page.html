@@ -200,7 +200,7 @@
 <script>
 /* ---------------- Sample data ---------------- */
 const REPOS = [
-  { repo: 'ai-sdlc', tone: 'success', label: 'Done', clock: '0:06:12', tasks: [
+  { repo: 'hoshin', tone: 'success', label: 'Done', clock: '0:06:12', tasks: [
     ['T1','Record the claim status vocabulary','success','Done'],
     ['T11','Write the change notes for support','idle','Not started'] ] },
   { repo: 'claims-core', tone: 'running', label: 'Running', clock: '0:41:55', tasks: [
@@ -230,7 +230,7 @@ const EVENTS = {
     ['turn','turn 6'],['assistant','The plan says outstanding payments show next to the claim, but a claim can have payments in two currencies.'],
     ['tool','Read src/Billing/Outstanding.cs'],['result','ok · 212 lines'],['assistant','I need a decision before going further.'],
   ],
-  'ai-sdlc': [['assistant','T1 recorded. Nothing else ready in this repository until T10 lands.'],['result','run.completed · exit 0']],
+  'hoshin': [['assistant','T1 recorded. Nothing else ready in this repository until T10 lands.'],['result','run.completed · exit 0']],
   'customer-portal': [],
 };
 const FILES = [
@@ -238,7 +238,7 @@ const FILES = [
     ['src/claims/status/StatusQuery.cs', 48, 12], ['src/claims/status/NextStep.cs', 96, 0], ['src/claims/history/StatusHistory.cs', 71, 4],
     ['tests/claims/StatusQueryTests.cs', 132, 0], ['tests/claims/NextStepTests.cs', 88, 0], ['src/claims/Retention.cs', 22, 3] ] },
   { repo: 'billing-api', files: [['src/Billing/Outstanding.cs', 14, 2]] },
-  { repo: 'ai-sdlc', files: [['intent/claims/vocabulary.md', 40, 0], ['intent/claims/2026-10-18-claim-status-self-service/build/claims-core.md', 4, 0]] },
+  { repo: 'hoshin', files: [['intent/claims/vocabulary.md', 40, 0], ['intent/claims/2026-10-18-claim-status-self-service/build/claims-core.md', 4, 0]] },
 ];
 const FINDINGS = [
   ['high','claims-core','src/claims/status/StatusQuery.cs:31','A claim moved between policies keeps showing to the old policy holder until the nightly sync runs.'],
@@ -476,7 +476,7 @@ function setStage(s) {
   st.className = 'k-status k-status--' + tone; st.lastElementChild.textContent = label;
   document.getElementById('actCancel').hidden = s === 'finished';
   document.getElementById('actDone').hidden = s !== 'finished';
-  if (s === 'finished') state.activityRepo = 'ai-sdlc';
+  if (s === 'finished') state.activityRepo = 'hoshin';
   render();
 }
 document.getElementById('stage').onchange = e => setStage(e.target.value);
