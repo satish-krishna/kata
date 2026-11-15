@@ -1,6 +1,6 @@
-import type { StatusText } from '../sdlc/build/build-page.view-model';
+import type { RedView, StatusText } from '../sdlc/build/build-page.view-model';
 
-export type TaskLine = { id: string; name: string; status: StatusText; finished: boolean; departure: string | null; commits: string[] };
+export type TaskLine = { id: string; name: string; status: StatusText; finished: boolean; departure: string | null; commits: string[]; red: RedView | null };
 
 export type TaskFilter = 'all' | 'open' | 'departed' | 'done';
 

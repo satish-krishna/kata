@@ -39,4 +39,4 @@ export type ChangeInfo = {
 };
 
 /** One task of a fixture's plan. */
-export type PlanTask = { id: string; name: string; repo: string; dependsOn: string[] };
+export type PlanTask = { id: string; name: string; repo: string; dependsOn: string[]; /** The command the task's own test runs, as the plan's `test` field gives it. */ test?: string[] };

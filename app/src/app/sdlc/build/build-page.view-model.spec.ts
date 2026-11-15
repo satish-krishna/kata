@@ -1030,6 +1030,94 @@ describe('the tasks area folds, filters and shows a departure with its task', ()
 });
 
 
+describe('the tasks area shows what the build log says about red', () => {
+  type Red = NonNullable<BuildStatus['tasks'][number]['red']>;
+  const CORE = 'commerce-core';
+  const taskOf = (id: string, red: Red | null) => ({ id, name: `Task ${id}`, repo: CORE, dependsOn: [] as string[], text: `### ${id}`, row: null, red });
+  const statusOf = (reds: [string, Red | null][], redShown = true): BuildStatus => ({
+    hasTasks: true,
+    problems: [],
+    logLayouts: [],
+    redShown,
+    departures: [],
+    tasks: reds.map(([id, red]) => taskOf(id, red)),
+    repos: [{ repo: CORE, firstUnfinished: reds[0][0], state: { kind: 'ready', task: reds[0][0] }, tasks: reds.length, finished: 0 }],
+  });
+
+  async function openedOn(status: BuildStatus) {
+    const s = setup();
+    vi.spyOn(s.transport, 'sdlcRunLinks').mockResolvedValue([]);
+    vi.spyOn(s.transport, 'sdlcTaskLinks').mockResolvedValue([]);
+    vi.spyOn(s.transport, 'listRuns').mockResolvedValue([]);
+    vi.spyOn(s.transport, 'sdlcBuildStatus').mockResolvedValue(status);
+    const record = vi.spyOn(s.transport, 'sdlcRedRecord').mockResolvedValue({
+      observed: false,
+      reason: 'the test passed',
+      stored: { commit: '3f2a9c1e0b7d3c5a8e6f1b2d4c7a9e0f3b5d8c1a', outcome: 'passed', output: 'ok' },
+    });
+    const [found] = (await readAllChanges(s.transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
+    await s.vm.load({ ctx: CTX, masterRepo: MOCK_MASTER, change: found, status, done: false, review: null });
+    await advance(300);
+    return { ...s, record };
+  }
+  const redOf = (vm: BuildPageViewModel, id: string) => group(vm, CORE).tasks.find((t) => t.id === id)!.red;
+
+  it('each verdict has its label, and only the ones that stand out are marked', async () => {
+    const { vm } = await openedOn(
+      statusOf([
+        ['T1', { kind: 'observed' }],
+        ['T2', { kind: 'notObserved', reason: 'the test passed at 3f2a9c1' }],
+        ['T3', { kind: 'unrecorded' }],
+        ['T4', { kind: 'noTest' }],
+        ['T5', { kind: 'unreadable', value: 'maybe' }],
+      ]),
+    );
+    expect(redOf(vm, 'T1')).toEqual({ label: 'red observed', standsOut: false });
+    expect(redOf(vm, 'T2')).toEqual({ label: 'red not observed: the test passed at 3f2a9c1', standsOut: true });
+    expect(redOf(vm, 'T3')).toEqual({ label: 'red not recorded', standsOut: false });
+    expect(redOf(vm, 'T4')).toEqual({ label: 'no test', standsOut: false });
+    expect(redOf(vm, 'T5')).toEqual({ label: 'red: maybe', standsOut: true });
+  });
+
+  it('a plan with no test anywhere shows no red on any row', async () => {
+    const { vm } = await openedOn(statusOf([['T1', { kind: 'observed' }], ['T2', { kind: 'noTest' }]], false));
+    expect(redOf(vm, 'T1')).toBeNull();
+    expect(redOf(vm, 'T2')).toBeNull();
+    expect(vm.view().groups[0].list.rows.every((r) => r.line.red === null)).toBe(true);
+  });
+
+  it('the list line carries the same verdict as the row', async () => {
+    const { vm } = await openedOn(statusOf([['T1', { kind: 'notObserved', reason: 'r' }]]));
+    expect(vm.view().groups[0].list.rows[0].line.red).toEqual({ label: 'red not observed: r', standsOut: true });
+  });
+
+  it('picking a task whose red was not observed reads its record once and exposes it', async () => {
+    const { vm, record } = await openedOn(statusOf([['T1', { kind: 'observed' }], ['T2', { kind: 'notObserved', reason: 'r' }]]));
+    expect(vm.redRecord()).toBeNull();
+    vm.choose({ kind: 'task', task: 'T2' });
+    await advance(100);
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ change: MOCK_BUILD_CHANGE }), CORE, 'T2');
+    expect(vm.redRecord()).toMatchObject({ observed: false, stored: { output: 'ok' } });
+    expect(vm.view().pickedRed).toEqual({ task: 'T2' });
+  });
+
+  it('picking an observed task never reads a record, and leaving the task drops it', async () => {
+    const { vm, record } = await openedOn(statusOf([['T1', { kind: 'observed' }], ['T2', { kind: 'notObserved', reason: 'r' }]]));
+    vm.choose({ kind: 'task', task: 'T1' });
+    await advance(100);
+    expect(record).not.toHaveBeenCalled();
+    expect(vm.redRecord()).toBeNull();
+    expect(vm.view().pickedRed).toBeNull();
+    vm.choose({ kind: 'task', task: 'T2' });
+    await advance(100);
+    expect(vm.redRecord()).not.toBeNull();
+    vm.choose({ kind: 'task', task: 'T1' });
+    await advance(100);
+    expect(vm.redRecord()).toBeNull();
+  });
+});
+
 describe('the build page reads the backend\'s build and starts it through the host\'s commands', () => {
   const REF = { workspace: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE };
   const keyOf = (change: string): ChangeKey => ({ workspace: { key: FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system: 'commerce', change });

@@ -2,6 +2,7 @@ import { onTestFinished } from 'vitest';
 import { ChangeDetectorRef, Component, inject, input, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import type { BuildRow } from '@bindings/BuildRow';
+import type { RedRecord } from '@bindings/RedRecord';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { Pick } from '../../lib/build-sessions';
 import { filterCounts, summaryOf, taskList, type TaskFilter, type TaskLine } from '../../lib/build-task-list';
@@ -19,7 +20,7 @@ import { ChangesView } from '../changes/changes-view';
 import { BuildLayoutViewModel, type ArrangeAction, type BuildLayoutState } from './build-layout.view-model';
 import { BuildPage } from './build-page';
 import { BuildPageViewModel } from './build-page.view-model';
-import type { BuildChanges, BuildPageView, ReviewRowsShown, ShownSession, StatusText, TaskGroupView } from './build-page.view-model';
+import type { BuildChanges, BuildPageView, RedView, ReviewRowsShown, ShownSession, StatusText, TaskGroupView } from './build-page.view-model';
 
 const CHANGES: BuildChanges = { ref: { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE }, masterRepo: MOCK_MASTER };
 
@@ -37,6 +38,7 @@ const task = (id: string, status: StatusText, extra: { departure?: string | null
   name: `Task ${id}`,
   status,
   departure: extra.departure ?? null,
+  red: null as RedView | null,
   picked: extra.picked ?? false,
   commits: [],
 });
@@ -50,7 +52,7 @@ const group = (repo: string, status: StatusText, action: TaskGroupView['action']
   stopLine: null,
   progress: { done: tasks.filter((t) => t.status === DONE).length, total: tasks.length },
   list: taskList(
-    tasks.map((t) => ({ id: t.id, name: t.name, status: t.status, finished: t.status === DONE, departure: t.departure, commits: t.commits })),
+    tasks.map((t) => ({ id: t.id, name: t.name, status: t.status, finished: t.status === DONE, departure: t.departure, red: t.red, commits: t.commits })),
     'all',
     true,
     null,
@@ -95,6 +97,7 @@ const base = (over: Partial<BuildPageView> = {}): BuildPageView => ({
   filter: { value: 'all', counts: { all: 0, open: 0, departed: 0, done: 0 } },
   noDepartures: false,
   pickedDeparture: null,
+  pickedRed: null,
   review: { status: { tone: 'idle', label: 'Not run' }, action: null, picked: false, ...NO_ROWS },
   pick: null,
   sessions: [],
@@ -152,6 +155,7 @@ const stopMessage = (exit: number, _error: null, _cancelled = false, _recorded =
       [task]="task"
       [stopped]="stopped"
       [focus]="focus()"
+      [redRecord]="redRecord"
       (pick)="onPick($event)"
       (repoAction)="repoActions.push($event)"
       (act)="acts.push($event)"
@@ -186,6 +190,7 @@ class Host {
   stopped: string[] = [];
   readonly focus = input<{ repo: string; n: number } | null>(null);
   readonly context = CHANGES;
+  redRecord: RedRecord | null | 'loading' = null;
   readonly rows: BuildRow[] = [];
   readonly picks: Pick[] = [];
   readonly repoActions: { repo: string; action: 'cancel' | 'continue' }[] = [];
@@ -226,11 +231,12 @@ const settle = async () => {
 };
 const norm = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
 
-async function mount(view: BuildPageView, extra: { stopped?: string[] } = {}) {
+async function mount(view: BuildPageView, extra: { stopped?: string[]; redRecord?: RedRecord | null | 'loading' } = {}) {
   TestBed.configureTestingModule({ imports: [Host], providers: [provideRouter([]), { provide: KataTransport, useValue: new MockTransport() }] });
   const fixture = TestBed.createComponent(Host);
   fixture.componentInstance.view = view;
   fixture.componentInstance.stopped = extra.stopped ?? [];
+  fixture.componentInstance.redRecord = extra.redRecord ?? null;
   await settle();
   fixture.detectChanges();
   const el = fixture.nativeElement as HTMLElement;
@@ -1681,9 +1687,9 @@ describe('the message box on the build page', () => {
 describe('the build page folds, filters and explains a departure', () => {
   const DEPARTURE = 'The size limit moved to the shared request limit';
   const lines = (departed: boolean): TaskLine[] => [
-    { id: 'T1', name: 'Task T1', status: DONE, finished: true, departure: null, commits: [] },
-    { id: 'T2', name: 'Task T2', status: DONE, finished: true, departure: departed ? DEPARTURE : null, commits: [] },
-    { id: 'T3', name: 'Task T3', status: RUNNING, finished: false, departure: null, commits: [] },
+    { id: 'T1', name: 'Task T1', status: DONE, finished: true, departure: null, commits: [], red: null },
+    { id: 'T2', name: 'Task T2', status: DONE, finished: true, departure: departed ? DEPARTURE : null, commits: [], red: null },
+    { id: 'T3', name: 'Task T3', status: RUNNING, finished: false, departure: null, commits: [], red: null },
   ];
   type State = { filter: TaskFilter; open: Set<string>; picked: string | null };
   const viewFor = (departed: boolean, st: State, ls: TaskLine[] = lines(departed)): BuildPageView => {
@@ -1772,11 +1778,11 @@ describe('the build page folds, filters and explains a departure', () => {
 
 describe('the build page folds three finished tasks and filters the open ones', () => {
   const three: TaskLine[] = [
-    { id: 'T1', name: 'Task T1', status: DONE, finished: true, departure: null, commits: ['aaaaaaa1'] },
-    { id: 'T2', name: 'Task T2', status: DONE, finished: true, departure: 'Used a queue instead', commits: [] },
-    { id: 'T3', name: 'Task T3', status: DONE, finished: true, departure: null, commits: [] },
-    { id: 'T4', name: 'Task T4', status: RUNNING, finished: false, departure: null, commits: [] },
-    { id: 'T5', name: 'Task T5', status: RUNNING, finished: false, departure: null, commits: [] },
+    { id: 'T1', name: 'Task T1', status: DONE, finished: true, departure: null, commits: ['aaaaaaa1'], red: null },
+    { id: 'T2', name: 'Task T2', status: DONE, finished: true, departure: 'Used a queue instead', commits: [], red: null },
+    { id: 'T3', name: 'Task T3', status: DONE, finished: true, departure: null, commits: [], red: null },
+    { id: 'T4', name: 'Task T4', status: RUNNING, finished: false, departure: null, commits: [], red: null },
+    { id: 'T5', name: 'Task T5', status: RUNNING, finished: false, departure: null, commits: [], red: null },
   ];
   const ids = (el: HTMLElement) => Array.from(el.querySelectorAll('[data-task]')).map((r) => norm(r.querySelector('.k-mono')?.textContent));
 
@@ -1970,5 +1976,54 @@ describe('a waiting app names no other change (R4.4)', () => {
     expect(strip.all.map((e) => [e.change.change, e.state])).toEqual([[ref.change, 'working']]);
     expect(strip.all.some((e) => 'holder' in e)).toBe(false);
     await transport.sdlcBuildCancel(ref, null);
+  });
+});
+
+describe('the build page shows red', () => {
+  const withRed = (red: { label: string; standsOut: boolean } | null) => ({ ...task('T1', RUNNING), red });
+  const open = (red: RedRecord | null | 'loading', picked = true) => {
+    const rows = [withRed({ label: 'red not observed: the test passed', standsOut: true })];
+    return mount(base({
+      groups: [group('commerce-core', RUNNING, null, rows, false)],
+      pick: { kind: 'task', task: 'T1' },
+      pickedRed: picked ? { task: 'T1' } : null,
+      sessions: [session('r1')],
+    }), { redRecord: red });
+  };
+
+  it('a verdict that stands out is a warning status with a dot and its label; one that does not is plain text', async () => {
+    const { el } = await mount(base({
+      groups: [group('commerce-core', RUNNING, null, [withRed({ label: 'red not observed: x', standsOut: true }), { ...withRed({ label: 'red observed', standsOut: false }), id: 'T2' }])],
+      sessions: [session('r1')],
+    }));
+    const marks = Array.from(el.querySelectorAll<HTMLElement>('[data-red]'));
+    expect(marks.map((m) => norm(m.textContent))).toEqual(['red not observed: x', 'red observed']);
+    expect(marks[0].classList.contains('k-status--warning')).toBe(true);
+    expect(marks[0].querySelector('.k-status__dot')).not.toBeNull();
+    expect(marks[1].classList.contains('k-status--warning')).toBe(false);
+  });
+
+  it('a task with no verdict shows no red mark', async () => {
+    const { el } = await mount(base({ groups: [group('commerce-core', RUNNING, null, [withRed(null)])], sessions: [session('r1')] }));
+    expect(el.querySelector('[data-red]')).toBeNull();
+  });
+
+  it('the stored record shows its commit as seven characters and its output in a scrollable block', async () => {
+    const { el } = await open({ observed: false, reason: 'r', stored: { commit: '3f2a9c1e0b7d3c5a8e6f', outcome: 'passed', output: 'line 1\nline 2' } });
+    expect(norm(el.querySelector('[data-red-commit]')?.textContent)).toBe('3f2a9c1 · passed');
+    const output = el.querySelector<HTMLElement>('[data-red-output]')!;
+    expect(output.textContent).toBe('line 1\nline 2');
+    expect(el.querySelector('[data-red-none]')).toBeNull();
+  });
+
+  it('says there is no record on this machine exactly when nothing is stored', async () => {
+    const { el } = await open({ observed: false, reason: 'r', stored: null });
+    expect(norm(el.querySelector('[data-red-none]')?.textContent)).toBe('No record on this machine.');
+    expect(el.querySelector('[data-red-output]')).toBeNull();
+  });
+
+  it('shows no record panel for a task whose red was not the picked not-observed one', async () => {
+    const { el } = await open({ observed: false, reason: 'r', stored: null }, false);
+    expect(el.querySelector('[data-pick-red]')).toBeNull();
   });
 });

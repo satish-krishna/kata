@@ -44,3 +44,11 @@ export function linkRequirements(md: string): string {
   const parts = md.split(/(```[\s\S]*?```|`[^`\n]*`)/);
   return parts.map((part, i) => (i % 2 === 1 ? part : part.replace(REQUIREMENT_ID, (id) => `[${id}](#req-${id})`))).join('');
 }
+
+/** The commands a task names for its own check, as the plan view's meta line says them: `test: cargo test t1`, then `compile: ...`. Empty when it names none. */
+export function commandsOf(task: Pick<ParsedTask, 'test' | 'compile'>): string[] {
+  return [
+    ...(task.test === null ? [] : [`test: ${task.test.join(' ')}`]),
+    ...(task.compile === null ? [] : [`compile: ${task.compile.join(' ')}`]),
+  ];
+}

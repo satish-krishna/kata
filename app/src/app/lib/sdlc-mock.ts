@@ -58,6 +58,7 @@ import type { ReadResult } from '@bindings/ReadResult';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { RepoState } from '@bindings/RepoState';
 import type { RepoStatus } from '@bindings/RepoStatus';
+import type { RedVerdict } from '@bindings/RedVerdict';
 import type { TaskStatus } from '@bindings/TaskStatus';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { ChangeView } from '@bindings/ChangeView';
@@ -338,8 +339,8 @@ const fixDocs = (name: string, title: string): Record<string, string> => ({
 
 /** The demo build's plan: T3 waits for T1, which lives in the other repository. */
 const BUILD_PLAN: PlanTask[] = [
-  { id: 'T1', name: 'Refuse an eleventh photo in the attachment store', repo: 'commerce-core', dependsOn: [] },
-  { id: 'T2', name: 'Add the photo picker to the product form', repo: 'customer-portal', dependsOn: [] },
+  { id: 'T1', name: 'Refuse an eleventh photo in the attachment store', repo: 'commerce-core', dependsOn: [], test: ['cargo', 'test', '-p', 'attachment-store', 'limits'] },
+  { id: 'T2', name: 'Add the photo picker to the product form', repo: 'customer-portal', dependsOn: [], test: ['npm', 'test', '--', 'photo-picker'] },
   { id: 'T3', name: 'Show the upload limit message', repo: 'customer-portal', dependsOn: ['T1'] },
 ];
 /**
@@ -400,7 +401,7 @@ const parsedTasks = (plan: PlanTask[], plain = false): ParsedTask[] => plan.map(
   files: [],
   covers: [],
   supports: [],
-  test: null,
+  test: t.test ?? null,
   compile: null,
   sections: [{ title: 'Depends on', body: dependsBody(t) }, ...(plain ? [] : (TASK_SECTIONS[t.id] ?? []))],
   text: plain ? taskText(t, []) : taskText(t),
@@ -465,6 +466,7 @@ const DEPARTED_TASKS = ['T2'];
 /** The long demo's departures: enough, with its findings, to overflow the findings area. */
 const LONG_DEPARTED_TASKS = ['T2', 'T5', 'T8', 'T9', 'T13', 'T14', 'T15', 'T16'];
 const DEPARTURE_TEXT = 'Reused the existing file picker instead of building a new one.';
+/** What the demo build log says about red, by task: T1 saw its test fail first, T2's test passed before the production code. A task the log leaves out has no red entry. */const DEMO_RED: Record<string, string> = { T1: 'observed', T2: 'not observed: the test passed at 3f2a9c1, before the production code' };/** The verdict the program reads from a built task's logged red, as the backend words it: no test, no entry, the two entries, or a value it cannot read. */function redVerdictOf(test: string[] | undefined, logged: string | null): RedVerdict {  if (test === undefined) return { kind: 'noTest' };  if (logged === null) return { kind: 'unrecorded' };  if (logged === 'observed') return { kind: 'observed' };  if (logged.startsWith('not observed: ')) return { kind: 'notObserved', reason: logged.slice('not observed: '.length) };  return { kind: 'unreadable', value: logged };}
 
 const DOC_STEMS = new Set(['intent', 'spec', 'plan']);
 
@@ -1183,10 +1185,13 @@ export class SdlcMock {
     if (!this.hasBuildLog(changeName) && changeName !== MOCK_DONE_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [], redShown: false };
     // The finished change has every task built; the demo build commits its rows one run at a time.
     const rowOf = (t: PlanTask): BuildRow | null =>
-      changeName === MOCK_DONE_CHANGE ? { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null, red: null } : (this.rows.get(t.id) ?? null);
-    const tasks: TaskStatus[] = this.plan.map((t) => ({ ...t, dependsOn: [...t.dependsOn], text: this.singleRepo() !== null ? taskText(t, []) : taskText(t), row: rowOf(t), red: null }));
+      changeName === MOCK_DONE_CHANGE ? { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null, red: DEMO_RED[t.id] ?? null } : (this.rows.get(t.id) ?? null);
+    const tasks: TaskStatus[] = this.plan.map(({ test, ...t }) => {
+      const row = rowOf({ ...t, test });
+      return { ...t, dependsOn: [...t.dependsOn], text: this.singleRepo() !== null ? taskText({ ...t, test }, []) : taskText({ ...t, test }), row, red: row === null ? null : redVerdictOf(test, row.red) };
+    });
     const departures = tasks.flatMap((t) => (t.row?.departure ? [{ task: t.id, repo: t.repo, planText: t.name, departure: t.row.departure }] : []));
-    return { tasks, repos: this.repos.map((r) => (changeName === MOCK_DONE_CHANGE ? this.doneRepoStatus(r) : this.repoStatus(r))), departures, hasTasks: true, problems: [], logLayouts: [], redShown: false };
+    return { tasks, repos: this.repos.map((r) => (changeName === MOCK_DONE_CHANGE ? this.doneRepoStatus(r) : this.repoStatus(r))), departures, hasTasks: true, problems: [], logLayouts: [], redShown: this.plan.some((t) => t.test !== undefined) };
   }
 
   /** A repository of the finished change: every task of it is built. */
@@ -1248,7 +1253,7 @@ export class SdlcMock {
     for (const t of tasks) {
       this.rows.set(t.id, {
         task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`],
-        departure: this.departed.has(t.id) ? DEPARTURE_TEXT : null, red: null,
+        departure: this.departed.has(t.id) ? DEPARTURE_TEXT : null, red: DEMO_RED[t.id] ?? null,
       });
     }
   }

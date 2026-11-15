@@ -455,7 +455,7 @@ export class MockTransport extends KataTransport {
       return Promise.resolve({ observed: false, reason: `no red recorded for ${task} on this machine`, stored: null });
     }
     const output = Array.from({ length: 20 }, (_, i) => `test upload::limits::case_${i + 1} ... ok`).join('\n');
-    return Promise.resolve({ observed: false, reason: 'the test passed at 4f1c2a9, before the production code', stored: { commit: '4f1c2a9e0b7d3c5a8e6f1b2d4c7a9e0f3b5d8c1a', outcome: 'passed', output } });
+    return Promise.resolve({ observed: false, reason: 'the test passed at 3f2a9c1, before the production code', stored: { commit: '3f2a9c1e0b7d3c5a8e6f1b2d4c7a9e0f3b5d8c1a', outcome: 'passed', output } });
   }
   sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }, appTurn?: AppTurn | null): Promise<RepoBoard[]> { return Promise.resolve(mockBoard(repos, status, going, stopped, appTurn ?? null)); }
   sdlcReviewStanding(input: ReviewStandingInput): Promise<ReviewStanding> { return Promise.resolve(mockStanding(input)); }

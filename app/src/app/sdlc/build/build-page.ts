@@ -1,6 +1,7 @@
 import { NgTemplateOutlet } from '@angular/common';
 import { Component, DestroyRef, ElementRef, Injector, afterEveryRender, afterNextRender, effect, inject, input, output, untracked, viewChild } from '@angular/core';
 import type { BuildRow } from '@bindings/BuildRow';
+import type { RedRecord } from '@bindings/RedRecord';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCheck, lucideChevronDown, lucideChevronRight, lucideEllipsis, lucideMaximize2, lucideMinus } from '@ng-icons/lucide';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
@@ -92,6 +93,8 @@ export class BuildPage {
   readonly extras = input<{ action: StageAction; disabled: boolean; title: string | null }[]>([]);
   /** A request to bring the picked repository's open question into view and focus it. */
   readonly focus = input<{ repo: string; n: number } | null>(null);
+  /** The stored record behind the picked task's not-observed red: null when none is wanted, 'loading' while it is read. */
+  readonly redRecord = input<RedRecord | null | 'loading'>(null);
 
   readonly pick = output<Pick>();
   readonly repoAction = output<{ repo: string; action: 'cancel' | 'continue' }>();

@@ -95,7 +95,7 @@
                     <span class="k-mono">{{ r.line.id }}</span>
                     <span class="k-bp__task-name">{{ r.line.name }}</span>
                     <span [class]="'k-status k-status--' + r.line.status.tone"><span class="k-status__dot"></span><span class="k-bp__status-label">{{ r.line.status.label }}</span></span>
-                    @if (r.line.commits.length > 0 || r.line.departure !== null) {
+                    @if (r.line.commits.length > 0 || r.line.departure !== null || r.line.red !== null) {
                       <span class="k-bp__task-meta" data-task-meta>
                         @if (r.line.commits.length > 0) {
                           <span class="k-mono k-bp__commits" data-commits>
@@ -106,6 +106,13 @@
                         }
                         @if (r.line.departure !== null) {
                           <span class="k-bp__departed k-status k-status--warning" data-departure><span class="k-status__dot" aria-hidden="true"></span>departed</span>
+                        }
+                        @if (r.line.red; as red) {
+                          @if (red.standsOut) {
+                            <span class="k-bp__red k-status k-status--warning" data-red><span class="k-status__dot" aria-hidden="true"></span>{{ red.label }}</span>
+                          } @else {
+                            <span class="k-bp__red k-mono" data-red>{{ red.label }}</span>
+                          }
                         }
                         @if (r.showDeparture && r.line.departure !== null) {
                           <span class="k-mono k-bp__departure" data-departure-text>{{ r.line.departure }}</span>
@@ -206,6 +213,23 @@
             <div class="k-bp__pick-departure" data-pick-departure>
               <h2 class="k-state__title">Departure from the plan</h2>
               <p class="k-mono k-bp__departure-text">{{ departure.text }}</p>
+            </div>
+          }
+          @if (view().pickedRed; as picked) {
+            <div class="k-bp__pick-red" data-pick-red>
+              <h2 class="k-state__title">Red not observed for {{ picked.task }}</h2>
+              @if (redRecord(); as rec) {
+                @if (rec === 'loading') {
+                  <p class="k-state__body" data-red-loading>Reading the record.</p>
+                } @else {
+                  @if (rec.stored; as stored) {
+                    <p class="k-mono k-bp__red-commit" data-red-commit>{{ stored.commit.slice(0, 7) }} · {{ stored.outcome }}</p>
+                    <pre class="k-mono k-bp__red-output" data-red-output tabindex="0">{{ stored.output }}</pre>
+                  } @else {
+                    <p class="k-state__body" data-red-none>No record on this machine.</p>
+                  }
+                }
+              }
             </div>
           }
           @if (view().stops.length > 0) {
