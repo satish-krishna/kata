@@ -4,7 +4,7 @@
 use crate::runs::{Lane, LiveSummary};
 use kata_sdlc::holds::RepoKey;
 use kata_sdlc::hoshin::migrate::{self, MigratePlan};
-use kata_sdlc::hoshin::Program;
+use kata_sdlc::hoshin::{Program, ProgramError};
 use std::path::{Path, PathBuf};
 
 /// Why the migration of `workspace` must wait, or `None` when nothing is working under it. A run counts by its
@@ -45,32 +45,53 @@ pub fn migration_blocked(
     })
 }
 
+/// What the program says when no master repository of either marker name is there: the one answer of `migrate`
+/// that means "this folder is not a workspace", not a fault.
+const NO_MASTER: &str = "No master repository found";
+
 /// The migration to offer for `folder`: `None` when the folder opens as a hoshin workspace, when the program
-/// cannot run `migrate` on it (no marker of either name), or when nothing is left to do.
-pub fn offer(program: &Program, folder: &Path) -> Option<MigratePlan> {
+/// finds no master repository of either marker name there, or when nothing is left to do. Any other failure of
+/// the program is an error with its own words.
+pub fn offer(program: &Program, folder: &Path) -> Result<Option<MigratePlan>, String> {
     if kata_sdlc::layout::open(program, folder).is_ok() {
-        return None;
+        return Ok(None);
     }
-    migrate::migrate(program, folder, false)
-        .ok()
-        .filter(MigratePlan::needed)
+    match migrate::dry_run(program, folder) {
+        Ok((plan, _)) => Ok(Some(plan).filter(MigratePlan::needed)),
+        Err(ProgramError::CouldNotRun { message }) if message.contains(NO_MASTER) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
-/// Runs the migration of `folder` with `--write`, refused while `live` runs or `holds` work under it.
+/// Runs the end closure when dropped, so a migration's mark is lifted on every path out of `run`.
+struct Marked<E: FnMut(&Path)> {
+    workspace: PathBuf,
+    end: E,
+}
+
+impl<E: FnMut(&Path)> Drop for Marked<E> {
+    fn drop(&mut self) {
+        (self.end)(&self.workspace);
+    }
+}
+
+/// Migrates `folder`: one dry run, then `begin` marks the workspace as migrating (and refuses while a run or a
+/// hold works under it, which is one decision with the mark), then the write, then `end` lifts the mark, on
+/// every path. A dry plan with nothing to take is returned as it is, with `write` false.
 pub fn run(
     program: &Program,
     folder: &Path,
-    live: &[LiveSummary],
-    holds: &[PathBuf],
+    begin: impl FnOnce(&Path) -> Result<(), String>,
+    end: impl FnMut(&Path),
 ) -> Result<MigratePlan, String> {
-    let dry = migrate::migrate(program, folder, false).map_err(|e| e.to_string())?;
-    let workspace = PathBuf::from(&dry.workspace);
-    if let Some(refusal) = migration_blocked(&workspace, live, holds)
-        .or_else(|| migration_blocked(folder, live, holds))
-    {
-        return Err(refusal);
+    let (plan, layout) = migrate::dry_run(program, folder).map_err(|e| e.to_string())?;
+    if !plan.needed() {
+        return Ok(plan);
     }
-    migrate::migrate(program, folder, true).map_err(|e| e.to_string())
+    let workspace = PathBuf::from(&plan.workspace);
+    begin(&workspace)?;
+    let _marked = Marked { workspace, end };
+    migrate::write(program, &plan, layout).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -169,19 +190,52 @@ mod tests {
     #[test]
     fn an_ai_sdlc_workspace_is_offered_and_a_hoshin_one_is_not() {
         let (dir, _) = workspace(".ai-sdlc.json");
-        let plan = offer(&program(), dir.path()).expect("offered");
+        let plan = offer(&program(), dir.path()).unwrap().expect("offered");
         assert!(plan.needed());
         let (dir, _) = workspace(".hoshin.json");
-        assert_eq!(offer(&program(), dir.path()), None);
+        assert_eq!(offer(&program(), dir.path()), Ok(None));
         let none = tempfile::tempdir().unwrap();
-        assert_eq!(offer(&program(), none.path()), None);
+        assert_eq!(offer(&program(), none.path()), Ok(None));
+    }
+
+    #[test]
+    fn a_failure_other_than_no_marker_is_an_error_with_the_programs_words() {
+        let (dir, hub) = workspace(".ai-sdlc.json");
+        // Two markers of the same workspace make the program refuse, which is a plan; a marker the program
+        // cannot read at all is a fault.
+        std::fs::write(hub.join(".ai-sdlc.json"), "{ not json").unwrap();
+        let err = offer(&program(), dir.path()).unwrap_err();
+        assert!(!err.is_empty(), "{err}");
+        assert!(!err.contains(NO_MASTER), "{err}");
+    }
+
+    fn marked_run(
+        table: &std::cell::RefCell<crate::runs::RunTable<()>>,
+        dir: &Path,
+    ) -> Result<MigratePlan, String> {
+        run(
+            &program(),
+            dir,
+            |w| table.borrow_mut().begin_migrating(w),
+            |w| table.borrow_mut().end_migrating(w),
+        )
     }
 
     #[test]
     fn a_live_run_in_the_workspace_refuses_the_migration_and_leaves_the_marker() {
         let (dir, hub) = workspace(".ai-sdlc.json");
-        let live = [run_in(&dir.path().join("app"), None)];
-        let err = run(&program(), dir.path(), &live, &[]).unwrap_err();
+        let mut table = crate::runs::RunTable::<()>::default();
+        table.insert(crate::runs::LiveRun {
+            id: 1,
+            workdir: dir.path().join("app"),
+            group: None,
+            lane: Lane::Solo,
+            kind: RunKind::Solo,
+            repo: None,
+            child: None,
+        });
+        let table = std::cell::RefCell::new(table);
+        let err = marked_run(&table, dir.path()).unwrap_err();
         assert!(
             err.starts_with("Stop the runs in this workspace before migrating it: app"),
             "{err}"
@@ -191,11 +245,23 @@ mod tests {
     }
 
     #[test]
-    fn with_nothing_live_the_migration_runs() {
+    fn the_mark_is_lifted_after_the_write_and_a_refused_plan_is_written_as_the_programs_answer() {
         let (dir, hub) = workspace(".ai-sdlc.json");
-        let plan = run(&program(), dir.path(), &[], &[]).unwrap();
+        let table = std::cell::RefCell::new(crate::runs::RunTable::<()>::default());
+        let plan = marked_run(&table, dir.path()).unwrap();
         assert!(plan.write);
         assert!(hub.join(".hoshin.json").is_file());
         assert!(!hub.join(".ai-sdlc.json").exists());
+        assert!(table
+            .borrow()
+            .claim(&dir.path().join("app"), &Lane::Solo)
+            .is_ok());
+        // Nothing left to take: the dry plan comes back, not written, and no mark is left either.
+        let again = marked_run(&table, dir.path()).unwrap();
+        assert!(!again.write && !again.needed());
+        assert!(table
+            .borrow()
+            .claim(&dir.path().join("app"), &Lane::Solo)
+            .is_ok());
     }
 }

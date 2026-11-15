@@ -47,6 +47,8 @@ pub struct MigrateStep {
 pub struct MigratePlan {
     pub workspace: String,
     pub master: String,
+    /// Whether the plan was taken. False for a dry run, and also for a write asked of a workspace with nothing to
+    /// take: the program was not started, and nothing was written.
     pub write: bool,
     pub steps: Vec<MigrateStep>,
     /// Paths left in the old folders.
@@ -77,7 +79,7 @@ fn read_plan(json: Value) -> Result<MigratePlan, ProgramError> {
 
 /// The program's `migrate --json` answer for `folder` and the layout it names. A workspace that is a git
 /// root needs `--workspace`; a single-repo repository needs none, so the workspace form is asked first.
-fn dry_run(program: &Program, folder: &Path) -> Result<(MigratePlan, Layout), ProgramError> {
+pub fn dry_run(program: &Program, folder: &Path) -> Result<(MigratePlan, Layout), ProgramError> {
     let ask = |layout| {
         program
             .run_in(&["migrate", "--json"], folder, layout)
@@ -92,12 +94,15 @@ fn dry_run(program: &Program, folder: &Path) -> Result<(MigratePlan, Layout), Pr
     }
 }
 
-/// The migration of the workspace at `folder`: a dry run, or with `write` the migration itself. Exit 1 with
-/// `problems` is an answer (a plan with refusals); exit 2 is an error.
-pub fn migrate(program: &Program, folder: &Path, write: bool) -> Result<MigratePlan, ProgramError> {
-    let (plan, layout) = dry_run(program, folder)?;
-    if !write || !plan.needed() {
-        return Ok(plan);
+/// Takes the migration `plan` (a dry run's answer in `layout`) with `--write`. A plan with nothing to take is
+/// returned as it is, with `write` false: nothing was written.
+pub fn write(
+    program: &Program,
+    plan: &MigratePlan,
+    layout: Layout,
+) -> Result<MigratePlan, ProgramError> {
+    if !plan.needed() {
+        return Ok(plan.clone());
     }
     let place = Place {
         layout,
@@ -121,6 +126,21 @@ pub fn migrate(program: &Program, folder: &Path, write: bool) -> Result<MigrateP
             message: "the program printed no plan".into(),
         }),
         _ => read_plan(answer.json),
+    }
+}
+
+/// The migration of the workspace at `folder`: a dry run, or with `write` the migration itself. Exit 1 with
+/// `problems` is an answer (a plan with refusals); exit 2 is an error.
+pub fn migrate(
+    program: &Program,
+    folder: &Path,
+    write_it: bool,
+) -> Result<MigratePlan, ProgramError> {
+    let (plan, layout) = dry_run(program, folder)?;
+    if write_it {
+        write(program, &plan, layout)
+    } else {
+        Ok(plan)
     }
 }
 

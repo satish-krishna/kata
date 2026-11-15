@@ -4,7 +4,12 @@ import type { MigrateStep } from "./MigrateStep";
 /**
  * The program's `migrate --json` answer.
  */
-export type MigratePlan = { workspace: string, master: string, write: boolean, steps: Array<MigrateStep>, 
+export type MigratePlan = { workspace: string, master: string, 
+/**
+ * Whether the plan was taken. False for a dry run, and also for a write asked of a workspace with nothing to
+ * take: the program was not started, and nothing was written.
+ */
+write: boolean, steps: Array<MigrateStep>, 
 /**
  * Paths left in the old folders.
  */

@@ -1341,14 +1341,19 @@ fn sdlc_build_status(change: build_host::ChangeRef) -> Result<sdlc::build::Build
 
 /// What migrating an ai-sdlc workspace to hoshin would do, for a folder the engineer picked: `None` when the
 /// folder is already a hoshin workspace, is none, or has nothing left to migrate. The program decides; nothing
-/// is changed.
+/// is changed. A program that cannot answer for another reason is an error with its words.
 #[tauri::command(async)]
 fn sdlc_migration(folder: String) -> Result<Option<sdlc::hoshin::migrate::MigratePlan>, String> {
     let (program, _) = state_inputs(&folder);
-    Ok(program.and_then(|p| migration::offer(&p, Path::new(&folder))))
+    match program {
+        Some(p) => migration::offer(&p, Path::new(&folder)),
+        None => Ok(None),
+    }
 }
 
-/// Migrates an ai-sdlc workspace to hoshin, refused while a run or a build hold works under it.
+/// Migrates an ai-sdlc workspace to hoshin. The workspace is marked as migrating (refused while a run or a build
+/// hold works under it) for the whole write, in the run table and in the build host, and the mark is lifted on
+/// every path out.
 #[tauri::command(async)]
 fn sdlc_migrate(
     control: State<'_, RunControl>,
@@ -1361,8 +1366,25 @@ fn sdlc_migrate(
         (None, sdlc::plugin::Readiness::Blocked { message, .. }) => return Err(message),
         (None, _) => return Err("the hoshin plugin cannot be used".into()),
     };
-    let live = control.state.lock().unwrap().live();
-    migration::run(&program, Path::new(&folder), &live, &host.held_folders())
+    migration::run(
+        &program,
+        Path::new(&folder),
+        |workspace| {
+            // The host first: it holds the repositories; then the table: it holds the runs. Neither lock is
+            // held across the other, and a start that slips between the two is refused by whichever it meets.
+            host.begin_migrating(workspace)?;
+            control
+                .state
+                .lock()
+                .unwrap()
+                .begin_migrating(workspace)
+                .inspect_err(|_| host.end_migrating(workspace))
+        },
+        |workspace| {
+            control.state.lock().unwrap().end_migrating(workspace);
+            host.end_migrating(workspace);
+        },
+    )
 }
 
 /// What the program stored when it ran a task's test at its test commit, and whether red counts as

@@ -69,11 +69,17 @@ pub struct Launching {
     pub repo: Option<String>,
 }
 
+/// Why a run may not start under a workspace that is being migrated.
+pub const MIGRATING: &str =
+    "This workspace is being migrated to hoshin; start the run when it finishes.";
+
 /// Every live run, keyed by id.
 pub struct RunTable<C = CommandChild> {
     runs: BTreeMap<u64, LiveRun<C>>,
     /// The changes whose copy the plugin is about to remove (a rejection, or removing a finished change's copy), so no run of them may start.
     rejecting: HashSet<ChangeKey>,
+    /// The workspaces being migrated to hoshin: no run may start under one.
+    migrating: Vec<RepoKey>,
 }
 
 impl<C> Default for RunTable<C> {
@@ -81,6 +87,7 @@ impl<C> Default for RunTable<C> {
         Self {
             runs: BTreeMap::new(),
             rejecting: HashSet::new(),
+            migrating: Vec::new(),
         }
     }
 }
@@ -88,6 +95,14 @@ impl<C> Default for RunTable<C> {
 impl<C> RunTable<C> {
     /// Decide whether a run in `workdir` on `lane` may start.
     pub fn claim(&self, workdir: &Path, lane: &Lane) -> Result<(), String> {
+        let in_migrating = |folder: &RepoKey| self.migrating.iter().any(|m| m.contains(folder));
+        let key_workspace = match lane {
+            Lane::Change { key, .. } => Some(&key.workspace),
+            Lane::Solo => None,
+        };
+        if in_migrating(&RepoKey::of(workdir)) || key_workspace.is_some_and(in_migrating) {
+            return Err(MIGRATING.into());
+        }
         if let Lane::Change { key, .. } = lane {
             if self.rejecting.contains(key) {
                 return Err("This change's copy is being removed.".into());
@@ -158,6 +173,26 @@ impl<C> RunTable<C> {
 
     pub fn end_rejecting(&mut self, key: &ChangeKey) {
         self.rejecting.remove(key);
+    }
+
+    /// Starts migrating `workspace`: refused while a live run works under it (or while it is being migrated
+    /// already). Until `end_migrating`, `claim` refuses every run under it. The check and the mark are one
+    /// decision under the caller's one lock on the table.
+    pub fn begin_migrating(&mut self, workspace: &Path) -> Result<(), String> {
+        let root = RepoKey::of(workspace);
+        if self.migrating.contains(&root) {
+            return Err("This workspace is already being migrated.".into());
+        }
+        if let Some(refusal) = crate::migration::migration_blocked(workspace, &self.live(), &[]) {
+            return Err(refusal);
+        }
+        self.migrating.push(root);
+        Ok(())
+    }
+
+    pub fn end_migrating(&mut self, workspace: &Path) {
+        let root = RepoKey::of(workspace);
+        self.migrating.retain(|m| *m != root);
     }
 
     /// Every live run with its lane, oldest id first.
@@ -262,6 +297,49 @@ mod tests {
             t.insert(r);
         }
         t
+    }
+
+    #[test]
+    fn a_workspace_being_migrated_takes_no_run_and_is_refused_while_one_is_live() {
+        let ws = Path::new("D:/ws");
+        // A live run under the workspace refuses the migration, naming it.
+        let mut t = table(vec![live(1, "D:/ws/a", change("c", false))]);
+        let err = t.begin_migrating(ws).unwrap_err();
+        assert_eq!(
+            err,
+            "Stop the runs in this workspace before migrating it: c."
+        );
+        // A run elsewhere does not.
+        let mut t = table(vec![live(1, "D:/other/a", Lane::Solo)]);
+        t.begin_migrating(ws).unwrap();
+        // While it runs, a claim under the workspace is refused, by folder or by change; another workspace is not.
+        let msg = "This workspace is being migrated to hoshin; start the run when it finishes.";
+        assert_eq!(
+            t.claim(Path::new("D:/ws/new"), &Lane::Solo).unwrap_err(),
+            msg
+        );
+        assert_eq!(
+            t.claim(Path::new("D:/elsewhere/x"), &change("c", false))
+                .unwrap_err(),
+            msg
+        );
+        assert!(t
+            .claim(
+                Path::new("D:/third/x"),
+                &Lane::Change {
+                    key: ChangeKey {
+                        workspace: RepoKey::of(Path::new("D:/third")),
+                        system: "s".into(),
+                        change: "z".into()
+                    },
+                    build: false
+                }
+            )
+            .is_ok());
+        // A second migration of the same workspace is refused; ending it allows claims again.
+        assert!(t.begin_migrating(ws).is_err());
+        t.end_migrating(ws);
+        assert!(t.claim(Path::new("D:/ws/new"), &change("c", false)).is_ok());
     }
 
     #[test]

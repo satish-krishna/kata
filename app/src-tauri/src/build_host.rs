@@ -479,6 +479,8 @@ struct Build {
 struct Inner {
     builds: HashMap<ChangeKey, Build>,
     holds: HoldTable,
+    /// The workspaces being migrated to hoshin: nothing there takes holds.
+    migrating: Vec<RepoKey>,
     /// The last start of each change that another change held, with when; cleared when the change
     /// is started again and gets its repositories.
     held_starts: HashMap<ChangeKey, (Vec<HeldRepo>, u64)>,
@@ -629,6 +631,7 @@ impl BuildHost {
             inner: Mutex::new(Inner {
                 builds: HashMap::new(),
                 holds: HoldTable::default(),
+                migrating: Vec::new(),
                 held_starts: HashMap::new(),
                 next_generation: 0,
                 stopped: false,
@@ -811,6 +814,18 @@ impl BuildHost {
             };
         }
         let folders = review_folders(&place, &snapshot.state);
+        if self
+            .inner
+            .lock()
+            .unwrap()
+            .migrating
+            .iter()
+            .any(|m| m.contains(&RepoKey::of(&place.workspace)))
+        {
+            return StartOutcome::Refused {
+                problems: vec![runs::MIGRATING.into()],
+            };
+        }
         let taken = self
             .inner
             .lock()
@@ -916,9 +931,27 @@ impl BuildHost {
         out
     }
 
-    /// Every product repository a change holds for its build or review, as its folder.
-    pub fn held_folders(&self) -> Vec<PathBuf> {
-        self.inner.lock().unwrap().holds.repos()
+    /// Marks `workspace` as being migrated: refused while a change holds a repository under it, and until
+    /// `end_migrating` no build or review of a change there takes holds. The check and the mark are one
+    /// decision under the host's lock.
+    pub fn begin_migrating(&self, workspace: &Path) -> Result<(), String> {
+        let mut inner = self.inner.lock().unwrap();
+        let root = RepoKey::of(workspace);
+        if let Some(refusal) =
+            crate::migration::migration_blocked(workspace, &[], &inner.holds.repos())
+        {
+            return Err(refusal);
+        }
+        if inner.migrating.contains(&root) {
+            return Err("This workspace is already being migrated.".into());
+        }
+        inner.migrating.push(root);
+        Ok(())
+    }
+
+    pub fn end_migrating(&self, workspace: &Path) {
+        let root = RepoKey::of(workspace);
+        self.inner.lock().unwrap().migrating.retain(|m| *m != root);
     }
 
     /// Stop every run of `change`'s build.
@@ -1263,6 +1296,15 @@ impl BuildHost {
         // The one step that must be atomic: the first change to ask for a repository gets it.
         let taken = {
             let mut guard = self.inner.lock().unwrap();
+            if guard
+                .migrating
+                .iter()
+                .any(|m| m.contains(&RepoKey::of(&place.workspace)))
+            {
+                return StartOutcome::Refused {
+                    problems: vec![runs::MIGRATING.into()],
+                };
+            }
             let taken = guard.holds.take(key, Purpose::Build, &folders);
             match &taken {
                 Ok(_) => {
@@ -2658,6 +2700,36 @@ mod tests {
                 .holder(&RepoKey::of(&Path::new(WS).join(repo)))
                 .cloned()
         }
+    }
+
+    #[test]
+    fn a_workspace_being_migrated_takes_no_holds_and_is_refused_while_one_is_held() {
+        // Marked: a build of a change there is refused and starts nothing; unmarked, it starts.
+        let r = rig();
+        r.simple("A", &["kata"]);
+        r.host.begin_migrating(Path::new(WS)).unwrap();
+        assert!(r.host.begin_migrating(Path::new(WS)).is_err());
+        assert_eq!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Refused {
+                problems: vec![runs::MIGRATING.into()]
+            }
+        );
+        assert_eq!(r.launcher.count(), 0);
+        r.host.end_migrating(Path::new(WS));
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        // A hold under the workspace refuses the mark, naming the repository.
+        let err = r.host.begin_migrating(Path::new(WS)).unwrap_err();
+        assert!(
+            err.starts_with("Stop the runs in this workspace before migrating it:"),
+            "{err}"
+        );
+        assert!(err.contains("kata"), "{err}");
+        // Another workspace is not affected.
+        r.host.begin_migrating(Path::new("D:/elsewhere")).unwrap();
     }
 
     // R1.1
