@@ -280,13 +280,13 @@ mod tests {
     const INTENT: &str = "---\ntitle: Greeting\nsystem: demo\nauthor: t\ndate: 2026-11-01\nstatus: accepted\nscope: demo\n---\n\n# Intent: Greeting\n";
 
     fn vendored() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools")
     }
 
     fn program() -> Program {
         Program {
             node: "node".into(),
-            entry: vendored().join("ai-sdlc.ts"),
+            entry: vendored().join("hoshin.ts"),
         }
     }
 
@@ -792,7 +792,7 @@ if (a[0] === 'change' && a[1] === 'show') {
             );
             testutil::commit_file(
                 &master,
-                ".ai-sdlc.json",
+                ".hoshin.json",
                 "{\"version\":1,\"systems\":{\"demo\":{\"repos\":[\"app\"]}}}\n",
                 "marker",
             );
@@ -818,7 +818,7 @@ if (a[0] === 'change' && a[1] === 'show') {
                 &app,
                 "hello.txt",
                 "hi\n",
-                "feat(demo): say hello\n\nGenerated-By: ai-sdlc",
+                "feat(demo): say hello\n\nGenerated-By: hoshin",
             );
             let head = testutil::run(&app, &["rev-parse", "HEAD"]).unwrap();
             let fx = Fx {
@@ -848,7 +848,7 @@ if (a[0] === 'change' && a[1] === 'show') {
                 &self.master,
                 &format!("intent/demo/{CHANGE}/build/review.md"),
                 &text,
-                &format!("docs(demo): record review 1 of {CHANGE}\n\nGenerated-By: ai-sdlc"),
+                &format!("docs(demo): record review 1 of {CHANGE}\n\nGenerated-By: hoshin"),
             );
         }
 
@@ -966,7 +966,7 @@ if (a[0] === 'change' && a[1] === 'show') {
         let sink = || -> StepSink { Arc::new(|_| {}) };
         let no_node = Program {
             node: "node-that-is-not-installed".into(),
-            entry: vendored().join("ai-sdlc.ts"),
+            entry: vendored().join("hoshin.ts"),
         };
         let DeclareView::CouldNotRun { message } = declare(
             &no_node,

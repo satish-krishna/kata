@@ -49,6 +49,8 @@ function tasks(): ParsedTask[] {
       files: [],
       covers: [`R${Math.min(n, NUMBERS.requirements)}.1`],
       supports: [],
+      test: null,
+      compile: null,
       sections: [
         { title: 'Change', body: `Change for task ${n}.` },
         { title: 'Tests', body: `Tests for task ${n}.` },

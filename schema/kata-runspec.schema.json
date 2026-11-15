@@ -46,7 +46,7 @@
           "type": "array"
         },
         "required_plugins": {
-          "description": "Plugin names (without a marketplace) the run cannot work without. The\nWorkbench writes `[\"ai-sdlc\"]` for an AI-SDLC run; such a plugin is shown\nlocked on and cannot be listed as switched off.",
+          "description": "Plugin names (without a marketplace) the run cannot work without. The\nWorkbench writes `[\"hoshin\"]` for an AI-SDLC run; such a plugin is shown\nlocked on and cannot be listed as switched off.",
           "items": {
             "type": "string"
           },

@@ -8,7 +8,7 @@
 export type Given = { hooks: Array<string>, skills: Array<string>, plugins: Array<string>, instructions: Array<string>, tool_servers: Array<string>, 
 /**
  * Plugin names (without a marketplace) the run cannot work without. The
- * Workbench writes `["ai-sdlc"]` for an AI-SDLC run; such a plugin is shown
+ * Workbench writes `["hoshin"]` for an AI-SDLC run; such a plugin is shown
  * locked on and cannot be listed as switched off.
  */
 required_plugins?: Array<string>, 

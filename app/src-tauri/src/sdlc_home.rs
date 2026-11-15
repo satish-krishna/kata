@@ -211,7 +211,7 @@ pub fn home_open(
     memory: &HomeMemory,
 ) -> Result<HomeOpen, String> {
     if !kata_sdlc::plugin::lists_changes(readiness) {
-        return Err("the installed ai-sdlc plugin cannot read open changes alone".into());
+        return Err("the installed hoshin plugin cannot read open changes alone".into());
     }
     let found = source.open_states(folder, layout, system)?;
     let mut problems = found.problems.clone();
@@ -292,7 +292,7 @@ pub fn home_pull_requests(
     memory: &HomeMemory,
 ) -> Result<HomeChecked, String> {
     if !kata_sdlc::plugin::lists_changes(readiness) {
-        return Err("the installed ai-sdlc plugin cannot read open changes alone".into());
+        return Err("the installed hoshin plugin cannot read open changes alone".into());
     }
     let views: Vec<ChangeView> = {
         let remembered = memory.rows.lock().unwrap();
@@ -342,7 +342,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    const STATE: &str = r#"{"system":"kata","changes":[{"change":"NAME","master":"/ws/.ai-sdlc/copies/NAME","folder":"/ws/.ai-sdlc/copies/NAME/intent/kata/NAME","inCopy":true,"title":"T","track":"full",
+    const STATE: &str = r#"{"system":"kata","changes":[{"change":"NAME","master":"/ws/.hoshin/copies/NAME","folder":"/ws/.hoshin/copies/NAME/intent/kata/NAME","inCopy":true,"title":"T","track":"full",
  "documents":{"intent":{"exists":true,"inHead":true,"headStatus":"accepted","workingStatus":"accepted","uncommitted":false},"spec":{"exists":true,"inHead":true,"headStatus":"accepted","workingStatus":"accepted","uncommitted":false,"pin":"holds"},"plan":{"exists":true,"inHead":true,"headStatus":"accepted","workingStatus":"accepted","uncommitted":false,"pin":"holds"}},
  "scenarios":2,"tasks":{"app":{"all":["T1"],"logged":["T1"],"unlogged":[],"commits":{"T1":["4f1c2a9e0b7d3c5a8e6f1b2d4c7a9e0f3b5d8c1a"]},"untasked":[],"uncommitted":[]}},"buildLogs":{"app":"clean"},"review":{"committed":0,"draft":"none"},"fix":null,
  "ready":{"spec":{"candidate":false,"stop":null,"accept":[]},"plan":{"candidate":false,"stop":null,"accept":[]},"build":{"candidate":false,"stop":null,"accept":[]},"review":{"candidate":false,"stop":null,"accept":[]},"done":{"candidate":DONE,"stop":null,"accept":[]},"reject":{"candidate":false,"stop":null,"accept":[]}}}],"problems":[]}"#;
@@ -542,7 +542,7 @@ mod tests {
             }
         }
         let blocked = Readiness::missing();
-        for readiness in [ready("1.2.0"), blocked] {
+        for readiness in [ready("0.9.0"), blocked] {
             let answer = home_list(
                 &Panics,
                 &readiness,
@@ -666,11 +666,11 @@ mod tests {
         assert!(answer.check.is_empty());
     }
 
-    /// A stand-in for the ai-sdlc program that logs each start as one line (its arguments), so a test can count
+    /// A stand-in for the hoshin program that logs each start as one line (its arguments), so a test can count
     /// the starts and the `resolve` ones. It answers `resolve`, `list`, `state`, `change show` and `status`; a
     /// `fail` file naming a command makes the next start of that command exit 2 and removes the file.
     fn recording_program(dir: &Path, done_candidate: bool) -> Program {
-        let entry = dir.join("ai-sdlc.ts");
+        let entry = dir.join("hoshin.ts");
         let script = r#"const fs = require('node:fs');
 const path = require('node:path');
 const here = __dirname;
@@ -904,9 +904,9 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
     ) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path().canonicalize().unwrap();
-        let master = init_repo(&ws, "ai-sdlc");
+        let master = init_repo(&ws, "hub");
         std::fs::write(
-            master.join(".ai-sdlc.json"),
+            master.join(".hoshin.json"),
             r#"{"version":1,"systems":{"kata":{"repos":["kata"]}}}"#,
         )
         .unwrap();
@@ -936,7 +936,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
                 )
                 .json;
             assert_eq!(started["outcome"], "passed", "{started}");
-            let copy = ws.join(".ai-sdlc").join("copies").join(&name);
+            let copy = ws.join(".hoshin").join("copies").join(&name);
             let folder = copy.join(format!("intent/kata/{name}"));
             std::fs::create_dir_all(&folder).unwrap();
             std::fs::write(folder.join("intent.md"), INTENT).unwrap();
@@ -1003,7 +1003,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
         let program = Program {
             node: "node".into(),
             entry: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../crates/kata-sdlc/tests/ai-sdlc-tools/ai-sdlc.ts"),
+                .join("../../crates/kata-sdlc/tests/hoshin-tools/hoshin.ts"),
         };
         let readiness = ready("1.3.1");
         let systems = names(&["kata"]);
@@ -1131,7 +1131,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
     #[test]
     fn app_rows_follow_the_program() {
         let dir = tempfile::tempdir().unwrap();
-        let entry = dir.path().join("ai-sdlc.ts");
+        let entry = dir.path().join("hoshin.ts");
         let root = dir.path().display().to_string().replace("\\", "/");
         let script = format!(
             r#"const args = process.argv.slice(2);

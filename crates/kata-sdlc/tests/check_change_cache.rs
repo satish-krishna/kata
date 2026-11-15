@@ -39,7 +39,7 @@ fn two_status_calls_on_an_unchanged_change_start_the_check_once() {
     let tmp = tempfile::tempdir().unwrap();
     let plugin = tmp.path().join("plugin");
     copy_dir(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools"),
         &plugin.join("tools"),
     );
     let repo = tmp.path().join("master");
@@ -49,7 +49,7 @@ fn two_status_calls_on_an_unchanged_change_start_the_check_once() {
     git(&repo, &["config", "user.email", "test@example.com"]);
     git(&repo, &["config", "commit.gpgsign", "false"]);
     let rel = "intent/demo/2026-10-12-one/plan.md";
-    let plan = include_str!("ai-sdlc-tools/examples/plan/2/valid.md");
+    let plan = include_str!("hoshin-tools/examples/plan/2/valid.md");
     commit(&repo, rel, plan);
 
     // The first status reads the plan and checks the change.

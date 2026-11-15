@@ -528,8 +528,8 @@ mod tests {
             change: "2026-11-01-a".into(),
             finished: None,
             apps: None,
-            master: "/ws/ai-sdlc".into(),
-            folder: "/ws/ai-sdlc/intent/demo/2026-11-01-a".into(),
+            master: "/ws/hub".into(),
+            folder: "/ws/hub/intent/demo/2026-11-01-a".into(),
             in_copy: false,
             title: Some("A".into()),
             track: ChangeTrack::Full,
@@ -825,7 +825,7 @@ mod tests {
     #[test]
     fn the_refusal_is_the_plugins_message_verbatim() {
         // The grammar's spec stop, with the status filled in.
-        let grammar = include_str!("../tests/ai-sdlc-tools/GRAMMAR.md");
+        let grammar = include_str!("../tests/hoshin-tools/GRAMMAR.md");
         assert!(grammar.contains(
             "The product owner accepts it by changing its status to `accepted` and committing; the spec runs only after that."
         ));

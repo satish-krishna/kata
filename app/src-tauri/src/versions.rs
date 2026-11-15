@@ -4,7 +4,7 @@ use kata_core::catalog;
 use serde::Serialize;
 use std::path::Path;
 
-/// What the Workbench knows about the ai-sdlc plugin's version.
+/// What the Workbench knows about the hoshin plugin's version.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -40,9 +40,9 @@ pub fn versions(package: &str, debug: bool, ai_sdlc: AiSdlc) -> Versions {
         package.to_string()
     };
     let plugin = match &ai_sdlc {
-        AiSdlc::Found { version } => format!("ai-sdlc {version}"),
-        AiSdlc::NotFound => "ai-sdlc: not found".to_string(),
-        AiSdlc::Unknown => "ai-sdlc: version unknown".to_string(),
+        AiSdlc::Found { version } => format!("hoshin {version}"),
+        AiSdlc::NotFound => "hoshin: not found".to_string(),
+        AiSdlc::Unknown => "hoshin: version unknown".to_string(),
     };
     Versions {
         line: format!("Workbench {workbench} \u{b7} {plugin}"),
@@ -52,7 +52,7 @@ pub fn versions(package: &str, debug: bool, ai_sdlc: AiSdlc) -> Versions {
     }
 }
 
-/// The ai-sdlc plugin the catalog finds for `folder` (the engineer's own scope alone when none), and the
+/// The hoshin plugin the catalog finds for `folder` (the engineer's own scope alone when none), and the
 /// version it declares. It reads files only and starts no process.
 pub fn find_ai_sdlc(folder: Option<&Path>) -> AiSdlc {
     let roots = catalog::roots_for_workdir(folder.and_then(Path::to_str));
@@ -106,9 +106,9 @@ mod tests {
         }
     }
 
-    /// An ai-sdlc plugin folder under `claude_dir`, providing `skill:build`, with `manifest` as its plugin.json.
+    /// An hoshin plugin folder under `claude_dir`, providing `skill:build`, with `manifest` as its plugin.json.
     fn install(claude_dir: &Path, manifest: &str) {
-        let plugin = claude_dir.join("plugins").join("ai-sdlc");
+        let plugin = claude_dir.join("plugins").join("hoshin");
         let skill = plugin.join("skills").join("build");
         std::fs::create_dir_all(&skill).unwrap();
         std::fs::write(skill.join("SKILL.md"), "---\nname: build\n---\n").unwrap();
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn a_plugin_without_a_readable_plugin_json_is_unknown() {
-        for manifest in ["not json at all", r#"{"name":"ai-sdlc"}"#] {
+        for manifest in ["not json at all", r#"{"name":"hoshin"}"#] {
             let root = tempfile::tempdir().unwrap();
             let home = root.path().join("home");
             install(&home.join(".claude"), manifest);
@@ -183,72 +183,72 @@ mod tests {
                 false,
                 found(),
                 "3.3.0",
-                "Workbench 3.3.0 · ai-sdlc 1.3.0",
-                "Kata Workbench 3.3.0, ai-sdlc 1.3.0",
+                "Workbench 3.3.0 · hoshin 1.3.0",
+                "Kata Workbench 3.3.0, hoshin 1.3.0",
             ),
             (
                 "3.3.0",
                 false,
                 AiSdlc::NotFound,
                 "3.3.0",
-                "Workbench 3.3.0 · ai-sdlc: not found",
-                "Kata Workbench 3.3.0, ai-sdlc: not found",
+                "Workbench 3.3.0 · hoshin: not found",
+                "Kata Workbench 3.3.0, hoshin: not found",
             ),
             (
                 "3.3.0",
                 false,
                 AiSdlc::Unknown,
                 "3.3.0",
-                "Workbench 3.3.0 · ai-sdlc: version unknown",
-                "Kata Workbench 3.3.0, ai-sdlc: version unknown",
+                "Workbench 3.3.0 · hoshin: version unknown",
+                "Kata Workbench 3.3.0, hoshin: version unknown",
             ),
             (
                 "3.4.0-beta.1",
                 false,
                 found(),
                 "3.4.0-beta.1",
-                "Workbench 3.4.0-beta.1 · ai-sdlc 1.3.0",
-                "Kata Workbench 3.4.0-beta.1, ai-sdlc 1.3.0",
+                "Workbench 3.4.0-beta.1 · hoshin 1.3.0",
+                "Kata Workbench 3.4.0-beta.1, hoshin 1.3.0",
             ),
             (
                 "3.4.0-beta.1",
                 false,
                 AiSdlc::NotFound,
                 "3.4.0-beta.1",
-                "Workbench 3.4.0-beta.1 · ai-sdlc: not found",
-                "Kata Workbench 3.4.0-beta.1, ai-sdlc: not found",
+                "Workbench 3.4.0-beta.1 · hoshin: not found",
+                "Kata Workbench 3.4.0-beta.1, hoshin: not found",
             ),
             (
                 "3.4.0-beta.1",
                 false,
                 AiSdlc::Unknown,
                 "3.4.0-beta.1",
-                "Workbench 3.4.0-beta.1 · ai-sdlc: version unknown",
-                "Kata Workbench 3.4.0-beta.1, ai-sdlc: version unknown",
+                "Workbench 3.4.0-beta.1 · hoshin: version unknown",
+                "Kata Workbench 3.4.0-beta.1, hoshin: version unknown",
             ),
             (
                 "3.3.0",
                 true,
                 found(),
                 "3.3.0 (dev)",
-                "Workbench 3.3.0 (dev) · ai-sdlc 1.3.0",
-                "Kata Workbench 3.3.0 (dev), ai-sdlc 1.3.0",
+                "Workbench 3.3.0 (dev) · hoshin 1.3.0",
+                "Kata Workbench 3.3.0 (dev), hoshin 1.3.0",
             ),
             (
                 "3.3.0",
                 true,
                 AiSdlc::NotFound,
                 "3.3.0 (dev)",
-                "Workbench 3.3.0 (dev) · ai-sdlc: not found",
-                "Kata Workbench 3.3.0 (dev), ai-sdlc: not found",
+                "Workbench 3.3.0 (dev) · hoshin: not found",
+                "Kata Workbench 3.3.0 (dev), hoshin: not found",
             ),
             (
                 "3.3.0",
                 true,
                 AiSdlc::Unknown,
                 "3.3.0 (dev)",
-                "Workbench 3.3.0 (dev) · ai-sdlc: version unknown",
-                "Kata Workbench 3.3.0 (dev), ai-sdlc: version unknown",
+                "Workbench 3.3.0 (dev) · hoshin: version unknown",
+                "Kata Workbench 3.3.0 (dev), hoshin: version unknown",
             ),
         ];
         for (package, debug, ai, workbench, line, copy) in rows {

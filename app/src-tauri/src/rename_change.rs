@@ -110,7 +110,7 @@ mod tests {
         Program {
             node: "node".into(),
             entry: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../crates/kata-sdlc/tests/ai-sdlc-tools/ai-sdlc.ts"),
+                .join("../../crates/kata-sdlc/tests/hoshin-tools/hoshin.ts"),
         }
     }
 
@@ -137,7 +137,7 @@ mod tests {
     fn fixture() -> Fx {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path().to_path_buf();
-        for name in ["ai-sdlc", "app"] {
+        for name in ["hub", "app"] {
             let repo = ws.join(name);
             std::fs::create_dir_all(&repo).unwrap();
             git(&repo, &["init", "-q", "-b", "main"]);
@@ -145,8 +145,8 @@ mod tests {
             git(&repo, &["config", "user.email", "test@example.com"]);
             git(&repo, &["config", "commit.gpgsign", "false"]);
         }
-        let master = ws.join("ai-sdlc");
-        std::fs::write(master.join(".ai-sdlc.json"), MARKER).unwrap();
+        let master = ws.join("hub");
+        std::fs::write(master.join(".hoshin.json"), MARKER).unwrap();
         git(&master, &["add", "."]);
         git(&master, &["commit", "-q", "-m", "marker"]);
         std::fs::write(ws.join("app").join("a.txt"), "a").unwrap();
@@ -319,7 +319,7 @@ if (args[0] === 'change' && args[1] === 'rename') {{
             marker = marker.display().to_string(),
             real = real.display().to_string(),
         );
-        let entry = dir.join("fake-ai-sdlc.mjs");
+        let entry = dir.join("fake-hoshin.mjs");
         std::fs::write(&entry, script).unwrap();
         (
             Program {

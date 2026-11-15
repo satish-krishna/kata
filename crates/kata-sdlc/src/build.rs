@@ -1,5 +1,5 @@
 //! The build's state, read from the plan and the build logs as committed in the master
-//! repository. Nothing in Kata parses `plan.md` or `build/<repo>.md` itself: the ai-sdlc plugin's
+//! repository. Nothing in Kata parses `plan.md` or `build/<repo>.md` itself: the hoshin plugin's
 //! format program reads them, in either layout, and this module folds its answer into a status.
 use crate::format::{self, FormatError, ParsedBuildLog, ParsedTask, Problem, ReadResult};
 use crate::git::{self, GitError};
@@ -109,7 +109,7 @@ pub(crate) fn change_dir(system: &str, change: &str) -> String {
     format!("intent/{system}/{change}")
 }
 
-const FORMAT_PROGRAM: &str = "ai-sdlc format program";
+const FORMAT_PROGRAM: &str = "hoshin format program";
 
 /// A format-program failure reported the way a git failure is, so one error type serves both.
 pub(crate) fn unreadable(error: FormatError) -> GitError {
@@ -120,9 +120,9 @@ pub(crate) fn unreadable(error: FormatError) -> GitError {
     }
 }
 
-/// The format program inside the ai-sdlc plugin folder.
+/// The format program inside the hoshin plugin folder.
 pub(crate) fn program(plugin: &Path) -> PathBuf {
-    plugin.join("tools").join("ai-sdlc.ts")
+    plugin.join("tools").join("hoshin.ts")
 }
 
 /// Where the committed documents are put for the program to read: the program takes a document's
@@ -347,7 +347,7 @@ fn rows_of(logs: &[ParsedBuildLog]) -> Vec<BuildRow> {
 }
 
 /// The build's state from the plan and build logs committed at `HEAD`, read by the format program
-/// in `plugin` (the ai-sdlc plugin folder). Problems found in those documents come back in
+/// in `plugin` (the hoshin plugin folder). Problems found in those documents come back in
 /// `problems` and do not stop the reading.
 pub fn status(
     plugin: &Path,
@@ -895,7 +895,7 @@ mod tests {
         let format_dir = plugin.path().join("tools");
         std::fs::create_dir_all(&format_dir).unwrap();
         std::fs::write(
-            format_dir.join("ai-sdlc.ts"),
+            format_dir.join("hoshin.ts"),
             format!(
                 "import {{ readdirSync, writeFileSync }} from 'node:fs';
                  if (process.argv[2] === 'check') process.exit(0);

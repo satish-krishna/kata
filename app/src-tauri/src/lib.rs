@@ -386,7 +386,7 @@ fn sdlc_run_history(
         .unwrap_or_default()
 }
 
-/// The ai-sdlc program of the plugin installed for `workspace`, as the build host asks for it.
+/// The hoshin program of the plugin installed for `workspace`, as the build host asks for it.
 struct PluginTools;
 
 impl PluginTools {
@@ -400,7 +400,7 @@ impl PluginTools {
                 Err(sdlc::ai_sdlc::ProgramError::CouldNotRun { message })
             }
             (None, _) => Err(sdlc::ai_sdlc::ProgramError::CouldNotRun {
-                message: "the ai-sdlc plugin cannot be used".into(),
+                message: "the hoshin plugin cannot be used".into(),
             }),
         }
     }
@@ -830,7 +830,7 @@ fn master_layout(
     program: Option<&sdlc::ai_sdlc::Program>,
     master: &str,
 ) -> Result<sdlc::layout::Layout, String> {
-    let program = program.ok_or("the ai-sdlc plugin is not ready")?;
+    let program = program.ok_or("the hoshin plugin is not ready")?;
     sdlc::layout::open(program, Path::new(master))
         .map(|opened| opened.layout)
         .map_err(|e| e.to_string())
@@ -865,7 +865,7 @@ fn sdlc_branches(master: String) -> sdlc::branch::BranchInfo {
 #[tauri::command(async)]
 fn sdlc_app_rows(folder: String, system: String) -> Result<sdlc_home::AppRows, String> {
     let (program, _) = state_inputs(&folder);
-    let program = program.ok_or("the ai-sdlc plugin is not ready")?;
+    let program = program.ok_or("the hoshin plugin is not ready")?;
     sdlc_home::app_rows(&program, Path::new(&folder), &system)
 }
 
@@ -1625,7 +1625,7 @@ fn drop_declare_done_after_earlier_declaration(
     }
 }
 
-/// The Workbench and ai-sdlc versions for the version line. The ai-sdlc plugin is looked up from the
+/// The Workbench and hoshin versions for the version line. The hoshin plugin is looked up from the
 /// workspace the home opens on (the most recently opened), or the engineer's own scope when none.
 #[tauri::command(async)]
 fn app_versions(app: tauri::AppHandle) -> versions::Versions {
@@ -1650,16 +1650,16 @@ fn sdlc_plugin_readiness(workdir: Option<String>) -> sdlc::plugin::Readiness {
     ai_sdlc_readiness(workdir.as_deref())
 }
 
-/// The installed plugin that is the ai-sdlc plugin: a plugin named `ai-sdlc` that provides the build skill.
+/// The installed plugin that is the hoshin plugin: a plugin named `hoshin` that provides the build skill.
 pub(crate) fn ai_sdlc_entry(found: &[CatalogEntry]) -> Option<&CatalogEntry> {
     found.iter().find(|e| {
         e.kind == catalog::EntryKind::Plugin
-            && e.name == "ai-sdlc"
+            && e.name == "hoshin"
             && e.provides.iter().any(|p| p == "skill:build")
     })
 }
 
-/// Whether the ai-sdlc plugin that `workdir`'s catalog finds can be used, and where it is.
+/// Whether the hoshin plugin that `workdir`'s catalog finds can be used, and where it is.
 fn ai_sdlc_readiness(workdir: Option<&str>) -> sdlc::plugin::Readiness {
     let roots = catalog::roots_for_workdir(workdir);
     let found = catalog::discover(&roots);
@@ -1688,7 +1688,7 @@ fn ai_sdlc_readiness(workdir: Option<&str>) -> sdlc::plugin::Readiness {
     }
 }
 
-/// The ai-sdlc plugin folder the format program is read from, or why the build cannot be read. It is
+/// The hoshin plugin folder the format program is read from, or why the build cannot be read. It is
 /// found from the workspace folder, the same place `sdlc_plugin_readiness` is asked about, so a
 /// project-scoped plugin there is the one every command uses.
 fn ai_sdlc_dir_in(folder: &str) -> Result<std::path::PathBuf, String> {
@@ -2690,7 +2690,7 @@ mod tests {
             "layout": "single-repo",
         });
         std::fs::write(
-            plugin.join("tools").join("ai-sdlc.ts"),
+            plugin.join("tools").join("hoshin.ts"),
             format!("console.log(JSON.stringify({answer}));\n"),
         )
         .unwrap();
@@ -2800,15 +2800,15 @@ mod tests {
             opened.borrow_mut().push(path.to_string());
             Ok(())
         };
-        open_copy_with(true, "/ws/.ai-sdlc/copies/c", fake).unwrap();
-        assert_eq!(*opened.borrow(), ["/ws/.ai-sdlc/copies/c"]);
+        open_copy_with(true, "/ws/.hoshin/copies/c", fake).unwrap();
+        assert_eq!(*opened.borrow(), ["/ws/.hoshin/copies/c"]);
         // Not in a copy: the master is the engineer's own checkout, which is not opened, and the reason is said.
         let opened = std::cell::RefCell::new(Vec::new());
         let fake = |path: &str| {
             opened.borrow_mut().push(path.to_string());
             Ok(())
         };
-        let err = open_copy_with(false, "/ws/ai-sdlc", fake).expect_err("not a copy");
+        let err = open_copy_with(false, "/ws/hub", fake).expect_err("not a copy");
         assert!(err.contains("copy"), "reason should explain: {err}");
         assert!(opened.borrow().is_empty());
         // The opener's own failure comes back.
@@ -2923,7 +2923,7 @@ mod tests {
         let mut table = RunTable::<()>::default();
         table.insert(LiveRun {
             id: 1,
-            workdir: std::path::PathBuf::from("D:/ws/.ai-sdlc/copies/c/ai-sdlc"),
+            workdir: std::path::PathBuf::from("D:/ws/.hoshin/copies/c/hoshin"),
             group: Some("document:s/c".into()),
             lane: runs::Lane::Change {
                 key: kata_sdlc::holds::ChangeKey {
@@ -3010,7 +3010,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let workspace = root.join("ws");
         let master = workspace.join("master");
-        let plugin = workspace.join(".claude").join("plugins").join("ai-sdlc");
+        let plugin = workspace.join(".claude").join("plugins").join("hoshin");
         std::fs::create_dir_all(master.join("intent")).unwrap();
         std::fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
         std::fs::create_dir_all(plugin.join("skills").join("build")).unwrap();
@@ -3024,7 +3024,7 @@ name: build
         .unwrap();
         std::fs::write(
             plugin.join(".claude-plugin").join("plugin.json"),
-            r#"{"name":"ai-sdlc","version":"1.1.0"}"#,
+            r#"{"name":"hoshin","version":"1.1.0"}"#,
         )
         .unwrap();
         let empty_home = root.join("home");
@@ -3090,7 +3090,7 @@ name: build
         #[test]
         fn leftovers_for_the_workspace_target_are_unchanged() {
             let dir = tempfile::tempdir().unwrap();
-            let master = dir.path().join("ai-sdlc");
+            let master = dir.path().join("hub");
             repo(&master);
             repo(&dir.path().join("app"));
             repo(&dir.path().join("web"));
@@ -3108,7 +3108,7 @@ name: build
         #[test]
         fn discard_for_the_workspace_target_acts_in_the_snapshots_folder() {
             let dir = tempfile::tempdir().unwrap();
-            let master = dir.path().join("ai-sdlc");
+            let master = dir.path().join("hub");
             repo(&master);
             let placed = Placed::Workspace(master.clone());
             let before = snapshot_in(&placed).unwrap();
@@ -3120,7 +3120,7 @@ name: build
         #[test]
         fn discard_with_an_unplaceable_change_target_refuses() {
             let dir = tempfile::tempdir().unwrap();
-            let master = dir.path().join("ai-sdlc");
+            let master = dir.path().join("hub");
             repo(&master);
             let before = snapshot_in(&Placed::Workspace(master.clone())).unwrap();
             std::fs::write(master.join("run.md"), "x").unwrap();
@@ -3154,12 +3154,11 @@ name: build
         const SYSTEM: &str = "demo";
         const CHANGE: &str = "2026-11-02-greeting";
         const SPEC: &str =
-            include_str!("../../../crates/kata-sdlc/tests/ai-sdlc-tools/examples/spec/2/valid.md");
+            include_str!("../../../crates/kata-sdlc/tests/hoshin-tools/examples/spec/2/valid.md");
         const PLAN: &str =
-            include_str!("../../../crates/kata-sdlc/tests/ai-sdlc-tools/examples/plan/2/valid.md");
-        const REVIEW: &str = include_str!(
-            "../../../crates/kata-sdlc/tests/ai-sdlc-tools/examples/review/2/valid.md"
-        );
+            include_str!("../../../crates/kata-sdlc/tests/hoshin-tools/examples/plan/2/valid.md");
+        const REVIEW: &str =
+            include_str!("../../../crates/kata-sdlc/tests/hoshin-tools/examples/review/2/valid.md");
 
         fn git(dir: &Path, args: &[&str]) {
             let out = std::process::Command::new("git")
@@ -3207,13 +3206,13 @@ name: build
             let dir = root.join("plugin");
             copy_dir(
                 &Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../crates/kata-sdlc/tests/ai-sdlc-tools"),
+                    .join("../../crates/kata-sdlc/tests/hoshin-tools"),
                 &dir.join("tools"),
             );
             std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
             std::fs::write(
                 dir.join(".claude-plugin/plugin.json"),
-                r#"{"name":"ai-sdlc","version":"1.1.0"}"#,
+                r#"{"name":"hoshin","version":"1.1.0"}"#,
             )
             .unwrap();
             dir
@@ -3270,8 +3269,8 @@ name: build
         /// committed, with a review, and whose `spec.md` has an uncommitted edit.
         fn fx() -> Fx {
             let dir = tempfile::tempdir().unwrap();
-            let checkout = dir.path().join("ai-sdlc");
-            let copy = dir.path().join(".ai-sdlc/copies").join(CHANGE);
+            let checkout = dir.path().join("hub");
+            let copy = dir.path().join(".hoshin/copies").join(CHANGE);
             repo(&checkout);
             write(&checkout, "intent.md", "older intent from the checkout\n");
             write(&checkout, "spec.md", "older spec from the checkout\n");
@@ -3354,7 +3353,7 @@ name: build
             let dir = root.join("failing-plugin");
             std::fs::create_dir_all(dir.join("tools")).unwrap();
             std::fs::write(
-                dir.join("tools/ai-sdlc.ts"),
+                dir.join("tools/hoshin.ts"),
                 "console.error('boom'); process.exit(2);\n",
             )
             .unwrap();
@@ -3501,21 +3500,21 @@ name: build
     fn preview_run_reads_the_options_from_the_spec() {
         use kata_core::given::LockReason;
         let dir = std::env::temp_dir().join(format!("kata-preview-opts-{}", std::process::id()));
-        // A project-scoped ai-sdlc, so the test never depends on the machine having the plugin installed.
-        let plugin = dir.join(".claude").join("plugins").join("ai-sdlc");
+        // A project-scoped hoshin, so the test never depends on the machine having the plugin installed.
+        let plugin = dir.join(".claude").join("plugins").join("hoshin");
         std::fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
         std::fs::write(
             plugin.join(".claude-plugin").join("plugin.json"),
-            r#"{"name":"ai-sdlc","version":"1.1.0"}"#,
+            r#"{"name":"hoshin","version":"1.1.0"}"#,
         )
         .unwrap();
         let mut plugins = std::collections::BTreeMap::new();
-        plugins.insert("ai-sdlc".to_string(), spec::PluginConfig::default());
+        plugins.insert("hoshin".to_string(), spec::PluginConfig::default());
         let spec = RunSpec {
             workdir: dir.to_string_lossy().into_owned(),
             plugins,
             given: Some(spec::Given {
-                required_plugins: vec!["ai-sdlc".into()],
+                required_plugins: vec!["hoshin".into()],
                 ..spec::Given::default()
             }),
             ..RunSpec::default()
@@ -3525,8 +3524,8 @@ name: build
         let item = resolved
             .items
             .iter()
-            .find(|i| i.kind == given::ItemKind::Plugin && i.name == "ai-sdlc")
-            .expect("the ai-sdlc plugin is listed");
+            .find(|i| i.kind == given::ItemKind::Plugin && i.name == "hoshin")
+            .expect("the hoshin plugin is listed");
         assert!(
             matches!(item.lock, Some(LockReason::Required { .. })),
             "{:?}",
@@ -3559,7 +3558,7 @@ mod steps_commands {
         Program {
             node: "node".into(),
             entry: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../crates/kata-sdlc/tests/ai-sdlc-tools/ai-sdlc.ts"),
+                .join("../../crates/kata-sdlc/tests/hoshin-tools/hoshin.ts"),
         }
     }
 
@@ -3588,7 +3587,7 @@ mod steps_commands {
     fn fixture_with(extra: &str) -> Fx {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path().to_path_buf();
-        for name in ["ai-sdlc", "app"] {
+        for name in ["hub", "app"] {
             let repo = ws.join(name);
             std::fs::create_dir_all(&repo).unwrap();
             git(&repo, &["init", "-q", "-b", "main"]);
@@ -3596,8 +3595,8 @@ mod steps_commands {
             git(&repo, &["config", "user.email", "test@example.com"]);
             git(&repo, &["config", "commit.gpgsign", "false"]);
         }
-        let master = ws.join("ai-sdlc");
-        std::fs::write(master.join(".ai-sdlc.json"), MARKER).unwrap();
+        let master = ws.join("hub");
+        std::fs::write(master.join(".hoshin.json"), MARKER).unwrap();
         git(&master, &["add", "."]);
         git(&master, &["commit", "-q", "-m", "marker"]);
         std::fs::write(ws.join("app").join("a.txt"), "a").unwrap();
@@ -3669,7 +3668,7 @@ if ({trigger}) {{
             marker = marker.display().to_string(),
             real = real.display().to_string(),
         );
-        let entry = dir.join("fake-ai-sdlc.mjs");
+        let entry = dir.join("fake-hoshin.mjs");
         std::fs::write(&entry, script).unwrap();
         (
             Program {

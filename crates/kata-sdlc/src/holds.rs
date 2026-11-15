@@ -247,6 +247,8 @@ mod tests {
             covers: Vec::new(),
             supports: Vec::new(),
             sections: Vec::new(),
+            test: None,
+            compile: None,
             text: String::new(),
             line: 1,
         }

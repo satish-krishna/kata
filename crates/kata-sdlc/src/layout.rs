@@ -1,5 +1,5 @@
 //! The layout of the folder Kata is opened on, and the answers only the single-repo layout has: its apps
-//! and their context, and the instructions in the repository's root file. Every answer is the ai-sdlc
+//! and their context, and the instructions in the repository's root file. Every answer is the hoshin
 //! program's; this module types it and decides nothing.
 use crate::ai_sdlc::{Place, Program, ProgramError};
 use crate::workspace::InstructionsState;
@@ -334,7 +334,7 @@ mod tests {
         let master = testutil::repo(&ws, "m");
         testutil::commit_file(
             &master,
-            ".ai-sdlc.json",
+            ".hoshin.json",
             "{\"version\":1,\"systems\":{}}\n",
             "marker",
         );
@@ -408,7 +408,7 @@ mod tests {
 
     /// A program that logs each call's arguments to `calls.log` beside it and answers as a workspace would.
     fn recording(dir: &Path) -> Program {
-        let entry = dir.join("ai-sdlc.mjs");
+        let entry = dir.join("hoshin.mjs");
         let script = r#"import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -516,7 +516,7 @@ if (args[0] === 'resolve') {
     fn program() -> Program {
         Program {
             node: "node".into(),
-            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts"),
+            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools/hoshin.ts"),
         }
     }
 
@@ -596,7 +596,7 @@ if (args[0] === 'resolve') {
             )
             .json;
         assert_eq!(started["outcome"], "passed", "{started}");
-        let copy = tmp.path().join(".ai-sdlc").join("copies").join(CHANGE);
+        let copy = tmp.path().join(".hoshin").join("copies").join(CHANGE);
         testutil::commit_file(
             &copy,
             &format!("intent/kata/{CHANGE}/intent.md"),
@@ -696,7 +696,7 @@ if (args[0] === 'resolve') {
         let master = testutil::repo(&ws, "m");
         testutil::commit_file(
             &master,
-            ".ai-sdlc.json",
+            ".hoshin.json",
             "{\"version\":1,\"systems\":{}}\n",
             "marker",
         );

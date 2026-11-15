@@ -154,7 +154,7 @@ pub struct ChangeState {
     pub review: ReviewState,
     pub fix: Option<crate::format::FixState>,
     pub ready: Ready,
-    /// Null when the change is open; answers before ai-sdlc 1.3.0 have no such field.
+    /// Null when the change is open; answers before hoshin 1.3.0 have no such field.
     #[serde(default)]
     #[cfg_attr(feature = "ts", ts(skip))]
     pub finished: Option<Finished>,
@@ -231,7 +231,7 @@ mod tests {
     use crate::ai_sdlc::Place;
     use crate::testutil;
 
-    const EXAMPLE: &str = r#"{"system":"demo","changes":[{"change":"2026-11-01-greeting","master":"/ws/.ai-sdlc/copies/2026-11-01-greeting","folder":"/ws/.ai-sdlc/copies/2026-11-01-greeting/intent/demo/2026-11-01-greeting","inCopy":true,"title":"Greeting","track":"full",
+    const EXAMPLE: &str = r#"{"system":"demo","changes":[{"change":"2026-11-01-greeting","master":"/ws/.hoshin/copies/2026-11-01-greeting","folder":"/ws/.hoshin/copies/2026-11-01-greeting/intent/demo/2026-11-01-greeting","inCopy":true,"title":"Greeting","track":"full",
  "documents":{"intent":{"exists":true,"inHead":true,"headStatus":"accepted","workingStatus":"accepted","uncommitted":false},"spec":{"exists":true,"inHead":true,"headStatus":"accepted","workingStatus":"accepted","uncommitted":false,"pin":"holds"},"plan":{"exists":true,"inHead":true,"headStatus":"accepted","workingStatus":"accepted","uncommitted":false,"pin":"holds"}},
  "scenarios":2,"tasks":{"app":{"all":["T1","T2"],"logged":["T1"],"unlogged":["T2"],"commits":{"T1":["4f1c2a9e0b7d3c5a8e6f1b2d4c7a9e0f3b5d8c1a"],"T2":[]},"untasked":[],"uncommitted":["src/greet.ts"]}},"buildLogs":{"app":"clean"},"review":{"committed":0,"draft":"none"},"fix":null,
  "ready":{"spec":{"candidate":false,"stop":null,"accept":["intent.md"]},"plan":{"candidate":false,"stop":null,"accept":["intent.md","spec.md"]},"build":{"candidate":true,"stop":null,"accept":["intent.md","spec.md","plan.md"]},"review":{"candidate":false,"stop":"These tasks have no build log entry yet: `app`: T2.","accept":["intent.md","spec.md","plan.md"]},"done":{"candidate":false,"stop":null,"accept":[]},"reject":{"candidate":false,"stop":"`greeting` has build work (a build log or a review), so it is not rejected. The engineer settles that work first.","accept":[]}}}],"problems":[]}"#;
@@ -239,7 +239,7 @@ mod tests {
     fn program() -> Program {
         Program {
             node: "node".into(),
-            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts"),
+            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools/hoshin.ts"),
         }
     }
 
@@ -275,10 +275,10 @@ mod tests {
         assert_eq!(system.changes.len(), 1);
         let c = &system.changes[0];
         assert_eq!(c.change, "2026-11-01-greeting");
-        assert_eq!(c.master, "/ws/.ai-sdlc/copies/2026-11-01-greeting");
+        assert_eq!(c.master, "/ws/.hoshin/copies/2026-11-01-greeting");
         assert_eq!(
             c.folder,
-            "/ws/.ai-sdlc/copies/2026-11-01-greeting/intent/demo/2026-11-01-greeting"
+            "/ws/.hoshin/copies/2026-11-01-greeting/intent/demo/2026-11-01-greeting"
         );
         assert!(c.in_copy);
         assert_eq!(c.title.as_deref(), Some("Greeting"));
@@ -359,10 +359,10 @@ mod tests {
     fn state_of_a_workspace_with_a_copy() {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path();
-        let master = testutil::repo(ws, "ai-sdlc");
+        let master = testutil::repo(ws, "hub");
         testutil::commit_file(
             &master,
-            ".ai-sdlc.json",
+            ".hoshin.json",
             r#"{"version":1,"systems":{"demo":{"repos":["app"]}}}"#,
             "marker",
         );

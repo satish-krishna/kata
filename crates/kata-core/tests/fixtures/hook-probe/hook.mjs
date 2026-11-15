@@ -1,6 +1,6 @@
 // Test fixture for the hook-probe plugin. Reads a hook event on stdin, appends
 // "<event> <tool> <command>" to the file named by HOOK_PROBE_LOG, and refuses any
-// Bash command containing `git push` (exit 2, reason on stderr), the way the ai-sdlc
+// Bash command containing `git push` (exit 2, reason on stderr), the way the hoshin
 // build skill's guard refuses a push.
 import { appendFileSync, readFileSync } from "node:fs";
 

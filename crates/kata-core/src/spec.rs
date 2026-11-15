@@ -91,7 +91,7 @@ pub struct Given {
     #[serde(default)]
     pub tool_servers: Vec<String>,
     /// Plugin names (without a marketplace) the run cannot work without. The
-    /// Workbench writes `["ai-sdlc"]` for an AI-SDLC run; such a plugin is shown
+    /// Workbench writes `["hoshin"]` for an AI-SDLC run; such a plugin is shown
     /// locked on and cannot be listed as switched off.
     #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<String>>"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1028,7 +1028,7 @@ isolation = "worktree"
         let back: RunSpec = toml::from_str(&text).unwrap();
         assert_eq!(back, spec);
         let with = given_spec(|g| {
-            g.required_plugins.push("ai-sdlc".into());
+            g.required_plugins.push("hoshin".into());
             g.build = true;
         });
         let text = to_toml(&with).unwrap();
@@ -1042,18 +1042,17 @@ isolation = "worktree"
     #[test]
     fn validate_refuses_a_required_plugin_listed_as_switched_off() {
         let spec = given_spec(|g| {
-            g.required_plugins.push("ai-sdlc".into());
-            g.plugins.push("personal:plugin:ai-sdlc@mkt".into());
+            g.required_plugins.push("hoshin".into());
+            g.plugins.push("personal:plugin:hoshin@mkt".into());
         });
         let errs = validate(&spec).unwrap_err();
         assert!(
-            errs.iter()
-                .any(|e| e.contains("personal:plugin:ai-sdlc@mkt")
-                    && e.contains("AI-SDLC runs work through this plugin")),
+            errs.iter().any(|e| e.contains("personal:plugin:hoshin@mkt")
+                && e.contains("AI-SDLC runs work through this plugin")),
             "{errs:?}"
         );
         let other = given_spec(|g| {
-            g.required_plugins.push("ai-sdlc".into());
+            g.required_plugins.push("hoshin".into());
             g.plugins.push("personal:plugin:other@mkt".into());
         });
         assert_eq!(validate(&other), Ok(()));

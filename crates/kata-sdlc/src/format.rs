@@ -1,9 +1,9 @@
-//! Runs the ai-sdlc plugin's format program (`ai-sdlc.ts`) and reads its answer.
+//! Runs the hoshin plugin's format program (`hoshin.ts`) and reads its answer.
 //!
 //! The program is the one place that knows how a spec, a plan, a build log or a review is laid
 //! out; Kata never parses those documents itself. `read` asks it for the parsed document
-//! (`ai-sdlc.ts read --json`) and `check_change` asks it to check a change's documents against each
-//! other (`ai-sdlc.ts check`). The program is spawned with an argv array (never a shell), a null
+//! (`hoshin.ts read --json`) and `check_change` asks it to check a change's documents against each
+//! other (`hoshin.ts check`). The program is spawned with an argv array (never a shell), a null
 //! stdin and a five-minute timeout that kills its whole process tree.
 //!
 //! The types below mirror `schema/read-result.schema.json` field for field, so they keep the
@@ -80,6 +80,8 @@ pub struct ParsedTask {
     pub covers: Vec<String>,
     pub supports: Vec<String>,
     pub sections: Vec<ParsedSection>,
+    pub test: Option<Vec<String>>,
+    pub compile: Option<Vec<String>>,
     pub text: String,
     pub line: u32,
 }
@@ -108,6 +110,7 @@ pub struct ParsedBuildEntry {
     pub task: String,
     pub commits: Vec<String>,
     pub departure: Option<String>,
+    pub red: Option<String>,
     pub line: u32,
 }
 
@@ -180,7 +183,7 @@ pub struct ParsedReview {
 /// The document layout versions Kata can read; a document in any other layout is shown as plain text and blocks building.
 pub const ACCEPTED_LAYOUTS: &[u32] = &[1, 2];
 
-/// What `ai-sdlc.ts read --json <file>` prints: the parsed document, its layout version, and every
+/// What `hoshin.ts read --json <file>` prints: the parsed document, its layout version, and every
 /// problem found in it.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
@@ -235,7 +238,7 @@ impl ReadResult {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FormatError {
     /// `node` is not on this machine's PATH.
-    #[error("Node.js was not found on this machine; ai-sdlc needs Node.js 22.18 or later")]
+    #[error("Node.js was not found on this machine; hoshin needs Node.js 22.18 or later")]
     NodeMissing,
     /// The program ran and said it could not work on the file (exit 2), or was killed.
     #[error("the format program could not run: {0}")]
@@ -414,7 +417,7 @@ fn disk_store(path: &Path, result: &ReadResult) {
     }
 }
 
-/// Reads one document with `program` (the path of `ai-sdlc.ts`). A document with the same name below
+/// Reads one document with `program` (the path of `hoshin.ts`). A document with the same name below
 /// its change folder and the same bytes is read once, wherever it sits: the next call returns the
 /// earlier answer without starting the program. Never uses the parse cache on disk.
 pub fn read(program: &Path, file: &Path) -> Result<ReadResult, FormatError> {
@@ -593,7 +596,7 @@ pub struct FixFacts {
     pub built: bool,
 }
 
-/// What `ai-sdlc.ts fix-state --json <change folder>` prints: the row of the fix-state table (1 to 8)
+/// What `hoshin.ts fix-state --json <change folder>` prints: the row of the fix-state table (1 to 8)
 /// and the facts it was decided on.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -621,7 +624,7 @@ pub struct RenderedNames {
     pub pull_request_title: Option<String>,
 }
 
-/// What `ai-sdlc.ts naming --json` prints.
+/// What `hoshin.ts naming --json` prints.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct NamingAnswer {
     /// The system has a `naming` key.
@@ -706,7 +709,7 @@ fn hash_of(bytes: &[u8]) -> u64 {
     hasher.finish()
 }
 
-/// The bytes of the `.ai-sdlc.json` the program would find above `file` (it walks up from the
+/// The bytes of the `.hoshin.json` the program would find above `file` (it walks up from the
 /// document's folder), or `None` when there is none.
 fn marker_bytes(file: &Path) -> Option<Vec<u8>> {
     file.ancestors()
@@ -850,7 +853,7 @@ mod tests {
         let file = dir.path().join("build/review.md");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, text).unwrap();
-        let program = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts");
+        let program = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools/hoshin.ts");
         match read(&program, &file).unwrap() {
             ReadResult::Review {
                 document, problems, ..

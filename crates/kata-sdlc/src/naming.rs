@@ -1,8 +1,8 @@
 //! A system's naming setting: the team's patterns for change branch names and pull request titles.
 //!
-//! The setting lives in the master repository's `.ai-sdlc.json`, under `systems.<system>.naming`, and is
+//! The setting lives in the master repository's `.hoshin.json`, under `systems.<system>.naming`, and is
 //! read only from the commit at the base branch, so it is the same for every engineer and cannot be
-//! changed on one machine. The ai-sdlc plugin's format program holds every rule about what a usable
+//! changed on one machine. The hoshin plugin's format program holds every rule about what a usable
 //! setting is and how the patterns are filled; this module only asks it.
 use crate::format::{self, NamingAnswer, NamingPatterns, NamingValues};
 use crate::plugin::{BlockReason, Readiness, MIN_VERSION};
@@ -25,7 +25,7 @@ fn fits_header(s: &str) -> bool {
     !s.is_empty() && !s.contains(|c: char| c.is_whitespace() || c == '(' || c == ')')
 }
 
-/// The scope a change starts with when its intent names none, as the ai-sdlc plugin resolves it: the intent's
+/// The scope a change starts with when its intent names none, as the hoshin plugin resolves it: the intent's
 /// `scope`, then the marker's `systems.<system>.commitScope`, then the system name. A malformed value is
 /// skipped: the intent's must fit a commit header's scope group, the marker's must be lowercase kebab-case.
 pub fn change_scope(master: &Path, system: &str, change: &str) -> String {
@@ -53,10 +53,10 @@ pub struct Naming {
 /// Why a name or a setting cannot be used.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NamingError {
-    #[error("the ai-sdlc plugin is not installed")]
+    #[error("the hoshin plugin is not installed")]
     PluginMissing,
     #[error(
-        "the system's naming setting needs ai-sdlc plugin {need} or later, this machine has {have}"
+        "the system's naming setting needs hoshin plugin {need} or later, this machine has {have}"
     )]
     PluginTooOld { have: String, need: String },
     #[error("the naming setting cannot be used: {}", .0.join("; "))]
@@ -69,7 +69,7 @@ pub enum NamingError {
 
 /// The marker as committed at the master's base branch; `None` when there is no such commit or file.
 ///
-/// The base is the ai-sdlc skills' default branch: `origin/HEAD`'s target, else `main`, else `master`
+/// The base is the hoshin skills' default branch: `origin/HEAD`'s target, else `main`, else `master`
 /// (`diff::base_branch`). It is never the current branch, so an edit on a pending or change branch cannot
 /// change the setting. A local branch is read when it exists, else its `origin/` copy.
 fn committed_marker(master: &Path) -> Option<Vec<u8>> {
@@ -85,7 +85,7 @@ fn committed_marker(master: &Path) -> Option<Vec<u8>> {
 }
 
 /// Whether the shared settings declare a naming setting for `system`. False when no base branch resolves
-/// or the base holds no `.ai-sdlc.json` (no setting is shared yet, so today's `change/<change>` naming
+/// or the base holds no `.hoshin.json` (no setting is shared yet, so today's `change/<change>` naming
 /// applies), and when the marker parses and the system has no `naming` key. A marker that is at the base
 /// but cannot be parsed, or whose `systems` or system entry has the wrong shape, counts as declared, so a
 /// broken marker never falls back to `change/` naming.
@@ -216,7 +216,7 @@ mod tests {
         assert_eq!(change_scope(&repo, "claims", CHANGE), "claims");
         testutil::commit_file(
             &repo,
-            ".ai-sdlc.json",
+            ".hoshin.json",
             r#"{"version":1,"systems":{"claims":{"commitScope":"claims-sys"}}}"#,
             "marker",
         );
@@ -239,7 +239,7 @@ mod tests {
         // A marker scope that is not lowercase kebab-case is skipped too.
         testutil::commit_file(
             &repo,
-            ".ai-sdlc.json",
+            ".hoshin.json",
             r#"{"version":1,"systems":{"claims":{"commitScope":"Claims Sys"}}}"#,
             "marker",
         );
@@ -274,7 +274,7 @@ mod tests {
     fn master_with(marker: &str) -> (tempfile::TempDir, std::path::PathBuf) {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
-        testutil::commit_file(&repo, ".ai-sdlc.json", marker, "marker");
+        testutil::commit_file(&repo, ".hoshin.json", marker, "marker");
         (tmp, repo)
     }
 
@@ -296,12 +296,12 @@ mod tests {
     #[test]
     fn setting_ignores_working_tree_and_change_branch_edits_r1_2() {
         let (_tmp, repo) = master_with(SETTING);
-        testutil::write(&repo, ".ai-sdlc.json", NO_NAMING);
+        testutil::write(&repo, ".hoshin.json", NO_NAMING);
         assert!(declared(&repo, "kata"));
         assert_eq!(setting(&current(), &repo, "kata"), Ok(Some(the_patterns())));
 
         testutil::checkout(&repo, "change/2026-11-02-x", true);
-        testutil::commit_file(&repo, ".ai-sdlc.json", NO_NAMING, "drop naming");
+        testutil::commit_file(&repo, ".hoshin.json", NO_NAMING, "drop naming");
         assert!(declared(&repo, "kata"));
         assert_eq!(setting(&current(), &repo, "kata"), Ok(Some(the_patterns())));
     }
@@ -314,7 +314,7 @@ mod tests {
             (NO_NAMING, "1.1.0", false, "none"),
             (bad_branch, "1.1.0", true, "unusable"),
             ("this is not json", "1.1.0", true, "unreadable"),
-            (SETTING, "1.0.0", true, "too old"),
+            (SETTING, "0.9.0", true, "too old"),
         ];
         for (marker, version, is_declared, expect) in rows {
             let (_tmp, repo) = master_with(marker);
@@ -339,7 +339,7 @@ mod tests {
     fn origin_head_target_wins_over_a_stale_main_r1_2() {
         let (_tmp, repo) = master_with(NO_NAMING);
         testutil::checkout(&repo, "develop", true);
-        testutil::commit_file(&repo, ".ai-sdlc.json", SETTING, "setting");
+        testutil::commit_file(&repo, ".hoshin.json", SETTING, "setting");
         testutil::checkout(&repo, "main", false);
         git::run(
             &repo,
@@ -359,7 +359,7 @@ mod tests {
         let (_tmp, repo) = master_with(NO_NAMING);
         git::run(&repo, &["branch", "-m", "main", "trunk"]).unwrap();
         testutil::checkout(&repo, "change/2026-11-02-x", true);
-        testutil::commit_file(&repo, ".ai-sdlc.json", SETTING, "add naming");
+        testutil::commit_file(&repo, ".hoshin.json", SETTING, "add naming");
         assert!(!declared(&repo, "kata"));
         assert_eq!(setting(&current(), &repo, "kata"), Ok(None));
     }

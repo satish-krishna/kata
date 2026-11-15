@@ -2,6 +2,6 @@
 import type { SystemDef } from "./SystemDef";
 
 /**
- * The `.ai-sdlc.json` marker (ai-sdlc `references/workspace.md` section 3).
+ * The `.hoshin.json` marker (hoshin `references/workspace.md` section 3).
  */
 export type Marker = { version: number, systems: { [key in string]?: SystemDef }, };

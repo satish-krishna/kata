@@ -614,7 +614,7 @@ mod tests {
     }
 
     fn repos() -> Vec<String> {
-        ["ai-sdlc", "catalog-api", "storefront-web"]
+        ["hub", "catalog-api", "storefront-web"]
             .map(String::from)
             .to_vec()
     }
@@ -864,12 +864,12 @@ mod tests {
     fn keeps_the_master_repository_first_in_offer_order_r5_7() {
         let list = [ReviewFinding {
             id: Some("F1".into()),
-            ..bare(Some(High), "x", Some("ai-sdlc"))
+            ..bare(Some(High), "x", Some("hub"))
         }];
         let o = offer_of(Some((Some(1), &list)), &repos());
         let p = plan(&o, &note(picks(&["F1"]), "catalog-api", "n"));
         let repos: Vec<_> = p.requests.iter().map(|r| r.repo.as_str()).collect();
-        assert_eq!(repos, ["ai-sdlc", "catalog-api"]);
+        assert_eq!(repos, ["hub", "catalog-api"]);
     }
 
     #[test]
@@ -921,7 +921,7 @@ mod tests {
         };
         offer_of(
             Some((Some(3), &[outside])),
-            &["ai-sdlc".to_string(), "catalog-api".to_string()],
+            &["hub".to_string(), "catalog-api".to_string()],
         )
     }
 

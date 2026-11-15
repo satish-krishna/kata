@@ -1,7 +1,7 @@
-//! Kata reads every document exactly as the ai-sdlc format program does (R6.2).
+//! Kata reads every document exactly as the hoshin format program does (R6.2).
 //!
-//! These tests run the vendored copy of the plugin's format folder in `tests/ai-sdlc-tools/`
-//! (refreshed with `node scripts/vendor-ai-sdlc-tools.mjs`), never the plugin repository. The
+//! These tests run the vendored copy of the plugin's format folder in `tests/hoshin-tools/`
+//! (refreshed with `node scripts/vendor-hoshin-tools.mjs`), never the plugin repository. The
 //! running Workbench always runs the installed plugin's program instead.
 #![allow(clippy::disallowed_methods)]
 use kata_sdlc::format::{self, FormatError, Problem};
@@ -11,11 +11,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn vendored() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools")
 }
 
 fn program() -> PathBuf {
-    vendored().join("ai-sdlc.ts")
+    vendored().join("hoshin.ts")
 }
 
 /// Every file below `dir` whose name ends with `suffix`, sorted.
@@ -158,12 +158,12 @@ fn compare_trees(sibling: &Path, copy: &Path, differences: &mut Vec<String>) {
 
 #[test]
 fn the_vendored_copy_matches_the_sibling_checkout() {
-    let plugin = std::env::var_os("KATA_AI_SDLC_PLUGIN")
+    let plugin = std::env::var_os("KATA_HOSHIN_PLUGIN")
         .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../ai-sdlc/plugin"));
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../hoshin"));
     let source = plugin.join("tools");
     if !source.is_dir() {
-        println!("sibling ai-sdlc checkout not found; copy not compared");
+        println!("sibling hoshin checkout not found; copy not compared");
         return;
     }
     let copy = vendored();
@@ -176,6 +176,8 @@ fn the_vendored_copy_matches_the_sibling_checkout() {
         "package.json",
         "package-lock.json",
         "tsconfig.json",
+        "coverage",
+        "CLIENTS.md",
     ];
     let mut entries: Vec<_> = fs::read_dir(&source)
         .unwrap()
@@ -190,7 +192,7 @@ fn the_vendored_copy_matches_the_sibling_checkout() {
     }
     assert!(
         differences.is_empty(),
-        "run node scripts/vendor-ai-sdlc-tools.mjs; {differences:#?}"
+        "run node scripts/vendor-hoshin-tools.mjs; {differences:#?}"
     );
     let manifest = fs::read_to_string(plugin.join(".claude-plugin/plugin.json")).unwrap();
     let manifest: Value = serde_json::from_str(&manifest).unwrap();

@@ -96,7 +96,7 @@ pub fn given_for(off: &[String], workdir: &str) -> Given {
     given
 }
 
-const AI_SDLC: &str = "ai-sdlc";
+const AI_SDLC: &str = "hoshin";
 const GITHUB_TOKENS: [&str; 3] = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"];
 
 /// The folder a build run of `repo` works in.
@@ -139,7 +139,7 @@ pub fn change_spec(place: &RunPlace, form: RunForm) -> RunSpec {
                 ),
             };
             let mut task = format!(
-                "Use the ai-sdlc build skill for system {} on change folder {} with {flag} --master {master}.",
+                "Use the hoshin build skill for system {} on change folder {} with {flag} --master {master}.",
                 place.system, place.state.change
             );
             if form.continue_on_leftovers {
@@ -219,7 +219,7 @@ mod tests {
     fn form(bare: bool) -> RunForm {
         RunForm {
             name: "sdlc-commerce-2026-10-12-photos-spec".into(),
-            task: "Use the ai-sdlc spec skill.".into(),
+            task: "Use the hoshin spec skill.".into(),
             bare,
             permission_mode: PermissionMode::Auto,
             timeout_secs: 7200,
@@ -279,7 +279,7 @@ mod tests {
         let s = change_spec(&p, form(false));
         assert_eq!(
             s.task,
-            format!("Use the ai-sdlc build skill for system commerce on change folder 2026-10-12-photos with --repo app --master {COPY_A}.")
+            format!("Use the hoshin build skill for system commerce on change folder 2026-10-12-photos with --repo app --master {COPY_A}.")
         );
         assert_eq!(s.workdir, "/home/u/ws/app");
         assert_eq!(s.name, "sdlc-commerce-2026-10-12-photos-build-app");
@@ -336,7 +336,7 @@ mod tests {
         let s = change_spec(&place_in_copies(RunKind::Document), f);
         let given = s.given.unwrap();
         assert_eq!(given.skills, vec!["brainstorming".to_string()]);
-        assert_eq!(given.required_plugins, vec!["ai-sdlc".to_string()]);
+        assert_eq!(given.required_plugins, vec!["hoshin".to_string()]);
         assert!(!given.build, "a document run is not a build run");
     }
 }

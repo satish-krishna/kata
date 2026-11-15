@@ -297,8 +297,8 @@ pub(crate) mod fixtures {
         }
     }
 
-    pub const COPY_A: &str = "/home/u/ws/.ai-sdlc/copies/2026-10-12-photos";
-    pub const COPY_B: &str = "/home/u/ws/.ai-sdlc/copies/2026-10-13-other";
+    pub const COPY_A: &str = "/home/u/ws/.hoshin/copies/2026-10-12-photos";
+    pub const COPY_B: &str = "/home/u/ws/.hoshin/copies/2026-10-13-other";
 
     /// Change "A" in its own copy, with change "B" in another.
     pub fn place_in_copies(kind: RunKind) -> RunPlace {
@@ -394,7 +394,7 @@ mod tests {
     }
 
     const COPY_DOCS: &str =
-        "//home/u/ws/.ai-sdlc/copies/2026-10-12-photos/intent/commerce/2026-10-12-photos";
+        "//home/u/ws/.hoshin/copies/2026-10-12-photos/intent/commerce/2026-10-12-photos";
 
     fn single_repo(apps: &[(&str, &str)], repo: &str) -> RunPlace {
         let mut p = place_in_copies(RunKind::Build { repo: repo.into() });
@@ -415,12 +415,12 @@ mod tests {
             "Bash(git push:*)".to_string(),
             "Bash(gh:*)".to_string(),
             "Bash(git remote:*)".to_string(),
-            "Edit(//home/u/ws/.ai-sdlc/copies/2026-10-12-photos/app/**)".to_string(),
+            "Edit(//home/u/ws/.hoshin/copies/2026-10-12-photos/app/**)".to_string(),
             "Edit(//home/u/.kata/workbench/parse-cache/**)".to_string(),
             format!("Edit({COPY_DOCS}/build/workbench.md)"),
             format!("Edit({COPY_DOCS}/build/review.md)"),
             "Edit(//home/u/ws/master/**)".to_string(),
-            "Edit(//home/u/ws/.ai-sdlc/copies/2026-10-13-other/**)".to_string(),
+            "Edit(//home/u/ws/.hoshin/copies/2026-10-13-other/**)".to_string(),
         ];
         assert_eq!(sorted(r.deny), sorted(want));
         assert_eq!(
@@ -442,7 +442,7 @@ mod tests {
             "Edit(//home/u/.kata/workbench/parse-cache/**)".to_string(),
             format!("Edit({COPY_DOCS}/build/review.md)"),
             "Edit(//home/u/ws/master/**)".to_string(),
-            "Edit(//home/u/ws/.ai-sdlc/copies/2026-10-13-other/**)".to_string(),
+            "Edit(//home/u/ws/.hoshin/copies/2026-10-13-other/**)".to_string(),
         ];
         assert_eq!(sorted(r.deny), sorted(want));
     }
@@ -450,8 +450,8 @@ mod tests {
     #[test]
     fn a_runs_edits_stay_in_its_own_change() {
         let checkout = "Edit(//home/u/ws/master/**)";
-        let b_copy = "Edit(//home/u/ws/.ai-sdlc/copies/2026-10-13-other/**)";
-        let own_copy = "Edit(//home/u/ws/.ai-sdlc/copies/2026-10-12-photos/**)";
+        let b_copy = "Edit(//home/u/ws/.hoshin/copies/2026-10-13-other/**)";
+        let own_copy = "Edit(//home/u/ws/.hoshin/copies/2026-10-12-photos/**)";
         let build = || RunKind::Build { repo: "app".into() };
         // (run, rule that must be in its deny list), one per Examples row of R19.1.
         let rows: Vec<(&str, RunKind, &str)> = vec![
@@ -496,7 +496,7 @@ mod tests {
             assert!(!r.deny.contains(&own_copy.to_string()), "{kind:?}");
         }
         // A build run's own log, in its own copy, is allowed.
-        let log = "Edit(//home/u/ws/.ai-sdlc/copies/2026-10-12-photos/intent/commerce/2026-10-12-photos/build/app.md)";
+        let log = "Edit(//home/u/ws/.hoshin/copies/2026-10-12-photos/intent/commerce/2026-10-12-photos/build/app.md)";
         assert!(rules(&place_in_copies(build()))
             .allow
             .contains(&log.to_string()));

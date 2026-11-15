@@ -184,14 +184,14 @@ fn fixture_on(branch: &str, record: bool) -> Fx {
     };
     fs::create_dir_all(&fx.folder).unwrap();
     copy_dir(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools"),
         &fx.plugin.join("tools"),
     );
     fs::create_dir_all(fx.plugin.join(".claude-plugin")).unwrap();
     fs::write(
         fx.plugin.join(".claude-plugin/plugin.json"),
         format!(
-            r#"{{"name":"ai-sdlc","version":"{}"}}"#,
+            r#"{{"name":"hoshin","version":"{}"}}"#,
             kata_sdlc::plugin::MIN_VERSION
         ),
     )
@@ -203,7 +203,7 @@ fn fixture_on(branch: &str, record: bool) -> Fx {
     }
     fx.commit(
         "m",
-        ".ai-sdlc.json",
+        ".hoshin.json",
         "{\"version\":1,\"systems\":{\"s\":{\"repos\":[\"app\",\"api\"]}}}\n",
         "marker",
     );
@@ -241,7 +241,7 @@ Kata writes this file.
             ),
             "docs(s): name branch
 
-Generated-By: ai-sdlc",
+Generated-By: hoshin",
         );
     }
     for name in ["m", "app", "api"] {
@@ -255,7 +255,7 @@ Generated-By: ai-sdlc",
         &format!("---\n{}", PLAN.replace("SPEC", &spec)),
         "docs(s): accept plan
 
-Generated-By: ai-sdlc",
+Generated-By: hoshin",
     );
     let app = fx.repo("app");
     fx.git(&app, &["checkout", "-q", "-b", branch]);
@@ -263,7 +263,7 @@ Generated-By: ai-sdlc",
         "app",
         "x.txt",
         "x\n",
-        "feat(s): own work\n\nGenerated-By: ai-sdlc\nPlan-Task: T1",
+        "feat(s): own work\n\nGenerated-By: hoshin\nPlan-Task: T1",
     );
     let short = &work[..7];
     fx.commit(
@@ -274,7 +274,7 @@ Generated-By: ai-sdlc",
         ),
         "docs(s): record T1
 
-Generated-By: ai-sdlc",
+Generated-By: hoshin",
     );
     fx.commit(
         "m",
@@ -282,7 +282,7 @@ Generated-By: ai-sdlc",
         REVIEW,
         "docs(s): review
 
-Generated-By: ai-sdlc",
+Generated-By: hoshin",
     );
     fx
 }

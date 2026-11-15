@@ -112,7 +112,7 @@ const PLAN = [
 ].join('\n');
 
 const planned = (id: string, name: string, repo: string, dependsOn: string[], sections: ParsedTask['sections']): ParsedTask => ({
-  id, name, repo, depends_on: dependsOn, uses: [], files: [], covers: [], supports: [], sections, text: `### ${id}: ${name}`, line: 1,
+  id, name, repo, depends_on: dependsOn, uses: [], files: [], covers: [], supports: [], sections, test: null, compile: null, text: `### ${id}: ${name}`, line: 1,
 });
 const task = (id: string, name: string, repo: string, dependsOn: string[], row: TaskStatus['row']): TaskStatus => ({
   id, name, repo, dependsOn, text: `### ${id}: ${name}`, row,

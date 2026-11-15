@@ -458,7 +458,7 @@ mod tests {
     fn one_change_with_two_runs_is_one_line_and_a_run_with_no_change_has_its_own() {
         let live = vec![
             run(1, "A", RunKind::Build, Some("kata")),
-            run(2, "A", RunKind::Build, Some("ai-sdlc")),
+            run(2, "A", RunKind::Build, Some("hub")),
             LiveSummary {
                 id: 3,
                 workdir: PathBuf::from("D:/solo"),
@@ -471,7 +471,7 @@ mod tests {
             on_close(&live, &[], &[], CloseAnswer::NotAsked),
             CloseOutcome::Ask {
                 running: vec![
-                    line("A", "building in kata and building in ai-sdlc"),
+                    line("A", "building in kata and building in hub"),
                     RunningLine {
                         change: None,
                         what: "running a task in the Workbench".into()

@@ -1109,6 +1109,8 @@ mod tests {
             covers: Vec::new(),
             supports: Vec::new(),
             sections: Vec::new(),
+            test: None,
+            compile: None,
             text: format!("### {}", p.id),
             line: 1,
         }

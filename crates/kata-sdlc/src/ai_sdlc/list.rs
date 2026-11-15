@@ -46,7 +46,7 @@ pub fn read_list(answer: Value) -> Result<ChangeList, ProgramError> {
 }
 
 impl Program {
-    /// The changes of `system` with the few facts a list row needs, open and finished. Needs ai-sdlc
+    /// The changes of `system` with the few facts a list row needs, open and finished. Needs hoshin
     /// 1.3.0 or later.
     pub fn list(&self, place: &Place, system: &str) -> Result<ChangeList, ProgramError> {
         read_list(self.run(&["list", "--json", "--system", system], place)?)
@@ -61,12 +61,12 @@ mod tests {
     use crate::testutil;
     use std::path::Path;
 
-    const EXAMPLE: &str = r#"{"system":"kata","changes":[{"change":"2026-11-03-end-finished-runs","title":"End finished runs","track":"full","master":"/ws/.ai-sdlc/copies/2026-11-03-end-finished-runs","inCopy":true,"finished":null}],"problems":[]}"#;
+    const EXAMPLE: &str = r#"{"system":"kata","changes":[{"change":"2026-11-03-end-finished-runs","title":"End finished runs","track":"full","master":"/ws/.hoshin/copies/2026-11-03-end-finished-runs","inCopy":true,"finished":null}],"problems":[]}"#;
 
     fn program() -> Program {
         Program {
             node: "node".into(),
-            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts"),
+            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools/hoshin.ts"),
         }
     }
 
@@ -84,7 +84,7 @@ mod tests {
                 change: "2026-11-03-end-finished-runs".into(),
                 title: Some("End finished runs".into()),
                 track: ChangeTrack::Full,
-                master: "/ws/.ai-sdlc/copies/2026-11-03-end-finished-runs".into(),
+                master: "/ws/.hoshin/copies/2026-11-03-end-finished-runs".into(),
                 in_copy: true,
                 finished: None,
             }]
@@ -107,10 +107,10 @@ mod tests {
     fn list_and_open_against_the_vendored_program() {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path();
-        let master = testutil::repo(ws, "ai-sdlc");
+        let master = testutil::repo(ws, "hub");
         testutil::commit_file(
             &master,
-            ".ai-sdlc.json",
+            ".hoshin.json",
             r#"{"version":1,"systems":{"demo":{"repos":["app"]}}}"#,
             "marker",
         );

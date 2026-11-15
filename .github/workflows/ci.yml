@@ -55,10 +55,10 @@ jobs:
         run: cargo test --workspace
 
       - name: Document format conformance (vendored copy)
-        # Runs Kata's document readers against the vendored copy of the ai-sdlc format program in
-        # crates/kata-sdlc/tests/ai-sdlc-tools/ (needs Node 22.18 or later, installed above). No network, no secret and no
-        # second checkout: the comparison with the sibling plugin skips itself where ../ai-sdlc is absent.
-        # Refresh the copy locally with: node scripts/vendor-ai-sdlc-tools.mjs
+        # Runs Kata's document readers against the vendored copy of the hoshin format program in
+        # crates/kata-sdlc/tests/hoshin-tools/ (needs Node 22.18 or later, installed above). No network, no secret and no
+        # second checkout: the comparison with the sibling plugin skips itself where ../hoshin is absent.
+        # Refresh the copy locally with: node scripts/vendor-hoshin-tools.mjs
         run: cargo test -p kata-sdlc --test format_conformance
 
       - name: Schema freshness (regenerate & diff)

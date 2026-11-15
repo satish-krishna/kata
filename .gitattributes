@@ -19,5 +19,5 @@
 *.icns binary
 
 # Generated files: collapsed in GitHub diffs and left out of language stats.
-# The vendored ai-sdlc program is refreshed by scripts/vendor-ai-sdlc-tools.mjs.
-crates/kata-sdlc/tests/ai-sdlc-tools/vendor/** linguist-generated=true
+# The vendored hoshin program is refreshed by scripts/vendor-hoshin-tools.mjs.
+crates/kata-sdlc/tests/hoshin-tools/vendor/** linguist-generated=true

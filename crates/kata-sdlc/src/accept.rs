@@ -1,4 +1,4 @@
-//! Accepting and rejecting a change's documents through the ai-sdlc plugin. Kata edits one front matter
+//! Accepting and rejecting a change's documents through the hoshin plugin. Kata edits one front matter
 //! line; the plugin commits it (`commit --kind accept-<doc>` or `reject-intent` / `reject-fix`), runs the
 //! `doc.accept` event and removes the rejected change's copy. Kata makes no commit and runs no hook.
 use crate::ai_sdlc::state::{ChangeState, ChangeTrack};
@@ -367,7 +367,7 @@ mod tests {
     fn program() -> Program {
         Program {
             node: "node".into(),
-            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts"),
+            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools/hoshin.ts"),
         }
     }
 
@@ -392,7 +392,7 @@ if ({trigger}) {{
             marker = marker.display().to_string(),
             real = real.display().to_string(),
         );
-        let entry = dir.join("fake-ai-sdlc.mjs");
+        let entry = dir.join("fake-hoshin.mjs");
         std::fs::write(&entry, script).unwrap();
         (
             Program {
@@ -437,7 +437,7 @@ if ({trigger}) {{
         format!("---\nlayout: 2\nsystem: demo\nstatus: {status}\nsource_spec_commit: {pin}\n---\n\n# Plan: Demo\n\n## Tasks\n\n### T1: Show the diff\n\n```yaml\nid: T1\nrepo: app\ndepends_on: []\ncovers: [R1.1]\n```\n\n#### Change\n\nShow the diff.\n\n#### Tests\n\nTest it first.\n\n### T2: Show the new diff\n\n```yaml\nid: T2\nrepo: app\ndepends_on: [T1]\ncovers: [R1.2]\n```\n\n#### Change\n\nShow the new diff.\n\n#### Tests\n\nTest it too.\n")
     }
 
-    /// A workspace: the master `ai-sdlc` (a marker for system `demo`, and whatever `base` commits), the
+    /// A workspace: the master `hoshin` (a marker for system `demo`, and whatever `base` commits), the
     /// product repository `app`, and a change the plugin started, with its copy.
     struct Fx {
         _dir: tempfile::TempDir,
@@ -450,8 +450,8 @@ if ({trigger}) {{
         fn new(base: &[(&str, &str)]) -> Fx {
             let dir = tempfile::tempdir().unwrap();
             let ws = dir.path().to_path_buf();
-            let master = testutil::repo(&ws, "ai-sdlc");
-            testutil::commit_file(&master, ".ai-sdlc.json", MARKER, "marker");
+            let master = testutil::repo(&ws, "hub");
+            testutil::commit_file(&master, ".hoshin.json", MARKER, "marker");
             for (rel, text) in base {
                 testutil::commit_file(&master, rel, text, "base");
             }
@@ -474,7 +474,7 @@ if ({trigger}) {{
                 .json;
             assert_eq!(started["outcome"], "passed", "{started}");
             Fx {
-                copy: ws.join(".ai-sdlc").join("copies").join(CHANGE),
+                copy: ws.join(".hoshin").join("copies").join(CHANGE),
                 _dir: dir,
                 ws,
                 master,
@@ -620,7 +620,8 @@ if ({trigger}) {{
             fx.apply(ChangeDocument::Spec),
             AcceptOutcome::Accepted {
                 warnings: vec![
-                    "after hook notify failed with exit code 3; nothing was undone".into()
+                    "after hook notify failed with exit code 3; nothing was undone".into(),
+                    "hook notify runs on doc.accept: hooks on doc.accept are deprecated and the next major release removes them; the event itself stays".into(),
                 ]
             }
         );
@@ -650,7 +651,12 @@ if ({trigger}) {{
             &CancelToken::new(),
             &sink,
         );
-        assert_eq!(outcome, AcceptOutcome::Accepted { warnings: vec![] });
+        assert_eq!(
+            outcome,
+            AcceptOutcome::Accepted {
+                warnings: vec!["hook docs-lint runs on doc.accept: hooks on doc.accept are deprecated and the next major release removes them; the event itself stays".into()]
+            }
+        );
         let seen = seen.lock().unwrap();
         assert!(
             seen.iter().any(|s| s.kind == StepProgressKind::Hook
@@ -713,7 +719,7 @@ if ({trigger}) {{
                 format!("docs(demo): {header} {CHANGE}"),
                 "{doc:?}"
             );
-            assert!(git(&fx.copy, &["log", "-1", "--format=%b"]).contains("Generated-By: ai-sdlc"));
+            assert!(git(&fx.copy, &["log", "-1", "--format=%b"]).contains("Generated-By: hoshin"));
             // The document shows as accepted, and the next step is offered by the next state read.
             let committed = git(
                 &fx.copy,
@@ -829,7 +835,7 @@ if ({trigger}) {{
             let before = fx.text("intent.md");
             let gone = Program {
                 node: "node".into(),
-                entry: fx.ws.join("no-such-plugin").join("ai-sdlc.ts"),
+                entry: fx.ws.join("no-such-plugin").join("hoshin.ts"),
             };
             let outcome = apply(
                 &gone,
@@ -886,7 +892,7 @@ if ({trigger}) {{
                 log.starts_with(&format!("docs(demo): reject intent {CHANGE}")),
                 "{log}"
             );
-            assert!(log.contains("Generated-By: ai-sdlc"), "{log}");
+            assert!(log.contains("Generated-By: hoshin"), "{log}");
             assert_eq!(
                 git(&fx.master, &["rev-list", "--count", &branch])
                     .parse::<u32>()
@@ -926,7 +932,7 @@ if ({trigger}) {{
                 log.starts_with(&format!("docs(demo): reject fix {CHANGE}")),
                 "{log}"
             );
-            assert!(log.contains("Generated-By: ai-sdlc"), "{log}");
+            assert!(log.contains("Generated-By: hoshin"), "{log}");
             let plan_text = git(
                 &fx.master,
                 &["show", &format!("{branch}:{}", fx.rel("plan.md"))],

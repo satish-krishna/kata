@@ -3,7 +3,7 @@ import type { TaskStatus } from '@bindings/TaskStatus';
 import { linkRequirements, neededBy, shownSections, taskRecord, withRows } from './task-view';
 
 const plan = (id: string, dependsOn: string[], sections: ParsedTask['sections'] = []): ParsedTask => ({
-  id, name: `Task ${id}`, repo: 'kata', depends_on: dependsOn, uses: [], files: [], covers: [], supports: [], sections, text: `### ${id}`, line: 1,
+  id, name: `Task ${id}`, repo: 'kata', depends_on: dependsOn, uses: [], files: [], covers: [], supports: [], sections, test: null, compile: null, text: `### ${id}`, line: 1,
 });
 const status = (id: string, row: TaskStatus['row']): TaskStatus => ({ id, name: `Task ${id}`, repo: 'kata', dependsOn: [], text: `### ${id}`, row });
 

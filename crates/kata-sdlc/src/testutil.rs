@@ -154,7 +154,7 @@ pub fn single_repo(dir: &Path, name: &str, apps: &[(&str, &str)]) -> PathBuf {
         "layout": "single-repo",
         "systems": {"kata": {"apps": map}}
     });
-    write(&path, ".ai-sdlc.json", &format!("{marker}\n"));
+    write(&path, ".hoshin.json", &format!("{marker}\n"));
     for (_, folder) in apps {
         write(&path, &format!("{folder}/README.md"), "app\n");
     }
@@ -165,7 +165,7 @@ pub fn single_repo(dir: &Path, name: &str, apps: &[(&str, &str)]) -> PathBuf {
     path
 }
 
-/// A stand-in for the ai-sdlc plugin folder: its `tools/` is the vendored copy of the plugin's
+/// A stand-in for the hoshin plugin folder: its `tools/` is the vendored copy of the plugin's
 /// format program, and its version is the first one that supports the light track. Made once per test process.
 pub fn plugin_dir() -> &'static Path {
     static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
@@ -193,19 +193,19 @@ fn plugin_copy(version: &str) -> tempfile::TempDir {
         }
     }
     let dir = tempfile::tempdir().unwrap();
-    let vendored = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools");
+    let vendored = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools");
     copy(&vendored, &dir.path().join("tools"));
     let meta = dir.path().join(".claude-plugin");
     std::fs::create_dir_all(&meta).unwrap();
     std::fs::write(
         meta.join("plugin.json"),
-        format!(r#"{{"name":"ai-sdlc","version":"{version}"}}"#),
+        format!(r#"{{"name":"hoshin","version":"{version}"}}"#),
     )
     .unwrap();
     dir
 }
 
-/// A stand-in plugin at `dir` whose `tools/ai-sdlc.ts` answers `fix-state --json <folder>...` without
+/// A stand-in plugin at `dir` whose `tools/hoshin.ts` answers `fix-state --json <folder>...` without
 /// git: a folder named with `row7` or `row9` stands at that row, one named with `broken` gets an `error`
 /// entry, any other stands at row 6. Every call appends a line to `tools/calls.log`, so a test counts
 /// the processes a scan started. Returns the plugin folder.
@@ -216,11 +216,11 @@ pub fn fake_fix_plugin(dir: &Path, version: &str) -> PathBuf {
     std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
     std::fs::write(
         dir.join(".claude-plugin").join("plugin.json"),
-        format!(r#"{{"name":"ai-sdlc","version":"{version}"}}"#),
+        format!(r#"{{"name":"hoshin","version":"{version}"}}"#),
     )
     .unwrap();
     std::fs::write(
-        format.join("ai-sdlc.ts"),
+        format.join("hoshin.ts"),
         r#"import { appendFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const [, , command, , ...folders] = process.argv;
@@ -242,7 +242,7 @@ mod tests {
     use super::*;
 
     fn node(args: &[&str], cwd: &Path) -> (bool, String) {
-        let program = plugin_dir().join("tools/ai-sdlc.ts");
+        let program = plugin_dir().join("tools/hoshin.ts");
         let out = std::process::Command::new("node")
             .arg(program)
             .args(args)
@@ -265,7 +265,7 @@ mod tests {
             "mono",
             &[("engine", "engine"), ("workbench", "app")],
         );
-        let marker = root.join(".ai-sdlc.json");
+        let marker = root.join(".hoshin.json");
         let (ok, text) = node(&["check", marker.to_str().unwrap()], &root);
         assert!(ok, "check reported problems: {text}");
         let (ok, text) = node(&["resolve", "--json"], &root);

@@ -1,4 +1,4 @@
-//! The one door to the ai-sdlc program: `node <plugin>/tools/ai-sdlc.ts <command>`.
+//! The one door to the hoshin program: `node <plugin>/tools/hoshin.ts <command>`.
 //!
 //! Every call Kata makes to the program goes through [`execute`]: it starts Node.js hidden and kills the
 //! whole process tree when it ends early. A quick read has a time limit ([`TIMEOUT`]); a long step
@@ -56,7 +56,7 @@ pub enum ExecError {
 }
 
 /// What a missing `node` is reported as.
-pub const NEEDS_NODE: &str = "ai-sdlc needs Node.js 22.18 or later";
+pub const NEEDS_NODE: &str = "hoshin needs Node.js 22.18 or later";
 
 /// The commands that take `--master` and `--workspace`.
 const PLACED: &[&str] = &[
@@ -72,7 +72,7 @@ const PLACED: &[&str] = &[
     "change",
 ];
 
-/// Where an ai-sdlc command works: the master repository and the workspace around it.
+/// Where an hoshin command works: the master repository and the workspace around it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Place {
     /// The layout of the master repository: how the folders around it are read.
@@ -86,13 +86,13 @@ pub struct Place {
 pub enum ProgramError {
     /// The program could not run: no Node.js, a usage error or crash (exit 2), a timeout, or an answer
     /// that is not JSON.
-    #[error("the ai-sdlc program could not run: {message}")]
+    #[error("the hoshin program could not run: {message}")]
     CouldNotRun { message: String },
     /// The installed plugin has no program Kata can run; `found` says what is there instead.
-    #[error("the installed ai-sdlc plugin is too old: {found}")]
+    #[error("the installed hoshin plugin is too old: {found}")]
     TooOld { found: String },
     /// The program refused (exit 1) and printed something that is not JSON.
-    #[error("the ai-sdlc program refused: {stdout}")]
+    #[error("the hoshin program refused: {stdout}")]
     Refused { stdout: String },
 }
 
@@ -353,7 +353,7 @@ fn named_repo(json: &Value) -> Option<String> {
     })
 }
 
-/// The ai-sdlc program: the Node.js executable and the entry file it runs.
+/// The hoshin program: the Node.js executable and the entry file it runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Program {
     pub node: PathBuf,
@@ -361,11 +361,11 @@ pub struct Program {
 }
 
 impl Program {
-    /// The program of the plugin installed at `plugin`: `node` from `PATH` and `<plugin>/tools/ai-sdlc.ts`.
+    /// The program of the plugin installed at `plugin`: `node` from `PATH` and `<plugin>/tools/hoshin.ts`.
     pub fn locate(plugin: &Path) -> Program {
         Program {
             node: "node".into(),
-            entry: plugin.join("tools").join("ai-sdlc.ts"),
+            entry: plugin.join("tools").join("hoshin.ts"),
         }
     }
 
@@ -733,15 +733,15 @@ mod tests {
     fn program() -> Program {
         Program {
             node: "node".into(),
-            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts"),
+            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools/hoshin.ts"),
         }
     }
 
     /// A workspace holding a master repository with a marker.
     fn workspace() -> (tempfile::TempDir, Place) {
         let dir = tempfile::tempdir().unwrap();
-        let master = testutil::repo(dir.path(), "ai-sdlc");
-        testutil::commit_file(&master, ".ai-sdlc.json", "{}\n", "marker");
+        let master = testutil::repo(dir.path(), "hub");
+        testutil::commit_file(&master, ".hoshin.json", "{}\n", "marker");
         let place = Place {
             layout: crate::layout::Layout::Workspace,
             master,
@@ -1075,10 +1075,10 @@ mod tests {
     #[test]
     fn a_long_call_has_no_limit_from_its_hooks() {
         let dir = tempfile::tempdir().unwrap();
-        let master = testutil::repo(dir.path(), "ai-sdlc");
+        let master = testutil::repo(dir.path(), "hub");
         let marker = serde_json::json!({"version": 1, "systems": {"demo": {"repos": []}},
             "hooks": {"build.start": [{"id": "quick", "run": ["node", "-e", "0"], "timeout": 1}]}});
-        testutil::commit_file(&master, ".ai-sdlc.json", &marker.to_string(), "marker");
+        testutil::commit_file(&master, ".hoshin.json", &marker.to_string(), "marker");
         let (program, mut place) = scripted(
             dir.path(),
             "setTimeout(() => { process.stdout.write(JSON.stringify({outcome: 'passed', problems: []}) + '\\n'); }, 3000);",

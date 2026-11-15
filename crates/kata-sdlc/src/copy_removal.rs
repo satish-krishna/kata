@@ -179,7 +179,7 @@ mod tests {
     fn program() -> Program {
         Program {
             node: "node".into(),
-            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts"),
+            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools/hoshin.ts"),
         }
     }
 
@@ -204,7 +204,7 @@ if ({trigger}) {{
             marker = marker.display().to_string(),
             real = real.display().to_string(),
         );
-        let entry = dir.join("fake-ai-sdlc.mjs");
+        let entry = dir.join("fake-hoshin.mjs");
         std::fs::write(&entry, script).unwrap();
         (
             Program {
@@ -241,8 +241,8 @@ if ({trigger}) {{
         fn new() -> Fx {
             let dir = tempfile::tempdir().unwrap();
             let ws = dir.path().to_path_buf();
-            let master = testutil::repo(&ws, "ai-sdlc");
-            testutil::commit_file(&master, ".ai-sdlc.json", MARKER, "marker");
+            let master = testutil::repo(&ws, "hub");
+            testutil::commit_file(&master, ".hoshin.json", MARKER, "marker");
             testutil::repo(&ws, "app");
             let place = Place {
                 layout: crate::layout::Layout::Workspace,
@@ -261,7 +261,7 @@ if ({trigger}) {{
                 )
                 .json;
             assert_eq!(started["outcome"], "passed", "{started}");
-            let copy = ws.join(".ai-sdlc").join("copies").join(CHANGE);
+            let copy = ws.join(".hoshin").join("copies").join(CHANGE);
             // A commit on the change branch, so git does not see the branch as merged into main and the
             // plugin keeps it, as it does for a branch whose pull request was squash-merged.
             testutil::commit_file(

@@ -400,6 +400,8 @@ const parsedTasks = (plan: PlanTask[], plain = false): ParsedTask[] => plan.map(
   files: [],
   covers: [],
   supports: [],
+  test: null,
+  compile: null,
   sections: [{ title: 'Depends on', body: dependsBody(t) }, ...(plain ? [] : (TASK_SECTIONS[t.id] ?? []))],
   text: plain ? taskText(t, []) : taskText(t),
   line: 10 + i * 10,

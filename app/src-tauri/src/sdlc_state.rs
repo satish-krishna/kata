@@ -147,7 +147,7 @@ mod tests {
         Program {
             node: "node".into(),
             entry: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../crates/kata-sdlc/tests/ai-sdlc-tools/ai-sdlc.ts"),
+                .join("../../crates/kata-sdlc/tests/hoshin-tools/hoshin.ts"),
         }
     }
 
@@ -181,8 +181,8 @@ mod tests {
     fn workspace() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path().to_path_buf();
-        let master = ws.join("ai-sdlc");
-        for name in ["ai-sdlc", "app"] {
+        let master = ws.join("hub");
+        for name in ["hub", "app"] {
             let repo = ws.join(name);
             std::fs::create_dir_all(&repo).unwrap();
             git(&repo, &["init", "-q", "-b", "main"]);
@@ -191,7 +191,7 @@ mod tests {
             git(&repo, &["config", "commit.gpgsign", "false"]);
         }
         std::fs::write(
-            master.join(".ai-sdlc.json"),
+            master.join(".hoshin.json"),
             r#"{"version":1,"systems":{"demo":{"repos":["app"]}}}"#,
         )
         .unwrap();
@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn sdlc_state_lists_a_change_that_lives_only_in_its_copy() {
         let (_dir, ws) = workspace();
-        let master = ws.join("ai-sdlc");
+        let master = ws.join("hub");
         let change = "2026-11-01-greeting";
         let started = program()
             .step_long(
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn a_change_only_on_its_branch_is_not_listed() {
         let (_dir, ws) = workspace();
-        let master = ws.join("ai-sdlc");
+        let master = ws.join("hub");
         let change = "2026-10-31-several-changes-at-once";
         git(
             &master,
@@ -375,8 +375,7 @@ mod tests {
         let source = counting(2);
         let blocked = Readiness::Blocked {
             reason: kata_sdlc::plugin::BlockReason::PluginTooOld,
-            message: "The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 1.0.0."
-                .into(),
+            message: "The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 1.0.0.".into(),
         };
         let view =
             system_view(Some(&source), &blocked, &no_live, Path::new("/ws"), "demo").unwrap();
@@ -397,7 +396,7 @@ mod tests {
         }
     }
 
-    /// R2.2: a single-repo folder on a plugin below 1.4.0 offers nothing, setup included.
+    /// R2.2: a single-repo folder on a plugin below 1.0.0 offers nothing, setup included.
     #[test]
     fn a_blocked_single_repo_offers_nothing() {
         let source = counting(2);
@@ -405,7 +404,7 @@ mod tests {
             &Readiness::Ready {
                 plugin: Plugin {
                     dir: PathBuf::from("plugin"),
-                    version: "1.3.1".into(),
+                    version: "0.9.1".into(),
                     layouts: vec![],
                 },
                 gh: GhPresence::Present,
@@ -425,13 +424,13 @@ mod tests {
             .start_change_reason
             .as_deref()
             .unwrap()
-            .contains("1.3.1"));
+            .contains("0.9.1"));
         assert_eq!(view.changes.len(), 2);
         for c in &view.changes {
             assert!(!c.offer.actions.is_empty());
             for a in &c.offer.actions {
                 assert!(!a.enabled, "{:?}", a.action);
-                assert!(a.reason.as_deref().unwrap().contains("1.4.0"));
+                assert!(a.reason.as_deref().unwrap().contains("1.0.0"));
             }
         }
     }

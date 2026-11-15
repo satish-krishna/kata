@@ -2758,24 +2758,24 @@ fn model_and_posture_come_from_claudes_start_report() {
 #[serial]
 fn the_engines_record_locks_the_required_plugin_like_the_preview() {
     let rig = Rig::new();
-    let cache = rig.home.parent().unwrap().join("cache/ai-sdlc");
+    let cache = rig.home.parent().unwrap().join("cache/hoshin");
     write_file(
         &cache.join(".claude-plugin/plugin.json"),
-        r#"{"name":"ai-sdlc","description":"the ai-sdlc plugin"}"#,
+        r#"{"name":"hoshin","description":"the hoshin plugin"}"#,
     );
     write_file(
         &rig.home.join(".claude/plugins/installed_plugins.json"),
-        &serde_json::json!({"version": 2, "plugins": {"ai-sdlc@mkt": [
+        &serde_json::json!({"version": 2, "plugins": {"hoshin@mkt": [
             {"scope": "user", "installPath": cache.to_string_lossy(), "version": "1"}
         ]}})
         .to_string(),
     );
     write_file(
         &rig.home.join(".claude/settings.json"),
-        &serde_json::json!({"enabledPlugins": {"ai-sdlc@mkt": true}}).to_string(),
+        &serde_json::json!({"enabledPlugins": {"hoshin@mkt": true}}).to_string(),
     );
     let mut spec = rig.spec();
-    spec.given = given_with(|g| g.required_plugins.push("ai-sdlc".into()));
+    spec.given = given_with(|g| g.required_plugins.push("hoshin".into()));
     let events = rig.run_events(&spec, "ok", |_| {});
     let given = given_events(&events);
     let item = given
@@ -2783,8 +2783,8 @@ fn the_engines_record_locks_the_required_plugin_like_the_preview() {
         .expect("a run.given")
         .0
         .iter()
-        .find(|i| i.kind == ItemKind::Plugin && i.name == "ai-sdlc")
-        .expect("the ai-sdlc plugin is listed");
+        .find(|i| i.kind == ItemKind::Plugin && i.name == "hoshin")
+        .expect("the hoshin plugin is listed");
     assert!(
         matches!(item.lock, Some(LockReason::Required { .. })),
         "{:?}",
@@ -3202,7 +3202,7 @@ fn run_given_carries_the_runs_options() {
     let rig = Rig::new();
     let mut spec = rig.spec();
     spec.given = Some(kata_core::spec::Given {
-        required_plugins: vec!["ai-sdlc".into()],
+        required_plugins: vec!["hoshin".into()],
         build: true,
         ..Default::default()
     });
@@ -3214,7 +3214,7 @@ fn run_given_carries_the_runs_options() {
             _ => None,
         })
         .expect("a run.given");
-    assert_eq!(options.required_plugins, vec!["ai-sdlc".to_string()]);
+    assert_eq!(options.required_plugins, vec!["hoshin".to_string()]);
     assert!(options.build);
 }
 

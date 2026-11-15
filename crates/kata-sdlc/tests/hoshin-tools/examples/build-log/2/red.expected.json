@@ -1,0 +1,38 @@
+{
+  "kind": "build-log",
+  "layout": 2,
+  "document": {
+    "repo": "red",
+    "entries": [
+      {
+        "task": "T1",
+        "commits": [
+          "abc1234",
+          "def5678"
+        ],
+        "departure": null,
+        "red": "observed",
+        "line": 7
+      },
+      {
+        "task": "T2",
+        "commits": [
+          "1234567"
+        ],
+        "departure": "rule 1: the runner found no test in the new file",
+        "red": "not observed: no test ran",
+        "line": 15
+      },
+      {
+        "task": "T3",
+        "commits": [
+          "89abcde"
+        ],
+        "departure": null,
+        "red": null,
+        "line": 24
+      }
+    ]
+  },
+  "problems": []
+}

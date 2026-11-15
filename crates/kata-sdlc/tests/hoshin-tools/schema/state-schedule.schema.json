@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hoshin.local/format/state-schedule.schema.json",
+  "title": "Schedule: the schedule field of a change in what node hoshin.ts state --json prints",
+  "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/schedule" }],
+  "definitions": {
+    "schedule": {
+      "type": "object",
+      "required": ["repos", "next", "oneAtATime"],
+      "properties": {
+        "repos": { "type": "array", "items": { "$ref": "#/definitions/repo" } },
+        "next": { "enum": ["build", "review", "blocked"] },
+        "oneAtATime": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "repo": {
+      "type": "object",
+      "required": ["repo", "state", "task", "waitingOn"],
+      "properties": {
+        "repo": { "type": "string" },
+        "state": { "enum": ["ready", "waiting", "done"] },
+        "task": { "type": ["string", "null"] },
+        "waitingOn": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["task", "repo"],
+            "properties": { "task": { "type": "string" }, "repo": { "type": "string" } },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

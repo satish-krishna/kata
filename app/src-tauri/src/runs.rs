@@ -331,14 +331,14 @@ mod tests {
         // (`runspec::change_spec`), not in the checkout's root.
         let t = table(vec![live(
             1,
-            r"D:\ws\ai-sdlc\intent\kata\2026-10-12-photos",
+            r"D:\ws\hub\intent\kata\2026-10-12-photos",
             change("2026-10-12-photos", false),
         )]);
         assert_eq!(
-            t.may_switch(Path::new("D:/ws/ai-sdlc")).unwrap_err(),
-            "The change 2026-10-12-photos has a run working in D:/ws/ai-sdlc. Switch the branch after the run ends."
+            t.may_switch(Path::new("D:/ws/hub")).unwrap_err(),
+            "The change 2026-10-12-photos has a run working in D:/ws/hub. Switch the branch after the run ends."
         );
-        assert!(t.may_switch(Path::new(r"D:\ws\ai-sdlc\")).is_err());
+        assert!(t.may_switch(Path::new(r"D:\ws\hub\")).is_err());
         // Paths are compared by component: a sibling whose name starts with the other's is not inside it.
         let t = table(vec![live(1, r"D:\ws\kata2", change("c", false))]);
         assert!(t.may_switch(Path::new("D:/ws/kata")).is_ok());

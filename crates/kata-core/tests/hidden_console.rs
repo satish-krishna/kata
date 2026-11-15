@@ -1,4 +1,4 @@
-//! A program the ai-sdlc plugin starts (git, gh) opens no console window when the plugin runs under a
+//! A program the hoshin plugin starts (git, gh) opens no console window when the plugin runs under a
 //! hidden node. The plugin calls Node's `spawnSync` without `windowsHide`, so this proves the
 //! grandchild's console is hidden anyway.
 #![cfg(windows)]

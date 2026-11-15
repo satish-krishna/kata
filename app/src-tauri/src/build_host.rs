@@ -1,7 +1,7 @@
 //! Th backend's host for each change's build: one `Coordinator` per change, the holds on product
 //! repositories, and the plugin's `build.start` that prepares every repository before any run starts.
 //! The host executes the coordinator's commands; it decides nothing the coordinator or the plugin decides.
-//! Everything outside the process (the ai-sdlc program, the run table and sidecar, the event channel)
+//! Everything outside the process (the hoshin program, the run table and sidecar, the event channel)
 //! sits behind [`Tools`] and [`Launcher`], so the tests need no Tauri app.
 
 use crate::runs::{self, Lane};
@@ -238,7 +238,7 @@ pub struct LaunchRequest {
     pub ended: Box<dyn FnOnce(RunEnd) + Send>,
 }
 
-/// What the host asks of the ai-sdlc program and the repositories.
+/// What the host asks of the hoshin program and the repositories.
 pub trait Tools: Send + Sync {
     /// The master repository and the workspace around `workspace`.
     fn resolve(&self, workspace: &Path) -> Result<Place, ProgramError>;
@@ -296,7 +296,7 @@ pub trait Launcher: Send + Sync {
     fn announce_running(&self);
 }
 
-/// [`Tools`] over one ai-sdlc program.
+/// [`Tools`] over one hoshin program.
 pub struct ProgramTools {
     program: Program,
     /// Whether the plugin can list changes (1.3.0 or later), so the copies come from the light list.
@@ -388,7 +388,7 @@ impl Tools for ProgramTools {
             .entry
             .parent()
             .and_then(Path::parent)
-            .ok_or_else(|| "the ai-sdlc program has no plugin folder".to_string())?;
+            .ok_or_else(|| "the hoshin program has no plugin folder".to_string())?;
         review::record(plugin, Path::new(&state.master), system, &state.change)
             .map_err(|e| e.to_string())
     }
@@ -2056,6 +2056,8 @@ mod tests {
                     covers: Vec::new(),
                     supports: Vec::new(),
                     sections: Vec::new(),
+                    test: None,
+                    compile: None,
                     text: format!("### {id}"),
                     line: 1,
                 })
@@ -2065,7 +2067,7 @@ mod tests {
     }
 
     fn copy_of(change: &str) -> String {
-        format!("{WS}/.ai-sdlc/copies/{change}")
+        format!("{WS}/.hoshin/copies/{change}")
     }
 
     fn passed_start(repo: &str, uncommitted: &[&str]) -> Value {
@@ -2078,7 +2080,7 @@ mod tests {
             "repos": repos.iter().map(|r| json!({"repo": r, "outcome": "passed", "problems": []})).collect::<Vec<_>>()})
     }
 
-    /// A stand-in for the ai-sdlc program and the repositories.
+    /// A stand-in for the hoshin program and the repositories.
     struct FakeTools {
         place: Place,
         system_repos: Vec<String>,
@@ -2115,7 +2117,7 @@ mod tests {
         fn new(place: Place) -> Arc<FakeTools> {
             Arc::new(FakeTools {
                 place,
-                system_repos: strs(&["ai-sdlc", "kata", "bob"]),
+                system_repos: strs(&["hub", "kata", "bob"]),
                 states: Mutex::new(Vec::new()),
                 plans: Mutex::new(HashMap::new()),
                 heads: Mutex::new(HashMap::new()),
@@ -2558,7 +2560,7 @@ mod tests {
     fn fake_place() -> Place {
         Place {
             layout: kata_sdlc::layout::Layout::Workspace,
-            master: PathBuf::from("D:/ws/ai-sdlc"),
+            master: PathBuf::from("D:/ws/hub"),
             workspace: PathBuf::from(WS),
         }
     }
@@ -2911,11 +2913,11 @@ mod tests {
             let r = rig();
             r.simple("A", &["kata", "bob"]);
             r.tools
-                .check_cannot_run("ai-sdlc needs Node.js 22.18 or later");
+                .check_cannot_run("hoshin needs Node.js 22.18 or later");
             assert_eq!(
                 r.host.start(&cref("A"), form()),
                 StartOutcome::CouldNotRun {
-                    output: "ai-sdlc needs Node.js 22.18 or later".into(),
+                    output: "hoshin needs Node.js 22.18 or later".into(),
                     repo: None
                 }
             );
@@ -3174,7 +3176,7 @@ mod tests {
         let r = rig();
         r.tools.add_change(
             "X",
-            "D:/ws/ai-sdlc",
+            "D:/ws/hub",
             false,
             &[("bob", &["T1"], &["T1"])],
             &[("T1", "bob", &[])],
@@ -3197,7 +3199,7 @@ mod tests {
         ));
         assert_eq!(
             r.launcher.live_dirs(),
-            BTreeSet::from(["D:/ws/ai-sdlc".to_string(), copy_of("Y")]),
+            BTreeSet::from(["D:/ws/hub".to_string(), copy_of("Y")]),
             "X reviews in the checkout, Y in its copy, at once"
         );
         // The folder rule still holds: a second run in the checkout is refused.
@@ -3210,7 +3212,7 @@ mod tests {
             .table
             .lock()
             .unwrap()
-            .claim(Path::new("D:/ws/ai-sdlc"), &lane)
+            .claim(Path::new("D:/ws/hub"), &lane)
             .is_err());
     }
 
@@ -3278,7 +3280,7 @@ mod tests {
         ));
         let run_form = RunForm {
             name: "sdlc-demo-B-spec".into(),
-            task: "Use the ai-sdlc spec skill.".into(),
+            task: "Use the hoshin spec skill.".into(),
             bare: true,
             permission_mode: PermissionMode::Auto,
             timeout_secs: 900,
@@ -3298,7 +3300,7 @@ mod tests {
             )
         };
         assert!(
-            spec.contains(&deny("D:/ws/ai-sdlc")),
+            spec.contains(&deny("D:/ws/hub")),
             "the engineer's checkout is denied"
         );
         assert!(
@@ -4031,7 +4033,7 @@ mod tests {
             .preview_change_run(
                 &cref("B"),
                 runs::RunKind::Spec,
-                run_form("Use the ai-sdlc spec skill."),
+                run_form("Use the hoshin spec skill."),
             )
             .expect("the preview composes the spec");
         assert_eq!(r.launcher.count(), 0, "a preview starts nothing");
@@ -4040,7 +4042,7 @@ mod tests {
             .change_run(
                 &cref("B"),
                 runs::RunKind::Spec,
-                run_form("Use the ai-sdlc spec skill."),
+                run_form("Use the hoshin spec skill."),
             )
             .unwrap();
         assert_eq!(
@@ -4261,7 +4263,7 @@ mod tests {
         };
         *r.tools.review.lock().unwrap() = Some(record.clone());
         let view = r.host.review_view(&cref("A")).unwrap();
-        let repos = vec!["kata".to_string(), "ai-sdlc".to_string()];
+        let repos = vec!["kata".to_string(), "hub".to_string()];
         assert_eq!(view.rows, round::review_rows_in(&record, &repos));
         let group = &view.rows.groups[0];
         let keys: Vec<&str> = group.rows.iter().map(|r| r.key.as_str()).collect();
@@ -4691,7 +4693,7 @@ mod tests {
         Program {
             node: "node".into(),
             entry: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../crates/kata-sdlc/tests/ai-sdlc-tools/ai-sdlc.ts"),
+                .join("../../crates/kata-sdlc/tests/hoshin-tools/hoshin.ts"),
         }
     }
 
@@ -4707,9 +4709,9 @@ mod tests {
     fn real_workspace(changes: &[&str]) -> Real {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path().canonicalize().unwrap();
-        let master = init_repo(&ws, "ai-sdlc");
+        let master = init_repo(&ws, "hub");
         std::fs::write(
-            master.join(".ai-sdlc.json"),
+            master.join(".hoshin.json"),
             r#"{"version":1,"systems":{"demo":{"repos":["kata","bob"]}}}"#,
         )
         .unwrap();
@@ -5054,7 +5056,7 @@ process.exit(r.status ?? 1);
         assert_eq!(std::fs::read_to_string(&bob_file).unwrap(), "mine\n");
         assert!(git(&real.ws.join("kata"), &["status", "--porcelain"]).is_empty());
         assert!(
-            !real.ws.join("kata/.git/ai-sdlc/active-build.json").exists(),
+            !real.ws.join("kata/.git/hoshin/active-build.json").exists(),
             "build.start never ran in kata"
         );
         assert_eq!(r.launcher.count(), 0);
