@@ -144,11 +144,12 @@ pub fn change_spec(place: &RunPlace, form: RunForm) -> RunSpec {
                     master.clone(),
                 ),
             };
-            if form.continue_on_leftovers {
+            let build = matches!(place.kind, RunKind::Build { .. });
+            if build && form.continue_on_leftovers {
                 task.push_str(" The engineer has already confirmed continuing on top of the uncommitted edits the previous run left; do not ask again.");
             }
             let instructions = form.instructions.as_deref().unwrap_or("").trim();
-            if matches!(place.kind, RunKind::Build { .. }) && !instructions.is_empty() {
+            if build && !instructions.is_empty() {
                 task.push_str(&format!(
                     "\n\nInstructions from the engineer for this run:\n{instructions}"
                 ));
@@ -295,6 +296,20 @@ mod tests {
         );
         assert_eq!(r.workdir, COPY_A);
         assert_eq!(r.name, "sdlc-commerce-2026-10-12-photos-review");
+    }
+
+    #[test]
+    fn a_review_never_carries_the_leftovers_sentence() {
+        let f = RunForm {
+            continue_on_leftovers: true,
+            instructions: Some("x".into()),
+            ..form(false)
+        };
+        let r = change_spec(&place_in_copies(RunKind::Review), f);
+        assert_eq!(
+            r.task,
+            format!("Use the hoshin review skill for system commerce on change folder 2026-10-12-photos with --master {COPY_A}.")
+        );
     }
 
     #[test]

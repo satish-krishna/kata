@@ -3392,7 +3392,7 @@ mod tests {
     // R12.1, R12.2 and R12.3: the decision table
     #[test]
     fn review_start_rows() {
-        // Row 3, by hand: taken, the review launches in the change's master with --review --master.
+        // Row 3, by hand: taken, the review launches in the change's master with the review skill and --master.
         {
             let r = rig();
             r.complete("A", &["kata"]);
