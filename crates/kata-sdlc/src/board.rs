@@ -236,6 +236,7 @@ mod tests {
             text: String::new(),
             red: None,
             red_stands_out: false,
+            red_record_wanted: false,
             row: departure.map(|d| BuildRow {
                 task: id.into(),
                 repo: repo.into(),

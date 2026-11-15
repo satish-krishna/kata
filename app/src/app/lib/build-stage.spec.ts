@@ -57,7 +57,7 @@ describe('build-stage', () => {
 
   it('taskGroups lists the plan repositories in order and the master last', () => {
     const repo = (name: string) => ({ repo: name, firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 }) as BuildStatus['repos'][number];
-    const task = (id: string, r: string) => ({ id, name: id, repo: r, dependsOn: [], text: '', row: null, red: null, redStandsOut: false }) as BuildStatus['tasks'][number];
+    const task = (id: string, r: string) => ({ id, name: id, repo: r, dependsOn: [], text: '', row: null, red: null, redStandsOut: false, redRecordWanted: false }) as BuildStatus['tasks'][number];
     const status = (repos: string[], tasks: Array<[string, string]>): BuildStatus =>
       ({ tasks: tasks.map(([i, r]) => task(i, r)), repos: repos.map(repo), departures: [], hasTasks: true, problems: [], logLayouts: [], redShown: false }) as BuildStatus;
 

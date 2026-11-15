@@ -15,4 +15,8 @@ red: RedVerdict | null,
 /**
  * Whether `red` is a verdict that needs a look (`RedVerdict::stands_out`); false when `red` is `None`. Sent as data because the Workbench decides nothing.
  */
-redStandsOut: boolean, };
+redStandsOut: boolean, 
+/**
+ * Whether the page fetches the task's stored red record when the task is picked: exactly when `red` is `NotObserved`, the one verdict the record explains. Sent as data because the Workbench decides nothing.
+ */
+redRecordWanted: boolean, };

@@ -5,7 +5,7 @@ import { linkRequirements, neededBy, shownSections, taskRecord, withRows } from 
 const plan = (id: string, dependsOn: string[], sections: ParsedTask['sections'] = []): ParsedTask => ({
   id, name: `Task ${id}`, repo: 'kata', depends_on: dependsOn, uses: [], files: [], covers: [], supports: [], sections, test: null, compile: null, text: `### ${id}`, line: 1,
 });
-const status = (id: string, row: TaskStatus['row']): TaskStatus => ({ id, name: `Task ${id}`, repo: 'kata', dependsOn: [], text: `### ${id}`, row, red: null, redStandsOut: false });
+const status = (id: string, row: TaskStatus['row']): TaskStatus => ({ id, name: `Task ${id}`, repo: 'kata', dependsOn: [], text: `### ${id}`, row, red: null, redStandsOut: false, redRecordWanted: false });
 
 describe('withRows', () => {
   it('gives each planned task the row the build status holds for it, and none to a task it does not list', () => {

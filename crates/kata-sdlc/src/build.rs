@@ -121,6 +121,8 @@ pub struct TaskStatus {
     pub red: Option<RedVerdict>,
     /// Whether `red` is a verdict that needs a look (`RedVerdict::stands_out`); false when `red` is `None`. Sent as data because the Workbench decides nothing.
     pub red_stands_out: bool,
+    /// Whether the page fetches the task's stored red record when the task is picked: exactly when `red` is `NotObserved`, the one verdict the record explains. Sent as data because the Workbench decides nothing.
+    pub red_record_wanted: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -454,6 +456,7 @@ pub fn status_with(
                 text: t.text.clone(),
                 row: row_of(&t.id).cloned(),
                 red_stands_out: red_stands_out(&red),
+                red_record_wanted: matches!(red, Some(RedVerdict::NotObserved { .. })),
                 red,
             }
         })

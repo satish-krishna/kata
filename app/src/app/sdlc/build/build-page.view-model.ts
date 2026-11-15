@@ -672,12 +672,12 @@ export class BuildPageViewModel {
     if (status === null || !status.redShown) return new Map();
     return new Map(status.tasks.flatMap((t): [string, RedView][] => (t.red === null ? [] : [[t.id, redViewOf(t.red, t.redStandsOut)]])));
   });
-  /** The picked task, when its verdict is red not observed: the one pick whose stored record the page shows. */
+  /** The picked task, when the backend says its stored red record is wanted (`redRecordWanted`): the one pick whose record the page shows. */
   private readonly redWanted = computed<{ id: string; repo: string } | null>(
     () => {
       const task = this.pickedTask();
-      const verdict = this.status()?.tasks.find((t) => t.id === task?.id)?.red;
-      return task !== null && this.reds().has(task.id) && verdict?.kind === 'notObserved' ? { id: task.id, repo: task.repo } : null;
+      const wanted = this.status()?.tasks.find((t) => t.id === task?.id)?.redRecordWanted === true;
+      return task !== null && wanted ? { id: task.id, repo: task.repo } : null;
     },
     { equal: (a, b) => a === b || (a !== null && b !== null && a.id === b.id && a.repo === b.repo) },
   );

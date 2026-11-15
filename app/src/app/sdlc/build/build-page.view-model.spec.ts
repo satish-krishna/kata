@@ -926,7 +926,7 @@ describe('the layout follows the real build page through a finish, whatever orde
 describe('the tasks area folds, filters and shows a departure with its task', () => {
   const row = (task: string, repo: string, departure: string | null = null) => ({ task, repo, commits: ['abc1234'], departure, red: null });
   const taskOf = (id: string, repo: string, finished: boolean, departure: string | null = null, dependsOn: string[] = []) => ({
-    id, name: `Task ${id}`, repo, dependsOn, text: `### ${id}`, row: finished ? row(id, repo, departure) : null, red: null, redStandsOut: false,
+    id, name: `Task ${id}`, repo, dependsOn, text: `### ${id}`, row: finished ? row(id, repo, departure) : null, red: null, redStandsOut: false, redRecordWanted: false,
   });
   const CORE = 'commerce-core';
   const PORTAL = 'customer-portal';
@@ -1035,7 +1035,7 @@ describe('the tasks area shows what the build log says about red', () => {
   type Red = NonNullable<BuildStatus['tasks'][number]['red']>;
   const CORE = 'commerce-core';
   /** A task as the backend sends it: its verdict and the backend's word on whether the verdict stands out. */
-  const taskOf = (id: string, red: Red | null, redStandsOut = false) => ({ id, name: `Task ${id}`, repo: CORE, dependsOn: [] as string[], text: `### ${id}`, row: null, red, redStandsOut });
+  const taskOf = (id: string, red: Red | null, redStandsOut = false) => ({ id, name: `Task ${id}`, repo: CORE, dependsOn: [] as string[], text: `### ${id}`, row: null, red, redStandsOut, redRecordWanted: red?.kind === 'notObserved' });
   const statusOf = (reds: [string, Red | null, boolean?][], redShown = true): BuildStatus => ({
     hasTasks: true,
     problems: [],
