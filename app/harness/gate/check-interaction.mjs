@@ -245,6 +245,15 @@ const DIALOG_STEPS = {
       },
     },
   ],
+  ['sdlc?demo=migrate-local']: [
+    {
+      label: 'the banner above an opened home reviews a refused plan with its problems',
+      text: 'Problems',
+      run: async (page) => {
+        await page.getByRole('button', { name: 'Review' }).click();
+      },
+    },
+  ],
   [`${DONE}?demo=done-refused`]: [
     {
       label: "the plugin's refusal, every problem as it wrote it",

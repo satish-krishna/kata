@@ -34,6 +34,7 @@ import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { MigratePlan } from '@bindings/MigratePlan';
+import type { MigrationOffer } from '@bindings/MigrationOffer';
 import type { RedRecord } from '@bindings/RedRecord';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
@@ -238,7 +239,7 @@ export abstract class KataTransport {
   /** The red the program stored for one task of a repository, and whether it counts as observed. No record on this machine is an answer with no stored part. */
   abstract sdlcRedRecord(ref: ChangeRef, repo: string, task: string): Promise<RedRecord>;
   /** What migrating an ai-sdlc workspace to hoshin would do, asked for every folder the home opens (even one that opens as a hoshin workspace may have local steps left); null when the folder has no migration to offer. */
-  abstract sdlcMigration(folder: string): Promise<MigratePlan | null>;
+  abstract sdlcMigration(folder: string): Promise<MigrationOffer | null>;
   /** Migrates the workspace; refused while a run works in it. */
   abstract sdlcMigrate(folder: string): Promise<MigratePlan>;
   /** The tasks area for `repos`: where each stands and what each task's row shows, decided from the build log's status and the host's live runs and stops. */

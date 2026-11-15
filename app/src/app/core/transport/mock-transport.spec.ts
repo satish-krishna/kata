@@ -446,13 +446,28 @@ describe('MockTransport', () => {
       // The scan does not fail for it, as the backend's does not: it finds no master repository.
       expect((await t.sdlcScan(MOCK_LEGACY_FOLDER)).master).toEqual({ kind: 'none' });
       expect(await t.sdlcMigration('D:/elsewhere')).toBeNull();
-      const plan = await t.sdlcMigration(MOCK_LEGACY_FOLDER);
+      const offer = await t.sdlcMigration(MOCK_LEGACY_FOLDER);
+      expect([offer?.blocks, offer?.kind]).toEqual([true, 'setUp']);
+      const plan = offer?.plan;
       expect(plan?.write).toBe(false);
       expect(plan?.steps.map((s) => [s.step, s.status])).toEqual([['marker', 'would'], ['copy', 'would'], ['state', 'would'], ['instructions', 'would']]);
       const done = await t.sdlcMigrate(MOCK_LEGACY_FOLDER);
       expect(done.write).toBe(true);
       expect(done.steps.every((s) => s.status === 'done')).toBe(true);
       await expect(t.sdlcMigrate('D:/elsewhere')).rejects.toThrow();
+    });
+
+    it('offers a refused, non-blocking local-files migration for the demo workspace under ?demo=migrate-local only', async () => {
+      window.history.replaceState({}, '', '/?demo=migrate-local');
+      try {
+        const offer = await new MockTransport().sdlcMigration(MOCK_WORKSPACE_FOLDER);
+        expect([offer?.blocks, offer?.kind]).toEqual([false, 'localFiles']);
+        expect(offer?.plan.steps.map((s) => s.status)).toEqual(['current', 'refused']);
+        expect(offer?.plan.problems.length).toBeGreaterThan(0);
+      } finally {
+        window.history.replaceState({}, '', '/');
+      }
+      expect(await new MockTransport().sdlcMigration(MOCK_WORKSPACE_FOLDER)).toBeNull();
     });
 
     it('answers a red record for the demo change: T2 has a recorded pass with 20 lines, any other task has none', async () => {

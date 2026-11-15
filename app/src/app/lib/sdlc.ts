@@ -75,8 +75,9 @@ export function restrictedFor(workspaceFolder: string, scan: WorkspaceScan): Res
 }
 
 /**
- * The default wall-clock limit of a build run, per repository. The red record of a task (`red record`) takes at most 600 s
- * inside this limit (the program's own timeout, `HOSHIN_RED_TIMEOUT` aside), and the engineer can raise the timeout in
+ * The default wall-clock limit of a build run, per repository. The red record of a task (`red record`) runs `compile` then
+ * `test`, each up to 600 s, so one call takes up to 1200 s inside this limit (GRAMMAR "Observed red"; the program's own
+ * timeout, `HOSHIN_RED_TIMEOUT` aside), and the engineer can raise the timeout in
  * the build form when a repository's tests need more.
  */
 export const DEFAULT_BUILD_SECS = 7200;

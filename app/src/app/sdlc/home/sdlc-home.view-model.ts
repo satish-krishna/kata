@@ -16,6 +16,7 @@ import type { WorkspaceChoice } from '@bindings/WorkspaceChoice';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { MigratePlan } from '@bindings/MigratePlan';
+import type { MigrationOffer } from '@bindings/MigrationOffer';
 import type { RunSpec } from '@bindings/RunSpec';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
@@ -225,7 +226,7 @@ export class SdlcHomeViewModel {
     if (!this.loaded()) return 'loading';
     if (this.pluginMissing()) return 'plugin-missing';
     if (this.current() === null) return 'no-workspaces';
-    if (this.migration() !== null) return 'migrate';
+    if (this.migrationOffer()?.blocks === true) return 'migrate';
     if (this.scanError() !== null) return 'folder-missing';
     const scan = this.scan();
     if (scan === null) return 'loading';
@@ -243,8 +244,22 @@ export class SdlcHomeViewModel {
   readonly candidate = signal<WorkspaceCandidate | null>(null);
 
   // --- migrating an ai-sdlc workspace
-  /** The program's dry run for the current folder, when the backend says there is migration to offer (whatever the scan found); null otherwise. */
-  readonly migration = signal<MigratePlan | null>(null);
+  /** The backend's offer for the current folder (the program's dry run, and whether it takes the whole page), whatever the scan found; null when there is none. */
+  readonly migrationOffer = signal<MigrationOffer | null>(null);
+  /** The program's dry run of the offer; null when there is none. */
+  readonly migration = computed(() => this.migrationOffer()?.plan ?? null);
+  /** What the offer says, by what it is about: the marker still has to move, or only this machine's files are left. */
+  readonly migrationTitle = computed(() =>
+    this.migrationOffer()?.kind === 'localFiles'
+      ? 'This machine still has ai-sdlc files for this workspace. Finish moving them to hoshin?'
+      : 'This workspace was set up with ai-sdlc. Migrate it to hoshin?',
+  );
+  /** The strip above the home of a workspace that opens: the offer's title, and whether the program refused its plan. Null when there is no offer or the offer takes the page. */
+  readonly migrationBanner = computed(() => {
+    const offer = this.migrationOffer();
+    if (offer === null || offer.blocks) return null;
+    return { title: this.migrationTitle(), refused: offer.plan.problems.length > 0 };
+  });
   readonly migrationOpen = signal(false);
   readonly migrationBusy = signal(false);
   /** The program's words when asking for the dry run failed; null when it answered, with a plan or with none. */
@@ -284,16 +299,16 @@ export class SdlcHomeViewModel {
     this.migrationOpen.set(false);
     if (this.migrated() === null) return;
     this.migrated.set(null);
-    this.migration.set(null);
+    this.migrationOffer.set(null);
     await Promise.all([this.loadCurrent(), this.refreshMissing()]);
   }
 
   /** The backend's offer of the migration for a folder: a plan, or none; when the check itself failed, the program's words. */
-  private async readMigration(folder: string): Promise<{ plan: MigratePlan | null; error: string | null }> {
+  private async readMigration(folder: string): Promise<{ offer: MigrationOffer | null; error: string | null }> {
     try {
-      return { plan: await this.transport.sdlcMigration(folder), error: null };
+      return { offer: await this.transport.sdlcMigration(folder), error: null };
     } catch (e) {
-      return { plan: null, error: message(e) };
+      return { offer: null, error: message(e) };
     }
   }
   readonly newChangeOpen = signal(false);
@@ -1330,7 +1345,7 @@ export class SdlcHomeViewModel {
     this.migrationCheckError.set(null);
     if (!w) {
       this.clearDetail();
-      this.migration.set(null);
+      this.migrationOffer.set(null);
       this.currentRead.set(true);
       return;
     }
@@ -1343,7 +1358,7 @@ export class SdlcHomeViewModel {
       this.readMigration(w.folder),
     ]);
     if (seq !== this.loadSeq) return;
-    this.migration.set(offered.plan);
+    this.migrationOffer.set(offered.offer);
     this.migrationCheckError.set(offered.error);
     if ('failed' in scanned) {
       this.clearDetail();

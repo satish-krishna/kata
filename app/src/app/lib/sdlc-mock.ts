@@ -100,6 +100,7 @@ import type { Severity } from '@bindings/Severity';
 import type { Concern } from '@bindings/Concern';
 import type { WorkspaceChoice } from '@bindings/WorkspaceChoice';
 import type { MigratePlan } from '@bindings/MigratePlan';
+import type { MigrationOffer } from '@bindings/MigrationOffer';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { DEMO_SETUP_FOLDER, DEMO_WORKSPACE_FOLDER } from './demo';
@@ -136,6 +137,30 @@ export function mockMigrationPlan(write: boolean): MigratePlan {
     kept: [],
     manual: ['Push the branches that got a marker commit.', 'Install hoshin@hoshin and uninstall ai-sdlc@ai-sdlc.'],
     problems: [],
+  };
+}
+/** The legacy folder's offer: the marker still has to move, so the offer takes the whole page. */
+export function mockLegacyOffer(): MigrationOffer {
+  return { plan: mockMigrationPlan(false), blocks: true, kind: 'setUp' };
+}
+/** `?demo=migrate-local`: the demo workspace opens, but this machine's `.git/ai-sdlc` and `.git/hoshin` both exist, so the offer is a banner and its plan is refused. */
+export function mockLocalOffer(): MigrationOffer {
+  const state = `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}/.git`;
+  return {
+    plan: {
+      workspace: MOCK_WORKSPACE_FOLDER,
+      master: `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`,
+      write: false,
+      steps: [
+        { step: 'marker', path: `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}/.hoshin.json`, to: null, status: 'current', detail: null },
+        { step: 'state', path: `${state}/ai-sdlc`, to: `${state}/hoshin`, status: 'refused', detail: `${state}/hoshin already exists` },
+      ],
+      kept: [],
+      manual: [],
+      problems: [`${state}/hoshin already exists; move or remove one of the two folders, then check again.`],
+    },
+    blocks: false,
+    kind: 'localFiles',
   };
 }
 /** The error the backend gives for switching the engineer's checkout in a single-repo repository. */

@@ -44,6 +44,24 @@ describe('SdlcHome', () => {
     expect(labels(container)).toContain('Add system');
   });
 
+  const bannerCase = (kind: 'localFiles' | 'setUp', title: string) =>
+    it(`shows the ${kind} migration banner above a home that opens, and its Review button opens the dialog`, async () => {
+      const transport = new MockTransport();
+      const offer = await transport.sdlcMigrate('D:/legacy-workspace').then((plan) => ({ plan: { ...plan, write: false }, blocks: false, kind }));
+      vi.spyOn(transport, 'sdlcMigration').mockResolvedValue(offer);
+      const { container } = await mount(transport);
+      const banner = container.querySelector('[data-testid="migration-banner"]');
+      expect(banner?.textContent).toContain(title);
+      // The home is still there.
+      expect(container.textContent).toContain('2026-10-12-product-photo-upload');
+      const review = Array.from(banner!.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'Review');
+      review!.click();
+      await settle();
+      expect(document.body.textContent).toContain('What migrating does');
+    });
+  bannerCase('localFiles', 'This machine still has ai-sdlc files for this workspace. Finish moving them to hoshin?');
+  bannerCase('setUp', 'This workspace was set up with ai-sdlc. Migrate it to hoshin?');
+
   it('offers Refresh context on every product repo with a context file, and crosses the seam when clicked', async () => {
     const { container, transport } = await mount();
     const run = vi.spyOn(transport, 'runSpec').mockResolvedValue('1');

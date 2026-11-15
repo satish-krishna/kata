@@ -35,6 +35,7 @@ import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { MigratePlan } from '@bindings/MigratePlan';
+import type { MigrationOffer } from '@bindings/MigrationOffer';
 import type { RedRecord } from '@bindings/RedRecord';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
@@ -60,7 +61,7 @@ import type { OpenRun } from '@bindings/OpenRun';
 import type { Opens } from '@bindings/Opens';
 import type { RunningEntry } from '@bindings/RunningEntry';
 import type { RunRef } from '@bindings/RunRef';
-import { MOCK_BUILD_CHANGE, MOCK_LEGACY_FOLDER, mockMigrationPlan, MOCK_LAYOUTS, MOCK_MASTER, MOCK_NOT_SWITCHABLE, MOCK_PLUGIN_VERSION, MOCK_SINGLE_FOLDER, MOCK_SINGLE_WORKSPACE, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_LEGACY_FOLDER, mockLegacyOffer, mockLocalOffer, mockMigrationPlan, MOCK_LAYOUTS, MOCK_MASTER, MOCK_NOT_SWITCHABLE, MOCK_PLUGIN_VERSION, MOCK_SINGLE_FOLDER, MOCK_SINGLE_WORKSPACE, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import type { AppTurn } from '@bindings/AppTurn';
 import type { BuildState } from '@bindings/BuildState';
@@ -464,8 +465,11 @@ export class MockTransport extends KataTransport {
   }
   sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }, appTurn?: AppTurn | null): Promise<RepoBoard[]> { return Promise.resolve(mockBoard(repos, status, going, stopped, appTurn ?? null)); }
   /** Asked for every folder the home opens, as the backend is; only the legacy fixture folder has anything to migrate. */
-  sdlcMigration(folder: string): Promise<MigratePlan | null> {
-    return Promise.resolve(folder === MOCK_LEGACY_FOLDER && !this.migrated ? mockMigrationPlan(false) : null);
+  sdlcMigration(folder: string): Promise<MigrationOffer | null> {
+    if (folder === MOCK_LEGACY_FOLDER && !this.migrated) return Promise.resolve(mockLegacyOffer());
+    // `?demo=migrate-local`: the demo workspace opens, with a refused offer for this machine's files.
+    if (folder === MOCK_WORKSPACE_FOLDER && demoParam() === 'migrate-local') return Promise.resolve(mockLocalOffer());
+    return Promise.resolve(null);
   }
   sdlcMigrate(folder: string): Promise<MigratePlan> {
     if (folder === MOCK_LEGACY_FOLDER) { this.migrated = true; return Promise.resolve(mockMigrationPlan(true)); }

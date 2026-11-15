@@ -49,6 +49,12 @@
       (decide)="vm.decide($event)"
     />
   } @else {
+    @if (vm.migrationBanner(); as banner) {
+      <div class="wb-banner wb-banner--warn" data-testid="migration-banner" role="status">
+        <span class="k-status k-status--warning"><span class="k-status__dot"></span>{{ banner.title }}</span>
+        <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.reviewMigration()">Review</button>
+      </div>
+    }
     @switch (vm.state()) {
       @case ('loading') {
         <main class="k-home__state"><p class="k-state__body" role="status">Reading the workspace…</p></main>
@@ -97,7 +103,7 @@
       @case ('migrate') {
         <main class="k-home__state">
           <section class="k-state" aria-labelledby="state-title">
-            <h1 id="state-title" class="k-state__title">This workspace was set up with ai-sdlc. Migrate it to hoshin?</h1>
+            <h1 id="state-title" class="k-state__title">{{ vm.migrationTitle() }}</h1>
             <p class="k-state__body"><code class="k-mono">{{ vm.current()?.folder }}</code></p>
             <button hlmBtn variant="primary" type="button" (click)="vm.reviewMigration()">Review</button>
           </section>

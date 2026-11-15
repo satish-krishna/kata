@@ -3,7 +3,7 @@
 //! build hold is working under the workspace, since the migration moves the copies those runs work in.
 use crate::runs::{Lane, LiveSummary};
 use kata_sdlc::holds::RepoKey;
-use kata_sdlc::hoshin::migrate::{self, MigratePlan};
+use kata_sdlc::hoshin::migrate::{self, MigratePlan, StepStatus};
 use kata_sdlc::hoshin::{Program, ProgramError};
 use std::path::{Path, PathBuf};
 
@@ -49,14 +49,55 @@ pub fn migration_blocked(
 /// that means "this folder is not a workspace", not a fault.
 const NO_MASTER: &str = "No master repository found";
 
+/// What the offer is about: the marker still has to move (`SetUp`), or the marker is already `.hoshin.json` and
+/// only this machine's files are left (`LocalFiles`).
+#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum OfferKind {
+    SetUp,
+    LocalFiles,
+}
+
+/// A migration the home offers: the program's plan, and how the home presents it. `blocks` is true only when the
+/// folder does not open as a hoshin workspace yet (the `marker` step is not `current`); a folder that opens keeps
+/// its home, and the offer is a banner above it, even when the plan is refused.
+#[derive(serde::Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct MigrationOffer {
+    pub plan: MigratePlan,
+    pub blocks: bool,
+    pub kind: OfferKind,
+}
+
+impl MigrationOffer {
+    fn of(plan: MigratePlan) -> Self {
+        let marker_moved = plan
+            .steps
+            .iter()
+            .any(|s| s.step == "marker" && s.status == StepStatus::Current);
+        let (blocks, kind) = if marker_moved {
+            (false, OfferKind::LocalFiles)
+        } else {
+            (true, OfferKind::SetUp)
+        };
+        Self { plan, blocks, kind }
+    }
+}
+
 /// The migration to offer for `folder`: `None` when the program finds no master repository of either marker
 /// name there, or when nothing is left to do. A folder that already opens as a hoshin workspace is asked all the
 /// same: a pull that renamed the marker leaves this machine's copies and git state under the ai-sdlc names, and a
 /// write the program refused part way is continued by a rerun. Any other failure of the program is an error
 /// with its own words.
-pub fn offer(program: &Program, folder: &Path) -> Result<Option<MigratePlan>, String> {
+pub fn offer(program: &Program, folder: &Path) -> Result<Option<MigrationOffer>, String> {
     match migrate::dry_run(program, folder) {
-        Ok((plan, _)) => Ok(Some(plan).filter(MigratePlan::needed)),
+        Ok((plan, _)) => Ok(Some(plan)
+            .filter(MigratePlan::needed)
+            .map(MigrationOffer::of)),
         Err(ProgramError::CouldNotRun { message }) if message.contains(NO_MASTER) => Ok(None),
         Err(e) => Err(e.to_string()),
     }
@@ -189,8 +230,8 @@ mod tests {
     #[test]
     fn an_ai_sdlc_workspace_is_offered_and_a_hoshin_one_is_not() {
         let (dir, _) = workspace(".ai-sdlc.json");
-        let plan = offer(&program(), dir.path()).unwrap().expect("offered");
-        assert!(plan.needed());
+        let offered = offer(&program(), dir.path()).unwrap().expect("offered");
+        assert!(offered.plan.needed());
         let (dir, _) = workspace(".hoshin.json");
         assert_eq!(offer(&program(), dir.path()), Ok(None));
         let none = tempfile::tempdir().unwrap();
@@ -208,8 +249,10 @@ mod tests {
             "{:?}",
             scan.master
         );
-        let plan = offer(&program(), dir.path()).unwrap().expect("offered");
-        assert!(plan.needed());
+        let offered = offer(&program(), dir.path()).unwrap().expect("offered");
+        assert!(offered.plan.needed());
+        assert!(offered.blocks);
+        assert_eq!(offered.kind, OfferKind::SetUp);
     }
 
     #[test]
@@ -229,8 +272,8 @@ mod tests {
             dir.path(),
             &["commit", "-q", "-m", "marker\n\nGenerated-By: ai-sdlc"],
         );
-        let plan = offer(&program(), dir.path()).unwrap().expect("offered");
-        assert!(plan.needed());
+        let offered = offer(&program(), dir.path()).unwrap().expect("offered");
+        assert!(offered.plan.needed());
     }
 
     #[test]
@@ -239,7 +282,13 @@ mod tests {
         let (dir, hub) = workspace(".hoshin.json");
         std::fs::create_dir_all(hub.join(".git").join("ai-sdlc")).unwrap();
         std::fs::write(hub.join(".git").join("ai-sdlc").join("state.json"), "{}").unwrap();
-        let plan = offer(&program(), dir.path()).unwrap().expect("offered");
+        let offered = offer(&program(), dir.path()).unwrap().expect("offered");
+        assert!(
+            !offered.blocks,
+            "the folder opens, so the offer must not block it"
+        );
+        assert_eq!(offered.kind, OfferKind::LocalFiles);
+        let plan = offered.plan;
         assert!(plan.needed());
         let would: Vec<&str> = plan
             .steps
@@ -249,6 +298,31 @@ mod tests {
             .collect();
         assert!(!would.is_empty(), "{plan:?}");
         assert!(!would.contains(&"marker"), "{would:?}");
+    }
+
+    #[test]
+    fn a_hoshin_workspace_with_both_state_folders_is_offered_refused_and_does_not_block() {
+        // A teammate who ran any hoshin build before migrating has `.git/hoshin` beside `.git/ai-sdlc`.
+        let (dir, hub) = workspace(".hoshin.json");
+        for name in ["ai-sdlc", "hoshin"] {
+            std::fs::create_dir_all(hub.join(".git").join(name)).unwrap();
+            std::fs::write(hub.join(".git").join(name).join("state.json"), "{}").unwrap();
+        }
+        let offered = offer(&program(), dir.path()).unwrap().expect("offered");
+        assert!(!offered.blocks);
+        assert_eq!(offered.kind, OfferKind::LocalFiles);
+        let state = offered
+            .plan
+            .steps
+            .iter()
+            .find(|s| s.step == "state")
+            .expect("state step");
+        assert_eq!(
+            state.status,
+            kata_sdlc::hoshin::migrate::StepStatus::Refused,
+            "{:?}",
+            offered.plan
+        );
     }
 
     #[test]

@@ -19,6 +19,7 @@ import type { StepKind } from '@bindings/StepKind';
 import type { StepProgress } from '@bindings/StepProgress';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { MigratePlan } from '@bindings/MigratePlan';
+import type { MigrationOffer } from '@bindings/MigrationOffer';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { toastState } from '@spartan-ng/brain/sonner';
@@ -2009,7 +2010,8 @@ describe('SdlcHomeViewModel migration', () => {
     problems: [],
     ...over,
   });
-  const legacy = async (offered: MigratePlan | null = plan()) => {
+  const offer = (over: Partial<MigrationOffer> = {}): MigrationOffer => ({ plan: plan(), blocks: true, kind: 'setUp', ...over });
+  const legacy = async (offered: MigrationOffer | null = offer()) => {
     const s = setup();
     // The real scan does not fail for an ai-sdlc folder: it finds no master repository.
     vi.spyOn(s.transport, 'sdlcScan').mockResolvedValue(scanOf({ master: { kind: 'none' }, marker: null }));
@@ -2033,18 +2035,46 @@ describe('SdlcHomeViewModel migration', () => {
     expect(vm.migration()).toBeNull();
   });
 
-  it('offers the migration for a workspace that scans as set up, when only local steps are left', async () => {
+  it('keeps the home of a workspace that opens when the offer does not block, and shows the banner', async () => {
     const s = setup();
-    vi.spyOn(s.transport, 'sdlcMigration').mockResolvedValue(plan());
+    vi.spyOn(s.transport, 'sdlcMigration').mockResolvedValue(offer({ blocks: false, kind: 'localFiles' }));
     await s.vm.init();
     expect(s.vm.scan()?.master.kind).toBe('one');
-    expect(s.vm.state()).toBe('migrate');
+    expect(s.vm.state()).not.toBe('migrate');
+    expect(s.vm.state()).toBe('ready');
+    expect(s.vm.migrationBanner()).toEqual({ title: 'This machine still has ai-sdlc files for this workspace. Finish moving them to hoshin?', refused: false });
+  });
+
+  it('keeps the home when a non-blocking offer is refused, and the dialog still lists the problems with Migrate off', async () => {
+    const s = setup();
+    const refused = plan({ steps: [{ step: 'state', path: 'a/.git/ai-sdlc', to: 'a/.git/hoshin', status: 'refused', detail: 'both exist' }], problems: ['both exist'] });
+    vi.spyOn(s.transport, 'sdlcMigration').mockResolvedValue(offer({ plan: refused, blocks: false, kind: 'localFiles' }));
+    await s.vm.init();
+    expect(s.vm.state()).toBe('ready');
+    expect(s.vm.migrationBanner()?.refused).toBe(true);
+    s.vm.reviewMigration();
+    expect(s.vm.migrationOpen()).toBe(true);
+    expect(s.vm.shownMigration()?.problems).toEqual(['both exist']);
+    expect(s.vm.canMigrate()).toBe(false);
+  });
+
+  it('takes the whole page for an offer that blocks, with no banner, and titles it for the marker', async () => {
+    const { vm } = await legacy();
+    expect(vm.state()).toBe('migrate');
+    expect(vm.migrationBanner()).toBeNull();
+    expect(vm.migrationTitle()).toBe('This workspace was set up with ai-sdlc. Migrate it to hoshin?');
+  });
+
+  it('has no banner when there is no offer', async () => {
+    const s = setup();
+    await s.vm.init();
+    expect(s.vm.migrationBanner()).toBeNull();
   });
 
   it('offers the migration over a scan that fails too, and keeps the open error', async () => {
     const s = setup();
     vi.spyOn(s.transport, 'sdlcScan').mockRejectedValue('no marker');
-    vi.spyOn(s.transport, 'sdlcMigration').mockResolvedValue(plan());
+    vi.spyOn(s.transport, 'sdlcMigration').mockResolvedValue(offer());
     await s.vm.init();
     expect(s.vm.state()).toBe('migrate');
     expect(s.vm.scanError()).toContain('no marker');
@@ -2097,7 +2127,7 @@ describe('SdlcHomeViewModel migration', () => {
   });
 
   it('disables migrating when the plan has problems', async () => {
-    const { vm, migrate } = await legacy(plan({ problems: ['a change is mid-build'] }));
+    const { vm, migrate } = await legacy(offer({ plan: plan({ problems: ['a change is mid-build'] }) }));
     vm.reviewMigration();
     expect(vm.canMigrate()).toBe(false);
     await vm.runMigration();

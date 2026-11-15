@@ -1343,7 +1343,7 @@ fn sdlc_build_status(change: build_host::ChangeRef) -> Result<sdlc::build::Build
 /// is none or has nothing left to migrate; a hoshin workspace with local steps left (a teammate's pull renamed
 /// the marker) is offered those. The program decides; nothing is changed. A program that cannot answer for another reason is an error with its words.
 #[tauri::command(async)]
-fn sdlc_migration(folder: String) -> Result<Option<sdlc::hoshin::migrate::MigratePlan>, String> {
+fn sdlc_migration(folder: String) -> Result<Option<migration::MigrationOffer>, String> {
     let (program, _) = state_inputs(&folder);
     match program {
         Some(p) => migration::offer(&p, Path::new(&folder)),
