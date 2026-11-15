@@ -458,7 +458,12 @@ mod tests {
         assert_eq!(scan(tmp.path()).unwrap().repos, vec!["a", "b"]);
     }
 
+    /// Compared resolved when both exist: a temp folder can be spelled with an 8.3 short name (CI's
+    /// `RUNNER~1`) that the program answers in its long form.
     fn same(a: &str, b: &Path) -> bool {
+        if let (Ok(x), Ok(y)) = (Path::new(a).canonicalize(), b.canonicalize()) {
+            return x == y;
+        }
         let norm = |p: &str| p.replace('\\', "/").to_lowercase();
         norm(a) == norm(&b.display().to_string())
     }

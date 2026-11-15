@@ -294,7 +294,12 @@ mod tests {
 
     const CHANGE: &str = "2026-11-12-greeting";
 
+    /// Compared resolved when both exist: a temp folder can be spelled with an 8.3 short name (CI's
+    /// `RUNNER~1`) that the program answers in its long form.
     fn same(a: &Path, b: &Path) -> bool {
+        if let (Ok(a), Ok(b)) = (a.canonicalize(), b.canonicalize()) {
+            return a == b;
+        }
         let norm = |p: &Path| p.display().to_string().replace('\\', "/").to_lowercase();
         norm(a) == norm(b)
     }
