@@ -33,6 +33,7 @@ import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { MigratePlan } from '@bindings/MigratePlan';
 import type { RedRecord } from '@bindings/RedRecord';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
@@ -236,6 +237,10 @@ export abstract class KataTransport {
   abstract sdlcBuildStatus(ref: ChangeRef): Promise<BuildStatus>;
   /** The red the program stored for one task of a repository, and whether it counts as observed. No record on this machine is an answer with no stored part. */
   abstract sdlcRedRecord(ref: ChangeRef, repo: string, task: string): Promise<RedRecord>;
+  /** What migrating an ai-sdlc workspace to hoshin would do; null when the folder is no ai-sdlc workspace or has nothing left to migrate. */
+  abstract sdlcMigration(folder: string): Promise<MigratePlan | null>;
+  /** Migrates the workspace; refused while a run works in it. */
+  abstract sdlcMigrate(folder: string): Promise<MigratePlan>;
   /** The tasks area for `repos`: where each stands and what each task's row shows, decided from the build log's status and the host's live runs and stops. */
   abstract sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }, appTurn?: AppTurn | null): Promise<RepoBoard[]>;
   /** Whether the change's latest review covers its current work, decided from what the page read. */

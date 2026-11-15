@@ -12,7 +12,7 @@ import type { Resolved } from '@bindings/Resolved';
 import type { BuildEvent } from '@bindings/BuildEvent';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
-import { MOCK_BUILD_CHANGE, MOCK_COPY_CHANGE, MOCK_BUILD_SECOND, MOCK_HELD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_SINGLE_FOLDER, MOCK_WORKSPACE_FOLDER, MOCK_MASTER, MOCK_STARTED_FIX, TRIAGE_LIGHT, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_LEGACY_FOLDER, MOCK_COPY_CHANGE, MOCK_BUILD_SECOND, MOCK_HELD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_SINGLE_FOLDER, MOCK_WORKSPACE_FOLDER, MOCK_MASTER, MOCK_STARTED_FIX, TRIAGE_LIGHT, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 
 const ref = (change: string): ChangeRef => ({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change });
 const total = (steps: { delay: number }[]) => steps.reduce((a, s) => a + s.delay, 0);
@@ -439,6 +439,18 @@ describe('MockTransport', () => {
       const t = new MockTransport();
       const opened = await t.sdlcOpenChange(ref(MOCK_BUILD_CHANGE), 'plan');
       expect(opened.status).toEqual(await t.sdlcBuildStatus(ref(MOCK_BUILD_CHANGE)));
+    });
+
+    it('offers the migration for the legacy fixture folder only, with one would step of each kind, and migrates it', async () => {
+      const t = new MockTransport();
+      expect(await t.sdlcMigration('D:/elsewhere')).toBeNull();
+      const plan = await t.sdlcMigration(MOCK_LEGACY_FOLDER);
+      expect(plan?.write).toBe(false);
+      expect(plan?.steps.map((s) => [s.step, s.status])).toEqual([['marker', 'would'], ['copy', 'would'], ['state', 'would'], ['instructions', 'would']]);
+      const done = await t.sdlcMigrate(MOCK_LEGACY_FOLDER);
+      expect(done.write).toBe(true);
+      expect(done.steps.every((s) => s.status === 'done')).toBe(true);
+      await expect(t.sdlcMigrate('D:/elsewhere')).rejects.toThrow();
     });
 
     it('answers a red record for the demo change: T2 has a recorded pass with 20 lines, any other task has none', async () => {

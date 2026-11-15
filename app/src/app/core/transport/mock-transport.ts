@@ -34,6 +34,7 @@ import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { MigratePlan } from '@bindings/MigratePlan';
 import type { RedRecord } from '@bindings/RedRecord';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
@@ -59,7 +60,7 @@ import type { OpenRun } from '@bindings/OpenRun';
 import type { Opens } from '@bindings/Opens';
 import type { RunningEntry } from '@bindings/RunningEntry';
 import type { RunRef } from '@bindings/RunRef';
-import { MOCK_BUILD_CHANGE, MOCK_LAYOUTS, MOCK_MASTER, MOCK_NOT_SWITCHABLE, MOCK_PLUGIN_VERSION, MOCK_SINGLE_FOLDER, MOCK_SINGLE_WORKSPACE, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_LEGACY_FOLDER, mockMigrationPlan, MOCK_LAYOUTS, MOCK_MASTER, MOCK_NOT_SWITCHABLE, MOCK_PLUGIN_VERSION, MOCK_SINGLE_FOLDER, MOCK_SINGLE_WORKSPACE, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import type { AppTurn } from '@bindings/AppTurn';
 import type { BuildState } from '@bindings/BuildState';
@@ -458,6 +459,13 @@ export class MockTransport extends KataTransport {
     return Promise.resolve({ observed: false, reason: 'the test passed at 3f2a9c1, before the production code', stored: { commit: '3f2a9c1e0b7d3c5a8e6f1b2d4c7a9e0f3b5d8c1a', outcome: 'passed', output } });
   }
   sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }, appTurn?: AppTurn | null): Promise<RepoBoard[]> { return Promise.resolve(mockBoard(repos, status, going, stopped, appTurn ?? null)); }
+  /** Only the legacy fixture folder is an ai-sdlc workspace. */
+  sdlcMigration(folder: string): Promise<MigratePlan | null> {
+    return Promise.resolve(folder === MOCK_LEGACY_FOLDER ? mockMigrationPlan(false) : null);
+  }
+  sdlcMigrate(folder: string): Promise<MigratePlan> {
+    return folder === MOCK_LEGACY_FOLDER ? Promise.resolve(mockMigrationPlan(true)) : Promise.reject(new Error('this folder has nothing to migrate'));
+  }
   sdlcReviewStanding(input: ReviewStandingInput): Promise<ReviewStanding> { return Promise.resolve(mockStanding(input)); }
   /** The fixture's parsed read; only the transport's own reads call it. */
   sdlcReadParsed(ref: ChangeRef, doc: string): Promise<ParsedRead | null> { return settled(() => this.sdlc.readParsed(ref.change, doc)); }

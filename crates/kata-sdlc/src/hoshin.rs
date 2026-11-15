@@ -7,6 +7,7 @@
 //! [`Program::step`] or [`Program::step_long`] as a typed [`StepOutcome`], and a read through
 //! [`Program::run`] as its JSON.
 pub mod list;
+pub mod migrate;
 pub mod red;
 pub mod show;
 pub mod state;
@@ -43,6 +44,7 @@ pub fn call_kind(command: &[&str]) -> CallKind {
         ["change", "start" | "rename" | "remove", ..] | ["commit", ..] | ["run", ..] => {
             CallKind::Long
         }
+        ["migrate", rest @ ..] if rest.contains(&"--write") => CallKind::Long,
         _ => CallKind::Quick,
     }
 }
@@ -72,6 +74,7 @@ const PLACED: &[&str] = &[
     "commit",
     "change",
     "red",
+    "migrate",
 ];
 
 /// Where an hoshin command works: the master repository and the workspace around it.
@@ -1034,6 +1037,7 @@ mod tests {
             &["run", "doc.reject", "--json"],
             &["run", "change.done", "--json", "--stream"],
             &["run", "review.start", "--json"],
+            &["migrate", "--json", "--write"],
         ];
         for command in long {
             assert_eq!(call_kind(command), CallKind::Long, "{command:?}");
@@ -1053,6 +1057,7 @@ mod tests {
             &["read", "plan.md"],
             &["check", "--json"],
             &["baseline", "show", "--json"],
+            &["migrate", "--json"],
         ];
         for command in quick {
             assert_eq!(call_kind(command), CallKind::Quick, "{command:?}");

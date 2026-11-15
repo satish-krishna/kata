@@ -916,6 +916,11 @@ impl BuildHost {
         out
     }
 
+    /// Every product repository a change holds for its build or review, as its folder.
+    pub fn held_folders(&self) -> Vec<PathBuf> {
+        self.inner.lock().unwrap().holds.repos()
+    }
+
     /// Stop every run of `change`'s build.
     pub fn cancel(self: &Arc<Self>, change: &ChangeRef) {
         self.drive(&key_of(change), None, Input::CancelAll);

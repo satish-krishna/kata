@@ -36,6 +36,7 @@ import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { MigratePlan } from '@bindings/MigratePlan';
 import type { RedRecord } from '@bindings/RedRecord';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
@@ -172,6 +173,8 @@ export class TauriTransport extends KataTransport {
   sdlcWaitRunExit(runId: string, timeoutMs: number) { return this.ipc.invoke<boolean>('sdlc_wait_run_exit', { runId, timeoutMs }); }
   sdlcBuildStatus(change: ChangeRef) { return this.ipc.invoke<BuildStatus>('sdlc_build_status', { change }); }
   sdlcRedRecord(change: ChangeRef, repo: string, task: string) { return this.ipc.invoke<RedRecord>('sdlc_red_record', { change, repo, task }); }
+  sdlcMigration(folder: string) { return this.ipc.invoke<MigratePlan | null>('sdlc_migration', { folder }); }
+  sdlcMigrate(folder: string) { return this.ipc.invoke<MigratePlan>('sdlc_migrate', { folder }); }
   sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }, appTurn?: AppTurn | null) { return this.ipc.invoke<RepoBoard[]>('sdlc_build_board', { repos, status, going, stopped, ...(appTurn ? { appTurn } : {}) }); }
   sdlcReviewStanding(input: ReviewStandingInput) { return this.ipc.invoke<ReviewStanding>('sdlc_review_standing', { ...input }); }
   sdlcReviewRecord(change: ChangeRef) { return this.ipc.invoke<ReviewRecord | null>('sdlc_review_record', { change }); }

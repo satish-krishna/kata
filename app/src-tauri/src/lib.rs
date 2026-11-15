@@ -2,6 +2,7 @@
 mod build_host;
 mod close_guard;
 mod history;
+mod migration;
 mod rename_change;
 mod running;
 mod runs;
@@ -1338,6 +1339,32 @@ fn sdlc_build_status(change: build_host::ChangeRef) -> Result<sdlc::build::Build
         .map_err(|e| e.to_string())
 }
 
+/// What migrating an ai-sdlc workspace to hoshin would do, for a folder the engineer picked: `None` when the
+/// folder is already a hoshin workspace, is none, or has nothing left to migrate. The program decides; nothing
+/// is changed.
+#[tauri::command(async)]
+fn sdlc_migration(folder: String) -> Result<Option<sdlc::hoshin::migrate::MigratePlan>, String> {
+    let (program, _) = state_inputs(&folder);
+    Ok(program.and_then(|p| migration::offer(&p, Path::new(&folder))))
+}
+
+/// Migrates an ai-sdlc workspace to hoshin, refused while a run or a build hold works under it.
+#[tauri::command(async)]
+fn sdlc_migrate(
+    control: State<'_, RunControl>,
+    host: State<'_, Arc<build_host::BuildHost>>,
+    folder: String,
+) -> Result<sdlc::hoshin::migrate::MigratePlan, String> {
+    let (program, readiness) = state_inputs(&folder);
+    let program = match (program, readiness) {
+        (Some(program), _) => program,
+        (None, sdlc::plugin::Readiness::Blocked { message, .. }) => return Err(message),
+        (None, _) => return Err("the hoshin plugin cannot be used".into()),
+    };
+    let live = control.state.lock().unwrap().live();
+    migration::run(&program, Path::new(&folder), &live, &host.held_folders())
+}
+
 /// What the program stored when it ran a task's test at its test commit, and whether red counts as
 /// observed (`red show`). It runs nothing; no record on this machine is an answer, not an error.
 #[tauri::command(async)]
@@ -2566,6 +2593,8 @@ pub fn run() {
             sdlc_link_run,
             sdlc_wait_run_exit,
             sdlc_build_status,
+            sdlc_migration,
+            sdlc_migrate,
             sdlc_red_record,
             sdlc_build_heads,
             sdlc_review_record,

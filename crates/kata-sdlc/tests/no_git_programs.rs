@@ -451,6 +451,25 @@ fn home_and_change_page_read_without_git() {
     assert_eq!(with_git, without_git);
 }
 
+/// The migration's dry run, with `PATH` holding only `node`: Kata starts nothing else. The fixture is a hoshin
+/// workspace, so there is nothing to migrate; the program still answers, and its own git children are its own.
+#[test]
+#[serial]
+fn the_migration_dry_run_starts_only_node() {
+    let fx = fixture();
+    let _home = KataHome::new(&fx.home);
+    let program = Program::locate(&fx.plugin);
+    // The program starts git itself, so git's folder is on PATH; Kata starts only node.
+    let git_dir = fx.git.parent().unwrap().to_path_buf();
+    let _path = PathOnly::new(Path::new(
+        &std::env::join_paths([&fx.only_node, &git_dir]).unwrap(),
+    ));
+    let log = SpawnLog::open();
+    let plan = kata_sdlc::hoshin::migrate::migrate(&program, &fx.folder, false).unwrap();
+    assert!(!plan.needed(), "{plan:?}");
+    assert_eq!(started(&log), ["node"]);
+}
+
 /// The target folder the test binaries are built into: `kata` and `fake-claude` sit there too.
 fn target_dir() -> PathBuf {
     let exe = std::env::current_exe().unwrap();

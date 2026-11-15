@@ -168,6 +168,14 @@ impl HoldTable {
     pub fn holder(&self, repo: &RepoKey) -> Option<&ChangeKey> {
         self.holds.get(repo).map(|h| &h.change)
     }
+
+    /// Every repository held, as the folder each key was made from.
+    pub fn repos(&self) -> Vec<std::path::PathBuf> {
+        self.holds
+            .keys()
+            .map(|k| std::path::PathBuf::from(&k.key))
+            .collect()
+    }
 }
 
 /// The keys a build or review of a change takes. The workspace layout holds one key per product repository

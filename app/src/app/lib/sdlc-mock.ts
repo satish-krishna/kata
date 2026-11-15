@@ -99,6 +99,7 @@ import type { ParsedFinding } from '@bindings/ParsedFinding';
 import type { Severity } from '@bindings/Severity';
 import type { Concern } from '@bindings/Concern';
 import type { WorkspaceChoice } from '@bindings/WorkspaceChoice';
+import type { MigratePlan } from '@bindings/MigratePlan';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { DEMO_SETUP_FOLDER, DEMO_WORKSPACE_FOLDER } from './demo';
@@ -115,6 +116,28 @@ export const MOCK_SINGLE_SYSTEM = 'kata';
 export const MOCK_SINGLE_CHANGE = '2026-11-12-single-repo-workbench';
 /** The workspace the single-repo demos list beside the repository. */
 export const MOCK_SINGLE_WORKSPACE = 'D:/workspaces';
+/** The one folder of the browser fixtures that is an ai-sdlc workspace: the migration is offered for it and for no other. */
+export const MOCK_LEGACY_FOLDER = 'D:/legacy-workspace';
+/** What migrating `MOCK_LEGACY_FOLDER` would do, one `would` step of each kind; with `write` the same steps `done`. */
+export function mockMigrationPlan(write: boolean): MigratePlan {
+  const status = write ? 'done' : 'would';
+  const old = `${MOCK_LEGACY_FOLDER}/.ai-sdlc`;
+  const next = `${MOCK_LEGACY_FOLDER}/.hoshin`;
+  return {
+    workspace: MOCK_LEGACY_FOLDER,
+    master: `${MOCK_LEGACY_FOLDER}/commerce-docs`,
+    write,
+    steps: [
+      { step: 'marker', path: `${MOCK_LEGACY_FOLDER}/commerce-docs/.ai-sdlc.json`, to: `${MOCK_LEGACY_FOLDER}/commerce-docs/.hoshin.json`, status, detail: null },
+      { step: 'copy', path: `${old}/copies/2026-10-19-build-demo`, to: `${next}/copies/2026-10-19-build-demo`, status, detail: null },
+      { step: 'state', path: `${MOCK_LEGACY_FOLDER}/commerce-docs/.git/ai-sdlc`, to: `${MOCK_LEGACY_FOLDER}/commerce-docs/.git/hoshin`, status, detail: null },
+      { step: 'instructions', path: `${MOCK_LEGACY_FOLDER}/CLAUDE.md`, to: null, status, detail: null },
+    ],
+    kept: [],
+    manual: ['Push the branches that got a marker commit.', 'Install hoshin@hoshin and uninstall ai-sdlc@ai-sdlc.'],
+    problems: [],
+  };
+}
 /** The error the backend gives for switching the engineer's checkout in a single-repo repository. */
 export const MOCK_NOT_SWITCHABLE = 'Single-repo changes are never switched into your checkout.';
 /** The engineer's checkout of the master repository, which a change started before copies existed lives in. */
