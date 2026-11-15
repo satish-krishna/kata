@@ -1473,7 +1473,7 @@ describe('the build page reads a change through its reference (R1.1, R2.2)', () 
     expect(heads.mock.calls.every(([ref]) => ref.change === MOCK_DONE_CHANGE && ref.workspace === FOLDER)).toBe(true);
     expect(heads.mock.calls[0][1]).toContain(MOCK_MASTER);
     // The files are counted in the folders the backend named; the master repository's is the copy itself.
-    const copy = `${FOLDER}/.ai-sdlc/copies/${MOCK_DONE_CHANGE}`;
+    const copy = `${FOLDER}/.hoshin/copies/${MOCK_DONE_CHANGE}`;
     expect(read.mock.calls.map(([path]) => path)).toContain(copy);
     expect(s.vm.view().counts.files).toBeGreaterThan(0);
   });

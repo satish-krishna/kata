@@ -847,7 +847,7 @@ describe('ChangePage way back', () => {
 });
 
 describe('ChangePage: the change copy', () => {
-  const COPY = 'C:/ws/.ai-sdlc/copies/2026-10-12-product-photo-upload';
+  const COPY = 'C:/ws/.hoshin/copies/2026-10-12-product-photo-upload';
   const BRANCH = `change/${PHOTOS_CHANGE}`;
   let draw: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
@@ -971,7 +971,7 @@ describe('ChangePage: the change copy', () => {
   });
 
   it("a refusal shows the plugin's problems as they are", async () => {
-    const { transport } = inCopy({ outcome: 'offer' }, { outcome: 'refused', problems: ['the branch is checked out', 'run ai-sdlc doctor'] });
+    const { transport } = inCopy({ outcome: 'offer' }, { outcome: 'refused', problems: ['the branch is checked out', 'run hoshin doctor'] });
     const { container } = await mount(PHOTOS_CHANGE, transport);
     await vi.waitFor(() => expect(buttonIn(container, 'Remove this copy')).toBeDefined());
     buttonIn(container, 'Remove this copy')!.click();
@@ -980,7 +980,7 @@ describe('ChangePage: the change copy', () => {
     await vi.waitFor(() => expect(container.querySelector('[data-testid="copy-note"]')).not.toBeNull());
     const note = container.querySelector('[data-testid="copy-note"]')!.textContent!;
     expect(note).toContain('the branch is checked out');
-    expect(note).toContain('run ai-sdlc doctor');
+    expect(note).toContain('run hoshin doctor');
     expect(line(container)).not.toBeNull();
   });
 

@@ -524,10 +524,10 @@ describe('MockTransport previewRun', () => {
     expect(Object.keys(r.settings)).toHaveLength(8);
   });
 
-  it('locks ai-sdlc only when required', async () => {
+  it('locks hoshin only when required', async () => {
     const t = new MockTransport();
-    const find = (r: Resolved) => r.items.find((i) => i.id === 'personal:plugin:ai-sdlc@ai-sdlc');
-    const required = { ...seedSpec(), given: { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [], required_plugins: ['ai-sdlc'] } };
+    const find = (r: Resolved) => r.items.find((i) => i.id === 'personal:plugin:hoshin@hoshin');
+    const required = { ...seedSpec(), given: { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [], required_plugins: ['hoshin'] } };
     expect(find(await t.previewRun(required))?.lock?.kind).toBe('required');
     expect(find(await t.previewRun(seedSpec()))?.lock).toBeNull();
   });
@@ -760,7 +760,7 @@ describe('MockTransport answers every call the backend gained on this branch (F2
     const t = new MockTransport();
     const spec = await t.sdlcPreviewChangeRun(ref(MOCK_BUILD_CHANGE), 'spec', FORM_RUN);
     expect([spec.name, spec.task, spec.permissions.mode, spec.leash.timeout_secs]).toEqual(['sdlc-spec', 'x', 'prompt', 900]);
-    expect(spec.given?.required_plugins).toEqual(['ai-sdlc']);
+    expect(spec.given?.required_plugins).toEqual(['hoshin']);
     expect((await t.sdlcPreviewChangeRun(ref(MOCK_BUILD_CHANGE), 'fix', FORM_RUN)).permissions.mode).toBe('auto');
     expect((await t.sdlcPreviewChangeRun(ref(MOCK_BUILD_CHANGE), 'triage', FORM_RUN)).permissions.mode).toBe('auto');
   });
@@ -889,22 +889,22 @@ describe('MockTransport versions', () => {
     }
   };
 
-  it('answers the Workbench version and a found ai-sdlc by default', async () => {
+  it('answers the Workbench version and a found hoshin by default', async () => {
     await withDemo(null, async (t) => {
       const v = await t.appVersions();
       expect(v.workbench).toBe(appVersion);
-      expect(v.hoshin).toEqual({ kind: 'found', version: '1.3.0' });
-      expect(v.line).toBe(`Workbench ${appVersion} · ai-sdlc 1.3.0`);
-      expect(v.copy).toBe(`Kata Workbench ${appVersion}, ai-sdlc 1.3.0`);
+      expect(v.hoshin).toEqual({ kind: 'found', version: '1.0.0' });
+      expect(v.line).toBe(`Workbench ${appVersion} · hoshin 1.0.0`);
+      expect(v.copy).toBe(`Kata Workbench ${appVersion}, hoshin 1.0.0`);
     });
   });
 
-  it('answers ai-sdlc not found under ?demo=versions-missing', async () => {
+  it('answers hoshin not found under ?demo=versions-missing', async () => {
     await withDemo('versions-missing', async (t) => {
       const v = await t.appVersions();
       expect(v.hoshin).toEqual({ kind: 'notFound' });
-      expect(v.line).toBe(`Workbench ${appVersion} · ai-sdlc: not found`);
-      expect(v.copy).toBe(`Kata Workbench ${appVersion}, ai-sdlc: not found`);
+      expect(v.line).toBe(`Workbench ${appVersion} · hoshin: not found`);
+      expect(v.copy).toBe(`Kata Workbench ${appVersion}, hoshin: not found`);
     });
   });
 

@@ -20,7 +20,7 @@ import { masterRepo as masterRepoOf, productRepos as productReposOf } from "./sd
 import { defaultSpec } from "./spec";
 
 /** The plugins an AI-SDLC run cannot work without; passed to `previewRun` so the preview locks them on. */
-export const SDLC_REQUIRED_PLUGINS: readonly string[] = ['ai-sdlc'] as const;
+export const SDLC_REQUIRED_PLUGINS: readonly string[] = ['hoshin'] as const;
 
 /** An action of the plugin's answer; the change page has a control for each. */
 export type StageAction = BindingStageAction;
@@ -76,7 +76,7 @@ export function restrictedFor(workspaceFolder: string, scan: WorkspaceScan): Res
 
 export const DEFAULT_BUILD_SECS = 7200;
 
-const HOSHIN = "ai-sdlc";
+const HOSHIN = "hoshin";
 
 const BUILD_DENY = ["Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)"];
 const GITHUB_TOKENS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"];
@@ -135,39 +135,39 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): s
   const { system, change } = ctx;
   switch (kind) {
     case "setup":
-      if (ctx.instructions) return "Use the ai-sdlc setup skill with --instructions.";
-      if (ctx.naming) return `Use the ai-sdlc setup skill with --naming. System: ${system}`;
-      return system ? `Use the ai-sdlc setup skill. System: ${system}` : "Use the ai-sdlc setup skill.";
+      if (ctx.instructions) return "Use the hoshin setup skill with --instructions.";
+      if (ctx.naming) return `Use the hoshin setup skill with --naming. System: ${system}`;
+      return system ? `Use the hoshin setup skill. System: ${system}` : "Use the hoshin setup skill.";
     case "context":
-      return `Use the ai-sdlc context skill for system ${system}, repositories: ${(ctx.repos ?? []).join(", ")}. Refresh each existing context file, even one that is current.`;
+      return `Use the hoshin context skill for system ${system}, repositories: ${(ctx.repos ?? []).join(", ")}. Refresh each existing context file, even one that is current.`;
     case "intent": {
-      if (change === null) return `Use the ai-sdlc intent skill for system ${system}. The idea: ${ctx.idea ?? ""}${scopeArg(ctx)}`;
+      if (change === null) return `Use the hoshin intent skill for system ${system}. The idea: ${ctx.idea ?? ""}${scopeArg(ctx)}`;
       // A change the workflow started before the run: its branch and its own copy exist, so the skill writes in them and starts nothing.
-      if (ctx.idea) return `Use the ai-sdlc intent skill for system ${system} on change folder ${change}. The change is already started: its branch and its own copy exist, so do not start it again. The idea: ${ctx.idea}${scopeArg(ctx)}`;
-      const resume = `Use the ai-sdlc intent skill for system ${system} on the existing change folder ${change}. Resume the draft.`;
+      if (ctx.idea) return `Use the hoshin intent skill for system ${system} on change folder ${change}. The change is already started: its branch and its own copy exist, so do not start it again. The idea: ${ctx.idea}${scopeArg(ctx)}`;
+      const resume = `Use the hoshin intent skill for system ${system} on the existing change folder ${change}. Resume the draft.`;
       return action === "reopen-intent"
         ? `${resume} The user has already confirmed reopening this accepted intent; do not ask again.`
         : resume;
     }
     case "spec": {
-      const task = `Use the ai-sdlc spec skill for system ${system} on change folder ${change}.`;
+      const task = `Use the hoshin spec skill for system ${system} on change folder ${change}.`;
       if (action === "reopen-spec") return `${task} The user has already confirmed reopening this accepted spec; do not ask again.`;
       if (action === "continue-spec") return `${task} The user has already confirmed regenerating the spec; do not ask again.`;
       return task;
     }
     case "plan": {
-      let task = `Use the ai-sdlc plan skill for system ${system} on change folder ${change}.`;
+      let task = `Use the hoshin plan skill for system ${system} on change folder ${change}.`;
       if (action === "rerun-plan") task += " The user has already confirmed replacing the existing plan; do not ask again.";
       return task;
     }
     case "build":
       throw new Error("a build run-spec is composed by the backend");
     case "triage":
-      return `Use the ai-sdlc start skill for system ${system}. The change: ${ctx.idea ?? ""}${ctx.scope ? `${scopeArg(ctx)}\n` : ". "}The person running this is both the engineer and the product owner and may take either route. If the route is the light track and the person takes it, run the fix skill in this session; the engineer accepts the fix later in the Workbench, so do not ask for acceptance.`;
+      return `Use the hoshin start skill for system ${system}. The change: ${ctx.idea ?? ""}${ctx.scope ? `${scopeArg(ctx)}\n` : ". "}The person running this is both the engineer and the product owner and may take either route. If the route is the light track and the person takes it, run the fix skill in this session; the engineer accepts the fix later in the Workbench, so do not ask for acceptance.`;
     case "fix":
       return action === "accept-fix"
-        ? `Use the ai-sdlc fix skill for system ${system} with --accept ${change}. The engineer accepted this fix in the Workbench.`
-        : `Use the ai-sdlc fix skill for system ${system} on change folder ${change}. The engineer accepts the fix later in the Workbench, so do not ask for acceptance.`;
+        ? `Use the hoshin fix skill for system ${system} with --accept ${change}. The engineer accepted this fix in the Workbench.`
+        : `Use the hoshin fix skill for system ${system} on change folder ${change}. The engineer accepts the fix later in the Workbench, so do not ask for acceptance.`;
   }
 }
 

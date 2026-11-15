@@ -46,7 +46,7 @@
               </section>
             }
             @for (repo of r.data.product_repos_changed; track repo) {
-              <p class="k-left__warn">the run changed files in {{ repo }}; ai-sdlc should not write there</p>
+              <p class="k-left__warn">the run changed files in {{ repo }}; hoshin should not write there</p>
             }
             @for (repo of r.data.product_repos_unchecked; track repo) {
               <p class="k-left__warn">could not check {{ repo }}</p>

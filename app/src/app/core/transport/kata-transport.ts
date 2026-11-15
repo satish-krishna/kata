@@ -240,7 +240,7 @@ export abstract class KataTransport {
   /** The change's review document as committed, or null when it has none. */
   abstract sdlcReviewRecord(ref: ChangeRef): Promise<ReviewRecord | null>;
   abstract sdlcBuildHeads(ref: ChangeRef, repos: string[]): Promise<Record<string, string>>;
-  /** Whether the ai-sdlc plugin is installed and new enough, as the backend decides it for the workspace folder. */
+  /** Whether the hoshin plugin is installed and new enough, as the backend decides it for the workspace folder. */
   abstract sdlcPluginReadiness(workdir: string | null): Promise<Readiness>;
   abstract sdlcChangeRepos(ref: ChangeRef): Promise<ChangeRepo[]>;
   /** The product repositories in the build that have no `change/<change>` branch, which the Changes view cannot list. */
@@ -267,7 +267,7 @@ export abstract class KataTransport {
   abstract openUrl(url: string): Promise<void>;
   /** Step the window's zoom. Resolves to the new level, which the backend remembers for the next launch. */
   abstract zoom(step: ZoomStep): Promise<number>;
-  /** The Workbench's version and the ai-sdlc version in use, with the line shown and the text copied; the backend writes both texts. */
+  /** The Workbench's version and the hoshin version in use, with the line shown and the text copied; the backend writes both texts. */
   abstract appVersions(): Promise<Versions>;
   /** Put plain text on the clipboard. */
   abstract copyText(text: string): Promise<void>;

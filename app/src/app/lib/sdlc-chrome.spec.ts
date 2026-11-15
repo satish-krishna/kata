@@ -36,9 +36,9 @@ describe('parseFrontMatter', () => {
   });
 
   it('keeps a value that has colons in it whole, and a list as written', () => {
-    const got = parseFrontMatter('---\nsource_intent: 2026-10-19-ai-sdlc-part-2/intent.md\npolicies_applied: [house-style]\nnote: a: b\n---\nbody\n');
+    const got = parseFrontMatter('---\nsource_intent: 2026-10-19-hoshin-part-2/intent.md\npolicies_applied: [house-style]\nnote: a: b\n---\nbody\n');
     expect(got.fields).toEqual([
-      ['source_intent', '2026-10-19-ai-sdlc-part-2/intent.md'],
+      ['source_intent', '2026-10-19-hoshin-part-2/intent.md'],
       ['policies_applied', '[house-style]'],
       ['note', 'a: b'],
     ]);

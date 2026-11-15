@@ -29,7 +29,7 @@ export class SdlcToolbar {
   readonly tag = input<string | null>(null);
   /** The first crumb's label: the way back to the changes list. Null where there is nowhere to go back to (the home page). */
   readonly back = input<string | null>(null);
-  /** Nothing in a workspace can be acted on (the ai-sdlc plugin is missing), so the workspace controls are withheld. */
+  /** Nothing in a workspace can be acted on (the hoshin plugin is missing), so the workspace controls are withheld. */
   readonly blocked = input(false);
 
   /** The chip's title and accessible name: the full branch, and on a change page the branch it should be on, so the icon form says all the text does. */

@@ -8,8 +8,8 @@ describe('VersionsStore', () => {
   const found = (version: string): Versions => ({
     workbench: '3.3.0',
     hoshin: { kind: 'found', version },
-    line: `Workbench 3.3.0 · ai-sdlc ${version}`,
-    copy: `Kata Workbench 3.3.0, ai-sdlc ${version}`,
+    line: `Workbench 3.3.0 · hoshin ${version}`,
+    copy: `Kata Workbench 3.3.0, hoshin ${version}`,
   });
 
   it('keeps the answer of the newest refresh when an older one finishes last', async () => {

@@ -19,9 +19,9 @@ const provideTransport = () => TestBed.configureTestingModule({ providers: [{ pr
 beforeEach(provideTransport);
 
 describe('SdlcToolbar', () => {
-  it('shows the ai-sdlc badge, the workspace, and the master branch in mono', async () => {
+  it('shows the AI-SDLC badge, the workspace, and the master branch in mono', async () => {
     const { container } = await render(SdlcToolbar, inputs());
-    expect(byLabel(container, 'Switch mode (ai-sdlc)').textContent!.trim()).toBe('ai-sdlc');
+    expect(byLabel(container, 'Switch mode (AI-SDLC)').textContent!.trim()).toBe('AI-SDLC');
     expect(container.textContent).toContain('acme-commerce');
     expect(container.querySelector('[data-testid="branch"]')!.textContent!.trim()).toBe('main');
   });
@@ -66,7 +66,7 @@ describe('SdlcToolbar', () => {
     const got: string[] = [];
     fixture.componentInstance.switchMode.subscribe(() => got.push('mode'));
     fixture.componentInstance.openSettings.subscribe(() => got.push('settings'));
-    byLabel(container, 'Switch mode (ai-sdlc)').click();
+    byLabel(container, 'Switch mode (AI-SDLC)').click();
     byLabel(container, 'AI-SDLC settings').click();
     expect(got).toEqual(['mode', 'settings']);
   });
@@ -92,7 +92,7 @@ describe('SdlcToolbar', () => {
     const { container } = await render(SdlcToolbar, inputs({ blocked: true }));
     expect(switcher(container)).toBeNull();
     expect(container.querySelector('[data-testid="branch"]')).toBeNull();
-    expect(byLabel(container, 'Switch mode (ai-sdlc)')).not.toBeNull();
+    expect(byLabel(container, 'Switch mode (AI-SDLC)')).not.toBeNull();
   });
 
   it('projects the primary action', async () => {
@@ -144,7 +144,7 @@ describe('SdlcToolbar while a change builds (R11.6)', () => {
     fixture.componentInstance.goBack.subscribe(() => went.push('back'));
     fixture.componentInstance.switchMode.subscribe(() => went.push('mode'));
     fixture.componentInstance.openSettings.subscribe(() => went.push('settings'));
-    for (const label of ['Back to the changes list', 'Switch mode (ai-sdlc)', 'AI-SDLC settings']) {
+    for (const label of ['Back to the changes list', 'Switch mode (AI-SDLC)', 'AI-SDLC settings']) {
       expect(byLabel(container, label).disabled, label).toBe(false);
       byLabel(container, label).click();
     }

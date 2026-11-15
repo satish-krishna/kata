@@ -2049,7 +2049,7 @@ export class BuildPageViewModel {
     try {
       readiness = await this.transport.sdlcPluginReadiness(ctx!.folder);
     } catch {
-      readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
+      readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the hoshin plugin' };
     }
     if (!this.shows(ctx)) return;
     this.reviewDocNotice.set(shownPart({ layout: document.layout, problems: document.problems }, readiness).notice);

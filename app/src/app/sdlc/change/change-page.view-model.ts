@@ -362,7 +362,7 @@ export class ChangePageViewModel {
   readonly resolutionError = signal<string | null>(null);
   /** The shown spec or plan as the format program read it; null for the other documents, or when the program could not run. */
   private readonly read = signal<ReadResult | ReadError | null>(null);
-  /** Whether the ai-sdlc plugin can be used; null until the first load has asked. */
+  /** Whether the hoshin plugin can be used; null until the first load has asked. */
   private readonly readiness = signal<Readiness | null>(null);
   /** The review document as the format program reads it; null when the change has none or it could not be read. */
   private readonly reviewRecord = signal<ReviewRecord | null>(null);
@@ -1529,7 +1529,7 @@ export class ChangePageViewModel {
     try {
       return await this.transport.sdlcPluginReadiness(folder);
     } catch {
-      return { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
+      return { kind: 'blocked', reason: 'pluginMissing', message: 'Install the hoshin plugin' };
     }
   }
 

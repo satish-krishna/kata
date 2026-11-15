@@ -21,7 +21,7 @@ const settle = async () => {
 };
 const text = (e: Element | null) => e?.textContent?.replace(/\s+/g, ' ').trim() ?? null;
 const PROSE = (title: string) => `---\nstatus: accepted\n---\n# ${title}\n\nWords only.\n`;
-const READY: Readiness = { kind: 'ready', plugin: { dir: '~/.claude/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2] }, gh: 'present' };
+const READY: Readiness = { kind: 'ready', plugin: { dir: '~/.claude/plugins/hoshin', version: '0.9.0', layouts: [1, 2] }, gh: 'present' };
 
 type Setup = {
   readiness?: Readiness;

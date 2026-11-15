@@ -6,7 +6,7 @@ import { shownBuild, shownChangeList, shownDocument, shownPart, type DocNotice, 
 /* The owner of "the Workbench never shows less than a document holds without saying so", tested row by row against
  * the table in the plan, written by hand. */
 
-const ready: Extract<Readiness, { kind: 'ready' }> = { kind: 'ready', plugin: { dir: 'plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2] }, gh: 'present' };
+const ready: Extract<Readiness, { kind: 'ready' }> = { kind: 'ready', plugin: { dir: 'plugins/hoshin', version: '0.9.0', layouts: [1, 2] }, gh: 'present' };
 const problems: Problem[] = [
   { file: 'spec.md', line: 14, message: 'requirement has no ID' },
   { file: 'spec.md', line: 31, message: 'scenario is outside a requirement' },
@@ -16,17 +16,17 @@ const filed = ['spec.md line 14: requirement has no ID', 'spec.md line 31: scena
 const read = (layout: number, over: Problem[] = []): ReadResult => ({ kind: 'spec', layout, document: { requirements: [] }, problems: over });
 const error: ReadError = { kind: 'error', message: 'front matter is not closed' };
 const warn = (text: string, withLines: string[] = []): DocNotice => ({ tone: 'warning', text, lines: withLines });
-const INSTALL = warn('Install the ai-sdlc plugin to read this document');
+const INSTALL = warn('Install the hoshin plugin to read this document');
 const NEWER = warn('This document needs a newer Workbench');
 
 type Row = { name: string; read: ReadResult | ReadError | null; readiness: Readiness; shown: Shown };
 
 /** One entry per row of the table and per branch of a row. */
 const ROWS: Row[] = [
-  { name: 'plugin missing, a document read', read: read(2), readiness: { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' }, shown: { show: 'plain', notice: INSTALL } },
-  { name: 'plugin missing, nothing read', read: null, readiness: { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' }, shown: { show: 'plain', notice: INSTALL } },
-  { name: 'plugin missing beats an error', read: error, readiness: { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' }, shown: { show: 'plain', notice: INSTALL } },
-  { name: 'plugin missing beats problems and a newer layout', read: read(3, problems), readiness: { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' }, shown: { show: 'plain', notice: INSTALL } },
+  { name: 'plugin missing, a document read', read: read(2), readiness: { kind: 'blocked', reason: 'pluginMissing', message: 'Install the hoshin plugin' }, shown: { show: 'plain', notice: INSTALL } },
+  { name: 'plugin missing, nothing read', read: null, readiness: { kind: 'blocked', reason: 'pluginMissing', message: 'Install the hoshin plugin' }, shown: { show: 'plain', notice: INSTALL } },
+  { name: 'plugin missing beats an error', read: error, readiness: { kind: 'blocked', reason: 'pluginMissing', message: 'Install the hoshin plugin' }, shown: { show: 'plain', notice: INSTALL } },
+  { name: 'plugin missing beats problems and a newer layout', read: read(3, problems), readiness: { kind: 'blocked', reason: 'pluginMissing', message: 'Install the hoshin plugin' }, shown: { show: 'plain', notice: INSTALL } },
   { name: 'plugin too old', read: read(2), readiness: { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.6.0.' }, shown: { show: 'plain', notice: warn('The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.6.0.') } },
   { name: 'plugin too old shows the message', read: error, readiness: { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.7.0.' }, shown: { show: 'plain', notice: warn('The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.7.0.') } },
   { name: 'ready, the program could not read the document (F4)', read: error, readiness: ready, shown: { show: 'plain', notice: warn('Could not read this document: front matter is not closed') } },
@@ -89,7 +89,7 @@ describe('shownBuild', () => {
   });
 
   it('a plugin that cannot read says so, whatever the parts hold', () => {
-    expect(shownBuild([older], { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' }).notice).toEqual(INSTALL);
+    expect(shownBuild([older], { kind: 'blocked', reason: 'pluginMissing', message: 'Install the hoshin plugin' }).notice).toEqual(INSTALL);
   });
 });
 
@@ -99,7 +99,7 @@ describe('shownPart', () => {
   });
 
   it('gives the plugin rows when the plugin is unusable', () => {
-    expect(shownPart({ layout: 2, problems }, { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' }).notice).toEqual(INSTALL);
+    expect(shownPart({ layout: 2, problems }, { kind: 'blocked', reason: 'pluginMissing', message: 'Install the hoshin plugin' }).notice).toEqual(INSTALL);
   });
 });
 
@@ -110,7 +110,7 @@ describe('shownChangeList (F26)', () => {
   });
 
   it('words a newer layout as the program does, never as a missing Node.js', () => {
-    const message = 'the format program could not run: plan.md: layout 3 is newer than this program reads (it reads 1, 2); update the ai-sdlc plugin';
+    const message = 'the format program could not run: plan.md: layout 3 is newer than this program reads (it reads 1, 2); update the hoshin plugin';
     const notice = list(ready, [message]);
     expect(notice).toEqual(shownDocument({ kind: 'error', message }, ready).notice);
     expect(notice?.text).toContain('layout 3 is newer');
@@ -118,7 +118,7 @@ describe('shownChangeList (F26)', () => {
   });
 
   it('words a missing Node.js as the program does', () => {
-    const message = 'Node.js was not found on this machine; ai-sdlc needs Node.js 20 or later';
+    const message = 'Node.js was not found on this machine; hoshin needs Node.js 20 or later';
     expect(list(ready, [message])?.text).toContain('Node.js was not found');
   });
 
@@ -129,7 +129,7 @@ describe('shownChangeList (F26)', () => {
   });
 
   it('keeps the plugin rows above any cause', () => {
-    expect(list({ kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' }, ['layout 3 is newer'])).toEqual(INSTALL);
+    expect(list({ kind: 'blocked', reason: 'pluginMissing', message: 'Install the hoshin plugin' }, ['layout 3 is newer'])).toEqual(INSTALL);
   });
 
   it('falls back to the plain notice when a plan is unreadable and no cause came with it', () => {

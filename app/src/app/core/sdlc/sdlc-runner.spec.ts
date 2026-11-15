@@ -40,7 +40,7 @@ class FakeTransport {
   sdlcLeftovers = vi.fn(async () => { this.calls.push('leftovers'); return this.leftovers; });
   sdlcDiscard = vi.fn(async (..._a: unknown[]) => { this.calls.push('discard'); });
   sdlcLinkRun = vi.fn(async (..._a: unknown[]) => { this.calls.push('link'); });
-  started: ChangeStart = { outcome: 'started', change: '2026-10-18-flag-prices', branch: 'change/2026-10-18-flag-prices', copy: '/ws/.ai-sdlc/copies/2026-10-18-flag-prices' };
+  started: ChangeStart = { outcome: 'started', change: '2026-10-18-flag-prices', branch: 'change/2026-10-18-flag-prices', copy: '/ws/.hoshin/copies/2026-10-18-flag-prices' };
   sdlcChangeName = vi.fn(async (..._a: unknown[]) => { this.calls.push('name'); return '2026-10-18-flag-prices'; });
   sdlcStartChange = vi.fn(async (..._a: unknown[]) => { this.calls.push('start'); return this.started; });
   /** The changes the plugin lists right now. */
@@ -52,7 +52,7 @@ class FakeTransport {
   sdlcChangeState = vi.fn(async (..._a: unknown[]) => ({ state: { track: 'full' } }));
   sdlcSettings = vi.fn(async () => ({ mode: null, remember: false, permission_mode: 'bypass' as const }));
   catalog = vi.fn(async (..._a: unknown[]) => seedCatalog);
-  readiness: Readiness = { kind: 'ready', plugin: { dir: '/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2] }, gh: 'present' };
+  readiness: Readiness = { kind: 'ready', plugin: { dir: '/plugins/hoshin', version: '0.9.0', layouts: [1, 2] }, gh: 'present' };
   sdlcPluginReadiness = vi.fn(async (..._a: unknown[]) => { this.calls.push('readiness'); return this.readiness; });
   sdlcBuildHeads = vi.fn(async (..._a: unknown[]) => ({ 'commerce-core': 'c0ffee' }));
   sdlcRunChange = vi.fn(async (..._a: unknown[]) => '41');
@@ -103,17 +103,17 @@ describe('SdlcRunner.run for a change that exists', () => {
 
   it('launches a spec run through sdlcRunChange, not through run_spec', async () => {
     const { runner, lock, fake } = setup();
-    const spec: RunSpec = { ...seedSpec(), name: 'sdlc-commerce-photos-spec', task: 'Use the ai-sdlc spec skill.' };
+    const spec: RunSpec = { ...seedSpec(), name: 'sdlc-commerce-photos-spec', task: 'Use the hoshin spec skill.' };
     spec.permissions = { mode: 'auto', allow: [], deny: [], ask: [], unmatched: 'ask' };
     spec.leash = { ...spec.leash, timeout_secs: 7200 };
-    spec.given = { hooks: [], skills: ['brainstorming'], plugins: [], instructions: [], tool_servers: [], required_plugins: ['ai-sdlc'] };
+    spec.given = { hooks: [], skills: ['brainstorming'], plugins: [], instructions: [], tool_servers: [], required_plugins: ['hoshin'] };
     await runner.run('Starting spec', spec, TARGET, { ref, kind: 'spec' });
     const via = lock.runAgent.mock.calls[0][2] as ((s: RunSpec) => Promise<string>) | undefined;
     expect(via).toBeTypeOf('function');
     expect(await via!(spec)).toBe('41');
     expect(fake.sdlcRunChange).toHaveBeenCalledWith(ref, 'spec', {
       name: 'sdlc-commerce-photos-spec',
-      task: 'Use the ai-sdlc spec skill.',
+      task: 'Use the hoshin spec skill.',
       permissionMode: 'auto',
       timeoutSecs: 7200,
       bare: false,
@@ -304,7 +304,7 @@ describe('SdlcRunner.run', () => {
       return (a[0] as { master: string }).master === '/ws/a-intent' ? before.a : before.b;
     });
     fake.scan = { folder: '/ws', repos: ['a-intent', 'a-core'], master: { kind: 'one', repo: 'a-intent', committed: false }, master_folder: '/ws/a-intent', marker: null, marker_error: null };
-    fake.leftovers = { ...EMPTY, discardable: ['.ai-sdlc.json'] };
+    fake.leftovers = { ...EMPTY, discardable: ['.hoshin.json'] };
     await runner.run('Running setup', seedSpec(), {
       ...TARGET, target: null, link: null, firstSetup: { folder: '/ws', repos: ['a-intent', 'a-core'] },
     });
@@ -312,7 +312,7 @@ describe('SdlcRunner.run', () => {
     expect(fake.calls).toEqual(['snapshot', 'snapshot', 'agent', 'wait', 'scan', 'leftovers', 'dismissed']);
     expect(fake.sdlcScan).toHaveBeenCalledWith('/ws');
     expect(fake.sdlcLeftovers).toHaveBeenCalledWith(WS('/ws/a-intent'), before.a);
-    expect(runner.leftovers()?.[0].data.discardable).toEqual(['.ai-sdlc.json']);
+    expect(runner.leftovers()?.[0].data.discardable).toEqual(['.hoshin.json']);
     expect(toasts.error).toHaveBeenCalledWith('Running setup stopped · 0 commits landed, 1 file left uncommitted');
   });
 
@@ -501,7 +501,7 @@ describe('SdlcRunner.newChange', () => {
 
   it('the run is told the change name the plugin gave when it differs from the previewed one', async () => {
     const { runner, fake, lock } = setup();
-    fake.started = { outcome: 'started', change: '2026-10-19-flag-prices', branch: 'change/2026-10-19-flag-prices', copy: '/ws/.ai-sdlc/copies/2026-10-19-flag-prices' };
+    fake.started = { outcome: 'started', change: '2026-10-19-flag-prices', branch: 'change/2026-10-19-flag-prices', copy: '/ws/.hoshin/copies/2026-10-19-flag-prices' };
     await runner.newChange(target, 'commerce', 'idea', 'full', async (spec) => spec);
     const spec = lock.runAgent.mock.calls[0][1] as RunSpec;
     expect(spec.task).toContain('2026-10-19-flag-prices');
@@ -575,7 +575,7 @@ describe('SdlcRunner.newChange', () => {
 
     it('a plugin that could not run is reported and starts nothing', async () => {
       const { runner, fake, lock, toasts } = setup();
-      fake.sdlcStartChange.mockRejectedValueOnce('the ai-sdlc program could not run: exit 2');
+      fake.sdlcStartChange.mockRejectedValueOnce('the hoshin program could not run: exit 2');
       expect(await runner.newChange(target, 'commerce', 'flag prices', 'full')).toEqual({ kind: 'stopped' });
       expect(toasts.error).toHaveBeenCalledWith(expect.stringContaining('could not run'));
       expect(lock.runAgent).not.toHaveBeenCalled();
@@ -610,7 +610,7 @@ describe('SdlcRunner.newChange track', () => {
     const { runner, lock, navigate } = setup();
     const outcome = await runner.newChange(target, 'commerce', 'flag prices', 'full');
     const spec = lock.runAgent.mock.calls[0][1] as RunSpec;
-    expect(spec.task.startsWith('Use the ai-sdlc intent skill')).toBe(true);
+    expect(spec.task.startsWith('Use the hoshin intent skill')).toBe(true);
     expect(outcome).toEqual({ kind: 'opened', change: '2026-10-18-flag-prices', branch: 'change/2026-10-18-flag-prices' });
     expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', '2026-10-18-flag-prices']);
   });
@@ -620,7 +620,7 @@ describe('SdlcRunner.newChange track', () => {
     fake.scan = SCAN;
     await runner.newChange(target, 'commerce', 'flag prices', 'decide');
     const spec = lock.runAgent.mock.calls[0][1] as RunSpec;
-    expect(spec.task.startsWith('Use the ai-sdlc start skill')).toBe(true);
+    expect(spec.task.startsWith('Use the hoshin start skill')).toBe(true);
     expect(spec.task).toContain('flag prices');
     expect(spec.permissions.mode).toBe('auto');
     expect(spec.permissions.deny?.length).toBeGreaterThan(0);

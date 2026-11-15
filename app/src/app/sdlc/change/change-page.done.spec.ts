@@ -445,7 +445,7 @@ describe("declaring done is the plugin's step", () => {
   it.each([
     ['refuses, listing what is not ready', { kind: 'notReady', problems: ['customer-portal has uncommitted files: a.rs'] }],
     ['fails part way', { kind: 'partial', pushed: ['commerce-core'], opened: [], failed: ['opening the pull request in commerce-core failed: boom'] }],
-    ['cannot run on this machine', { kind: 'couldNotRun', message: 'ai-sdlc needs Node.js 22.18 or later' }],
+    ['cannot run on this machine', { kind: 'couldNotRun', message: 'hoshin needs Node.js 22.18 or later' }],
   ] satisfies [string, DeclareView][])('the plugin %s: the engineer sees exactly that answer (R7.1)', async (_row, view) => {
     const { vm, transport } = await finished((t) => vi.spyOn(t, 'sdlcDeclareDone').mockResolvedValue(view));
     await vm.act('declare-done');

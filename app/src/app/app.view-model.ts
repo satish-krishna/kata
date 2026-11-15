@@ -50,7 +50,7 @@ export class AppViewModel {
     void this.versionsStore.refresh();
   }
 
-  /** The window regained focus: an ai-sdlc update or removal made elsewhere shows now. */
+  /** The window regained focus: an hoshin update or removal made elsewhere shows now. */
   windowFocused(): void {
     void this.versionsStore.refresh();
   }

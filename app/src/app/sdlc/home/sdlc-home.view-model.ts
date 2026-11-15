@@ -162,7 +162,7 @@ export class SdlcHomeViewModel {
   readonly finishedCount = computed(() => this.listed()?.finishedCount ?? 0);
   readonly contexts = signal<Record<string, ContextState>>({});
   readonly lastRuns = signal<Record<string, number>>({});
-  private readonly readiness = signal<Readiness>({ kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' });
+  private readonly readiness = signal<Readiness>({ kind: 'blocked', reason: 'pluginMissing', message: 'Install the hoshin plugin' });
   /** Above the change list when a plan could not be read; null when every plan was. The plugin's own words come from the answer's problems. */
   readonly listNotice = computed(() => {
     const unreadable = this.rows().filter((r) => r.offer?.stage === 'plan-unreadable');
@@ -216,7 +216,7 @@ export class SdlcHomeViewModel {
     const s = this.scan();
     if (!s?.marker) return '';
     if (s.layout === 'single-repo') return `${plural(this.systems().length, 'system', 'systems')} · this repository is its own master`;
-    return `.ai-sdlc.json in ${masterRepo(s) ?? 'the master repo'} · ${plural(this.systems().length, 'system', 'systems')}`;
+    return `.hoshin.json in ${masterRepo(s) ?? 'the master repo'} · ${plural(this.systems().length, 'system', 'systems')}`;
   });
 
   readonly state = computed<HomeState>(() => {
@@ -508,7 +508,7 @@ export class SdlcHomeViewModel {
         },
       },
       {
-        label: 'Read .ai-sdlc.json',
+        label: 'Read .hoshin.json',
         run: async () => {
           const s = found.scan;
           if (s?.marker) return plural(Object.keys(s.marker.systems).length, 'system', 'systems');
@@ -544,7 +544,7 @@ export class SdlcHomeViewModel {
       return;
     }
     if (scan.marker_error !== null) {
-      this.toasts.error(`.ai-sdlc.json could not be read: ${scan.marker_error}`);
+      this.toasts.error(`.hoshin.json could not be read: ${scan.marker_error}`);
       return;
     }
     let contexts = found.contexts;
@@ -1036,7 +1036,7 @@ export class SdlcHomeViewModel {
       return null;
     }
     if (!isSetUp(after)) {
-      this.toasts.error('Setup finished, but .ai-sdlc.json is not committed in the master repo.');
+      this.toasts.error('Setup finished, but .hoshin.json is not committed in the master repo.');
       return null;
     }
     return after;
@@ -1291,7 +1291,7 @@ export class SdlcHomeViewModel {
     let lastRuns: Record<string, number> = {};
     let readFailed = false;
     const repo = masterRepo(scan);
-    let readiness: Readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
+    let readiness: Readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the hoshin plugin' };
     try {
       readiness = await this.transport.sdlcPluginReadiness(w.folder);
     } catch {

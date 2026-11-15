@@ -7,7 +7,7 @@ const file = (path: string, over: Partial<RepoFile> = {}): RepoFile => ({
 const GROUPS: RepoFileGroup[] = [
   {
     repo: 'commerce-docs',
-    branch: 'change/2026-10-19-ai-sdlc-part-2',
+    branch: 'change/2026-10-19-hoshin-part-2',
     base: 'main',
     expanded: true, untied: null, untiedShown: false,
     files: [
@@ -18,7 +18,7 @@ const GROUPS: RepoFileGroup[] = [
       file('f.md', { status: 'untracked', uncommitted: true }),
     ],
   },
-  { repo: 'commerce-core', branch: 'change/2026-10-19-ai-sdlc-part-2', base: null, expanded: false, untied: null, untiedShown: false, files: [file('src/deep/x.rs'), file('.github/ci.yml')] },
+  { repo: 'commerce-core', branch: 'change/2026-10-19-hoshin-part-2', base: null, expanded: false, untied: null, untiedShown: false, files: [file('src/deep/x.rs'), file('.github/ci.yml')] },
 ];
 const text = (e: Element | null) => (e?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
@@ -35,7 +35,7 @@ describe('RepoFileList', () => {
     const { container } = await render(RepoFileList, { groups: GROUPS, selected: null });
     const branches = Array.from(container.querySelectorAll('[data-branch]'));
     expect(branches.map((b) => text(b))).toEqual(['change/… → main', 'change/…']);
-    expect(branches.map((b) => b.getAttribute('title'))).toEqual(['change/2026-10-19-ai-sdlc-part-2 → main', 'change/2026-10-19-ai-sdlc-part-2']);
+    expect(branches.map((b) => b.getAttribute('title'))).toEqual(['change/2026-10-19-hoshin-part-2 → main', 'change/2026-10-19-hoshin-part-2']);
   });
 
   it('names each status letter, marks uncommitted files and shows line counts or bin', async () => {

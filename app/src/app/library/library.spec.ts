@@ -21,7 +21,7 @@ describe('the library footer and the version line', () => {
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(container.querySelectorAll('.wb-statusbar')).toHaveLength(1);
-      expect(footerLast(container)).toBe(`Workbench ${appVersion} · ai-sdlc 1.3.0`);
+      expect(footerLast(container)).toBe(`Workbench ${appVersion} · hoshin 1.0.0`);
     });
   });
 
@@ -35,24 +35,24 @@ describe('the library footer and the version line', () => {
       expect(container.querySelector<HTMLElement>('.wb-statusbar__version')).not.toBeNull();
     });
     container.querySelector<HTMLElement>('.wb-statusbar__version')!.click();
-    expect(copy).toHaveBeenCalledWith(`Kata Workbench ${appVersion}, ai-sdlc 1.3.0`);
+    expect(copy).toHaveBeenCalledWith(`Kata Workbench ${appVersion}, hoshin 1.0.0`);
   });
 
-  it('with ai-sdlc not installed the footer reads not found and the library shows no AI-SDLC readiness message', async () => {
+  it('with hoshin not installed the footer reads not found and the library shows no AI-SDLC readiness message', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'appVersions').mockResolvedValue({
       workbench: '3.3.0',
       hoshin: { kind: 'notFound' },
-      line: 'Workbench 3.3.0 · ai-sdlc: not found',
-      copy: 'Kata Workbench 3.3.0, ai-sdlc: not found',
+      line: 'Workbench 3.3.0 · hoshin: not found',
+      copy: 'Kata Workbench 3.3.0, hoshin: not found',
     });
     const { fixture, container } = await render(Library, {}, [provideRouter([]), { provide: KataTransport, useValue: transport }]);
     await TestBed.inject(VersionsStore).refresh();
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(footerLast(container)).toBe('Workbench 3.3.0 · ai-sdlc: not found');
+      expect(footerLast(container)).toBe('Workbench 3.3.0 · hoshin: not found');
     });
-    expect(container.textContent).not.toMatch(/ai-sdlc plugin was not found|AI-SDLC mode needs/i);
+    expect(container.textContent).not.toMatch(/hoshin plugin was not found|AI-SDLC mode needs/i);
   });
 
   it('the shell draws no line on the library route, so the page footer is the only one', async () => {
@@ -62,7 +62,7 @@ describe('the library footer and the version line', () => {
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(container.querySelector('.wb-statusbar')).not.toBeNull();
-      expect(footerLast(container)).toBe(`Workbench ${appVersion} · ai-sdlc 1.3.0`);
+      expect(footerLast(container)).toBe(`Workbench ${appVersion} · hoshin 1.0.0`);
     });
     expect(container.querySelectorAll('.wb-statusbar')).toHaveLength(1);
   });

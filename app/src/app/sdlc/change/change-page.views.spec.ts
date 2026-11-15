@@ -638,8 +638,8 @@ describe('ChangePage: where the change lives', () => {
   });
 
   it.each([
-    ['the plugin is too old', NOT_PLACED + 'the installed ai-sdlc plugin is too old: 1.0.0 is below 1.1.0'],
-    ['the plugin fails', NOT_PLACED + 'the ai-sdlc program could not run: boom'],
+    ['the plugin is too old', NOT_PLACED + 'the installed hoshin plugin is too old: 0.9.0 is below 1.0.0'],
+    ['the plugin fails', NOT_PLACED + 'the hoshin program could not run: boom'],
     ['the plugin times out', NOT_PLACED + 'timed out'],
     ['the plugin does not list a rejected change', null],
   ])('change_page_shows_the_resolution_error_and_nothing_else: %s', async (_row, message) => {

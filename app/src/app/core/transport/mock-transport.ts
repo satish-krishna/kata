@@ -199,7 +199,7 @@ export class MockTransport extends KataTransport {
 
   private launchBuildRun(change: ChangeRef, repo: string, onEnd: () => void, instructions?: string): string {
     const name = repo === 'review' ? `sdlc-build-${change.change}-review` : `sdlc-build-${repo}`;
-    const task = instructions === undefined ? seedSpec().task : `Use the ai-sdlc build skill.\n\nInstructions from the engineer for this run:\n${instructions}`;
+    const task = instructions === undefined ? seedSpec().task : `Use the hoshin build skill.\n\nInstructions from the engineer for this run:\n${instructions}`;
     const spec: RunSpec = { ...seedSpec(), name, task, workdir: `${MOCK_WORKSPACE_FOLDER}/${repo}` };
     const id = String(++this.nextRun);
     const { run, head } = this.begin(spec, `build:${change.system}/${change.change}`);
@@ -455,7 +455,7 @@ export class MockTransport extends KataTransport {
   sdlcReviewRecord(ref: ChangeRef): Promise<ReviewRecord | null> { return settled(() => { this.sdlc.homeOf(ref.change); return this.sdlc.reviewRecord(); }); }
   sdlcBuildHeads(ref: ChangeRef, repos: string[]): Promise<Record<string, string>> { return settled(() => { this.sdlc.homeOf(ref.change); return this.sdlc.heads(repos); }); }
   sdlcPluginReadiness(_workdir: string | null): Promise<Readiness> {
-    return Promise.resolve({ kind: 'ready', plugin: { dir: '~/.claude/plugins/ai-sdlc', version: MOCK_PLUGIN_VERSION, layouts: MOCK_LAYOUTS }, gh: 'present' });
+    return Promise.resolve({ kind: 'ready', plugin: { dir: '~/.claude/plugins/hoshin', version: MOCK_PLUGIN_VERSION, layouts: MOCK_LAYOUTS }, gh: 'present' });
   }
   sdlcChangeRepos(ref: ChangeRef): Promise<ChangeRepo[]> { return settled(() => this.sdlc.changeRepos(ref.workspace, ref.change)); }
   sdlcMissingChangeBranches(ref: ChangeRef): Promise<string[]> { return settled(() => { this.sdlc.homeOf(ref.change); return []; }); }
@@ -593,7 +593,7 @@ export class MockTransport extends KataTransport {
       workdir: change.workspace,
       permissions: { ...base.permissions, mode },
       leash: { ...base.leash, timeout_secs: form.timeoutSecs, max_turns: null, max_budget_usd: null },
-      given: { ...(form.given ?? { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [] }), required_plugins: ['ai-sdlc'], build: false },
+      given: { ...(form.given ?? { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [] }), required_plugins: ['hoshin'], build: false },
     };
   }
   async sdlcPreviewBuild(change: ChangeRef, which: BuildPreviewKind, repo: string | null, form: StartForm): Promise<BuildSection[]> {

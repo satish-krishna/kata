@@ -69,7 +69,7 @@ describe('SdlcHome', () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull();
     const outside = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter((b) => !b.closest('app-sdlc-session'));
     expect(outside.length).toBeGreaterThan(0);
-    expect(outside.filter((b) => !b.disabled).map((b) => b.textContent!.trim() || b.getAttribute('aria-label'))).toEqual(['ai-sdlc', 'acme-commerce', 'AI-SDLC settings']);
+    expect(outside.filter((b) => !b.disabled).map((b) => b.textContent!.trim() || b.getAttribute('aria-label'))).toEqual(['AI-SDLC', 'acme-commerce', 'AI-SDLC settings']);
   });
 
   it('is a blocking empty state naming where kata looked, with every workspace action withheld, when the plugin is missing', async () => {
@@ -77,7 +77,7 @@ describe('SdlcHome', () => {
     vi.spyOn(transport, 'catalog').mockResolvedValue(seedCatalog);
     const { container } = await mount(transport);
     const text = container.textContent!.replace(/\s+/g, ' ');
-    expect(text).toContain('The ai-sdlc plugin was not found');
+    expect(text).toContain('The hoshin plugin was not found');
     expect(text).toContain('~/.claude');
     expect(text).toContain('the .claude folder of the workspace');
     expect(text).toContain('installed marketplace plugins');
@@ -95,7 +95,7 @@ describe('SdlcHome', () => {
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([]);
     vi.spyOn(transport, 'catalog').mockResolvedValue([
       ...seedCatalog,
-      { kind: 'plugin', name: 'ai-sdlc', description: '', source: 'user', path: '', provides: [], mcp_servers: [] },
+      { kind: 'plugin', name: 'hoshin', description: '', source: 'user', path: '', provides: [], mcp_servers: [] },
     ]);
     const { container } = await mount(transport);
     expect(container.textContent).toContain('No workspace yet');

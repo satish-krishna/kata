@@ -56,8 +56,8 @@
       @case ('plugin-missing') {
         <main class="k-home__state">
           <section class="k-state" aria-labelledby="state-title">
-            <h1 id="state-title" class="k-state__title">The ai-sdlc plugin was not found</h1>
-            <p class="k-state__body">Kata looked for a plugin named ai-sdlc in these places:</p>
+            <h1 id="state-title" class="k-state__title">The hoshin plugin was not found</h1>
+            <p class="k-state__body">Kata looked for a plugin named hoshin in these places:</p>
             <ul class="k-state__list">
               <li>~/.claude</li>
               <li>the .claude folder of the workspace</li>
@@ -96,7 +96,7 @@
           <section class="k-state" aria-labelledby="state-title">
             <h1 id="state-title" class="k-state__title">No master repo found</h1>
             <p class="k-state__body">
-              The master repo is the one that holds <code class="k-mono">.ai-sdlc.json</code>. None of the repos in
+              The master repo is the one that holds <code class="k-mono">.hoshin.json</code>. None of the repos in
               <code class="k-mono">{{ vm.current()?.folder }}</code> has it any more.
             </p>
             <button hlmBtn variant="secondary" type="button" (click)="vm.askRemove()">Remove from list…</button>
@@ -107,7 +107,7 @@
         <main class="k-home__state">
           <section class="k-state" aria-labelledby="state-title">
             <h1 id="state-title" class="k-state__title">More than one master repo</h1>
-            <p class="k-state__body">A workspace has exactly one <code class="k-mono">.ai-sdlc.json</code>. These repos each have one:</p>
+            <p class="k-state__body">A workspace has exactly one <code class="k-mono">.hoshin.json</code>. These repos each have one:</p>
             <ul class="k-state__list">
               @for (m of vm.masters(); track m) {
                 <li>{{ m }}</li>
@@ -120,7 +120,7 @@
       @case ('marker-error') {
         <main class="k-home__state">
           <section class="k-state" aria-labelledby="state-title">
-            <h1 id="state-title" class="k-state__title">.ai-sdlc.json could not be read</h1>
+            <h1 id="state-title" class="k-state__title">.hoshin.json could not be read</h1>
             <p class="k-state__body">{{ vm.scan()?.marker_error }}</p>
           </section>
         </main>
@@ -130,7 +130,7 @@
           <section class="k-state" aria-labelledby="state-title">
             <h1 id="state-title" class="k-state__title">This workspace is not set up</h1>
             <p class="k-state__body">
-              <code class="k-mono">.ai-sdlc.json</code> is not committed in the master repo. A cancelled setup leaves it uncommitted.
+              <code class="k-mono">.hoshin.json</code> is not committed in the master repo. A cancelled setup leaves it uncommitted.
             </p>
             <button hlmBtn variant="primary" type="button" [disabled]="vm.locked()" (click)="vm.addSystem()">Run setup</button>
           </section>
@@ -167,7 +167,7 @@
             @for (old of vm.oldChecks(); track old.system) {
               <section class="k-oldchecks" data-testid="old-checks" role="status" [attr.aria-label]="'Old checks for ' + old.system">
                 <p>
-                  These checks no longer run. Checks are now team settings in the master repository; check them in with the ai-sdlc setup skill's
+                  These checks no longer run. Checks are now team settings in the master repository; check them in with the hoshin setup skill's
                   <code class="k-mono">--hooks</code>.
                 </p>
                 <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.dismissOldChecks(old.system)">Dismiss</button>

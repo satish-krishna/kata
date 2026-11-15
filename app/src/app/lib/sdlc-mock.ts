@@ -105,7 +105,7 @@ import { PENDING_PERMISSION, type ScriptStep } from './mock';
 import { masterPath } from './sdlc-workspace';
 
 export const MOCK_WORKSPACE_FOLDER = DEMO_WORKSPACE_FOLDER;
-/** A folder the demo can add that has repos but no committed `.ai-sdlc.json`, so adding it runs setup. */
+/** A folder the demo can add that has repos but no committed `.hoshin.json`, so adding it runs setup. */
 export const MOCK_SETUP_FOLDER = DEMO_SETUP_FOLDER;
 export const MOCK_MASTER = 'commerce-docs';
 /** The single-repo repository of `?demo=single-repo` and `?demo=single-repo-root`: its folder, its one system and the change it has open in a copy. */
@@ -140,8 +140,8 @@ export const MOCK_COPY_CHANGE = '2026-11-02-copy-only';
 /** A drafted fix that lives only in its own copy. */
 export const MOCK_COPY_FIX = '2026-11-02-copy-fix';
 export const MOCK_DONE_CHANGE = '2026-10-18-photo-limits-shipped';
-/** The version the demo's `ai-sdlc` plugin reports. */
-export const MOCK_PLUGIN_VERSION = '1.1.0';
+/** The version the demo's `hoshin` plugin reports. */
+export const MOCK_PLUGIN_VERSION = '1.0.0';
 /** A fix awaiting acceptance: the light track's three documents are drafted. */
 export const MOCK_FIX_CHANGE = '2026-10-22-photo-retry-fix';
 /** A fix that was rejected, so it is closed. */
@@ -156,7 +156,7 @@ const plugin = (name: string, description: string, provides: string[] = []): Cat
 
 /** Plugins the catalog finds for the demo workspace, so the AI-SDLC screens render in a plain browser. */
 export const MOCK_SDLC_CATALOG: CatalogEntry[] = [
-  plugin('ai-sdlc', 'intent, spec, plan and build skills for a change', ['skill:build', 'skill:intent', 'skill:spec', 'skill:plan', 'skill:context', 'skill:setup']),
+  plugin('hoshin', 'intent, spec, plan and build skills for a change', ['skill:build', 'skill:intent', 'skill:spec', 'skill:plan', 'skill:context', 'skill:setup']),
   plugin('superpowers', 'planning and review skills'),
 ];
 
@@ -208,7 +208,7 @@ export const sdlcTriageScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
   ],
   mid: [
     // The fix skill starts the change through the plugin; its answer names the change, which is how the triage's change is found.
-    { delay: 300, ev: { type: 'tool.use', name: 'Bash', input_summary: `node ai-sdlc.ts change start --json --system commerce --change ${MOCK_STARTED_FIX} --type fix --scope commerce`, id: 'toolu_t1s', input: { command: `node ai-sdlc.ts change start --json --system commerce --change ${MOCK_STARTED_FIX} --type fix --scope commerce` } } },
+    { delay: 300, ev: { type: 'tool.use', name: 'Bash', input_summary: `node hoshin.ts change start --json --system commerce --change ${MOCK_STARTED_FIX} --type fix --scope commerce`, id: 'toolu_t1s', input: { command: `node hoshin.ts change start --json --system commerce --change ${MOCK_STARTED_FIX} --type fix --scope commerce` } } },
     { delay: 300, ev: { type: 'tool.result', name: 'Bash', ok: true, summary: 'change started', id: 'toolu_t1s', output: JSON.stringify({ event: 'change.start', system: 'commerce', change: MOCK_STARTED_FIX, outcome: 'passed', details: { branch: `fix/${MOCK_STARTED_FIX}`, created: true } }) } },
     { delay: 300, ev: { type: 'tool.use', name: 'Write', input_summary: 'commerce/2026-10-24-price-flag-fix/intent.md', id: 'toolu_t2', input: { file_path: 'commerce/2026-10-24-price-flag-fix/intent.md' } } },
     { delay: 400, ev: { type: 'tool.result', name: 'Write', ok: true, summary: 'intent.md written', id: 'toolu_t2', output: 'ok' } },
@@ -230,8 +230,8 @@ export const sdlcSetupScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
     ] } },
   ],
   mid: [
-    { delay: 300, ev: { type: 'tool.use', name: 'Write', input_summary: '.ai-sdlc.json', id: 'toolu_u2', input: { file_path: 'billing-intent/.ai-sdlc.json' } } },
-    { delay: 400, ev: { type: 'tool.result', name: 'Write', ok: true, summary: '.ai-sdlc.json written', id: 'toolu_u2', output: 'ok' } },
+    { delay: 300, ev: { type: 'tool.use', name: 'Write', input_summary: '.hoshin.json', id: 'toolu_u2', input: { file_path: 'billing-intent/.hoshin.json' } } },
+    { delay: 400, ev: { type: 'tool.result', name: 'Write', ok: true, summary: '.hoshin.json written', id: 'toolu_u2', output: 'ok' } },
     { delay: 400, ev: { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.02, duration_ms: 15000, result: 'Setup committed.' } },
   ],
 };
@@ -469,8 +469,8 @@ const DEPARTURE_TEXT = 'Reused the existing file picker instead of building a ne
 const DOC_STEMS = new Set(['intent', 'spec', 'plan']);
 
 /** The copy of the change that lives only in a copy. */
-const COPY_ONLY_PATH = `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${MOCK_COPY_CHANGE}`;
-const COPY_FIX_PATH = `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${MOCK_COPY_FIX}`;
+const COPY_ONLY_PATH = `${MOCK_WORKSPACE_FOLDER}/.hoshin/copies/${MOCK_COPY_CHANGE}`;
+const COPY_FIX_PATH = `${MOCK_WORKSPACE_FOLDER}/.hoshin/copies/${MOCK_COPY_FIX}`;
 
 /** Document text a copy holds, keyed by the copy's folder and then `<change>/<stem>`. The checkout's fixture is `DOCS`. */
 const COPY_DOCS: Record<string, Record<string, string>> = {
@@ -999,10 +999,10 @@ export class SdlcMock {
 
   /** The copy folder of a change that has one, else null. */
   private copyOf(changeName: string): string | null {
-    if (this.singleRepo() !== null) return changeName === MOCK_SINGLE_CHANGE ? `D:/.ai-sdlc/copies/${changeName}` : null;
+    if (this.singleRepo() !== null) return changeName === MOCK_SINGLE_CHANGE ? `D:/.hoshin/copies/${changeName}` : null;
     if (changeName === MOCK_COPY_CHANGE) return COPY_ONLY_PATH;
     if (changeName === MOCK_COPY_FIX) return COPY_FIX_PATH;
-    return this.copies.has(changeName) ? `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${changeName}` : null;
+    return this.copies.has(changeName) ? `${MOCK_WORKSPACE_FOLDER}/.hoshin/copies/${changeName}` : null;
   }
   /** Removal is offered for the finished change with its pull requests merged; the done demos leave it undeclared, so nothing is offered. */
   copyRemoval(changeName: string): CopyRemoval {
@@ -1136,7 +1136,7 @@ export class SdlcMock {
     this.others = [...this.others, name];
     this.changes = [change(name, doc('draft', false), doc(null), doc(null), 'intent-awaiting'), ...this.changes];
     this.docs[`${name}/intent`] = '---\nstatus: draft\n---\n# New change\n\nDrafted from the idea you gave the agent.\n';
-    return { outcome: 'started', change: name, branch: made, copy: `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${name}` };
+    return { outcome: 'started', change: name, branch: made, copy: `${MOCK_WORKSPACE_FOLDER}/.hoshin/copies/${name}` };
   }
 
   checkout(branch: string): void {
@@ -1147,7 +1147,7 @@ export class SdlcMock {
     this.current = branch;
   }
 
-  /** The demo system declares a naming setting; the patterns are the ones the ai-sdlc plugin documents. */
+  /** The demo system declares a naming setting; the patterns are the ones the hoshin plugin documents. */
   naming(): NamingState { return { kind: 'setting', branch: '{type}/{scope}-{slug}', pullRequestTitle: '{type}({scope}): {title}' }; }
   /** The plugin renames it everywhere; a change with a pull request recorded under the old name lists it to close by hand. */
   renameBranch(changeName: string, to: string): RenameOutcome {
@@ -1309,7 +1309,7 @@ export class SdlcMock {
     const finished = changeName === MOCK_DONE_CHANGE || this.rows.size >= this.plan.length;
     const output = ['running 14 tests', 'test store::keeps_the_upload ... FAILED', '', 'failures:', '    store::keeps_the_upload', '', 'test result: FAILED. 13 passed; 1 failed'].join('\n');
     const view = (repo: string, id: string): CheckView => {
-      if (this.demo === 'checks-config') return { kind: 'configBroken', output: '.ai-sdlc.json: hooks.build.finish[0]: timeout must be a whole number of seconds from 1 to 86400' };
+      if (this.demo === 'checks-config') return { kind: 'configBroken', output: '.hoshin.json: hooks.build.finish[0]: timeout must be a whole number of seconds from 1 to 86400' };
       if (!finished) return { kind: 'notRunYet' };
       if (repo === 'billing-api') return { kind: 'failedFix', id, output };
       switch (this.demo) {
@@ -1383,7 +1383,7 @@ export class SdlcMock {
       case 'done-gh':
         return { view: { kind: 'notReady', problems: ["Declaring done needs GitHub's command-line tool, gh. Install it from https://cli.github.com and reopen."] }, steps: [] };
       case 'done-cannot':
-        return { view: { kind: 'couldNotRun', message: 'ai-sdlc needs Node.js 22.18 or later; this machine has 20.11.0.' }, steps: [] };
+        return { view: { kind: 'couldNotRun', message: 'hoshin needs Node.js 22.18 or later; this machine has 20.11.0.' }, steps: [] };
       case 'done-refused':
         return {
           view: {

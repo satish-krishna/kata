@@ -135,7 +135,7 @@ describe('SdlcHomeViewModel init', () => {
     expect(vm.current()?.id).toBe('c');
   });
 
-  it('is blocked, with every workspace action withheld, when the catalog has no ai-sdlc plugin', async () => {
+  it('is blocked, with every workspace action withheld, when the catalog has no hoshin plugin', async () => {
     const { vm } = setup({ catalogHasPlugin: false });
     await vm.init();
     expect(vm.pluginMissing()).toBe(true);
@@ -146,7 +146,7 @@ describe('SdlcHomeViewModel init', () => {
   it('asks for a first workspace when there are none', async () => {
     const { vm, transport } = setup();
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([]);
-    vi.spyOn(transport, 'catalog').mockResolvedValue([...seedCatalog, { kind: 'plugin', name: 'ai-sdlc', description: '', source: 'user', path: '', provides: [], mcp_servers: [] }]);
+    vi.spyOn(transport, 'catalog').mockResolvedValue([...seedCatalog, { kind: 'plugin', name: 'hoshin', description: '', source: 'user', path: '', provides: [], mcp_servers: [] }]);
     await vm.init();
     expect(vm.state()).toBe('no-workspaces');
     expect(vm.canWork()).toBe(false);
@@ -199,7 +199,7 @@ describe('SdlcHomeViewModel add workspace', () => {
     await vm.addWorkspace();
     expect(runSteps.mock.calls[0][0]).toBe('Checking workspace');
     expect(runSteps.mock.calls[0][1].map((s) => s.label)).toEqual([
-      'Scan folder for repos', 'Find master repo', 'Read .ai-sdlc.json', 'Check context staleness', 'List changes',
+      'Scan folder for repos', 'Find master repo', 'Read .hoshin.json', 'Check context staleness', 'List changes',
     ]);
     expect(runAgent).not.toHaveBeenCalled();
     expect(vm.candidate()?.folder).toBe(NEW_FOLDER);
@@ -230,14 +230,14 @@ describe('SdlcHomeViewModel add workspace', () => {
   it('opens the leftover dialog and adds nothing when setup is cancelled', async () => {
     const { vm, transport, runAgent, addWorkspace } = setup();
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
-    vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({ new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] });
+    vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({ new_commits: [], discardable: ['.hoshin.json'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] });
     runAgent.mockResolvedValue('warning');
     await vm.init();
     vi.spyOn(transport, 'sdlcScan').mockResolvedValueOnce(
       scanOf({ master: { kind: 'one', repo: 'commerce-docs', committed: false }, marker: null }),
     );
     await vm.addWorkspace();
-    expect(vm.leftovers()?.[0].data.discardable).toEqual(['.ai-sdlc.json']);
+    expect(vm.leftovers()?.[0].data.discardable).toEqual(['.hoshin.json']);
     expect(vm.candidate()).toBeNull();
     expect(addWorkspace).not.toHaveBeenCalled();
   });
@@ -249,7 +249,7 @@ describe('SdlcHomeViewModel add workspace', () => {
     await vm.init();
     const snap = vi.spyOn(transport, 'sdlcSnapshot');
     const left = vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({
-      new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [],
+      new_commits: [], discardable: ['.hoshin.json'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [],
     });
     vi.spyOn(transport, 'sdlcScan')
       .mockResolvedValueOnce(scanOf({ master: { kind: 'none' }, master_folder: null, marker: null }))
@@ -260,7 +260,7 @@ describe('SdlcHomeViewModel add workspace', () => {
       { kind: 'workspace', master: `${NEW_FOLDER}/customer-portal` },
     ]);
     expect(left).toHaveBeenCalledWith({ kind: 'workspace', master: `${NEW_FOLDER}/commerce-docs` }, expect.anything());
-    expect(vm.leftovers()?.[0].data.discardable).toEqual(['.ai-sdlc.json']);
+    expect(vm.leftovers()?.[0].data.discardable).toEqual(['.hoshin.json']);
     expect(vm.candidate()).toBeNull();
   });
 
@@ -606,7 +606,7 @@ describe('SdlcHomeViewModel runs', () => {
     vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.0.' });
     await vm.init();
     expect(vm.lightTrack()).toBe(false);
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', plugin: { dir: '/p', version: '1.1.0', layouts: [1] }, gh: 'present' });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', plugin: { dir: '/p', version: '1.0.0', layouts: [1] }, gh: 'present' });
     await vm.selectWorkspace(vm.workspaces()[0].id);
     expect(vm.lightTrack()).toBe(true);
   });
@@ -843,9 +843,9 @@ describe('SdlcHomeViewModel plan notice (F20)', () => {
   it('says to install the plugin on the change list when a plan could not be read and the plugin is missing', async () => {
     const { vm, transport } = setup();
     withUnreadablePlan(transport);
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginMissing', message: 'Install the hoshin plugin' });
     await vm.init();
-    expect(noticeOf(vm)?.text).toBe('Install the ai-sdlc plugin to read this document');
+    expect(noticeOf(vm)?.text).toBe('Install the hoshin plugin to read this document');
     expect(noticeOf(vm)?.tone).toBe('warning');
   });
 
@@ -880,7 +880,7 @@ describe('SdlcHomeViewModel plan notice (F20)', () => {
 });
 
 describe('SdlcHomeViewModel workspace instructions', () => {
-  const lightReady: Readiness = { kind: 'ready', plugin: { dir: '/p', version: '1.1.0', layouts: [1] }, gh: 'present' };
+  const lightReady: Readiness = { kind: 'ready', plugin: { dir: '/p', version: '1.0.0', layouts: [1] }, gh: 'present' };
 
   it('reads the instructions state only when the plugin supports the light track', async () => {
     const { vm, transport } = setup();
@@ -910,7 +910,7 @@ describe('SdlcHomeViewModel workspace instructions', () => {
     expect(branches).toHaveBeenCalled();
     expect(runAgent).toHaveBeenCalledTimes(1);
     expect(specOf(runAgent).name).toBe('sdlc-setup');
-    expect(specOf(runAgent).task).toBe('Use the ai-sdlc setup skill with --instructions.');
+    expect(specOf(runAgent).task).toBe('Use the hoshin setup skill with --instructions.');
     expect(vm.instructions()).toBe('current');
   });
 
@@ -956,7 +956,7 @@ const viewOf = (change: string, text: string, readiness: Readiness): ChangeView 
   live: { runLive: false, buildStopped: false, buildLive: false },
   readiness,
 });
-const READY: Readiness = { kind: 'ready', plugin: { dir: '/p', version: '1.1.0', layouts: [1, 2] }, gh: 'present' };
+const READY: Readiness = { kind: 'ready', plugin: { dir: '/p', version: '1.0.0', layouts: [1, 2] }, gh: 'present' };
 const BLOCKED: Readiness = { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.0.' };
 /** The plugin's answer for a system with `n` changes, each labeled by the plugin with words of its own. */
 const systemViewOf = (n: number, readiness: Readiness = READY): SystemView => ({
@@ -1232,10 +1232,10 @@ describe('SdlcHomeViewModel naming at the start of a change', () => {
   });
 
   it.each([
-    ['pluginMissing', 'the ai-sdlc plugin is not installed'],
-    ['pluginTooOld', 'the system naming setting needs ai-sdlc plugin 0.14.0 or later'],
+    ['pluginMissing', 'the hoshin plugin is not installed'],
+    ['pluginTooOld', 'the system naming setting needs hoshin plugin 0.14.0 or later'],
     ['unusable', 'the naming setting cannot be used: "ticket" is not a known part of a name'],
-    ['unreadable', 'the naming setting cannot be read: .ai-sdlc.json is not committed at the base branch'],
+    ['unreadable', 'the naming setting cannot be read: .hoshin.json is not committed at the base branch'],
     ['name', 'not a usable branch name: -D'],
   ] as const)('starting a change in a system with a broken setting is refused: %s (R3.2)', async (reason, text) => {
     const { vm, transport } = await opened({ kind: 'error', reason, message: text });
@@ -1574,9 +1574,9 @@ describe('SdlcHomeViewModel open changes', () => {
 
 describe('SdlcHomeViewModel failed reads and an older plugin', () => {
   const failures = [
-    'the ai-sdlc program could not run: ai-sdlc needs Node.js 22.18 or later',
-    'the ai-sdlc program could not run: it did not finish in 60 seconds',
-    'the ai-sdlc program refused: change not found',
+    'the hoshin program could not run: hoshin needs Node.js 22.18 or later',
+    'the hoshin program could not run: it did not finish in 60 seconds',
+    'the hoshin program refused: change not found',
   ];
   for (const failure of failures) {
     it(`a failed refresh keeps the rows and shows today's message: ${failure}`, async () => {
@@ -1614,11 +1614,11 @@ describe('SdlcHomeViewModel failed reads and an older plugin', () => {
   it('a failed first stage read marks each row unread', async () => {
     const { vm, transport } = setup({ home: 'listed' });
     vi.spyOn(transport, 'sdlcHomeList').mockResolvedValue(listedOf('commerce', ['commerce'], NAMES));
-    vi.spyOn(transport, 'sdlcHomeOpen').mockRejectedValue(new Error('the ai-sdlc program refused: nope'));
+    vi.spyOn(transport, 'sdlcHomeOpen').mockRejectedValue(new Error('the hoshin program refused: nope'));
     await vm.init();
     expect(vm.rows().map((r) => r.change)).toEqual(NAMES);
     expect(vm.rows().every((r) => r.failed)).toBe(true);
-    expect(toastText()).toContain('Could not read the changes: the ai-sdlc program refused: nope');
+    expect(toastText()).toContain('Could not read the changes: the hoshin program refused: nope');
   });
 
   it('an older plugin takes today\'s path', async () => {
