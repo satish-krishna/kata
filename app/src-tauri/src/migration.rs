@@ -7,14 +7,43 @@ use kata_sdlc::hoshin::migrate::{self, MigratePlan, StepStatus};
 use kata_sdlc::hoshin::{Program, ProgramError};
 use std::path::{Path, PathBuf};
 
+/// The key of a folder's resolved form, the one way a path the program prints meets a path Kata holds: 8.3 short
+/// names, a `\\?\` prefix, a mapped drive, a junction or a symlink all name one folder in different spellings. A
+/// folder that is gone keeps its lexical key.
+pub fn resolved_key(path: &Path) -> RepoKey {
+    match std::fs::canonicalize(path) {
+        Ok(real) => RepoKey::of(&strip_verbatim(real)),
+        Err(_) => RepoKey::of(path),
+    }
+}
+
+/// `resolved_key` for a key already held: the key's normalized path is resolved again.
+pub fn resolved_held(key: &RepoKey) -> RepoKey {
+    resolved_key(Path::new(key.path()))
+}
+
+/// Removes the Windows verbatim prefix `canonicalize` adds: `\\?\C:\x` becomes `C:\x`, `\\?\UNC\h\s` becomes
+/// `\\h\s`.
+fn strip_verbatim(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        PathBuf::from(rest.to_string())
+    } else {
+        path
+    }
+}
+
 /// Why the migration of `workspace` must wait, or `None` when nothing is working under it. A run counts by its
-/// folder, a hold by its repository's folder, so a run in one of the workspace's change copies counts too.
+/// folder, a hold by its repository's folder, so a run in one of the workspace's change copies counts too. Every
+/// folder is compared by its resolved form.
 pub fn migration_blocked(
     workspace: &Path,
     live: &[LiveSummary],
     holds: &[PathBuf],
 ) -> Option<String> {
-    let root = RepoKey::of(workspace);
+    let root = resolved_key(workspace);
     let folder_name = |p: &Path| {
         p.file_name()
             .map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into())
@@ -27,14 +56,14 @@ pub fn migration_blocked(
     };
     for run in live
         .iter()
-        .filter(|r| root.contains(&RepoKey::of(&r.workdir)))
+        .filter(|r| root.contains(&resolved_key(&r.workdir)))
     {
         add(match &run.lane {
             Lane::Change { key, .. } => key.change.clone(),
             _ => folder_name(&run.workdir),
         });
     }
-    for hold in holds.iter().filter(|h| root.contains(&RepoKey::of(h))) {
+    for hold in holds.iter().filter(|h| root.contains(&resolved_key(h))) {
         add(folder_name(hold));
     }
     (!names.is_empty()).then(|| {
@@ -139,6 +168,25 @@ mod tests {
     use super::*;
     use crate::runs::RunKind;
     use kata_sdlc::holds::ChangeKey;
+
+    #[test]
+    fn a_missing_path_keeps_its_lexical_key() {
+        let gone = Path::new("D:/no/such/Folder/here");
+        assert_eq!(resolved_key(gone), RepoKey::of(gone));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn spellings_of_one_folder_resolve_to_one_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().to_path_buf();
+        let verbatim = PathBuf::from(format!(r"\\?\{}", plain.display()));
+        let shouted = PathBuf::from(plain.to_string_lossy().to_uppercase());
+        let want = resolved_key(&plain);
+        assert_eq!(resolved_key(&verbatim), want);
+        assert_eq!(resolved_key(&shouted), want);
+        assert_eq!(resolved_held(&RepoKey::of(&plain)), want);
+    }
 
     fn program() -> Program {
         Program {

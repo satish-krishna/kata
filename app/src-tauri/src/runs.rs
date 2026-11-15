@@ -1,6 +1,7 @@
 //! The table of live runs behind the Workbench's `run_spec`. Pure and generic over
 //! the child handle so tests can use a fake; the app uses `CommandChild`.
 
+use crate::migration::{resolved_held, resolved_key};
 use kata_sdlc::holds::{ChangeKey, RepoKey};
 use serde::Serialize;
 use serde_json::Value;
@@ -97,10 +98,10 @@ impl<C> RunTable<C> {
     pub fn claim(&self, workdir: &Path, lane: &Lane) -> Result<(), String> {
         let in_migrating = |folder: &RepoKey| self.migrating.iter().any(|m| m.contains(folder));
         let key_workspace = match lane {
-            Lane::Change { key, .. } => Some(&key.workspace),
+            Lane::Change { key, .. } => Some(resolved_held(&key.workspace)),
             Lane::Solo => None,
         };
-        if in_migrating(&RepoKey::of(workdir)) || key_workspace.is_some_and(in_migrating) {
+        if in_migrating(&resolved_key(workdir)) || key_workspace.is_some_and(|k| in_migrating(&k)) {
             return Err(MIGRATING.into());
         }
         if let Lane::Change { key, .. } = lane {
@@ -179,7 +180,7 @@ impl<C> RunTable<C> {
     /// already). Until `end_migrating`, `claim` refuses every run under it. The check and the mark are one
     /// decision under the caller's one lock on the table.
     pub fn begin_migrating(&mut self, workspace: &Path) -> Result<(), String> {
-        let root = RepoKey::of(workspace);
+        let root = resolved_key(workspace);
         if self.migrating.contains(&root) {
             return Err("This workspace is already being migrated.".into());
         }
@@ -191,7 +192,7 @@ impl<C> RunTable<C> {
     }
 
     pub fn end_migrating(&mut self, workspace: &Path) {
-        let root = RepoKey::of(workspace);
+        let root = resolved_key(workspace);
         self.migrating.retain(|m| *m != root);
     }
 

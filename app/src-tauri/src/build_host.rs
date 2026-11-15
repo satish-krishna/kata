@@ -818,11 +818,8 @@ impl BuildHost {
         // two locks would otherwise find the review's hold already taken.
         let taken = {
             let mut guard = self.inner.lock().unwrap();
-            if guard
-                .migrating
-                .iter()
-                .any(|m| m.contains(&RepoKey::of(&place.workspace)))
-            {
+            let workspace = crate::migration::resolved_key(&place.workspace);
+            if guard.migrating.iter().any(|m| m.contains(&workspace)) {
                 return StartOutcome::Refused {
                     problems: vec![runs::MIGRATING.into()],
                 };
@@ -933,7 +930,7 @@ impl BuildHost {
     /// decision under the host's lock.
     pub fn begin_migrating(&self, workspace: &Path) -> Result<(), String> {
         let mut inner = self.inner.lock().unwrap();
-        let root = RepoKey::of(workspace);
+        let root = crate::migration::resolved_key(workspace);
         if let Some(refusal) =
             crate::migration::migration_blocked(workspace, &[], &inner.holds.repos())
         {
@@ -947,7 +944,7 @@ impl BuildHost {
     }
 
     pub fn end_migrating(&self, workspace: &Path) {
-        let root = RepoKey::of(workspace);
+        let root = crate::migration::resolved_key(workspace);
         self.inner.lock().unwrap().migrating.retain(|m| *m != root);
     }
 
@@ -1293,11 +1290,8 @@ impl BuildHost {
         // The one step that must be atomic: the first change to ask for a repository gets it.
         let taken = {
             let mut guard = self.inner.lock().unwrap();
-            if guard
-                .migrating
-                .iter()
-                .any(|m| m.contains(&RepoKey::of(&place.workspace)))
-            {
+            let workspace = crate::migration::resolved_key(&place.workspace);
+            if guard.migrating.iter().any(|m| m.contains(&workspace)) {
                 return StartOutcome::Refused {
                     problems: vec![runs::MIGRATING.into()],
                 };
