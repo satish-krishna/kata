@@ -3,7 +3,7 @@ import type { FinishedChange } from "./FinishedChange";
 import type { ListedChange } from "./ListedChange";
 
 /**
- * What the home lists for a workspace: nothing new on a plugin older than 1.3.0 (the page asks `sdlc_state`
+ * What the home lists for a workspace: nothing new where the program cannot list changes (the page asks `sdlc_state`
  * as before), else the shown system with its open and finished changes.
  */
 export type HomeList = { "kind": "legacy" } | { "kind": "listed", system: string | null, systems: Array<string>, open: Array<ListedChange>, finished: Array<FinishedChange>, finishedCount: number, canStartChange: boolean, startChangeReason: string | null, };
