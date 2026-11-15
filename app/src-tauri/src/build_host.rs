@@ -469,6 +469,9 @@ struct LiveRun {
     run_id: Option<u64>,
     /// A cancel arrived while the launch was under way.
     cancel_asked: bool,
+    /// Ends the program step the launch is in (the app's `build.start`); cancelled with the run. The
+    /// launches of the first drive of a start share the start's step token, so its Stop reaches them too.
+    token: CancelToken,
 }
 
 /// One change's build.
@@ -1382,7 +1385,7 @@ impl BuildHost {
         if let Some(build) = self.inner.lock().unwrap().builds.get_mut(key) {
             build.form = form;
         }
-        let driven = self.drive(key, Some(generation), input);
+        let driven = self.drive_in(key, Some(generation), input, Some(step.token()));
         if let Some(outcome) = driven.refusal {
             // Nothing launched for the start: it is refused as the program said, and takes nothing.
             let mut guard = self.inner.lock().unwrap();
@@ -1549,6 +1552,18 @@ impl BuildHost {
     /// with the lock released, and what they found is applied at the next step. A step of a coordinator
     /// that has been replaced since `generation` is dropped.
     fn drive(self: &Arc<Self>, key: &ChangeKey, generation: Option<u64>, first: Input) -> Driven {
+        self.drive_in(key, generation, first, None)
+    }
+
+    /// `drive`, for a start whose step is still running: `step` is the token its Stop cancels, which the
+    /// launches this call makes carry as their own.
+    fn drive_in(
+        self: &Arc<Self>,
+        key: &ChangeKey,
+        generation: Option<u64>,
+        first: Input,
+        step: Option<&CancelToken>,
+    ) -> Driven {
         let mut driven = Driven::default();
         let mut inputs = VecDeque::from([first]);
         let mut update = Update::default();
@@ -1626,6 +1641,7 @@ impl BuildHost {
                                     key: launch_key.clone(),
                                     run_id: None,
                                     cancel_asked: false,
+                                    token: step.cloned().unwrap_or_default(),
                                 },
                             );
                         }
@@ -1633,7 +1649,10 @@ impl BuildHost {
                             if let Some(run) = build.live.get_mut(instance) {
                                 match run.run_id {
                                     Some(id) => cancels.push(id),
-                                    None => run.cancel_asked = true,
+                                    None => {
+                                        run.cancel_asked = true;
+                                        run.token.cancel();
+                                    }
                                 }
                             }
                         }
@@ -1732,7 +1751,7 @@ impl BuildHost {
                         }
                         if launch_key != REVIEW && exec.place.layout == Layout::SingleRepo {
                             // One app at a time: the program starts the app just before it launches.
-                            match self.start_app(&exec, &launch_key) {
+                            match self.start_app(&exec, key, instance, &launch_key) {
                                 Ok(files) => {
                                     if !files.is_empty() {
                                         driven.uncommitted.insert(launch_key.clone(), files);
@@ -1774,7 +1793,22 @@ impl BuildHost {
 
     /// `build.start --repo <app>` for the app about to launch in a single-repo build: the uncommitted
     /// files the program named, or the outcome to give when it did not pass.
-    fn start_app(&self, exec: &Exec, app: &str) -> Result<Vec<String>, StartOutcome> {
+    fn start_app(
+        &self,
+        exec: &Exec,
+        key: &ChangeKey,
+        instance: u64,
+        app: &str,
+    ) -> Result<Vec<String>, StartOutcome> {
+        let token = self
+            .inner
+            .lock()
+            .unwrap()
+            .builds
+            .get(key)
+            .and_then(|b| b.live.get(&instance))
+            .map(|run| run.token.clone())
+            .unwrap_or_default();
         let command = [
             "run",
             "build.start",
@@ -1786,9 +1820,7 @@ impl BuildHost {
             "--repo",
             app,
         ];
-        let answer = self
-            .tools
-            .step_long(&command, &exec.place, &CancelToken::new(), None);
+        let answer = self.tools.step_long(&command, &exec.place, &token, None);
         match failure(answer.outcome, &[]) {
             Some(outcome) => Err(outcome),
             None => Ok(strings(&answer.json["details"]["uncommitted"])),
