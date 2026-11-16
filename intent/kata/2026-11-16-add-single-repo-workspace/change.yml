@@ -4,3 +4,8 @@ branch: "change/2026-11-16-add-single-repo-workspace"
 type: fix
 scope: "kata"
 base: "main"
+pullRequests:
+  - repo: "master"
+    url: "https://github.com/satish-krishna/kata/pull/88"
+    number: 88
+    pushed: "11e089034fc04be8f39d844f2fdbe8fb8a86631c"
