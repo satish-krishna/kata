@@ -67,6 +67,22 @@ describe('AddWorkspaceDialog', () => {
     expect(button('Add workspace')).toBeUndefined();
   });
 
+  it('offers Add workspace for a single-repo repository, which lists no sibling repos', async () => {
+    await render(AddWorkspaceDialog, {
+      candidate: candidate({
+        layout: 'single-repo',
+        repos: [],
+        no_repositories: false,
+        master: { kind: 'one', repo: 'kata', committed: true },
+        marker: { version: 1, systems: { kata: { repos: ['kata'] } } },
+      }),
+    });
+    await settle();
+    expect(text()).toContain('kata');
+    expect(text()).not.toContain('No git repositories found');
+    expect(button('Add workspace')).toBeDefined();
+  });
+
   it('lists every marker when more than one repo holds .hoshin.json and offers no Add', async () => {
     await render(AddWorkspaceDialog, { candidate: candidate({ master: { kind: 'many', repos: ['intent-a', 'intent-b'] } }) });
     await settle();
