@@ -124,7 +124,7 @@ pub fn scan_single_repo(root: &Path) -> WorkspaceScan {
         master_folder: Some(root.to_string_lossy().into_owned()),
         marker,
         marker_error,
-        no_repositories: true,
+        no_repositories: false,
     }
 }
 

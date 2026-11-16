@@ -11,7 +11,7 @@ const SCAN: WorkspaceScan = {
   master: { kind: 'one', repo: 'commerce-docs', committed: true },
   marker: { version: 1, systems: { commerce: { repos: ['customer-portal', 'billing-api'] } } },
   master_folder: null,
-  marker_error: null,
+  marker_error: null, no_repositories: false,
 };
 const candidate = (scan: Partial<WorkspaceScan> = {}): WorkspaceCandidate => ({
   folder: 'D:/Work/acme-commerce',

@@ -76,7 +76,7 @@ const scanOf = (over: Partial<WorkspaceScan>): WorkspaceScan => ({
   master: { kind: 'one', repo: 'commerce-docs', committed: true },
   marker: { version: 1, systems: { commerce: { repos: ['customer-portal'] } } },
   master_folder: `${NEW_FOLDER}/commerce-docs`,
-  marker_error: null,
+  marker_error: null, no_repositories: false,
   ...over,
 });
 const specOf = (runAgent: { mock: { calls: unknown[][] } }, n = 0) => runAgent.mock.calls[n][1] as RunSpec;

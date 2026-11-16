@@ -889,7 +889,7 @@ export class SdlcMock {
         master: { kind: 'one', repo: MOCK_SINGLE_SYSTEM, committed: true },
         master_folder: folder,
         marker: { version: 2, systems: { [MOCK_SINGLE_SYSTEM]: { repos: [] } } },
-        marker_error: null,
+        marker_error: null, no_repositories: false,
       };
     }
     if (folder === MOCK_SETUP_FOLDER) {
@@ -900,7 +900,7 @@ export class SdlcMock {
         master: { kind: 'one', repo: 'billing-intent', committed: true },
         master_folder: masterPath(folder, 'billing-intent'),
         marker: this.setupDone ? { version: 1, systems: { billing: { repos: MOCK_SETUP_REPOS } } } : null,
-        marker_error: null,
+        marker_error: null, no_repositories: false,
       };
     }
     return {
@@ -910,7 +910,7 @@ export class SdlcMock {
       master: { kind: 'one', repo: MOCK_MASTER, committed: true },
       master_folder: masterPath(folder, MOCK_MASTER),
       marker: { version: 1, systems: { [MOCK_SYSTEM]: { repos: MOCK_REPOS }, ...(this.demo === 'finished-many' || this.threeSystems() ? { [MOCK_SECOND_SYSTEM]: { repos: ['commerce-core'] } } : {}), ...(this.threeSystems() ? { [MOCK_THIRD_SYSTEM]: { repos: ['commerce-core'] } } : {}) } },
-      marker_error: null,
+      marker_error: null, no_repositories: false,
     };
   }
 

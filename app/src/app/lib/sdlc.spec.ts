@@ -357,7 +357,7 @@ describe("triage and fix run-specs (T8)", () => {
     master: { kind: "one", repo: "intent-repo", committed: true },
     marker: null,
     master_folder: null,
-    marker_error: null,
+    marker_error: null, no_repositories: false,
     ...over,
   });
   // The auto setting is not in the generated type yet; the spec must not depend on the setting at all.
