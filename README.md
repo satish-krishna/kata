@@ -33,7 +33,7 @@ Before any run starts, Run opens a preview of what the run will start with: its 
 
 ## AI-SDLC mode
 
-The same app has a second mode for taking a change from an idea to open pull requests inside a workspace of git repos: one master repo holds the intents, specs, plans, build logs and reviews, and the product repos hold the code they describe. Kata drives the `hoshin` plugin through the same `kata run` path and shows what a stopped run left behind before anything is discarded. The plugin (1.1.0 or later) owns the workflow itself: it starts, renames and removes changes, commits, accepts documents, finishes builds and declares changes done. Kata starts the agent runs, shows the plugin's answers and keeps the rules a run is held to. Pick the mode on first launch and switch any time from the toolbar.
+The same app has a second mode for taking a change from an idea to open pull requests inside a workspace of git repos: one master repo holds the intents, specs, plans, build logs and reviews, and the product repos hold the code they describe. Kata drives the `hoshin` plugin through the same `kata run` path and shows what a stopped run left behind before anything is discarded. The plugin (1.0.0 or later) owns the workflow itself: it starts, renames and removes changes, commits, accepts documents, finishes builds and declares changes done. Kata starts the agent runs, shows the plugin's answers and keeps the rules a run is held to. Pick the mode on first launch and switch any time from the toolbar.
 
 The workspace home lists your workspaces (add or remove one, switch between them) and each system's changes; the AI-SDLC settings dialog holds the mode's own preferences. One change has one page, and it follows the change through these steps:
 
