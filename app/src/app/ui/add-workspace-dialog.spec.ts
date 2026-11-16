@@ -11,7 +11,7 @@ const SCAN: WorkspaceScan = {
   master: { kind: 'one', repo: 'commerce-docs', committed: true },
   marker: { version: 1, systems: { commerce: { repos: ['customer-portal', 'billing-api'] } } },
   master_folder: null,
-  marker_error: null, no_repositories: false,
+  marker_error: null, no_repositories: false, setup_offered: true,
 };
 const candidate = (scan: Partial<WorkspaceScan> = {}): WorkspaceCandidate => ({
   folder: 'D:/Work/acme-commerce',
@@ -73,6 +73,7 @@ describe('AddWorkspaceDialog', () => {
         layout: 'single-repo',
         repos: [],
         no_repositories: false,
+        setup_offered: false,
         master: { kind: 'one', repo: 'kata', committed: true },
         marker: { version: 1, systems: { kata: { repos: ['kata'] } } },
       }),

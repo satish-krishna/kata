@@ -336,7 +336,7 @@ export class MockTransport extends KataTransport {
       return new Promise((ok) => setTimeout(() => ok(this.sdlc.scan(folder)), SETUP_SCAN_MS));
     }
     // The real scan does not fail for an ai-sdlc folder: it finds no master repository, and the migration offer comes from `sdlcMigration`.
-    if (folder === MOCK_LEGACY_FOLDER && !this.migrated) return Promise.resolve({ folder, layout: 'workspace', repos: [], master: { kind: 'none' }, master_folder: null, marker: null, marker_error: null, no_repositories: true });
+    if (folder === MOCK_LEGACY_FOLDER && !this.migrated) return Promise.resolve({ folder, layout: 'workspace', repos: [], master: { kind: 'none' }, master_folder: null, marker: null, marker_error: null, no_repositories: true, setup_offered: true });
     return Promise.resolve(this.sdlc.scan(folder));
   }
   sdlcContextHealth(_folder: string, _master: string, _system: string, repo: string): Promise<ContextState> { return Promise.resolve(this.sdlc.contextHealth(repo)); }

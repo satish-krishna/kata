@@ -76,7 +76,7 @@ const scanOf = (over: Partial<WorkspaceScan>): WorkspaceScan => ({
   master: { kind: 'one', repo: 'commerce-docs', committed: true },
   marker: { version: 1, systems: { commerce: { repos: ['customer-portal'] } } },
   master_folder: `${NEW_FOLDER}/commerce-docs`,
-  marker_error: null, no_repositories: false,
+  marker_error: null, no_repositories: false, setup_offered: true,
   ...over,
 });
 const specOf = (runAgent: { mock: { calls: unknown[][] } }, n = 0) => runAgent.mock.calls[n][1] as RunSpec;
@@ -296,6 +296,17 @@ describe('SdlcHomeViewModel add workspace', () => {
     await vm.addWorkspace();
     expect(runAgent).not.toHaveBeenCalled();
     expect(vm.candidate()?.scan.repos).toEqual([]);
+  });
+
+  it('does not run setup for an uncommitted single-repo repository, and shows the dialog', async () => {
+    const { vm, transport, runAgent } = setup();
+    vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
+    await vm.init();
+    const scan = scanOf({ layout: 'single-repo', repos: [], no_repositories: false, setup_offered: false, master: { kind: 'one', repo: 'kata', committed: false }, master_folder: NEW_FOLDER, marker: { version: 1, systems: { kata: { repos: [] } } } });
+    vi.spyOn(transport, 'sdlcScan').mockResolvedValueOnce(scan);
+    await vm.addWorkspace();
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(vm.candidate()?.scan).toEqual(scan);
   });
 
   it('lists the markers instead of running setup when two repos hold one', async () => {
