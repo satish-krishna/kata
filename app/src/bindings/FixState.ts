@@ -2,7 +2,7 @@
 import type { FixFacts } from "./FixFacts";
 
 /**
- * What `ai-sdlc.ts fix-state --json <change folder>` prints: the row of the fix-state table (1 to 8)
+ * What `hoshin.ts fix-state --json <change folder>` prints: the row of the fix-state table (1 to 8)
  * and the facts it was decided on.
  */
 export type FixState = { 

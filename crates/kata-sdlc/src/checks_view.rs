@@ -2,8 +2,8 @@
 //! `build.finish` hooks, committed to the master's base branch and run by the plugin when a repository's
 //! build finishes; Kata runs none of them. This module only reads the plugin's ledger and hook list and
 //! names the state the page shows, in the words it shows.
-use crate::ai_sdlc::status::{Hooks, OnFailure, Status};
-use crate::ai_sdlc::{Place, Program, ProgramError};
+use crate::hoshin::status::{Hooks, OnFailure, Status};
+use crate::hoshin::{Place, Program, ProgramError};
 use crate::layout::Layout;
 use serde::Serialize;
 
@@ -191,7 +191,7 @@ pub fn for_change(
     // In the single-repo layout an app's head is the one the change's `apps` give.
     let app_heads = match place.layout {
         Layout::SingleRepo => {
-            crate::ai_sdlc::state::one(program, place, system, change)?
+            crate::hoshin::state::one(program, place, system, change)?
                 .ok_or_else(|| ProgramError::CouldNotRun {
                     message: format!("the state answer has no change {change}"),
                 })?
@@ -236,7 +236,7 @@ mod tests {
     fn program() -> Program {
         Program {
             node: "node".into(),
-            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts"),
+            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools/hoshin.ts"),
         }
     }
 
@@ -253,14 +253,14 @@ mod tests {
         fn new(with_hooks: bool) -> Fx {
             let dir = tempfile::tempdir().unwrap();
             let ws = dir.path().to_path_buf();
-            let master = testutil::repo(&ws, "ai-sdlc");
+            let master = testutil::repo(&ws, "hub");
             let marker = if with_hooks {
                 json!({"version": 1, "systems": {"demo": {"repos": ["app"]}},
                     "hooks": {"build.finish": [{"id": "unit", "run": ["node", "-v"], "repos": ["app"]}]}})
             } else {
                 json!({"version": 1, "systems": {"demo": {"repos": ["app"]}}})
             };
-            testutil::commit_file(&master, ".ai-sdlc.json", &marker.to_string(), "marker");
+            testutil::commit_file(&master, ".hoshin.json", &marker.to_string(), "marker");
             let app = testutil::repo(&ws, "app");
             let head = testutil::run(&app, &["rev-parse", "HEAD"]).unwrap();
             let fx = Fx {
@@ -297,7 +297,7 @@ mod tests {
             let folder = self
                 .master
                 .join(".git")
-                .join("ai-sdlc")
+                .join("hoshin")
                 .join(SYSTEM)
                 .join(CHANGE);
             std::fs::create_dir_all(&folder).unwrap();
@@ -462,7 +462,7 @@ mod tests {
         // Broken after the change started: the plugin will run no check until it is fixed.
         let marker = json!({"version": 1, "systems": {"demo": {"repos": ["app"]}},
             "hooks": {"build.finish": [{"id": "unit", "run": ["node", "-v"], "repos": ["app"], "timeout": "soon"}]}});
-        testutil::commit_file(&fx.master, ".ai-sdlc.json", &marker.to_string(), "broken");
+        testutil::commit_file(&fx.master, ".hoshin.json", &marker.to_string(), "broken");
         let got = fx.view();
         let CheckView::ConfigBroken { output } = &got.view else {
             panic!("{got:?}");
@@ -537,7 +537,7 @@ mod tests {
             {"id": "unit", "run": ["node", "-v"], "apps": ["engine", "workbench"]},
             {"id": "lint", "run": ["node", "-v"], "apps": ["docs"]}
         ]}});
-        testutil::commit_file(&root, ".ai-sdlc.json", &marker.to_string(), "hooks");
+        testutil::commit_file(&root, ".hoshin.json", &marker.to_string(), "hooks");
         let place = Place {
             layout: crate::layout::Layout::SingleRepo,
             master: root.clone(),
@@ -561,7 +561,7 @@ mod tests {
             .join(CHANGE);
         std::fs::create_dir_all(&doc).unwrap();
         std::fs::write(doc.join("intent.md"), "# Greeting\n").unwrap();
-        let state = crate::ai_sdlc::state::one(&program(), &place, "kata", CHANGE)
+        let state = crate::hoshin::state::one(&program(), &place, "kata", CHANGE)
             .unwrap()
             .unwrap();
         let head_of = |app: &str| state.apps.as_ref().unwrap()[app].head.clone().unwrap();
@@ -571,7 +571,7 @@ mod tests {
             for (k, v) in extra.as_object().unwrap() {
                 entry[k] = v.clone();
             }
-            let folder = root.join(".git").join("ai-sdlc").join("kata").join(CHANGE);
+            let folder = root.join(".git").join("hoshin").join("kata").join(CHANGE);
             std::fs::create_dir_all(&folder).unwrap();
             let ledger = json!({"version": 1, "system": "kata", "change": CHANGE, "repo": app,
                 "path": root, "runs": [entry], "gateBlocks": {}});

@@ -4,8 +4,8 @@
 //! or the repositories' heads, launching a run, cancelling one. Whatever the host reads comes back
 //! as the next input. The coordinator decides which repositories run, when a repository stops, when
 //! a round is done and when the review starts; the host only does what it is told.
-use crate::ai_sdlc::state::ChangeState;
 use crate::format::ParsedPlan;
+use crate::hoshin::state::ChangeState;
 use crate::review::ReviewCurrency;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -1056,8 +1056,8 @@ fn report_for(status: &BuildFacts, waiting: Vec<WaitingRepo>) -> StopReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_sdlc::state::RepoTasks;
     use crate::format::ParsedTask;
+    use crate::hoshin::state::RepoTasks;
     use crate::permissions::fixtures::change_state;
 
     fn none_choices() -> BuildChoices {
@@ -1109,6 +1109,8 @@ mod tests {
             covers: Vec::new(),
             supports: Vec::new(),
             sections: Vec::new(),
+            test: None,
+            compile: None,
             text: format!("### {}", p.id),
             line: 1,
         }

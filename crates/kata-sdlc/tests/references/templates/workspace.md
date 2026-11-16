@@ -1,8 +1,8 @@
-# ai-sdlc workspace
+# hoshin workspace
 
-This folder is a multi-repository workspace: several git repositories checked out side by side. `<master>` is the master repository; it holds the ai-sdlc documents for the systems below, and its `.ai-sdlc.json` says which repositories belong to which system. The master repository and the repositories in the table are part of these systems; any other repository in this folder is not, and these instructions do not apply to work in it.
+This folder is a multi-repository workspace: several git repositories checked out side by side. `<master>` is the master repository; it holds the hoshin documents for the systems below, and its `.hoshin.json` says which repositories belong to which system. The master repository and the repositories in the table are part of these systems; any other repository in this folder is not, and these instructions do not apply to work in it.
 
-The ai-sdlc setup skill generates this text from `.ai-sdlc.json`. To change it, change the marker and rerun setup rather than editing it.
+The hoshin setup skill generates this text from `.hoshin.json`. To change it, change the marker and rerun setup rather than editing it.
 
 ## Systems
 
@@ -15,9 +15,9 @@ The ai-sdlc setup skill generates this text from `.ai-sdlc.json`. To change it, 
 Before writing a spec, a design, a plan, or a proposal that changes how one of these systems behaves:
 
 1. Work out which system and which repositories the work touches, from the table above.
-2. Read the context file of every repository it touches, `<master>/intent/<system>/context/<repo>.md`. It describes what the repository does in business terms. If it does not exist yet, say so; the ai-sdlc context skill builds it.
+2. Read the context file of every repository it touches, `<master>/intent/<system>/context/<repo>.md`. It describes what the repository does in business terms. If it does not exist yet, say so; the hoshin context skill builds it.
 3. Read the system's `policies.md` for the policy areas and their owners.
-4. Before relying on a context file, compare its `source_commit` with the repository: run `git rev-list --count <source_commit>..HEAD -- . ":(exclude)intent" ":(exclude).ai-sdlc.json"` in that repository. If the count is above zero, or the command fails because the commit no longer exists, say that the file may be out of date; the ai-sdlc context skill refreshes it.
+4. Before relying on a context file, compare its `source_commit` with the repository: run `git rev-list --count <source_commit>..HEAD -- . ":(exclude)intent" ":(exclude).hoshin.json"` in that repository. If the count is above zero, or the command fails because the commit no longer exists, say that the file may be out of date; the hoshin context skill refreshes it.
 
 How to read a context file:
 
@@ -30,6 +30,6 @@ Each repository's own instructions govern code inside it: its `CLAUDE.md`, `CONT
 
 ## How changes are made
 
-Not sure which track a request takes? The ai-sdlc `start` skill takes a brief description of anything, from a feature to a bug, and routes it. A bug fix or a small enhancement that stays in one repository, changes no business rule in its context file and fits in three plan tasks takes the light track: the ai-sdlc `fix` skill writes and accepts its documents in one run, then `build` and `review` run as for any change. Any other change goes through the ai-sdlc skills in order, each with its own document under `<master>/intent/<system>/<change>/`: `intent` (the product owner's what and why), `spec`, `plan`, then `build` from inside each repository the plan names.
+Not sure which track a request takes? The hoshin `start` skill takes a brief description of anything, from a feature to a bug, and routes it. A bug fix or a small enhancement that stays in one repository, changes no business rule in its context file and fits in three plan tasks takes the light track: the hoshin `fix` skill writes and accepts its documents in one run, then `build` and `review` run as for any change. Any other change goes through the hoshin skills in order, each with its own document under `<master>/intent/<system>/<change>/`: `intent` (the product owner's what and why), `spec`, `plan`, then `build` from inside each repository the plan names.
 
 A session given a plan task (a brief naming a task `T<n>` and the scenarios it covers) works from that brief: the brief is its scope, and it does not reread every context file.

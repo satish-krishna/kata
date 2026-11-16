@@ -34,6 +34,9 @@ import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { MigratePlan } from '@bindings/MigratePlan';
+import type { MigrationOffer } from '@bindings/MigrationOffer';
+import type { RedRecord } from '@bindings/RedRecord';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { Part } from '@bindings/Part';
@@ -58,7 +61,7 @@ import type { OpenRun } from '@bindings/OpenRun';
 import type { Opens } from '@bindings/Opens';
 import type { RunningEntry } from '@bindings/RunningEntry';
 import type { RunRef } from '@bindings/RunRef';
-import { MOCK_LAYOUTS, MOCK_MASTER, MOCK_NOT_SWITCHABLE, MOCK_PLUGIN_VERSION, MOCK_SINGLE_FOLDER, MOCK_SINGLE_WORKSPACE, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_LEGACY_FOLDER, mockLegacyOffer, mockLocalOffer, mockMigrationPlan, MOCK_LAYOUTS, MOCK_MASTER, MOCK_NOT_SWITCHABLE, MOCK_PLUGIN_VERSION, MOCK_SINGLE_FOLDER, MOCK_SINGLE_WORKSPACE, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import type { AppTurn } from '@bindings/AppTurn';
 import type { BuildState } from '@bindings/BuildState';
@@ -146,6 +149,8 @@ export class MockTransport extends KataTransport {
   /** `?demo=build-long` (browser only) widens the build demo to three repositories, seventeen tasks, many files and findings, so every area of the build page overflows at 1280 by 800. */
   private readonly sdlc = new SdlcMock(demoParam() === 'build-long', demoParam(), earlierParam());
   private setupScanned = false;
+  /** Set once the legacy fixture folder is migrated; from then on it opens like any workspace. */
+  private migrated = false;
   /** The build layout a browser session has saved; a fresh session starts with none. */
   private buildLayout: Record<string, unknown> = {};
 
@@ -199,7 +204,7 @@ export class MockTransport extends KataTransport {
 
   private launchBuildRun(change: ChangeRef, repo: string, onEnd: () => void, instructions?: string): string {
     const name = repo === 'review' ? `sdlc-build-${change.change}-review` : `sdlc-build-${repo}`;
-    const task = instructions === undefined ? seedSpec().task : `Use the ai-sdlc build skill.\n\nInstructions from the engineer for this run:\n${instructions}`;
+    const task = instructions === undefined ? seedSpec().task : `Use the hoshin build skill.\n\nInstructions from the engineer for this run:\n${instructions}`;
     const spec: RunSpec = { ...seedSpec(), name, task, workdir: `${MOCK_WORKSPACE_FOLDER}/${repo}` };
     const id = String(++this.nextRun);
     const { run, head } = this.begin(spec, `build:${change.system}/${change.change}`);
@@ -291,7 +296,7 @@ export class MockTransport extends KataTransport {
   }
 
   catalog(workdir: string | null): Promise<CatalogEntry[]> {
-    return Promise.resolve(workdir === MOCK_WORKSPACE_FOLDER || workdir === MOCK_SINGLE_FOLDER || workdir === MOCK_SINGLE_WORKSPACE ? [...seedCatalog, ...MOCK_SDLC_CATALOG] : seedCatalog);
+    return Promise.resolve(workdir === MOCK_WORKSPACE_FOLDER || workdir === MOCK_SINGLE_FOLDER || workdir === MOCK_SINGLE_WORKSPACE || workdir === MOCK_LEGACY_FOLDER ? [...seedCatalog, ...MOCK_SDLC_CATALOG] : seedCatalog);
   }
   listRuns(): Promise<RunRecord[]> { return Promise.resolve([...history, ...this.sdlc.sessionRecords()]); }
   loadRun(id: string): Promise<RunDetail> {
@@ -330,6 +335,8 @@ export class MockTransport extends KataTransport {
       this.setupScanned = true;
       return new Promise((ok) => setTimeout(() => ok(this.sdlc.scan(folder)), SETUP_SCAN_MS));
     }
+    // The real scan does not fail for an ai-sdlc folder: it finds no master repository, and the migration offer comes from `sdlcMigration`.
+    if (folder === MOCK_LEGACY_FOLDER && !this.migrated) return Promise.resolve({ folder, layout: 'workspace', repos: [], master: { kind: 'none' }, master_folder: null, marker: null, marker_error: null });
     return Promise.resolve(this.sdlc.scan(folder));
   }
   sdlcContextHealth(_folder: string, _master: string, _system: string, repo: string): Promise<ContextState> { return Promise.resolve(this.sdlc.contextHealth(repo)); }
@@ -345,7 +352,7 @@ export class MockTransport extends KataTransport {
   }
   /** A test or a demo changes what the workspace holds for a change; the next `sdlcChangeState` and `sdlcState` show it. */
   patchChange(change: string, patch: Partial<ChangeInfo>): void { this.sdlc.patch(change, patch); }
-  /** Scripted from the home fixtures; `?demo=old-plugin` answers `legacy`, `?demo=finished-many` adds a second system and sixty finished changes. */
+  /** Scripted from the home fixtures; `?demo=finished-many` adds a second system and sixty finished changes. */
   async sdlcHomeList(_workspaceId: string, systems: string[]): Promise<HomeList> { return this.sdlc.homeList(systems, await this.sdlcPluginReadiness(null)); }
   async sdlcHomePick(_workspaceId: string, system: string, systems: string[]): Promise<HomeList> { return this.sdlc.homePick(system, systems, await this.sdlcPluginReadiness(null)); }
   async sdlcHomeOpen(folder: string, system: string, shown: string[], trigger: Refresh): Promise<HomeOpen> {
@@ -448,21 +455,34 @@ export class MockTransport extends KataTransport {
   /** The scripted run has no process to wait for. */
   sdlcWaitRunExit(_runId: string, _timeoutMs: number): Promise<boolean> { return Promise.resolve(true); }
   sdlcBuildStatus(ref: ChangeRef): Promise<BuildStatus> { return settled(() => this.sdlc.buildStatus(ref.change)); }
+  /** T2 of the build demo and of the finished change has a recorded test that passed before the production code, with 20 lines of output; any other task has no record on this machine. */
+  sdlcRedRecord(ref: ChangeRef, _repo: string, task: string): Promise<RedRecord> {
+    if ((ref.change !== MOCK_BUILD_CHANGE && ref.change !== MOCK_DONE_CHANGE) || task !== 'T2') {
+      return Promise.resolve({ observed: false, reason: `no red recorded for ${task} on this machine`, stored: null });
+    }
+    const cases = ['opens the file dialog', 'lists the picked photos', 'keeps the order of the picked photos', 'shows a thumbnail for each photo', 'removes a photo', 'refuses a file that is not an image', 'refuses an eleventh photo', 'says how many photos are left', 'disables Add at ten photos', 'keeps the photos when the form is saved'];
+    const output = ['> customer-portal@2.8.0 test', '> vitest run photo-picker', '', ' RUN  v3.2.4 D:/Work/acme-commerce/customer-portal', '', ...cases.map((c) => ` ✓ photo picker > ${c}`), '', ' Test Files  1 passed (1)', '      Tests  10 passed (10)', '   Start at  10:42:07', '   Duration  1.84s'].join('\n');
+    return Promise.resolve({ observed: false, reason: 'the test passed at 3f2a9c1, before the production code', stored: { commit: '3f2a9c1e0b7d3c5a8e6f1b2d4c7a9e0f3b5d8c1a', outcome: 'passed', output } });
+  }
   sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }, appTurn?: AppTurn | null): Promise<RepoBoard[]> { return Promise.resolve(mockBoard(repos, status, going, stopped, appTurn ?? null)); }
+  /** Asked for every folder the home opens, as the backend is; only the legacy fixture folder has anything to migrate. */
+  sdlcMigration(folder: string): Promise<MigrationOffer | null> {
+    if (folder === MOCK_LEGACY_FOLDER && !this.migrated) return Promise.resolve(mockLegacyOffer());
+    // `?demo=migrate-local`: the demo workspace opens, with a refused offer for this machine's files.
+    if (folder === MOCK_WORKSPACE_FOLDER && demoParam() === 'migrate-local') return Promise.resolve(mockLocalOffer());
+    return Promise.resolve(null);
+  }
+  sdlcMigrate(folder: string): Promise<MigratePlan> {
+    if (folder === MOCK_LEGACY_FOLDER) { this.migrated = true; return Promise.resolve(mockMigrationPlan(true)); }
+    return Promise.reject(new Error('this folder has nothing to migrate'));
+  }
   sdlcReviewStanding(input: ReviewStandingInput): Promise<ReviewStanding> { return Promise.resolve(mockStanding(input)); }
   /** The fixture's parsed read; only the transport's own reads call it. */
   sdlcReadParsed(ref: ChangeRef, doc: string): Promise<ParsedRead | null> { return settled(() => this.sdlc.readParsed(ref.change, doc)); }
   sdlcReviewRecord(ref: ChangeRef): Promise<ReviewRecord | null> { return settled(() => { this.sdlc.homeOf(ref.change); return this.sdlc.reviewRecord(); }); }
   sdlcBuildHeads(ref: ChangeRef, repos: string[]): Promise<Record<string, string>> { return settled(() => { this.sdlc.homeOf(ref.change); return this.sdlc.heads(repos); }); }
-  /** `?demo=single-repo&plugin=<version>` gives the readiness of a machine whose plugin is older than the single-repo layout; the single-repo demos otherwise run on 1.4.0. */
   sdlcPluginReadiness(_workdir: string | null): Promise<Readiness> {
-    const demo = demoParam();
-    const single = demo === 'single-repo' || demo === 'single-repo-root';
-    const asked = single && typeof location !== 'undefined' ? new URLSearchParams(location.search).get('plugin') : null;
-    if (asked !== null && asked < '1.4.0') {
-      return Promise.resolve({ kind: 'blocked', reason: 'layoutNeedsNewerPlugin', message: `The single-repo layout needs ai-sdlc 1.4.0 or later; this machine has ${asked}.` });
-    }
-    return Promise.resolve({ kind: 'ready', plugin: { dir: '~/.claude/plugins/ai-sdlc', version: single ? '1.4.0' : MOCK_PLUGIN_VERSION, layouts: MOCK_LAYOUTS }, gh: 'present' });
+    return Promise.resolve({ kind: 'ready', plugin: { dir: '~/.claude/plugins/hoshin', version: MOCK_PLUGIN_VERSION, layouts: MOCK_LAYOUTS }, gh: 'present' });
   }
   sdlcChangeRepos(ref: ChangeRef): Promise<ChangeRepo[]> { return settled(() => this.sdlc.changeRepos(ref.workspace, ref.change)); }
   sdlcMissingChangeBranches(ref: ChangeRef): Promise<string[]> { return settled(() => { this.sdlc.homeOf(ref.change); return []; }); }
@@ -600,7 +620,7 @@ export class MockTransport extends KataTransport {
       workdir: change.workspace,
       permissions: { ...base.permissions, mode },
       leash: { ...base.leash, timeout_secs: form.timeoutSecs, max_turns: null, max_budget_usd: null },
-      given: { ...(form.given ?? { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [] }), required_plugins: ['ai-sdlc'], build: false },
+      given: { ...(form.given ?? { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [] }), required_plugins: ['hoshin'], build: false },
     };
   }
   async sdlcPreviewBuild(change: ChangeRef, which: BuildPreviewKind, repo: string | null, form: StartForm): Promise<BuildSection[]> {

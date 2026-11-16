@@ -96,7 +96,7 @@ pub fn given_for(off: &[String], workdir: &str) -> Given {
     given
 }
 
-const AI_SDLC: &str = "ai-sdlc";
+const HOSHIN: &str = "hoshin";
 const GITHUB_TOKENS: [&str; 3] = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"];
 
 /// The folder a build run of `repo` works in.
@@ -126,27 +126,30 @@ pub fn change_spec(place: &RunPlace, form: RunForm) -> RunSpec {
     let master = slashes(&place.master_path());
     let (name, task, workdir) = match &place.kind {
         RunKind::Build { .. } | RunKind::Review => {
-            let (flag, name, workdir) = match &place.kind {
+            let (mut task, name, workdir) = match &place.kind {
                 RunKind::Build { repo } => (
-                    format!("--repo {repo}"),
+                    format!(
+                        "Use the hoshin build skill for system {} on change folder {} with --repo {repo} --master {master}.",
+                        place.system, place.state.change
+                    ),
                     format!("sdlc-{}-{}-build-{repo}", place.system, place.state.change),
                     slashes(&build_workdir(place, repo)),
                 ),
                 _ => (
-                    "--review".to_string(),
+                    format!(
+                        "Use the hoshin review skill for system {} on change folder {} with --master {master}.",
+                        place.system, place.state.change
+                    ),
                     format!("sdlc-{}-{}-review", place.system, place.state.change),
                     master.clone(),
                 ),
             };
-            let mut task = format!(
-                "Use the ai-sdlc build skill for system {} on change folder {} with {flag} --master {master}.",
-                place.system, place.state.change
-            );
-            if form.continue_on_leftovers {
+            let build = matches!(place.kind, RunKind::Build { .. });
+            if build && form.continue_on_leftovers {
                 task.push_str(" The engineer has already confirmed continuing on top of the uncommitted edits the previous run left; do not ask again.");
             }
             let instructions = form.instructions.as_deref().unwrap_or("").trim();
-            if matches!(place.kind, RunKind::Build { .. }) && !instructions.is_empty() {
+            if build && !instructions.is_empty() {
                 task.push_str(&format!(
                     "\n\nInstructions from the engineer for this run:\n{instructions}"
                 ));
@@ -182,9 +185,9 @@ pub fn change_spec(place: &RunPlace, form: RunForm) -> RunSpec {
         name,
         task,
         workdir,
-        plugins: BTreeMap::from([(AI_SDLC.to_string(), PluginConfig::default())]),
+        plugins: BTreeMap::from([(HOSHIN.to_string(), PluginConfig::default())]),
         given: Some(Given {
-            required_plugins: vec![AI_SDLC.to_string()],
+            required_plugins: vec![HOSHIN.to_string()],
             build,
             ..form.given.clone().unwrap_or_default()
         }),
@@ -219,7 +222,7 @@ mod tests {
     fn form(bare: bool) -> RunForm {
         RunForm {
             name: "sdlc-commerce-2026-10-12-photos-spec".into(),
-            task: "Use the ai-sdlc spec skill.".into(),
+            task: "Use the hoshin spec skill.".into(),
             bare,
             permission_mode: PermissionMode::Auto,
             timeout_secs: 7200,
@@ -279,7 +282,7 @@ mod tests {
         let s = change_spec(&p, form(false));
         assert_eq!(
             s.task,
-            format!("Use the ai-sdlc build skill for system commerce on change folder 2026-10-12-photos with --repo app --master {COPY_A}.")
+            format!("Use the hoshin build skill for system commerce on change folder 2026-10-12-photos with --repo app --master {COPY_A}.")
         );
         assert_eq!(s.workdir, "/home/u/ws/app");
         assert_eq!(s.name, "sdlc-commerce-2026-10-12-photos-build-app");
@@ -287,11 +290,26 @@ mod tests {
         assert_eq!(s.permissions.mode, PermissionMode::Auto);
 
         let r = change_spec(&place_in_copies(RunKind::Review), form(false));
-        assert!(r
-            .task
-            .ends_with(&format!("with --review --master {COPY_A}.")));
+        assert_eq!(
+            r.task,
+            format!("Use the hoshin review skill for system commerce on change folder 2026-10-12-photos with --master {COPY_A}.")
+        );
         assert_eq!(r.workdir, COPY_A);
         assert_eq!(r.name, "sdlc-commerce-2026-10-12-photos-review");
+    }
+
+    #[test]
+    fn a_review_never_carries_the_leftovers_sentence() {
+        let f = RunForm {
+            continue_on_leftovers: true,
+            instructions: Some("x".into()),
+            ..form(false)
+        };
+        let r = change_spec(&place_in_copies(RunKind::Review), f);
+        assert_eq!(
+            r.task,
+            format!("Use the hoshin review skill for system commerce on change folder 2026-10-12-photos with --master {COPY_A}.")
+        );
     }
 
     #[test]
@@ -336,7 +354,7 @@ mod tests {
         let s = change_spec(&place_in_copies(RunKind::Document), f);
         let given = s.given.unwrap();
         assert_eq!(given.skills, vec!["brainstorming".to_string()]);
-        assert_eq!(given.required_plugins, vec!["ai-sdlc".to_string()]);
+        assert_eq!(given.required_plugins, vec!["hoshin".to_string()]);
         assert!(!given.build, "a document run is not a build run");
     }
 }

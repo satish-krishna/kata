@@ -13,4 +13,8 @@ problems: Array<Problem>,
 /**
  * The layout each build log is written in, so the Build tab can label an older one.
  */
-logLayouts: Array<LogLayout>, };
+logLayouts: Array<LogLayout>, 
+/**
+ * Whether any task of the plan has a `test`, so the Build tab shows the red verdicts at all.
+ */
+redShown: boolean, };

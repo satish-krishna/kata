@@ -1,0 +1,69 @@
+<hlm-dialog [state]="open() ? 'open' : 'closed'" [disableClose]="busy()" (stateChanged)="onState($event)">
+  <hlm-dialog-content *hlmDialogPortal="let ctx" class="[--dialog-w:60rem]">
+    @if (plan(); as p) {
+      <h2 hlmDialogTitle>{{ done() ? 'Migrated to hoshin' : 'Migrate to hoshin' }}</h2>
+      <div class="k-left max-h-[65vh] overflow-y-auto">
+        <section class="k-left__group" aria-labelledby="migrate-steps">
+          <h3 id="migrate-steps" class="k-left__head">{{ done() ? 'What was done' : 'What migrating does' }}</h3>
+          <ul class="k-left__list">
+            @for (s of p.steps; track $index) {
+              <li class="k-left__row">
+                <span class="k-status" [class]="status(s.status).tone"><span class="k-status__dot"></span>{{ status(s.status).label }}</span>
+                <span class="k-mono">
+                  {{ s.step }} {{ s.path }}
+                  @if (s.to !== null) {
+                    → {{ s.to }}
+                  }
+                </span>
+                @if (s.detail !== null) {
+                  <span class="k-left__note">{{ s.detail }}</span>
+                }
+              </li>
+            }
+          </ul>
+        </section>
+        @if (p.kept.length > 0) {
+          <section class="k-left__group" aria-labelledby="migrate-kept">
+            <h3 id="migrate-kept" class="k-left__head">Kept in the old folders</h3>
+            <ul class="k-left__list">
+              @for (k of p.kept; track $index) {
+                <li class="k-mono">{{ k }}</li>
+              }
+            </ul>
+          </section>
+        }
+        @if (p.problems.length > 0) {
+          <section class="k-left__group" aria-labelledby="migrate-problems">
+            <h3 id="migrate-problems" class="k-left__head">Problems</h3>
+            <ul class="k-left__list">
+              @for (q of p.problems; track $index) {
+                <li class="k-left__warn">{{ q }}</li>
+              }
+            </ul>
+          </section>
+        }
+        @if (done() && p.manual.length > 0) {
+          <section class="k-left__group" aria-labelledby="migrate-manual">
+            <h3 id="migrate-manual" class="k-left__head">Still to do by hand</h3>
+            <ul class="k-left__list">
+              @for (m of p.manual; track $index) {
+                <li>{{ m }}</li>
+              }
+            </ul>
+          </section>
+        }
+        @if (error(); as e) {
+          <p role="alert" class="k-left__warn">{{ e }}</p>
+        }
+      </div>
+      <hlm-dialog-footer>
+        @if (done()) {
+          <button hlmBtn variant="primary" size="sm" type="button" (click)="close.emit()">Close</button>
+        } @else {
+          <button hlmBtn variant="ghost" size="sm" type="button" [disabled]="busy()" (click)="close.emit()">Cancel</button>
+          <button hlmBtn variant="primary" size="sm" type="button" [disabled]="!canMigrate()" (click)="migrate.emit()">Migrate</button>
+        }
+      </hlm-dialog-footer>
+    }
+  </hlm-dialog-content>
+</hlm-dialog>

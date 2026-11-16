@@ -19,7 +19,7 @@ A TypeScript ViewModel may:
 - format text for display (truncate, pluralize, label);
 - map backend data onto presentational components.
 
-A rule the ai-sdlc plugin owns is asked of the plugin by the backend through `ai_sdlc` and passed on as data; it is never re-derived in Rust or TypeScript.
+A rule the hoshin plugin owns is asked of the plugin by the backend through `hoshin` and passed on as data; it is never re-derived in Rust or TypeScript.
 
 The test: if the answer is the same whatever the screen state, and a spec scenario or a context rule asserts it, it is a decision and belongs in Rust. "Most serious first" is a decision; "the low findings are folded until clicked" is arrangement.
 

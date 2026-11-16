@@ -17,7 +17,7 @@ describe('splitPath', () => {
 
 describe('branchLabel', () => {
   it('shortens a change branch and names the base it is compared with', () => {
-    expect(branchLabel('change/2026-10-19-ai-sdlc-part-2', 'main')).toEqual({ text: 'change/… → main', title: 'change/2026-10-19-ai-sdlc-part-2 → main' });
+    expect(branchLabel('change/2026-10-19-hoshin-part-2', 'main')).toEqual({ text: 'change/… → main', title: 'change/2026-10-19-hoshin-part-2 → main' });
   });
 
   it('leaves out the base until it is known', () => {

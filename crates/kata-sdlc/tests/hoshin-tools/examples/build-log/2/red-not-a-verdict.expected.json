@@ -1,0 +1,25 @@
+{
+  "kind": "build-log",
+  "layout": 2,
+  "document": {
+    "repo": "red-not-a-verdict",
+    "entries": [
+      {
+        "task": "T1",
+        "commits": [
+          "abc1234"
+        ],
+        "departure": null,
+        "red": "seen",
+        "line": 7
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "build/red-not-a-verdict.md",
+      "line": 9,
+      "message": "entry T1 fields field red must match pattern \"^(observed|not observed: .+)$\""
+    }
+  ]
+}

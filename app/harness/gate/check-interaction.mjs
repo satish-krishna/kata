@@ -228,6 +228,32 @@ const DIALOG_STEPS = {
       },
     },
   ],
+  ['sdlc?demo=migrate']: [
+    {
+      label: 'the migration dialog lists each step of the dry run',
+      text: 'What migrating does',
+      run: async (page) => {
+        await page.getByRole('button', { name: 'Review' }).click();
+      },
+    },
+    {
+      label: 'migrating shows what is still to do by hand',
+      text: 'Still to do by hand',
+      run: async (page) => {
+        await page.getByRole('button', { name: 'Review' }).click();
+        await page.getByRole('button', { name: 'Migrate', exact: true }).click();
+      },
+    },
+  ],
+  ['sdlc?demo=migrate-local']: [
+    {
+      label: 'the banner above an opened home reviews a refused plan with its problems',
+      text: 'Problems',
+      run: async (page) => {
+        await page.getByRole('button', { name: 'Review' }).click();
+      },
+    },
+  ],
   [`${DONE}?demo=done-refused`]: [
     {
       label: "the plugin's refusal, every problem as it wrote it",

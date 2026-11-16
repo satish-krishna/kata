@@ -97,16 +97,16 @@ describe('RunningChanges', () => {
     });
 
     it("two sessions waiting on the engineer: a list of the change's sessions opens, each opening in one more step", async () => {
-      const { container, fixture, navigate } = await mount(strip(asking(A, 'Which branch?', [ref(7, 'kata'), ref(9, 'ai-sdlc')])));
+      const { container, fixture, navigate } = await mount(strip(asking(A, 'Which branch?', [ref(7, 'kata'), ref(9, 'hoshin')])));
       entryButton(container, A.change).click();
       await settle();
       fixture.detectChanges();
       expect(navigate).not.toHaveBeenCalled();
-      expect(choices().map((c) => text(c))).toEqual(['kata Answer', 'ai-sdlc Answer']);
+      expect(choices().map((c) => text(c))).toEqual(['kata Answer', 'hoshin Answer']);
       choices()[1].click();
       await settle();
       expect(navigate).toHaveBeenCalledWith(['/sdlc', 'kata', A.change]);
-      expect(TestBed.inject(RunLandingStore).pending()).toEqual({ workspaceId: 'w1', system: 'kata', change: A.change, run: open(ref(9, 'ai-sdlc'), true) });
+      expect(TestBed.inject(RunLandingStore).pending()).toEqual({ workspaceId: 'w1', system: 'kata', change: A.change, run: open(ref(9, 'hoshin'), true) });
     });
 
     it("no session waiting, one working: a list of the change's sessions opens, each opening in one more step", async () => {

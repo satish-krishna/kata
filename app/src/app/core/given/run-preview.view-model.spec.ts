@@ -101,12 +101,12 @@ describe('RunPreviewViewModel', () => {
     expect(vm.warnings()).toEqual([]);
   });
 
-  it('an SDLC run locks the ai-sdlc plugin its spec requires', async () => {
+  it('an SDLC run locks the hoshin plugin its spec requires', async () => {
     const { vm, req, spec } = setup();
-    const required = { ...spec, given: { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [], required_plugins: ['ai-sdlc'] } };
+    const required = { ...spec, given: { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [], required_plugins: ['hoshin'] } };
     void vm.open(req({ mode: 'sdlc', spec: required }));
     await opened(vm);
-    expect(rowOf(vm, 'personal:plugin:ai-sdlc@ai-sdlc').locked?.kind).toBe('required');
+    expect(rowOf(vm, 'personal:plugin:hoshin@hoshin').locked?.kind).toBe('required');
   });
 
   describe('a build with two repositories', () => {

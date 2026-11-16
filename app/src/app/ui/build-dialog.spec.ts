@@ -33,7 +33,7 @@ const pickRepo = async (fixture: ComponentFixture<BuildDialog>, repo: string) =>
   await settle();
 };
 
-const REPOS = ['ai-sdlc', 'catalog-api', 'storefront-web'];
+const REPOS = ['hoshin', 'catalog-api', 'storefront-web'];
 const finding = (id: string, severity: 'high' | 'medium' | 'low', repo?: string): RoundOffer['findings'][number] => ({
   key: id,
   finding: { id, severity, text: `${id} is wrong. It needs a fix.`, file: `src/${id}.cs`, ...(repo === undefined ? {} : { repo }) },
@@ -123,7 +123,7 @@ describe('BuildDialog', () => {
     await open('round', NO_REVIEW);
     expect(root().querySelector('[role="checkbox"]')).toBeNull();
     expect(notes()).toHaveLength(3);
-    expect(text(root())).toContain('Also tell the ai-sdlc agent (optional)');
+    expect(text(root())).toContain('Also tell the hoshin agent (optional)');
     expect(text(root())).toContain('Also tell the storefront-web agent (optional)');
     expect(hours()).not.toBeNull();
   });

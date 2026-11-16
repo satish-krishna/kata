@@ -1,8 +1,8 @@
 //! Where a system's changes stand, as the Workbench shows them: the plugin's `state` answer, what each
 //! change shows and offers, and the live facts only the run table knows. The Tauri commands in `lib.rs`
 //! are one-line wrappers over [`system_view`] and [`change_view`], so this module is testable without Tauri.
-use kata_sdlc::ai_sdlc::state::{ChangeState, SystemState};
-use kata_sdlc::ai_sdlc::{Program, ProgramError};
+use kata_sdlc::hoshin::state::{ChangeState, SystemState};
+use kata_sdlc::hoshin::{Program, ProgramError};
 use kata_sdlc::offer::{ChangeOffer, LiveFacts};
 use kata_sdlc::plugin::Readiness;
 pub use kata_sdlc::view::{ChangeView, SystemView, WorkspaceView};
@@ -25,7 +25,7 @@ impl StateSource for Program {
         system: &str,
         change: Option<&str>,
     ) -> Result<SystemState, ProgramError> {
-        kata_sdlc::ai_sdlc::state::state(self, workspace, system, change)
+        kata_sdlc::hoshin::state::state(self, workspace, system, change)
     }
 }
 
@@ -137,7 +137,7 @@ pub fn change_view(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kata_sdlc::ai_sdlc::state::read_state;
+    use kata_sdlc::hoshin::state::read_state;
     use kata_sdlc::plugin::{GhPresence, Plugin};
     use std::cell::Cell;
     use std::path::PathBuf;
@@ -147,7 +147,7 @@ mod tests {
         Program {
             node: "node".into(),
             entry: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../crates/kata-sdlc/tests/ai-sdlc-tools/ai-sdlc.ts"),
+                .join("../../crates/kata-sdlc/tests/hoshin-tools/hoshin.ts"),
         }
     }
 
@@ -155,7 +155,7 @@ mod tests {
         Readiness::Ready {
             plugin: Plugin {
                 dir: PathBuf::from("plugin"),
-                version: "1.1.0".into(),
+                version: "1.0.0".into(),
                 layouts: vec![],
             },
             gh: GhPresence::Present,
@@ -181,8 +181,8 @@ mod tests {
     fn workspace() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path().to_path_buf();
-        let master = ws.join("ai-sdlc");
-        for name in ["ai-sdlc", "app"] {
+        let master = ws.join("hub");
+        for name in ["hub", "app"] {
             let repo = ws.join(name);
             std::fs::create_dir_all(&repo).unwrap();
             git(&repo, &["init", "-q", "-b", "main"]);
@@ -191,7 +191,7 @@ mod tests {
             git(&repo, &["config", "commit.gpgsign", "false"]);
         }
         std::fs::write(
-            master.join(".ai-sdlc.json"),
+            master.join(".hoshin.json"),
             r#"{"version":1,"systems":{"demo":{"repos":["app"]}}}"#,
         )
         .unwrap();
@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn sdlc_state_lists_a_change_that_lives_only_in_its_copy() {
         let (_dir, ws) = workspace();
-        let master = ws.join("ai-sdlc");
+        let master = ws.join("hub");
         let change = "2026-11-01-greeting";
         let started = program()
             .step_long(
@@ -265,7 +265,7 @@ mod tests {
                     "change", "start", "--json", "--system", "demo", "--change", change, "--type",
                     "feat", "--scope", "X-1",
                 ],
-                &kata_sdlc::ai_sdlc::Place {
+                &kata_sdlc::hoshin::Place {
                     layout: kata_sdlc::layout::Layout::Workspace,
                     master: master.clone(),
                     workspace: ws.clone(),
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn a_change_only_on_its_branch_is_not_listed() {
         let (_dir, ws) = workspace();
-        let master = ws.join("ai-sdlc");
+        let master = ws.join("hub");
         let change = "2026-10-31-several-changes-at-once";
         git(
             &master,
@@ -375,8 +375,7 @@ mod tests {
         let source = counting(2);
         let blocked = Readiness::Blocked {
             reason: kata_sdlc::plugin::BlockReason::PluginTooOld,
-            message: "The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 1.0.0."
-                .into(),
+            message: "The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.0.".into(),
         };
         let view =
             system_view(Some(&source), &blocked, &no_live, Path::new("/ws"), "demo").unwrap();
@@ -386,52 +385,13 @@ mod tests {
             .start_change_reason
             .as_deref()
             .unwrap()
-            .contains("1.1.0"));
+            .contains("0.9.0"));
         for c in &view.changes {
             assert!(!c.offer.label.text.is_empty());
             assert!(!c.offer.actions.is_empty());
             for a in &c.offer.actions {
                 assert!(!a.enabled, "{:?}", a.action);
-                assert!(a.reason.as_deref().unwrap().contains("1.0.0"));
-            }
-        }
-    }
-
-    /// R2.2: a single-repo folder on a plugin below 1.4.0 offers nothing, setup included.
-    #[test]
-    fn a_blocked_single_repo_offers_nothing() {
-        let source = counting(2);
-        let readiness = kata_sdlc::plugin::for_layout(
-            &Readiness::Ready {
-                plugin: Plugin {
-                    dir: PathBuf::from("plugin"),
-                    version: "1.3.1".into(),
-                    layouts: vec![],
-                },
-                gh: GhPresence::Present,
-            },
-            kata_sdlc::layout::Layout::SingleRepo,
-        );
-        let view = system_view(
-            Some(&source),
-            &readiness,
-            &no_live,
-            Path::new("/ws"),
-            "demo",
-        )
-        .unwrap();
-        assert!(!view.can_start_change);
-        assert!(view
-            .start_change_reason
-            .as_deref()
-            .unwrap()
-            .contains("1.3.1"));
-        assert_eq!(view.changes.len(), 2);
-        for c in &view.changes {
-            assert!(!c.offer.actions.is_empty());
-            for a in &c.offer.actions {
-                assert!(!a.enabled, "{:?}", a.action);
-                assert!(a.reason.as_deref().unwrap().contains("1.4.0"));
+                assert!(a.reason.as_deref().unwrap().contains("0.9.0"));
             }
         }
     }

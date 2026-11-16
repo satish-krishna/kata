@@ -9,15 +9,15 @@ import { MockTransport } from './core/transport/mock-transport';
 
 const found = (version: string): Versions => ({
   workbench: '3.3.0',
-  aiSdlc: { kind: 'found', version },
-  line: `Workbench 3.3.0 · ai-sdlc ${version}`,
-  copy: `Kata Workbench 3.3.0, ai-sdlc ${version}`,
+  hoshin: { kind: 'found', version },
+  line: `Workbench 3.3.0 · hoshin ${version}`,
+  copy: `Kata Workbench 3.3.0, hoshin ${version}`,
 });
 const notFound: Versions = {
   workbench: '3.3.0',
-  aiSdlc: { kind: 'notFound' },
-  line: 'Workbench 3.3.0 · ai-sdlc: not found',
-  copy: 'Kata Workbench 3.3.0, ai-sdlc: not found',
+  hoshin: { kind: 'notFound' },
+  line: 'Workbench 3.3.0 · hoshin: not found',
+  copy: 'Kata Workbench 3.3.0, hoshin: not found',
 };
 
 function setup(transport: MockTransport): AppViewModel {
@@ -33,9 +33,9 @@ describe('AppViewModel versions', () => {
     const transport = new MockTransport();
     const ask = vi.spyOn(transport, 'appVersions').mockResolvedValueOnce(found('1.3.0')).mockResolvedValueOnce(found('1.4.0'));
     const vm = setup(transport);
-    await vi.waitFor(() => expect(vm.versions()?.line).toBe('Workbench 3.3.0 · ai-sdlc 1.3.0'));
+    await vi.waitFor(() => expect(vm.versions()?.line).toBe('Workbench 3.3.0 · hoshin 1.3.0'));
     vm.windowFocused();
-    await vi.waitFor(() => expect(vm.versions()?.line).toBe('Workbench 3.3.0 · ai-sdlc 1.4.0'));
+    await vi.waitFor(() => expect(vm.versions()?.line).toBe('Workbench 3.3.0 · hoshin 1.4.0'));
     expect(ask).toHaveBeenCalledTimes(2);
   });
 
@@ -43,9 +43,9 @@ describe('AppViewModel versions', () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'appVersions').mockResolvedValueOnce(found('1.3.0')).mockResolvedValueOnce(notFound);
     const vm = setup(transport);
-    await vi.waitFor(() => expect(vm.versions()?.line).toContain('ai-sdlc 1.3.0'));
+    await vi.waitFor(() => expect(vm.versions()?.line).toContain('hoshin 1.3.0'));
     vm.windowFocused();
-    await vi.waitFor(() => expect(vm.versions()?.line).toBe('Workbench 3.3.0 · ai-sdlc: not found'));
+    await vi.waitFor(() => expect(vm.versions()?.line).toBe('Workbench 3.3.0 · hoshin: not found'));
   });
 
   it('copy writes the copy text and says the versions were copied', async () => {
@@ -56,18 +56,18 @@ describe('AppViewModel versions', () => {
     const success = vi.spyOn(TestBed.inject(ToastStore), 'success');
     await vi.waitFor(() => expect(vm.versions()).not.toBeNull());
     await vm.copyVersions();
-    expect(write).toHaveBeenCalledWith('Kata Workbench 3.3.0, ai-sdlc 1.3.0');
+    expect(write).toHaveBeenCalledWith('Kata Workbench 3.3.0, hoshin 1.3.0');
     expect(success).toHaveBeenCalledWith('Versions copied');
   });
 
-  it('copy with ai-sdlc not found writes the not-found text', async () => {
+  it('copy with hoshin not found writes the not-found text', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'appVersions').mockResolvedValue(notFound);
     const write = vi.spyOn(transport, 'copyText').mockResolvedValue(undefined);
     const vm = setup(transport);
     await vi.waitFor(() => expect(vm.versions()).not.toBeNull());
     await vm.copyVersions();
-    expect(write).toHaveBeenCalledWith('Kata Workbench 3.3.0, ai-sdlc: not found');
+    expect(write).toHaveBeenCalledWith('Kata Workbench 3.3.0, hoshin: not found');
   });
 
   it('copy raises an error toast when the clipboard refuses', async () => {

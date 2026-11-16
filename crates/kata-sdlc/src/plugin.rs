@@ -1,16 +1,10 @@
-//! What the AI-SDLC mode needs on this machine: the ai-sdlc plugin, Node.js, git and (for declaring done) gh.
+//! What the AI-SDLC mode needs on this machine: the hoshin plugin, Node.js, git and (for declaring done) gh.
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 /// The first plugin release with every plugin step Kata relies on.
-pub const MIN_VERSION: &str = "1.1.0";
-
-/// The first plugin release that lists changes (`list`) and reads only the open ones (`state --open`).
-pub const LIST_MIN_VERSION: &str = "1.3.0";
-
-/// The first plugin release that understands the single-repo layout.
-pub const LAYOUT_MIN_VERSION: &str = "1.4.0";
+pub const MIN_VERSION: &str = "1.0.0";
 
 /// The oldest Node.js the plugin's program runs on.
 pub const MIN_NODE: &str = "22.18";
@@ -65,7 +59,6 @@ pub enum GhPresence {
 pub enum BlockReason {
     PluginMissing,
     PluginTooOld,
-    LayoutNeedsNewerPlugin,
     NodeMissing,
     NodeTooOld,
     GitMissing,
@@ -93,7 +86,7 @@ pub enum Readiness {
 impl Readiness {
     /// The blocked readiness for a plugin that is not installed (what tests that need no plugin pass).
     pub fn missing() -> Readiness {
-        blocked(BlockReason::PluginMissing, "Install the ai-sdlc plugin")
+        blocked(BlockReason::PluginMissing, "Install the hoshin plugin")
     }
 }
 
@@ -113,7 +106,7 @@ pub fn readiness(env: &Machine) -> Readiness {
         return blocked(
             BlockReason::PluginTooOld,
             format!(
-                "The AI-SDLC mode needs ai-sdlc {MIN_VERSION} or later; this machine has {}.",
+                "The AI-SDLC mode needs hoshin {MIN_VERSION} or later; this machine has {}.",
                 plugin.version
             ),
         );
@@ -157,45 +150,6 @@ pub fn readiness(env: &Machine) -> Readiness {
             GhPresence::Missing
         },
     }
-}
-
-/// The readiness for a folder opened with `layout`: the machine's `readiness`, unless the folder is a
-/// single-repo repository and the plugin is not a release of [`LAYOUT_MIN_VERSION`] or later. A plugin
-/// the machine check refused as too old, a pre-release included, reads the same for a single-repo folder.
-pub fn for_layout(readiness: &Readiness, layout: crate::layout::Layout) -> Readiness {
-    if layout != crate::layout::Layout::SingleRepo {
-        return readiness.clone();
-    }
-    let needs = |version: &str| {
-        blocked(
-            BlockReason::LayoutNeedsNewerPlugin,
-            format!(
-                "The single-repo layout needs ai-sdlc {LAYOUT_MIN_VERSION} or later; this machine has {version}."
-            ),
-        )
-    };
-    match readiness {
-        Readiness::Ready { plugin, .. } if !at_least(&plugin.version, LAYOUT_MIN_VERSION) => {
-            needs(&plugin.version)
-        }
-        Readiness::Blocked {
-            reason: BlockReason::PluginTooOld,
-            message,
-        } => match message
-            .rsplit_once("this machine has ")
-            .and_then(|(_, v)| v.strip_suffix('.'))
-        {
-            Some(version) => needs(version),
-            None => readiness.clone(),
-        },
-        _ => readiness.clone(),
-    }
-}
-
-/// Whether the installed plugin can list changes and read the open ones alone: a ready machine whose
-/// plugin is [`LIST_MIN_VERSION`] or later. Every path that needs 1.3.0 asks this.
-pub fn lists_changes(readiness: &Readiness) -> bool {
-    matches!(readiness, Readiness::Ready { plugin, .. } if at_least(&plugin.version, LIST_MIN_VERSION))
 }
 
 impl Machine {
@@ -289,17 +243,17 @@ mod tests {
 
     #[test]
     fn plugin_version_reads_plugin_json_r2_5() {
-        for ok in ["1.1.0", "1.10.1", "2.0.0"] {
-            let dir = plugin_with(Some(&format!(r#"{{"name":"ai-sdlc","version":"{ok}"}}"#)));
+        for ok in ["1.0.0", "1.10.1", "2.0.0"] {
+            let dir = plugin_with(Some(&format!(r#"{{"name":"hoshin","version":"{ok}"}}"#)));
             let v = version(dir.path()).unwrap();
             assert_eq!(v, ok);
             assert!(at_least(&v, MIN_VERSION), "{ok}");
         }
         for (json, expect) in [
             (Some(r#"{"version":"0.5.0"}"#), Some("0.5.0")),
-            (Some(r#"{"version":"1.0.0"}"#), Some("1.0.0")),
-            (Some(r#"{"version":"1.1.0-rc1"}"#), Some("1.1.0-rc1")),
-            (Some(r#"{"name":"ai-sdlc"}"#), None),
+            (Some(r#"{"version":"0.9.9"}"#), Some("0.9.9")),
+            (Some(r#"{"version":"1.0.0-rc1"}"#), Some("1.0.0-rc1")),
+            (Some(r#"{"name":"hoshin"}"#), None),
             (None, None),
         ] {
             let dir = plugin_with(json);
@@ -311,7 +265,7 @@ mod tests {
 
     fn installed(version: &str) -> Option<Installed> {
         Some(Installed {
-            dir: PathBuf::from("/plugins/ai-sdlc"),
+            dir: PathBuf::from("/plugins/hoshin"),
             version: version.to_string(),
         })
     }
@@ -335,7 +289,7 @@ mod tests {
     fn ready(version: &str, gh: GhPresence) -> Readiness {
         Readiness::Ready {
             plugin: Plugin {
-                dir: PathBuf::from("/plugins/ai-sdlc"),
+                dir: PathBuf::from("/plugins/hoshin"),
                 version: version.to_string(),
                 layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
             },
@@ -350,19 +304,27 @@ mod tests {
             (
                 "1 plugin missing",
                 machine(None, Some("v22.18.0"), true, true),
-                blocked_with(BlockReason::PluginMissing, "Install the ai-sdlc plugin"),
+                blocked_with(BlockReason::PluginMissing, "Install the hoshin plugin"),
             ),
             (
-                "2 plugin below 1.1.0 (R10.1)",
-                machine(Some("1.0.0"), None, false, false),
+                "2 plugin below 1.0.0 (R10.1)",
+                machine(Some("0.9.0"), None, false, false),
                 blocked_with(
                     BlockReason::PluginTooOld,
-                    "The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 1.0.0.",
+                    "The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.0.",
+                ),
+            ),
+            (
+                "2b plugin 0.9.9, one patch below the floor",
+                machine(Some("0.9.9"), Some("v22.18.0"), true, true),
+                blocked_with(
+                    BlockReason::PluginTooOld,
+                    "The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.9.",
                 ),
             ),
             (
                 "3 node missing",
-                machine(Some("1.1.0"), None, false, false),
+                machine(Some("1.0.0"), None, false, false),
                 blocked_with(
                     BlockReason::NodeMissing,
                     "The AI-SDLC mode needs Node.js 22.18 or later; install it and reopen.",
@@ -370,7 +332,7 @@ mod tests {
             ),
             (
                 "4 node below 22.18",
-                machine(Some("1.1.0"), Some("v22.17.9"), false, false),
+                machine(Some("1.0.0"), Some("v22.17.9"), false, false),
                 blocked_with(
                     BlockReason::NodeTooOld,
                     "The AI-SDLC mode needs Node.js 22.18 or later; this machine has 22.17.9.",
@@ -378,7 +340,7 @@ mod tests {
             ),
             (
                 "5 git missing",
-                machine(Some("1.1.0"), Some("v22.18.0"), false, true),
+                machine(Some("1.0.0"), Some("v22.18.0"), false, true),
                 blocked_with(
                     BlockReason::GitMissing,
                     "The AI-SDLC mode needs git. Install it from https://git-scm.com and reopen.",
@@ -386,8 +348,8 @@ mod tests {
             ),
             (
                 "6 gh missing",
-                machine(Some("1.1.0"), Some("v22.18.0"), true, false),
-                ready("1.1.0", GhPresence::Missing),
+                machine(Some("1.0.0"), Some("v22.18.0"), true, false),
+                ready("1.0.0", GhPresence::Missing),
             ),
             (
                 "7 everything present",
@@ -397,101 +359,6 @@ mod tests {
         ];
         for (name, env, expected) in rows {
             assert_eq!(readiness(&env), expected, "{name}");
-        }
-    }
-
-    /// R2.1: the readiness of an opened folder, one case per row of the table, against a written list.
-    #[test]
-    fn layout_readiness_rows() {
-        use crate::layout::Layout::{SingleRepo, Workspace};
-        let needs = |version: &str| {
-            blocked_with(
-                BlockReason::LayoutNeedsNewerPlugin,
-                &format!(
-                    "The single-repo layout needs ai-sdlc 1.4.0 or later; this machine has {version}."
-                ),
-            )
-        };
-        let rows: Vec<(&str, Option<&str>, crate::layout::Layout, Readiness)> = vec![
-            (
-                "single-repo 1.4.0",
-                Some("1.4.0"),
-                SingleRepo,
-                ready("1.4.0", GhPresence::Present),
-            ),
-            (
-                "single-repo 1.5.2",
-                Some("1.5.2"),
-                SingleRepo,
-                ready("1.5.2", GhPresence::Present),
-            ),
-            (
-                "single-repo 1.3.1",
-                Some("1.3.1"),
-                SingleRepo,
-                needs("1.3.1"),
-            ),
-            (
-                "single-repo 1.4.0-beta.1",
-                Some("1.4.0-beta.1"),
-                SingleRepo,
-                needs("1.4.0-beta.1"),
-            ),
-            (
-                "single-repo, not installed",
-                None,
-                SingleRepo,
-                blocked_with(BlockReason::PluginMissing, "Install the ai-sdlc plugin"),
-            ),
-            (
-                "workspace 1.1.0",
-                Some("1.1.0"),
-                Workspace,
-                ready("1.1.0", GhPresence::Present),
-            ),
-            (
-                "workspace 1.0.4",
-                Some("1.0.4"),
-                Workspace,
-                blocked_with(
-                    BlockReason::PluginTooOld,
-                    "The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 1.0.4.",
-                ),
-            ),
-        ];
-        for (name, version, layout, expected) in rows {
-            let machine = machine(version, Some("v22.18.0"), true, true);
-            assert_eq!(for_layout(&readiness(&machine), layout), expected, "{name}");
-        }
-    }
-
-    #[test]
-    fn lists_changes_rows() {
-        let rows: Vec<(&str, Readiness, bool)> = vec![
-            ("blocked, plugin missing", Readiness::missing(), false),
-            (
-                "blocked, node missing",
-                blocked_with(BlockReason::NodeMissing, "x"),
-                false,
-            ),
-            (
-                "blocked, plugin too old",
-                blocked_with(BlockReason::PluginTooOld, "x"),
-                false,
-            ),
-            ("ready 1.2.0", ready("1.2.0", GhPresence::Present), false),
-            ("ready 1.2.9", ready("1.2.9", GhPresence::Present), false),
-            (
-                "ready 1.3.0-rc1",
-                ready("1.3.0-rc1", GhPresence::Present),
-                false,
-            ),
-            ("ready 1.3.0", ready("1.3.0", GhPresence::Present), true),
-            ("ready 1.3.1", ready("1.3.1", GhPresence::Missing), true),
-            ("ready 2.0.0", ready("2.0.0", GhPresence::Present), true),
-        ];
-        for (name, readiness, expected) in rows {
-            assert_eq!(lists_changes(&readiness), expected, "{name}");
         }
     }
 

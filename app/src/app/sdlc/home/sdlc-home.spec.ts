@@ -44,6 +44,24 @@ describe('SdlcHome', () => {
     expect(labels(container)).toContain('Add system');
   });
 
+  const bannerCase = (kind: 'localFiles' | 'setUp', title: string) =>
+    it(`shows the ${kind} migration banner above a home that opens, and its Review button opens the dialog`, async () => {
+      const transport = new MockTransport();
+      const offer = await transport.sdlcMigrate('D:/legacy-workspace').then((plan) => ({ plan: { ...plan, write: false }, blocks: false, kind }));
+      vi.spyOn(transport, 'sdlcMigration').mockResolvedValue(offer);
+      const { container } = await mount(transport);
+      const banner = container.querySelector('[data-testid="migration-banner"]');
+      expect(banner?.textContent).toContain(title);
+      // The home is still there.
+      expect(container.textContent).toContain('2026-10-12-product-photo-upload');
+      const review = Array.from(banner!.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'Review');
+      review!.click();
+      await settle();
+      expect(document.body.textContent).toContain('What migrating does');
+    });
+  bannerCase('localFiles', 'This machine still has ai-sdlc files for this workspace. Finish moving them to hoshin?');
+  bannerCase('setUp', 'This workspace was set up with ai-sdlc. Migrate it to hoshin?');
+
   it('offers Refresh context on every product repo with a context file, and crosses the seam when clicked', async () => {
     const { container, transport } = await mount();
     const run = vi.spyOn(transport, 'runSpec').mockResolvedValue('1');
@@ -69,7 +87,7 @@ describe('SdlcHome', () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull();
     const outside = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter((b) => !b.closest('app-sdlc-session'));
     expect(outside.length).toBeGreaterThan(0);
-    expect(outside.filter((b) => !b.disabled).map((b) => b.textContent!.trim() || b.getAttribute('aria-label'))).toEqual(['ai-sdlc', 'acme-commerce', 'AI-SDLC settings']);
+    expect(outside.filter((b) => !b.disabled).map((b) => b.textContent!.trim() || b.getAttribute('aria-label'))).toEqual(['AI-SDLC', 'acme-commerce', 'AI-SDLC settings']);
   });
 
   it('is a blocking empty state naming where kata looked, with every workspace action withheld, when the plugin is missing', async () => {
@@ -77,7 +95,7 @@ describe('SdlcHome', () => {
     vi.spyOn(transport, 'catalog').mockResolvedValue(seedCatalog);
     const { container } = await mount(transport);
     const text = container.textContent!.replace(/\s+/g, ' ');
-    expect(text).toContain('The ai-sdlc plugin was not found');
+    expect(text).toContain('The hoshin plugin was not found');
     expect(text).toContain('~/.claude');
     expect(text).toContain('the .claude folder of the workspace');
     expect(text).toContain('installed marketplace plugins');
@@ -95,7 +113,7 @@ describe('SdlcHome', () => {
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([]);
     vi.spyOn(transport, 'catalog').mockResolvedValue([
       ...seedCatalog,
-      { kind: 'plugin', name: 'ai-sdlc', description: '', source: 'user', path: '', provides: [], mcp_servers: [] },
+      { kind: 'plugin', name: 'hoshin', description: '', source: 'user', path: '', provides: [], mcp_servers: [] },
     ]);
     const { container } = await mount(transport);
     expect(container.textContent).toContain('No workspace yet');
@@ -289,20 +307,6 @@ describe('SdlcHome of a single-repo repository', () => {
     await confirmPreview();
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     expect(run.mock.calls[0][0].name).toBe('sdlc-kata-context');
-  });
-
-  it('a refused repository shows the message and offers nothing (R2.2)', async () => {
-    demoAt('demo=single-repo&plugin=1.3.1');
-    const { container } = await mount();
-    expect(text(container)).toContain('this machine has 1.3.1');
-    const all = labels(container);
-    for (const gone of ['Add system', 'Run setup', 'Refresh instructions', 'Write instructions']) expect(all).not.toContain(gone);
-    expect(container.querySelector('app-repos-table')).toBeNull();
-    expect(container.querySelector('app-instructions-row')).toBeNull();
-    expect(container.querySelector('button[aria-label^="View context"]')).toBeNull();
-    expect(container.querySelector('button[aria-label^="Build context"]')).toBeNull();
-    const start = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'New change');
-    expect(start === undefined || start.disabled).toBe(true);
   });
 
   it('offers no way to open another branch in a single-repo repository (R6.1)', async () => {

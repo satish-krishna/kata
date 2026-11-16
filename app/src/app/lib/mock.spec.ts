@@ -101,8 +101,8 @@ describe("mockVersions", () => {
   it("shows the version it is given", () => {
     const v = mockVersions(null, "9.9.9");
     expect(v.workbench).toBe("9.9.9");
-    expect(v.line).toBe("Workbench 9.9.9 · ai-sdlc 1.3.0");
-    expect(v.copy).toBe("Kata Workbench 9.9.9, ai-sdlc 1.3.0");
+    expect(v.line).toBe("Workbench 9.9.9 · hoshin 1.0.0");
+    expect(v.copy).toBe("Kata Workbench 9.9.9, hoshin 1.0.0");
     expect(mockVersions(null).workbench).toBe(appVersion);
   });
 });

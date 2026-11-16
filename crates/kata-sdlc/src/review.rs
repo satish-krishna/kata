@@ -2,7 +2,7 @@
 //!
 //! The final review writes its findings to that document, one `## Review <n>` section per review,
 //! and the Workbench shows what the document holds. Nothing in Kata parses the document itself:
-//! the ai-sdlc plugin's format program reads it, in whatever layout it is written.
+//! the hoshin plugin's format program reads it, in whatever layout it is written.
 use crate::build::{change_dir, program, put, reading, staging_dir, unreadable};
 use crate::format::{self, FormatError, ParsedReviewSection, Problem, ReadResult};
 use crate::git::{self, GitError};
@@ -31,7 +31,7 @@ pub struct ReviewRecord {
 }
 
 /// The change's review document as committed at `HEAD`, read by the format program in `plugin` (the
-/// ai-sdlc plugin folder). `None` when the change has no review document: the caller then falls back
+/// hoshin plugin folder). `None` when the change has no review document: the caller then falls back
 /// to the review run's closing words. A document that is present always holds at least one review,
 /// or `problems` says why not.
 pub fn record(
@@ -301,8 +301,8 @@ mod tests {
 
     #[test]
     fn currency_rows() {
-        let h = heads(&[("kata", "abcdef123"), ("ai-sdlc", "99887766")]);
-        let good = section(&[("kata", "abcdef1"), ("ai-sdlc", "9988")]);
+        let h = heads(&[("kata", "abcdef123"), ("hub", "99887766")]);
+        let good = section(&[("kata", "abcdef1"), ("hub", "9988")]);
         // 1: problems
         let r = record_of(vec![good.clone()], 1, &[]);
         assert_eq!(currency(&r, &h), ReviewCurrency::Invalid);
@@ -312,9 +312,9 @@ mod tests {
         // 3: a head does not match (differs, missing, or a recorded commit under four characters), or
         // the master moved
         for bad in [
-            section(&[("kata", "ffffff"), ("ai-sdlc", "9988")]),
-            section(&[("ai-sdlc", "9988")]),
-            section(&[("kata", "abc"), ("ai-sdlc", "9988")]),
+            section(&[("kata", "ffffff"), ("hub", "9988")]),
+            section(&[("hub", "9988")]),
+            section(&[("kata", "abc"), ("hub", "9988")]),
         ] {
             let r = record_of(vec![bad], 0, &[]);
             assert_eq!(currency(&r, &h), ReviewCurrency::Stale);
@@ -599,7 +599,7 @@ mod tests {
     #[test]
     fn standing_judges_the_master_by_what_it_committed_since_the_review() {
         let reviewed = || vec![section(&[("a", "1111111"), ("master", "0123456")])];
-        let product = record_of(reviewed(), 0, &["plugin/tools/ai-sdlc.ts"]);
+        let product = record_of(reviewed(), 0, &["plugin/tools/hoshin.ts"]);
         assert_eq!(
             standing(
                 &[],

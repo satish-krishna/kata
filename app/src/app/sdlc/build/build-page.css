@@ -440,6 +440,38 @@
   color: var(--warning-text);
 }
 
+.k-bp__red {
+  color: var(--text-muted);
+}
+
+.k-bp__red.k-status--warning {
+  color: var(--warning-text);
+}
+
+.k-bp__pick-red {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0 0 var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.k-bp__red-commit {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.k-bp__red-output {
+  margin: 0;
+  max-height: calc(var(--space-16) * 2);
+  overflow: auto;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  white-space: pre;
+}
+
 .k-bp__pick-departure {
   display: grid;
   gap: var(--space-2);

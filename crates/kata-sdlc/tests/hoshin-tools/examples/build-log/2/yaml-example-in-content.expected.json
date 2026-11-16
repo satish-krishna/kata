@@ -1,0 +1,19 @@
+{
+  "kind": "build-log",
+  "layout": 2,
+  "document": {
+    "repo": "yaml-example-in-content",
+    "entries": [
+      {
+        "task": "T1",
+        "commits": [
+          "abc1234"
+        ],
+        "departure": null,
+        "red": null,
+        "line": 7
+      }
+    ]
+  },
+  "problems": []
+}

@@ -188,12 +188,12 @@ describe('ChangePage', () => {
 
     it('a refused build opens the refusal dialog', async () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
-      vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'refused', problems: ['The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.', 'customer-portal: uncommitted files: a.txt'] });
+      vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'refused', problems: ['The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.7.9.', 'customer-portal: uncommitted files: a.txt'] });
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
       await settle();
       await confirmPreview();
       await vi.waitFor(() => expect(document.body.textContent).toContain('The build did not start'));
-      expect(document.body.textContent).toContain('The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.');
+      expect(document.body.textContent).toContain('The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.7.9.');
       expect(document.body.textContent).toContain('customer-portal: uncommitted files: a.txt');
     });
 
@@ -322,7 +322,7 @@ function allBuilt(transport: MockTransport, edit: (status: BuildStatus) => Build
     return edit({
       ...got,
       repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })),
-      tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } })),
+      tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null, red: null } })),
     });
   });
   return transport;
@@ -669,7 +669,7 @@ describe('ChangePage build page', () => {
     it('see departures from the plan', async () => {
       const transport = finished((got) => ({
         ...got,
-        tasks: got.tasks.map((t) => (t.id === 'T2' ? { ...t, row: { task: 'T2', repo: t.repo, commits: ['abc1234'], departure: 'Reused the existing file picker.' } } : t)),
+        tasks: got.tasks.map((t) => (t.id === 'T2' ? { ...t, row: { task: 'T2', repo: t.repo, commits: ['abc1234'], departure: 'Reused the existing file picker.', red: null } } : t)),
       }));
       const { container } = await mount(MOCK_BUILD_CHANGE, transport);
       alone(container);
@@ -847,7 +847,7 @@ describe('ChangePage way back', () => {
 });
 
 describe('ChangePage: the change copy', () => {
-  const COPY = 'C:/ws/.ai-sdlc/copies/2026-10-12-product-photo-upload';
+  const COPY = 'C:/ws/.hoshin/copies/2026-10-12-product-photo-upload';
   const BRANCH = `change/${PHOTOS_CHANGE}`;
   let draw: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
@@ -971,7 +971,7 @@ describe('ChangePage: the change copy', () => {
   });
 
   it("a refusal shows the plugin's problems as they are", async () => {
-    const { transport } = inCopy({ outcome: 'offer' }, { outcome: 'refused', problems: ['the branch is checked out', 'run ai-sdlc doctor'] });
+    const { transport } = inCopy({ outcome: 'offer' }, { outcome: 'refused', problems: ['the branch is checked out', 'run hoshin doctor'] });
     const { container } = await mount(PHOTOS_CHANGE, transport);
     await vi.waitFor(() => expect(buttonIn(container, 'Remove this copy')).toBeDefined());
     buttonIn(container, 'Remove this copy')!.click();
@@ -980,7 +980,7 @@ describe('ChangePage: the change copy', () => {
     await vi.waitFor(() => expect(container.querySelector('[data-testid="copy-note"]')).not.toBeNull());
     const note = container.querySelector('[data-testid="copy-note"]')!.textContent!;
     expect(note).toContain('the branch is checked out');
-    expect(note).toContain('run ai-sdlc doctor');
+    expect(note).toContain('run hoshin doctor');
     expect(line(container)).not.toBeNull();
   });
 

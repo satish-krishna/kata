@@ -7,13 +7,13 @@
 //! `NODE_OPTIONS`) over local bare remotes. R21.2 (the isolated copy of a Workbench run still refuses a signing
 //! repository) stays covered by the `kata_core::worktree` test `refuses_a_repository_that_signs_every_commit`.
 //!
-//! These tests run the vendored copy of the plugin's program in `tests/ai-sdlc-tools/`, and need `git`, `sed` and
+//! These tests run the vendored copy of the plugin's program in `tests/hoshin-tools/`, and need `git`, `sed` and
 //! Node.js on `PATH`.
 #![allow(clippy::disallowed_methods)]
 use kata_sdlc::accept::{self, AcceptOutcome, ChangeDocument};
-use kata_sdlc::ai_sdlc::state;
-use kata_sdlc::ai_sdlc::{Place, Program};
 use kata_sdlc::done::{self, DeclareView};
+use kata_sdlc::hoshin::state;
+use kata_sdlc::hoshin::{Place, Program};
 use kata_sdlc::plugin::{GhPresence, Plugin, Readiness};
 use serde_json::Value;
 use std::ffi::OsString;
@@ -38,7 +38,7 @@ fn forward(path: &Path) -> String {
 fn program() -> Program {
     Program {
         node: "node".into(),
-        entry: here().join("tests/ai-sdlc-tools/ai-sdlc.ts"),
+        entry: here().join("tests/hoshin-tools/hoshin.ts"),
     }
 }
 
@@ -60,13 +60,13 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 fn plugin(place: &Place, args: &[&str]) -> Value {
-    match kata_sdlc::ai_sdlc::call_kind(args) {
-        kata_sdlc::ai_sdlc::CallKind::Long => {
+    match kata_sdlc::hoshin::call_kind(args) {
+        kata_sdlc::hoshin::CallKind::Long => {
             program()
                 .step_long(args, place, &kata_core::proc::CancelToken::new(), None)
                 .json
         }
-        kata_sdlc::ai_sdlc::CallKind::Quick => program().run(args, place).unwrap(),
+        kata_sdlc::hoshin::CallKind::Quick => program().run(args, place).unwrap(),
     }
 }
 
@@ -234,7 +234,7 @@ fn goes_through_every_step(need: Need) {
     let say = |what: &str| format!("{need:?}: {what}");
     let master = repo(
         &ws,
-        "ai-sdlc",
+        "hub",
         (need == Need::MasterSigns).then_some(fakes.gpg.as_path()),
         false,
     );
@@ -244,8 +244,8 @@ fn goes_through_every_step(need: Need) {
         (need == Need::KataSigns).then_some(fakes.gpg.as_path()),
         need == Need::KataFilters,
     );
-    std::fs::write(master.join(".ai-sdlc.json"), MARKER).unwrap();
-    git(&master, &["add", ".ai-sdlc.json"]);
+    std::fs::write(master.join(".hoshin.json"), MARKER).unwrap();
+    git(&master, &["add", ".hoshin.json"]);
     git(&master, &["commit", "-q", "-m", "marker"]);
     git(&master, &["push", "-q", "origin", "main"]);
 
@@ -268,7 +268,7 @@ fn goes_through_every_step(need: Need) {
         "{}",
         say(&started.to_string())
     );
-    let copy = ws.join(".ai-sdlc").join("copies").join(CHANGE);
+    let copy = ws.join(".hoshin").join("copies").join(CHANGE);
     let at = Place {
         layout: kata_sdlc::layout::Layout::Workspace,
         master: copy.clone(),
@@ -281,7 +281,7 @@ fn goes_through_every_step(need: Need) {
     let example = |name: &str| {
         std::fs::read_to_string(
             here()
-                .join("tests/ai-sdlc-tools/examples/change/2/valid")
+                .join("tests/hoshin-tools/examples/change/2/valid")
                 .join(name),
         )
         .unwrap()
@@ -468,7 +468,7 @@ fn goes_through_every_step(need: Need) {
         other => panic!("{}", say(&format!("nothing refused or stopped: {other:?}"))),
     }
     assert_eq!(fakes.prs().len(), 2, "{}", say("a pull request each"));
-    for remote in ["kata-origin.git", "ai-sdlc-origin.git"] {
+    for remote in ["kata-origin.git", "hub-origin.git"] {
         let pushed = git(&ws.join(remote), &["branch", "--list", &branch]);
         assert!(
             pushed.contains(&branch),

@@ -1,7 +1,7 @@
 //! The layout of the folder Kata is opened on, and the answers only the single-repo layout has: its apps
-//! and their context, and the instructions in the repository's root file. Every answer is the ai-sdlc
+//! and their context, and the instructions in the repository's root file. Every answer is the hoshin
 //! program's; this module types it and decides nothing.
-use crate::ai_sdlc::{Place, Program, ProgramError};
+use crate::hoshin::{Place, Program, ProgramError};
 use crate::workspace::InstructionsState;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -155,8 +155,8 @@ fn saved(folder: &Path) -> Option<Layout> {
 
 /// The program's `resolve --json` answer for `folder` and the folder's layout: the one place the saved layout is
 /// read and one not known yet is filled. A saved layout is the answer, whatever the program says, and the
-/// program is asked in its form. Otherwise the program's answer names the layout (a program before 1.4.0 prints
-/// none; then, and only then, the marker's `layout` field says it), and a saved entry that has none stores it
+/// program is asked in its form. Otherwise the program's answer names the layout (an answer that names none leaves
+/// it to the marker's `layout` field, and only then), and a saved entry that has none stores it
 /// once, when the program placed the folder.
 pub(crate) fn placed(program: &Program, folder: &Path) -> Result<(Value, Layout), ProgramError> {
     let saved = saved(folder);
@@ -195,7 +195,7 @@ fn repository_root(folder: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// The layout `resolve --json` names. A plugin before 1.4.0 prints none, which reads as the workspace layout.
+/// The layout `resolve --json` names. An answer that names none reads as the workspace layout.
 pub(crate) fn read(layout: &Value) -> Result<Layout, ProgramError> {
     if layout.is_null() {
         return Ok(Layout::Workspace);
@@ -287,8 +287,8 @@ pub fn instructions(program: &Program, place: &Place) -> Result<InstructionsStat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_sdlc::state::{self, AppFacts};
-    use crate::ai_sdlc::StepOutcome;
+    use crate::hoshin::state::{self, AppFacts};
+    use crate::hoshin::StepOutcome;
     use crate::testutil;
     use std::path::Path;
 
@@ -334,7 +334,7 @@ mod tests {
         let master = testutil::repo(&ws, "m");
         testutil::commit_file(
             &master,
-            ".ai-sdlc.json",
+            ".hoshin.json",
             "{\"version\":1,\"systems\":{}}\n",
             "marker",
         );
@@ -408,7 +408,7 @@ mod tests {
 
     /// A program that logs each call's arguments to `calls.log` beside it and answers as a workspace would.
     fn recording(dir: &Path) -> Program {
-        let entry = dir.join("ai-sdlc.mjs");
+        let entry = dir.join("hoshin.mjs");
         let script = r#"import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -516,7 +516,7 @@ if (args[0] === 'resolve') {
     fn program() -> Program {
         Program {
             node: "node".into(),
-            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts"),
+            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools/hoshin.ts"),
         }
     }
 
@@ -596,7 +596,7 @@ if (args[0] === 'resolve') {
             )
             .json;
         assert_eq!(started["outcome"], "passed", "{started}");
-        let copy = tmp.path().join(".ai-sdlc").join("copies").join(CHANGE);
+        let copy = tmp.path().join(".hoshin").join("copies").join(CHANGE);
         testutil::commit_file(
             &copy,
             &format!("intent/kata/{CHANGE}/intent.md"),
@@ -686,7 +686,6 @@ if (args[0] === 'resolve') {
         use crate::holds::{keys_for, RepoKey};
         use crate::permissions::fixtures::place;
         use crate::permissions::RunKind;
-        use crate::plugin::{self, GhPresence, Plugin, Readiness};
         use crate::review::ReviewCurrency;
         use crate::runspec::build_workdir;
         use std::collections::BTreeMap;
@@ -696,7 +695,7 @@ if (args[0] === 'resolve') {
         let master = testutil::repo(&ws, "m");
         testutil::commit_file(
             &master,
-            ".ai-sdlc.json",
+            ".hoshin.json",
             "{\"version\":1,\"systems\":{}}\n",
             "marker",
         );
@@ -705,17 +704,6 @@ if (args[0] === 'resolve') {
 
         // The layout of the opened folder and the repository it opens as.
         assert_opened(open(&program(), &ws), &ws, &ws, Layout::Workspace);
-
-        // The readiness comes back unchanged on 1.1.0.
-        let ready = Readiness::Ready {
-            plugin: Plugin {
-                dir: ws.join("plugin"),
-                version: "1.1.0".into(),
-                layouts: vec![1],
-            },
-            gh: GhPresence::Present,
-        };
-        assert_eq!(plugin::for_layout(&ready, Layout::Workspace), ready);
 
         // The master checkout can be switched.
         assert!(branch::switchable(Layout::Workspace));

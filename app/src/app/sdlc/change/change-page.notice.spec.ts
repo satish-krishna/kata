@@ -21,7 +21,7 @@ const settle = async () => {
 };
 const text = (e: Element | null) => e?.textContent?.replace(/\s+/g, ' ').trim() ?? null;
 const PROSE = (title: string) => `---\nstatus: accepted\n---\n# ${title}\n\nWords only.\n`;
-const READY: Readiness = { kind: 'ready', plugin: { dir: '~/.claude/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2] }, gh: 'present' };
+const READY: Readiness = { kind: 'ready', plugin: { dir: '~/.claude/plugins/hoshin', version: '0.9.0', layouts: [1, 2] }, gh: 'present' };
 
 type Setup = {
   readiness?: Readiness;
@@ -113,9 +113,9 @@ describe('ChangePage document notices', () => {
     expect(newer.tasks()).toBe(NUMBERS.tasks);
     TestBed.resetTestingModule();
 
-    const old = await open({ readiness: { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.6.0.' } });
+    const old = await open({ readiness: { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.6.0.' } });
     await old.tab('Spec');
-    expect(text(old.notice())).toContain('The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.6.0.');
+    expect(text(old.notice())).toContain('The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.6.0.');
     expect(old.requirements()).toBe(0);
   });
 

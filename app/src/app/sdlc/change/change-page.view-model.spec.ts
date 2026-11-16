@@ -40,7 +40,7 @@ const holdLock = (lock: LockStore): void => void lock.runSteps('Checking', [{ la
 const PHOTOS_CHANGE = '2026-10-12-product-photo-upload';
 const FRAUD = '2026-10-16-price-flag';
 const REASSIGN = '2026-10-09-merchant-reassign';
-const NO_PLACE = 'Could not find where this change lives: the ai-sdlc program could not run: boom';
+const NO_PLACE = 'Could not find where this change lives: the hoshin program could not run: boom';
 const toastText = () => toastState.toasts().map((t) => String(t.title)).join(' | ');
 
 /** `confirm` (the default) lets the preview confirm every run at once, so a test about something else never meets it; `real` leaves it to the test. */
@@ -504,11 +504,11 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       const writes = [vi.spyOn(transport, 'saveSpec'), vi.spyOn(transport, 'saveKata'), vi.spyOn(transport, 'savePreset'), vi.spyOn(transport, 'sdlcSaveSettings'), vi.spyOn(transport, 'sdlcOpenWorkspace'), vi.spyOn(transport, 'sdlcAddWorkspace'), vi.spyOn(transport, 'sdlcRemoveWorkspace')];
       const hook = () => previewRows(preview).find((r) => r.item.id === 'project:hook:PostToolUse:Write|Edit:8c1f77e2d3a40b95')!;
-      const sdlcPlugin = () => previewRows(preview).find((r) => r.item.id === 'personal:plugin:ai-sdlc@ai-sdlc')!;
+      const sdlcPlugin = () => previewRows(preview).find((r) => r.item.id === 'personal:plugin:hoshin@hoshin')!;
 
       const specRun = vm.act('start-spec');
       await previewReady(preview);
-      // Not a build run, so a project hook can be switched off; the ai-sdlc plugin is locked on for every AI-SDLC run.
+      // Not a build run, so a project hook can be switched off; the hoshin plugin is locked on for every AI-SDLC run.
       expect(hook().locked).toBeNull();
       expect(sdlcPlugin().locked).toMatchObject({ kind: 'required' });
       expect(hook().off).toBe(false);
@@ -516,7 +516,7 @@ describe('ChangePageViewModel', () => {
       preview.toggle(hook().key, true);
       preview.start();
       await specRun;
-      expect((runAgent.mock.calls[0][1] as RunSpec).given).toMatchObject({ hooks: [hookId], required_plugins: ['ai-sdlc'], build: false });
+      expect((runAgent.mock.calls[0][1] as RunSpec).given).toMatchObject({ hooks: [hookId], required_plugins: ['hoshin'], build: false });
 
       const planRun = vm.act('start-plan');
       await previewReady(preview);
@@ -866,7 +866,7 @@ describe('ChangePageViewModel', () => {
 
     it('draws no strip on the Build tab when there is no status, no facts and no action', async () => {
       const transport = await finished();
-      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({ tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] });
+      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({ tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [], redShown: false });
       const { vm } = setup(BUILD, transport);
       await ready(vm);
       await vm.showDoc('build');
@@ -1624,7 +1624,7 @@ describe("ChangePageViewModel: Close waits on the settling of the run on show, t
 });
 
 describe('ChangePageViewModel: the change copy', () => {
-  const COPY = 'C:/ws/.ai-sdlc/copies/2026-10-12-product-photo-upload';
+  const COPY = 'C:/ws/.hoshin/copies/2026-10-12-product-photo-upload';
   const REF = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: PHOTOS_CHANGE };
 
   /** The change as the plugin reports it from inside its own copy, with the backend's answers as the test says. */
@@ -1770,14 +1770,14 @@ describe('ChangePageViewModel: the change copy', () => {
   });
 
   it("a removal the plugin refuses shows the plugin's problems as they are and keeps the copy", async () => {
-    const { transport } = inCopy({ outcome: 'offer' }, { outcome: 'refused', problems: ['the branch is checked out', 'run ai-sdlc doctor'] });
+    const { transport } = inCopy({ outcome: 'offer' }, { outcome: 'refused', problems: ['the branch is checked out', 'run hoshin doctor'] });
     const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
     await removalReady(vm, true);
     vm.askRemoveCopy();
     await vm.confirmRemoveCopy();
     expect(vm.copy()).not.toBeNull();
-    expect(vm.copyNote()?.lines).toEqual(['the branch is checked out', 'run ai-sdlc doctor']);
+    expect(vm.copyNote()?.lines).toEqual(['the branch is checked out', 'run hoshin doctor']);
   });
 
   it('a removal that could not run says so and keeps the copy', async () => {
@@ -1921,7 +1921,7 @@ describe('ChangePageViewModel of a single-repo repository', () => {
 
   it('a single-repo change shows its copy folder and branch', async () => {
     const { vm, open } = await opened();
-    await vi.waitFor(() => expect(vm.copy()).toEqual({ folder: `D:/.ai-sdlc/copies/${MOCK_SINGLE_CHANGE}`, branch: `change/${MOCK_SINGLE_CHANGE}` }));
+    await vi.waitFor(() => expect(vm.copy()).toEqual({ folder: `D:/.hoshin/copies/${MOCK_SINGLE_CHANGE}`, branch: `change/${MOCK_SINGLE_CHANGE}` }));
     await vm.openCopyFolder();
     expect(open).toHaveBeenCalledWith({ workspace: 'D:/kata', system: MOCK_SINGLE_SYSTEM, change: MOCK_SINGLE_CHANGE });
   });

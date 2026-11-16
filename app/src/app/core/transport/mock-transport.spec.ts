@@ -12,7 +12,7 @@ import type { Resolved } from '@bindings/Resolved';
 import type { BuildEvent } from '@bindings/BuildEvent';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import type { SnapshotTarget } from '@bindings/SnapshotTarget';
-import { MOCK_BUILD_CHANGE, MOCK_COPY_CHANGE, MOCK_BUILD_SECOND, MOCK_HELD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_SINGLE_FOLDER, MOCK_WORKSPACE_FOLDER, MOCK_MASTER, MOCK_STARTED_FIX, TRIAGE_LIGHT, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_LEGACY_FOLDER, MOCK_COPY_CHANGE, MOCK_BUILD_SECOND, MOCK_HELD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_SINGLE_FOLDER, MOCK_WORKSPACE_FOLDER, MOCK_MASTER, MOCK_STARTED_FIX, TRIAGE_LIGHT, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 
 const ref = (change: string): ChangeRef => ({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change });
 const total = (steps: { delay: number }[]) => steps.reduce((a, s) => a + s.delay, 0);
@@ -441,6 +441,43 @@ describe('MockTransport', () => {
       expect(opened.status).toEqual(await t.sdlcBuildStatus(ref(MOCK_BUILD_CHANGE)));
     });
 
+    it('offers the migration for the legacy fixture folder only, with one would step of each kind, and migrates it', async () => {
+      const t = new MockTransport();
+      // The scan does not fail for it, as the backend's does not: it finds no master repository.
+      expect((await t.sdlcScan(MOCK_LEGACY_FOLDER)).master).toEqual({ kind: 'none' });
+      expect(await t.sdlcMigration('D:/elsewhere')).toBeNull();
+      const offer = await t.sdlcMigration(MOCK_LEGACY_FOLDER);
+      expect([offer?.blocks, offer?.kind]).toEqual([true, 'setUp']);
+      const plan = offer?.plan;
+      expect(plan?.write).toBe(false);
+      expect(plan?.steps.map((s) => [s.step, s.status])).toEqual([['marker', 'would'], ['copy', 'would'], ['state', 'would'], ['instructions', 'would']]);
+      const done = await t.sdlcMigrate(MOCK_LEGACY_FOLDER);
+      expect(done.write).toBe(true);
+      expect(done.steps.every((s) => s.status === 'done')).toBe(true);
+      await expect(t.sdlcMigrate('D:/elsewhere')).rejects.toThrow();
+    });
+
+    it('offers a refused, non-blocking local-files migration for the demo workspace under ?demo=migrate-local only', async () => {
+      window.history.replaceState({}, '', '/?demo=migrate-local');
+      try {
+        const offer = await new MockTransport().sdlcMigration(MOCK_WORKSPACE_FOLDER);
+        expect([offer?.blocks, offer?.kind]).toEqual([false, 'localFiles']);
+        expect(offer?.plan.steps.map((s) => s.status)).toEqual(['current', 'refused']);
+        expect(offer?.plan.problems.length).toBeGreaterThan(0);
+      } finally {
+        window.history.replaceState({}, '', '/');
+      }
+      expect(await new MockTransport().sdlcMigration(MOCK_WORKSPACE_FOLDER)).toBeNull();
+    });
+
+    it('answers a red record for the demo change: T2 has a recorded pass with 20 lines, any other task has none', async () => {
+      const t = new MockTransport();
+      const t2 = await t.sdlcRedRecord(ref(MOCK_BUILD_CHANGE), 'commerce-core', 'T2');
+      expect(t2.observed).toBe(false);
+      expect(t2.stored?.output.split('\n')).toHaveLength(20);
+      expect(await t.sdlcRedRecord(ref(MOCK_BUILD_CHANGE), 'commerce-core', 'T1')).toEqual({ observed: false, reason: 'no red recorded for T1 on this machine', stored: null });
+    });
+
     it('opens a planned change whose build status cannot be read: no status and a notice, never a failed open (F1)', async () => {
       const t = new MockTransport();
       vi.spyOn(t, 'sdlcBuildStatus').mockRejectedValue(new Error('path does not exist in HEAD'));
@@ -524,10 +561,10 @@ describe('MockTransport previewRun', () => {
     expect(Object.keys(r.settings)).toHaveLength(8);
   });
 
-  it('locks ai-sdlc only when required', async () => {
+  it('locks hoshin only when required', async () => {
     const t = new MockTransport();
-    const find = (r: Resolved) => r.items.find((i) => i.id === 'personal:plugin:ai-sdlc@ai-sdlc');
-    const required = { ...seedSpec(), given: { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [], required_plugins: ['ai-sdlc'] } };
+    const find = (r: Resolved) => r.items.find((i) => i.id === 'personal:plugin:hoshin@hoshin');
+    const required = { ...seedSpec(), given: { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [], required_plugins: ['hoshin'] } };
     expect(find(await t.previewRun(required))?.lock?.kind).toBe('required');
     expect(find(await t.previewRun(seedSpec()))?.lock).toBeNull();
   });
@@ -760,7 +797,7 @@ describe('MockTransport answers every call the backend gained on this branch (F2
     const t = new MockTransport();
     const spec = await t.sdlcPreviewChangeRun(ref(MOCK_BUILD_CHANGE), 'spec', FORM_RUN);
     expect([spec.name, spec.task, spec.permissions.mode, spec.leash.timeout_secs]).toEqual(['sdlc-spec', 'x', 'prompt', 900]);
-    expect(spec.given?.required_plugins).toEqual(['ai-sdlc']);
+    expect(spec.given?.required_plugins).toEqual(['hoshin']);
     expect((await t.sdlcPreviewChangeRun(ref(MOCK_BUILD_CHANGE), 'fix', FORM_RUN)).permissions.mode).toBe('auto');
     expect((await t.sdlcPreviewChangeRun(ref(MOCK_BUILD_CHANGE), 'triage', FORM_RUN)).permissions.mode).toBe('auto');
   });
@@ -889,22 +926,22 @@ describe('MockTransport versions', () => {
     }
   };
 
-  it('answers the Workbench version and a found ai-sdlc by default', async () => {
+  it('answers the Workbench version and a found hoshin by default', async () => {
     await withDemo(null, async (t) => {
       const v = await t.appVersions();
       expect(v.workbench).toBe(appVersion);
-      expect(v.aiSdlc).toEqual({ kind: 'found', version: '1.3.0' });
-      expect(v.line).toBe(`Workbench ${appVersion} · ai-sdlc 1.3.0`);
-      expect(v.copy).toBe(`Kata Workbench ${appVersion}, ai-sdlc 1.3.0`);
+      expect(v.hoshin).toEqual({ kind: 'found', version: '1.0.0' });
+      expect(v.line).toBe(`Workbench ${appVersion} · hoshin 1.0.0`);
+      expect(v.copy).toBe(`Kata Workbench ${appVersion}, hoshin 1.0.0`);
     });
   });
 
-  it('answers ai-sdlc not found under ?demo=versions-missing', async () => {
+  it('answers hoshin not found under ?demo=versions-missing', async () => {
     await withDemo('versions-missing', async (t) => {
       const v = await t.appVersions();
-      expect(v.aiSdlc).toEqual({ kind: 'notFound' });
-      expect(v.line).toBe(`Workbench ${appVersion} · ai-sdlc: not found`);
-      expect(v.copy).toBe(`Kata Workbench ${appVersion}, ai-sdlc: not found`);
+      expect(v.hoshin).toEqual({ kind: 'notFound' });
+      expect(v.line).toBe(`Workbench ${appVersion} · hoshin: not found`);
+      expect(v.copy).toBe(`Kata Workbench ${appVersion}, hoshin: not found`);
     });
   });
 
@@ -958,9 +995,6 @@ describe('MockTransport home listing', () => {
       const again = await t.sdlcHomeList('acme-commerce', ['commerce', 'payments']);
       if (again.kind !== 'listed') throw new Error('expected a listed home');
       expect(again.system).toBe('payments');
-    });
-    await withDemo('old-plugin', async (t) => {
-      expect(await t.sdlcHomeList('acme-commerce', ['commerce'])).toEqual({ kind: 'legacy' });
     });
   });
 });

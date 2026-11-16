@@ -1,6 +1,6 @@
 import { Component, computed, input, output } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
-import { linkRequirements, neededBy, shownSections, taskRecord, type TaskView } from '../lib/task-view';
+import { commandsOf, linkRequirements, neededBy, shownSections, taskRecord, type TaskView } from '../lib/task-view';
 import { MarkdownBody } from './markdown-body';
 import { MarkdownInline } from './markdown-inline';
 
@@ -35,6 +35,7 @@ export class TasksView {
     return t === null ? [] : neededBy(this.tasks(), t.id);
   });
   protected readonly link = linkRequirements;
+  protected readonly commandsOf = commandsOf;
 
   /** Whether the build log has a row for the task. */
   protected built(t: TaskView): boolean {

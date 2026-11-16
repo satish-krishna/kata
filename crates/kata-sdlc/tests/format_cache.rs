@@ -8,8 +8,8 @@ use std::path::PathBuf;
 #[test]
 #[serial]
 fn the_same_bytes_read_from_two_paths_start_the_program_once() {
-    let program = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts");
-    let plan = include_str!("ai-sdlc-tools/examples/plan/2/valid.md");
+    let program = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools/hoshin.ts");
+    let plan = include_str!("hoshin-tools/examples/plan/2/valid.md");
     let tmp = tempfile::tempdir().unwrap();
     let mut files = Vec::new();
     for change in ["first-change", "second-change"] {
@@ -56,7 +56,7 @@ impl Drop for Home {
 }
 
 fn program() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools/hoshin.ts")
 }
 
 /// A change folder holding the valid plan, and the plan's path. Each call ends the plan with a line of its
@@ -66,7 +66,7 @@ fn plan_in(root: &std::path::Path) -> PathBuf {
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let file = root.join("a-change").join("plan.md");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-    let text = include_str!("ai-sdlc-tools/examples/plan/2/valid.md");
+    let text = include_str!("hoshin-tools/examples/plan/2/valid.md");
     std::fs::write(
         &file,
         format!(
@@ -164,7 +164,7 @@ fn a_changed_program_or_marker_misses() {
     let _home = Home::new();
     let tmp = tempfile::tempdir().unwrap();
     let plan = plan_in(tmp.path());
-    let marker = tmp.path().join(".ai-sdlc.json");
+    let marker = tmp.path().join(".hoshin.json");
     std::fs::write(
         &marker,
         r#"{"version":1,"systems":{"kata":{"repos":["kata"]}}}"#,
@@ -191,7 +191,7 @@ fn a_changed_program_or_marker_misses() {
     // A program with other bytes is a miss.
     // The entry of this program is a file that imports the rest, so a stand-in entry with other bytes
     // that imports the real one reads the same and is a different program to the cache.
-    let other = tmp.path().join("other").join("ai-sdlc.ts");
+    let other = tmp.path().join("other").join("hoshin.ts");
     std::fs::create_dir_all(other.parent().unwrap()).unwrap();
     let real = program().display().to_string().replace('\\', "/");
     std::fs::write(&other, format!("await import('file:///{real}');\n")).unwrap();

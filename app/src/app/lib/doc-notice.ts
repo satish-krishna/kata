@@ -28,7 +28,7 @@ const warning = (text: string, lines: string[] = []): DocNotice => ({ tone: 'war
 
 /** The plugin rows: nothing could be read, so the text is shown plain. Null when the plugin is ready. */
 function unusable(readiness: Readiness): Shown | null {
-  if (readiness.kind === 'blocked') return { show: 'plain', notice: warning(readiness.reason === 'pluginMissing' ? 'Install the ai-sdlc plugin to read this document' : readiness.message) };
+  if (readiness.kind === 'blocked') return { show: 'plain', notice: warning(readiness.reason === 'pluginMissing' ? 'Install the hoshin plugin to read this document' : readiness.message) };
   return null;
 }
 

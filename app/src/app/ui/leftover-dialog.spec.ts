@@ -37,7 +37,7 @@ describe('LeftoverDialog', () => {
     expect(t).toContain('scratch.txt');
     expect(t).toContain('notes.md');
     expect(t).toContain('changed before and during this run');
-    expect(t).toContain('the run changed files in commerce-core; ai-sdlc should not write there');
+    expect(t).toContain('the run changed files in commerce-core; hoshin should not write there');
   });
 
   it('tags a file the run created that cannot be discarded as changed during this run only', async () => {

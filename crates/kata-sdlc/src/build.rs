@@ -1,5 +1,5 @@
 //! The build's state, read from the plan and the build logs as committed in the master
-//! repository. Nothing in Kata parses `plan.md` or `build/<repo>.md` itself: the ai-sdlc plugin's
+//! repository. Nothing in Kata parses `plan.md` or `build/<repo>.md` itself: the hoshin plugin's
 //! format program reads them, in either layout, and this module folds its answer into a status.
 use crate::format::{self, FormatError, ParsedBuildLog, ParsedTask, Problem, ReadResult};
 use crate::git::{self, GitError};
@@ -19,6 +19,68 @@ pub struct BuildRow {
     pub repo: String,
     pub commits: Vec<String>,
     pub departure: Option<String>,
+    /// The entry's `red` field as logged: `observed`, `not observed: <reason>`, or none.
+    pub red: Option<String>,
+}
+
+/// What the build log says about whether a task's test failed before its production code.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum RedVerdict {
+    Observed,
+    NotObserved { reason: String },
+    Unrecorded,
+    NoTest,
+    Unreadable { value: String },
+}
+
+impl RedVerdict {
+    /// Whether the verdict is one the engineer should notice: anything but a seen red or no test.
+    pub fn stands_out(&self) -> bool {
+        matches!(
+            self,
+            RedVerdict::NotObserved { .. } | RedVerdict::Unrecorded | RedVerdict::Unreadable { .. }
+        )
+    }
+}
+
+/// Whether a task's red verdict, when it has one, needs a look.
+fn red_stands_out(red: &Option<RedVerdict>) -> bool {
+    red.as_ref().is_some_and(RedVerdict::stands_out)
+}
+
+/// The verdict for one task, given whether the plan has tests at all, whether this task has one,
+/// and its build-log row, if any.
+fn red_verdict(
+    plan_has_tests: bool,
+    task: &ParsedTask,
+    row: Option<&BuildRow>,
+) -> Option<RedVerdict> {
+    if !plan_has_tests {
+        return None;
+    }
+    if task.test.is_none() {
+        return Some(RedVerdict::NoTest);
+    }
+    let row = row?;
+    Some(match row.red.as_deref() {
+        None => RedVerdict::Unrecorded,
+        Some("observed") => RedVerdict::Observed,
+        Some(v) => match v.strip_prefix("not observed: ") {
+            Some(reason) => RedVerdict::NotObserved {
+                reason: reason.to_string(),
+            },
+            None => RedVerdict::Unreadable {
+                value: v.to_string(),
+            },
+        },
+    })
 }
 
 /// Where a repository stands in the build.
@@ -54,6 +116,13 @@ pub struct TaskStatus {
     /// The task's own section of the plan, as the format program parsed it.
     pub text: String,
     pub row: Option<BuildRow>,
+    /// Whether the task's test was seen to fail first; `None` when the plan has no tests or the
+    /// task is not built yet.
+    pub red: Option<RedVerdict>,
+    /// Whether `red` is a verdict that needs a look (`RedVerdict::stands_out`); false when `red` is `None`. Sent as data because the Workbench decides nothing.
+    pub red_stands_out: bool,
+    /// Whether the page fetches the task's stored red record when the task is picked: exactly when `red` is `NotObserved`, the one verdict the record explains. Sent as data because the Workbench decides nothing.
+    pub red_record_wanted: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -93,6 +162,8 @@ pub struct BuildStatus {
     pub problems: Vec<Problem>,
     /// The layout each build log is written in, so the Build tab can label an older one.
     pub log_layouts: Vec<LogLayout>,
+    /// Whether any task of the plan has a `test`, so the Build tab shows the red verdicts at all.
+    pub red_shown: bool,
 }
 
 /// The layout one build log is written in.
@@ -109,7 +180,7 @@ pub(crate) fn change_dir(system: &str, change: &str) -> String {
     format!("intent/{system}/{change}")
 }
 
-const FORMAT_PROGRAM: &str = "ai-sdlc format program";
+const FORMAT_PROGRAM: &str = "hoshin format program";
 
 /// A format-program failure reported the way a git failure is, so one error type serves both.
 pub(crate) fn unreadable(error: FormatError) -> GitError {
@@ -120,9 +191,9 @@ pub(crate) fn unreadable(error: FormatError) -> GitError {
     }
 }
 
-/// The format program inside the ai-sdlc plugin folder.
+/// The format program inside the hoshin plugin folder.
 pub(crate) fn program(plugin: &Path) -> PathBuf {
-    plugin.join("tools").join("ai-sdlc.ts")
+    plugin.join("tools").join("hoshin.ts")
 }
 
 /// Where the committed documents are put for the program to read: the program takes a document's
@@ -341,13 +412,14 @@ fn rows_of(logs: &[ParsedBuildLog]) -> Vec<BuildRow> {
                 repo: log.repo.clone(),
                 commits: entry.commits.clone(),
                 departure: entry.departure.clone().filter(|d| !d.trim().is_empty()),
+                red: entry.red.clone(),
             })
         })
         .collect()
 }
 
 /// The build's state from the plan and build logs committed at `HEAD`, read by the format program
-/// in `plugin` (the ai-sdlc plugin folder). Problems found in those documents come back in
+/// in `plugin` (the hoshin plugin folder). Problems found in those documents come back in
 /// `problems` and do not stop the reading.
 pub fn status(
     plugin: &Path,
@@ -370,16 +442,23 @@ pub fn status_with(
     let rows = rows_of(&committed.logs);
     let row_of = |id: &str| rows.iter().find(|r| r.task == id);
 
+    let red_shown = committed.tasks.iter().any(|t| t.test.is_some());
     let tasks: Vec<TaskStatus> = committed
         .tasks
         .iter()
-        .map(|t| TaskStatus {
-            id: t.id.clone(),
-            name: t.name.clone(),
-            repo: t.repo.clone(),
-            depends_on: t.depends_on.clone(),
-            text: t.text.clone(),
-            row: row_of(&t.id).cloned(),
+        .map(|t| {
+            let red = red_verdict(red_shown, t, row_of(&t.id));
+            TaskStatus {
+                id: t.id.clone(),
+                name: t.name.clone(),
+                repo: t.repo.clone(),
+                depends_on: t.depends_on.clone(),
+                text: t.text.clone(),
+                row: row_of(&t.id).cloned(),
+                red_stands_out: red_stands_out(&red),
+                red_record_wanted: matches!(red, Some(RedVerdict::NotObserved { .. })),
+                red,
+            }
         })
         .collect();
 
@@ -438,6 +517,7 @@ pub fn status_with(
         repos,
         departures,
         problems: committed.problems(),
+        red_shown,
         log_layouts: committed
             .logs
             .iter()
@@ -895,7 +975,7 @@ mod tests {
         let format_dir = plugin.path().join("tools");
         std::fs::create_dir_all(&format_dir).unwrap();
         std::fs::write(
-            format_dir.join("ai-sdlc.ts"),
+            format_dir.join("hoshin.ts"),
             format!(
                 "import {{ readdirSync, writeFileSync }} from 'node:fs';
                  if (process.argv[2] === 'check') process.exit(0);
@@ -935,5 +1015,123 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().starts_with("met-"))
             .count();
         assert_eq!(met, 2, "each read should have met the other");
+    }
+
+    fn red_task(id: &str, test: bool) -> ParsedTask {
+        ParsedTask {
+            id: id.into(),
+            name: id.into(),
+            repo: "app".into(),
+            depends_on: vec![],
+            uses: vec![],
+            files: vec![],
+            covers: vec![],
+            supports: vec![],
+            sections: vec![],
+            test: test.then(|| vec!["cargo".into(), "test".into()]),
+            compile: None,
+            text: String::new(),
+            line: 1,
+        }
+    }
+
+    fn red_row(red: Option<&str>) -> BuildRow {
+        BuildRow {
+            task: "T1".into(),
+            repo: "app".into(),
+            commits: vec!["abc1234".into()],
+            departure: None,
+            red: red.map(String::from),
+        }
+    }
+
+    #[test]
+    fn red_is_none_when_no_task_has_a_test() {
+        let t = red_task("T1", false);
+        assert_eq!(red_verdict(false, &t, Some(&red_row(None))), None);
+        assert!(!red_stands_out(&red_verdict(
+            false,
+            &t,
+            Some(&red_row(None))
+        )));
+    }
+
+    #[test]
+    fn red_no_test_when_the_plan_has_tests_but_this_task_has_none() {
+        let t = red_task("T1", false);
+        assert_eq!(red_verdict(true, &t, None), Some(RedVerdict::NoTest));
+        assert!(!red_stands_out(&red_verdict(true, &t, None)));
+    }
+
+    #[test]
+    fn red_is_none_for_a_task_not_built_yet() {
+        let t = red_task("T1", true);
+        assert_eq!(red_verdict(true, &t, None), None);
+        assert!(!red_stands_out(&red_verdict(true, &t, None)));
+    }
+
+    #[test]
+    fn red_unrecorded_when_the_entry_has_no_red() {
+        let t = red_task("T1", true);
+        assert_eq!(
+            red_verdict(true, &t, Some(&red_row(None))),
+            Some(RedVerdict::Unrecorded)
+        );
+        assert!(red_stands_out(&red_verdict(true, &t, Some(&red_row(None)))));
+    }
+
+    #[test]
+    fn red_observed_when_logged_observed() {
+        let t = red_task("T1", true);
+        assert_eq!(
+            red_verdict(true, &t, Some(&red_row(Some("observed")))),
+            Some(RedVerdict::Observed)
+        );
+        assert!(!red_stands_out(&red_verdict(
+            true,
+            &t,
+            Some(&red_row(Some("observed")))
+        )));
+    }
+
+    #[test]
+    fn red_not_observed_carries_the_reason_after_the_prefix() {
+        let t = red_task("T1", true);
+        assert_eq!(
+            red_verdict(true, &t, Some(&red_row(Some("not observed: no test ran")))),
+            Some(RedVerdict::NotObserved {
+                reason: "no test ran".into()
+            })
+        );
+        assert!(red_stands_out(&red_verdict(
+            true,
+            &t,
+            Some(&red_row(Some("not observed: no test ran")))
+        )));
+    }
+
+    #[test]
+    fn red_unreadable_keeps_the_value_as_logged() {
+        let t = red_task("T1", true);
+        assert_eq!(
+            red_verdict(true, &t, Some(&red_row(Some("seen")))),
+            Some(RedVerdict::Unreadable {
+                value: "seen".into()
+            })
+        );
+        assert!(red_stands_out(&red_verdict(
+            true,
+            &t,
+            Some(&red_row(Some("seen")))
+        )));
+    }
+
+    #[test]
+    fn red_stands_out_for_the_three_that_need_a_look() {
+        assert!(RedVerdict::NotObserved { reason: "x".into() }.stands_out());
+        assert!(RedVerdict::Unrecorded.stands_out());
+        assert!(RedVerdict::Unreadable { value: "x".into() }.stands_out());
+        assert!(!RedVerdict::Observed.stands_out());
+        assert!(!RedVerdict::NoTest.stands_out());
     }
 }

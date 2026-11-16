@@ -49,6 +49,8 @@ function tasks(): ParsedTask[] {
       files: [],
       covers: [`R${Math.min(n, NUMBERS.requirements)}.1`],
       supports: [],
+      test: null,
+      compile: null,
       sections: [
         { title: 'Change', body: `Change for task ${n}.` },
         { title: 'Tests', body: `Tests for task ${n}.` },
@@ -71,7 +73,10 @@ export function builtTasks(): TaskStatus[] {
     repo: t.repo,
     dependsOn: t.depends_on,
     text: t.text,
-    row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null },
+    row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null, red: null },
+    red: null,
+    redStandsOut: false,
+    redRecordWanted: false,
   }));
 }
 

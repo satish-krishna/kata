@@ -79,8 +79,8 @@ describe("PrListDialog, the plugin's answer to declaring done", () => {
   });
 
   it('a machine that could not run the step says so and claims nothing as pushed (R7.1 cannot run)', async () => {
-    await show({ kind: 'couldNotRun', message: 'ai-sdlc needs Node.js 22.18 or later' });
-    expect(text()).toContain('ai-sdlc needs Node.js 22.18 or later');
+    await show({ kind: 'couldNotRun', message: 'hoshin needs Node.js 22.18 or later' });
+    expect(text()).toContain('hoshin needs Node.js 22.18 or later');
     expect(text()).toContain('Nothing is claimed as pushed.');
     expect(button('Declare done again')).toBeUndefined();
   });

@@ -1,8 +1,8 @@
 //! Holds on product repositories: which change is building or reviewing in a repository. A change
 //! takes every repository it needs at once or none, so two builds that need the same repository
 //! are told apart at the moment they start. The table lives behind one `Mutex` in the backend.
-use crate::ai_sdlc::state::ChangeState;
 use crate::format::ParsedPlan;
+use crate::hoshin::state::ChangeState;
 use crate::layout::Layout;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -168,6 +168,14 @@ impl HoldTable {
     pub fn holder(&self, repo: &RepoKey) -> Option<&ChangeKey> {
         self.holds.get(repo).map(|h| &h.change)
     }
+
+    /// Every repository held, as the folder each key was made from.
+    pub fn repos(&self) -> Vec<std::path::PathBuf> {
+        self.holds
+            .keys()
+            .map(|k| std::path::PathBuf::from(&k.key))
+            .collect()
+    }
 }
 
 /// The keys a build or review of a change takes. The workspace layout holds one key per product repository
@@ -230,8 +238,8 @@ pub fn review_repos(change: &ChangeState, master_name: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_sdlc::state::RepoTasks;
     use crate::format::ParsedTask;
+    use crate::hoshin::state::RepoTasks;
     use crate::permissions::fixtures::change_state;
     use std::collections::BTreeMap;
     use std::sync::{Arc, Barrier, Mutex};
@@ -247,6 +255,8 @@ mod tests {
             covers: Vec::new(),
             supports: Vec::new(),
             sections: Vec::new(),
+            test: None,
+            compile: None,
             text: String::new(),
             line: 1,
         }

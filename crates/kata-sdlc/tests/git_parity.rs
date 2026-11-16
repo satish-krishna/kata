@@ -90,7 +90,7 @@ fn plain() -> Fx {
     fx.commit(&format!("{D}/build/kata.md"), "log\n");
     fx.commit(&format!("{D}/build/review.md"), "review\n");
     fx.commit("src/lib.rs", "fn main() {}\n");
-    fx.commit(".ai-sdlc.json", "{}\n");
+    fx.commit(".hoshin.json", "{}\n");
     fx.commit("dir with space/a b.md", "x\n");
     fx.commit("caf\u{e9}.md", "unicode\n");
     // Edited in the working tree only, staged only, both, deleted, and untracked.
@@ -251,7 +251,7 @@ fn merges() -> Fx {
     fx.commit("src/f.rs", "f\n");
     fx.commit("README.md", "changed\n");
     // An empty merge-like commit and a commit that only touches excluded paths.
-    fx.commit(".ai-sdlc.json", "{}\n");
+    fx.commit(".hoshin.json", "{}\n");
     fx
 }
 
@@ -275,7 +275,7 @@ fn random_history(seed: u64) -> Fx {
         "src/b.rs",
         "intent/s/c/x.md",
         "README.md",
-        ".ai-sdlc.json",
+        ".hoshin.json",
     ];
     for step in 0..40 {
         let pick = next() % tips.len();
@@ -366,7 +366,7 @@ fn candidate_paths() -> Vec<String> {
         "keep.md",
         "kept.md",
         "notes.txt",
-        ".ai-sdlc.json",
+        ".hoshin.json",
         "dir with space/a b.md",
         "caf\u{e9}.md",
         "untracked dir/two.md",
@@ -541,11 +541,11 @@ fn documents_count_since_equals_rev_list_count() {
                     "--",
                     ".",
                     ":(exclude)intent",
-                    ":(exclude).ai-sdlc.json",
+                    ":(exclude).hoshin.json",
                 ],
             )
             .map(|out| String::from_utf8_lossy(&out).trim().parse::<u32>().unwrap());
-            let got = repo.count_since(sha, &["."], &["intent", ".ai-sdlc.json"]);
+            let got = repo.count_since(sha, &["."], &["intent", ".hoshin.json"]);
             match (want, got) {
                 (Ok(want), Ok(got)) => assert_eq!(want, got, "{name}: {sha}"),
                 (Err(_), Err(_)) => {}

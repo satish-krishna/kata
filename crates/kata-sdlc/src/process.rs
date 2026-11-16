@@ -1,4 +1,4 @@
-//! How a finished child process ended, as the ai-sdlc and format programs' callers read it.
+//! How a finished child process ended, as the hoshin and format programs' callers read it.
 
 /// How a finished process ended, with its whole stdout and its stderr kept apart.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -17,6 +17,8 @@ import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { ReviewRows } from '@bindings/ReviewRows';
 import type { RoundGroup } from '@bindings/RoundGroup';
 import type { RoundOffer } from '@bindings/RoundOffer';
+import type { RedRecord } from '@bindings/RedRecord';
+import type { RedVerdict } from '@bindings/RedVerdict';
 import type { RoundPicks } from '@bindings/RoundPicks';
 import { picksOf } from '../../ui/build-dialog';
 import type { RunLink } from '@bindings/RunLink';
@@ -135,8 +137,27 @@ export type TaskArea = {
 /** A status as the page shows it: an andon tone, drawn as a dot, and its label. */
 export type StatusText = { tone: 'success' | 'warning' | 'error' | 'idle'; label: string };
 
+/** What the build log says about a task's red, as one line; `standsOut` is the backend's word (`redStandsOut`), drawn with the warning status. */
+export type RedView = { label: string; standsOut: boolean };
+
+/** The line for a verdict the backend decided, and whether the backend says it stands out. */
+export function redViewOf(verdict: RedVerdict, standsOut: boolean): RedView {
+  switch (verdict.kind) {
+    case 'observed':
+      return { label: 'red observed', standsOut };
+    case 'notObserved':
+      return { label: `red not observed: ${verdict.reason}`, standsOut };
+    case 'unrecorded':
+      return { label: 'red not recorded', standsOut };
+    case 'noTest':
+      return { label: 'no test', standsOut };
+    case 'unreadable':
+      return { label: `red: ${verdict.value}`, standsOut };
+  }
+}
+
 /** One task of the tasks area. */
-export type TaskRowView = { id: string; name: string; status: StatusText; departure: string | null; picked: boolean; commits: string[] };
+export type TaskRowView = { id: string; name: string; status: StatusText; departure: string | null; red: RedView | null; picked: boolean; commits: string[] };
 
 /** One repository of the tasks area: its heading (name, situation, the button it offers) and its tasks. */
 export type TaskGroupView = {
@@ -238,6 +259,8 @@ export type BuildPageView = {
   noDepartures: boolean;
   /** The picked task's departure from the plan, when it is a finished task that recorded one. */
   pickedDeparture: { task: string; text: string } | null;
+  /** The picked task, when its red was not observed: the page shows the stored record of it, which `redRecord` holds. */
+  pickedRed: { task: string } | null;
   review: ReviewEntryView;
   pick: Pick | null;
   sessions: ShownSession[];
@@ -404,6 +427,9 @@ export class BuildPageViewModel {
   /** The tasks area as the backend decided it from the build log's status and the host's live runs and stops. */
   private readonly board = signal<RepoBoard[]>([]);
   private boardSeq = 0;
+  /** The stored record behind the picked task's not-observed red: null when none is wanted, 'loading' while it is read, 'failed' when the read failed. */
+  readonly redRecord = signal<RedRecord | null | 'loading' | 'failed'>(null);
+  private redSeq = 0;
   /** The final state of each earlier run whose transcript was read, by run id; 'unreadable' when it could not be. */
   private readonly details = signal<Readonly<Record<string, RunSnapshot | 'unreadable'>>>({});
   private readonly readingDetail = new Set<string>();
@@ -640,6 +666,21 @@ export class BuildPageViewModel {
     // A status read must not look like a new pick, and picking the same task again must: the Changes view starts over on a new object.
     { equal: (a, b) => a === b || (a !== null && b !== null && a.id === b.id && a.repo === b.repo && a.pick === b.pick) },
   );
+  /** What the build log says about each task's red, from the backend's verdicts; empty while the plan names no test at all. */
+  private readonly reds = computed<ReadonlyMap<string, RedView>>(() => {
+    const status = this.status();
+    if (status === null || !status.redShown) return new Map();
+    return new Map(status.tasks.flatMap((t): [string, RedView][] => (t.red === null ? [] : [[t.id, redViewOf(t.red, t.redStandsOut)]])));
+  });
+  /** The picked task, when the backend says its stored red record is wanted (`redRecordWanted`): the one pick whose record the page shows. */
+  private readonly redWanted = computed<{ id: string; repo: string } | null>(
+    () => {
+      const task = this.pickedTask();
+      const wanted = this.status()?.tasks.find((t) => t.id === task?.id)?.redRecordWanted === true;
+      return task !== null && wanted ? { id: task.id, repo: task.repo } : null;
+    },
+    { equal: (a, b) => a === b || (a !== null && b !== null && a.id === b.id && a.repo === b.repo) },
+  );
   /** The repositories whose run stopped, whose uncommitted files were left by it. */
   readonly stoppedRepos = computed<string[]>(() => this.taskAreas().flatMap((g) => (g.situation.kind === 'stopped' ? [g.repo] : [])));
 
@@ -707,6 +748,11 @@ export class BuildPageViewModel {
       const repos = this.groupKeys();
       const state = this.buildState();
       if (status !== null) untracked(() => void this.readBoard(repos, status, state));
+    });
+    // The stored record behind a not-observed red is read when its task is picked, and dropped when the pick moves.
+    effect(() => {
+      const wanted = this.redWanted();
+      untracked(() => void this.readRed(wanted));
     });
     // A run's transcript is linked to its own change as soon as its id shows up in the run's events, whichever change is on show.
     effect(() => {
@@ -1255,9 +1301,11 @@ export class BuildPageViewModel {
     const filter = this.taskFilter();
     const checkViews = this.checkViews();
     const openFolds = this.openFolds();
+    const reds = this.reds();
+    const redWanted = this.redWanted();
     const pickedTask = pick?.kind === 'task' ? pick.task : null;
     const linesOf = (g: TaskArea): TaskLine[] =>
-      g.tasks.map((t) => ({ id: t.id, name: t.name, status: taskStatus(t.state), finished: t.state.kind === 'done', departure: t.state.kind === 'done' ? t.state.departure : null, commits: t.commits }));
+      g.tasks.map((t) => ({ id: t.id, name: t.name, status: taskStatus(t.state), finished: t.state.kind === 'done', departure: t.state.kind === 'done' ? t.state.departure : null, red: reds.get(t.id) ?? null, commits: t.commits }));
     const counts = filterCounts(areas.flatMap(linesOf));
     const pickedDeparture = areas
       .flatMap((g) => g.tasks)
@@ -1284,6 +1332,7 @@ export class BuildPageViewModel {
           name: t.name,
           status: taskStatus(t.state),
           departure: t.state.kind === 'done' ? t.state.departure : null,
+          red: reds.get(t.id) ?? null,
           picked: pick?.kind === 'task' && pick.task === t.id,
           commits: t.commits,
         })),
@@ -1291,6 +1340,7 @@ export class BuildPageViewModel {
       filter: { value: filter, counts },
       noDepartures: filter === 'departed' && counts.departed === 0,
       pickedDeparture,
+      pickedRed: redWanted === null ? null : { task: redWanted.id },
       review: { status: reviewStatus(entry), action: this.reviewAction(), picked: pick?.kind === 'review', ...this.reviewList(entry) },
       pick,
       sessions: this.mountedSessions(),
@@ -1413,6 +1463,26 @@ export class BuildPageViewModel {
       if (seq === this.boardSeq && ctx !== null && this.shows(ctx)) this.board.set(board);
     } catch (e) {
       if (seq === this.boardSeq) this.toasts.error(`Could not read where the build stands: ${message(e)}`);
+    }
+  }
+
+  /** Read the stored record of the picked task's red; a newer pick supersedes it. */
+  private async readRed(wanted: { id: string; repo: string } | null): Promise<void> {
+    const seq = ++this.redSeq;
+    const ctx = this.ctx;
+    if (wanted === null || ctx === null) {
+      this.redRecord.set(null);
+      return;
+    }
+    this.redRecord.set('loading');
+    try {
+      const record = await this.transport.sdlcRedRecord(this.refOf(ctx), wanted.repo, wanted.id);
+      if (seq === this.redSeq && this.shows(ctx)) this.redRecord.set(record);
+    } catch (e) {
+      if (seq === this.redSeq) {
+        this.redRecord.set('failed');
+        this.toasts.error(`Could not read the record of ${wanted.id}: ${message(e)}`);
+      }
     }
   }
 
@@ -2049,7 +2119,7 @@ export class BuildPageViewModel {
     try {
       readiness = await this.transport.sdlcPluginReadiness(ctx!.folder);
     } catch {
-      readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
+      readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the hoshin plugin' };
     }
     if (!this.shows(ctx)) return;
     this.reviewDocNotice.set(shownPart({ layout: document.layout, problems: document.problems }, readiness).notice);

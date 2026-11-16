@@ -9,6 +9,7 @@ import { FinishedChanges } from '../../ui/finished-changes';
 import { Segmented } from '../../ui/segmented';
 import { ConfirmDialog } from '../../ui/confirm-dialog';
 import { LeftoverDialog } from '../../ui/leftover-dialog';
+import { MigrateDialog } from '../../ui/migrate-dialog';
 import { LockOverlay } from '../../ui/lock-overlay';
 import { SdlcSession } from '../../ui/sdlc-session';
 import { NewChangeDialog } from '../../ui/new-change-dialog';
@@ -43,6 +44,7 @@ import { SdlcHomeViewModel } from './sdlc-home.view-model';
     NewChangeDialog,
     SdlcSettingsDialog,
     LeftoverDialog,
+    MigrateDialog,
     LockOverlay,
     ConfirmDialog,
     RunPreviewDialog,

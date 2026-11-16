@@ -11,6 +11,7 @@ const line = (id: string, finished: boolean, departure: string | null = null): T
   finished,
   departure,
   commits: [],
+  red: null,
 });
 
 // T1..T5 finished (T2 and T4 departed), T6 running, T7 and T8 not started.
@@ -30,7 +31,7 @@ const ids = (v: ReturnType<typeof taskList>) => v.rows.map((r) => r.line.id);
 describe('taskList', () => {
   it('all, some finished, closed: folds the finished and lists the unfinished', () => {
     const v = taskList(repo(), 'all', false, null);
-    expect(v.fold).toEqual({ range: 'T1–T5', done: 5, departed: 2, open: false });
+    expect(v.fold).toEqual({ range: 'T1–T5', done: 5, departed: 2, red: 0, open: false });
     expect(ids(v)).toEqual(['T6', 'T7', 'T8']);
     expect(v.rows.every((r) => !r.showDeparture)).toBe(true);
     expect(v.empty).toBeNull();
@@ -44,7 +45,7 @@ describe('taskList', () => {
 
   it('all, some finished, opened by the engineer: finished then unfinished', () => {
     const v = taskList(repo(), 'all', true, 'T7');
-    expect(v.fold).toEqual({ range: 'T1–T5', done: 5, departed: 2, open: true });
+    expect(v.fold).toEqual({ range: 'T1–T5', done: 5, departed: 2, red: 0, open: true });
     expect(ids(v)).toEqual(['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8']);
     expect(v.rows.every((r) => !r.showDeparture)).toBe(true);
   });
@@ -93,9 +94,21 @@ describe('taskList', () => {
     expect(v.empty).toBeNull();
   });
 
+  it('the fold counts the finished tasks whose red verdict stands out, and only those', () => {
+    const withRed = (l: TaskLine, label: string, standsOut: boolean): TaskLine => ({ ...l, red: { label, standsOut } });
+    const tasks = [
+      withRed(line('T1', true), 'red observed', false),
+      withRed(line('T2', true), 'red not observed: passed first', true),
+      withRed(line('T3', true), 'red not recorded', true),
+      withRed(line('T4', true), 'no test', false),
+      withRed(line('T5', false), 'red not recorded', true),
+    ];
+    expect(taskList(tasks, 'all', false, null).fold).toEqual({ range: 'T1–T4', done: 4, departed: 0, red: 2, open: false });
+  });
+
   it('a single finished task reads its own id as the range', () => {
     const v = taskList([line('T1', true), line('T2', false)], 'all', false, null);
-    expect(v.fold).toEqual({ range: 'T1', done: 1, departed: 0, open: false });
+    expect(v.fold).toEqual({ range: 'T1', done: 1, departed: 0, red: 0, open: false });
   });
 
   describe('R1.3 of 7 tasks finished', () => {
@@ -109,13 +122,13 @@ describe('taskList', () => {
 
     it('4 finished: fold of 4 and 3 rows', () => {
       const v = taskList(seven(4), 'all', false, null);
-      expect(v.fold).toEqual({ range: 'T1–T4', done: 4, departed: 0, open: false });
+      expect(v.fold).toEqual({ range: 'T1–T4', done: 4, departed: 0, red: 0, open: false });
       expect(ids(v)).toEqual(['T5', 'T6', 'T7']);
     });
 
     it('7 finished: fold of 7 and no rows', () => {
       const v = taskList(seven(7), 'all', false, null);
-      expect(v.fold).toEqual({ range: 'T1–T7', done: 7, departed: 0, open: false });
+      expect(v.fold).toEqual({ range: 'T1–T7', done: 7, departed: 0, red: 0, open: false });
       expect(v.rows).toEqual([]);
     });
   });

@@ -1,10 +1,10 @@
-//! A change started through the real (vendored) ai-sdlc program must be found again from the one folder the
+//! A change started through the real (vendored) hoshin program must be found again from the one folder the
 //! Workbench saved for its workspace, in both layouts, through the app's own code paths: the home's list and
 //! open reads, the change page's `home::resolve` and the build host's `resolve` and state read. Nothing here
 //! is faked and no `Place` under test is built by hand; the only hand-made one starts the change.
 use crate::build_host::{ProgramTools, Tools};
 use crate::sdlc_home::HomeSource;
-use kata_sdlc::ai_sdlc::{Place, Program};
+use kata_sdlc::hoshin::{Place, Program};
 use kata_sdlc::layout::Layout;
 use std::path::{Path, PathBuf};
 
@@ -16,7 +16,7 @@ fn vendored() -> Program {
     Program {
         node: "node".into(),
         entry: Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../crates/kata-sdlc/tests/ai-sdlc-tools/ai-sdlc.ts"),
+            .join("../../crates/kata-sdlc/tests/hoshin-tools/hoshin.ts"),
     }
 }
 
@@ -55,7 +55,7 @@ fn commit_all(dir: &Path, message: &str) {
 fn single_repo(parent: &Path) -> PathBuf {
     let root = init_repo(parent, "kata");
     std::fs::write(
-        root.join(".ai-sdlc.json"),
+        root.join(".hoshin.json"),
         r#"{"version":1,"layout":"single-repo","systems":{"kata":{"apps":{"engine":"engine","workbench":"app"}}}}"#,
     )
     .unwrap();
@@ -68,11 +68,11 @@ fn single_repo(parent: &Path) -> PathBuf {
     root
 }
 
-/// A workspace `parent` holding the master `ai-sdlc` and the product repository `kata`; returns `parent`.
+/// A workspace `parent` holding the master `hoshin` and the product repository `kata`; returns `parent`.
 fn workspace(parent: &Path) -> PathBuf {
-    let master = init_repo(parent, "ai-sdlc");
+    let master = init_repo(parent, "hub");
     std::fs::write(
-        master.join(".ai-sdlc.json"),
+        master.join(".hoshin.json"),
         r#"{"version":1,"systems":{"kata":{"repos":["kata"]}}}"#,
     )
     .unwrap();
@@ -97,7 +97,7 @@ fn start(program: &Program, place: &Place) {
         )
         .json;
     assert_eq!(started["outcome"], "passed", "{started}");
-    let copy = place.workspace.join(".ai-sdlc/copies").join(CHANGE);
+    let copy = place.workspace.join(".hoshin/copies").join(CHANGE);
     let folder = copy.join(format!("intent/{SYSTEM}/{CHANGE}"));
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join("intent.md"), INTENT).unwrap();
@@ -135,7 +135,7 @@ fn found_again(program: &Program, saved: &str, layout: Layout) {
     assert!(home.in_copy);
 
     // (c) The build host resolves the folder, then reads the change's state in the place it got.
-    let tools = ProgramTools::new(program.clone(), true);
+    let tools = ProgramTools::new(program.clone());
     let place = tools.resolve(folder).unwrap();
     let state = tools
         .change_state(&place, SYSTEM, CHANGE)
@@ -184,7 +184,7 @@ fn a_workspace_change_is_found_from_the_folder_saved_for_it() {
         &program,
         &Place {
             layout,
-            master: ws.join("ai-sdlc"),
+            master: ws.join("hub"),
             workspace: ws.clone(),
         },
     );
@@ -218,7 +218,7 @@ fn the_backend_lets_a_workspace_master_be_switched() {
     let tmp = tempfile::tempdir().unwrap();
     let parent = tmp.path().canonicalize().unwrap();
     let ws = workspace(&parent);
-    let master = ws.join("ai-sdlc");
+    let master = ws.join("hub");
     let master = master.to_str().unwrap();
 
     assert_eq!(
@@ -252,7 +252,7 @@ fn a_workspace_that_is_a_git_root_is_found_from_the_folder_saved_for_it() {
         &program,
         &Place {
             layout,
-            master: ws.join("ai-sdlc"),
+            master: ws.join("hub"),
             workspace: ws.clone(),
         },
     );

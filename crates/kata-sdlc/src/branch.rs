@@ -218,11 +218,11 @@ pub(crate) fn ensure_clean(master: &Path) -> Result<(), BranchError> {
     }
 }
 
-/// The change a copy folder belongs to: its folder name when it sits in `.ai-sdlc/copies`, else the path.
+/// The change a copy folder belongs to: its folder name when it sits in `.hoshin/copies`, else the path.
 fn copy_change_name(folder: &Path) -> String {
     let in_copies = folder
         .parent()
-        .is_some_and(|p| p.ends_with(".ai-sdlc/copies"));
+        .is_some_and(|p| p.ends_with(".hoshin/copies"));
     match folder.file_name() {
         Some(name) if in_copies => name.to_string_lossy().into_owned(),
         _ => folder.display().to_string(),
@@ -342,7 +342,7 @@ mod tests {
 
     const S: &str = "s";
     const C: &str = "2026-10-19-c";
-    const OWN: &str = "feat(s): own work\n\nGenerated-By: ai-sdlc";
+    const OWN: &str = "feat(s): own work\n\nGenerated-By: hoshin";
     const RECORDED: &str = "feat/PROJ-123-password-reset";
 
     struct Fx {
@@ -380,7 +380,7 @@ mod tests {
             .join(",");
         testutil::commit_file(
             &master,
-            ".ai-sdlc.json",
+            ".hoshin.json",
             &format!("{{\"version\":1,\"systems\":{{\"{S}\":{{\"repos\":[{repos}]}}}}}}"),
             "marker",
         );
@@ -653,7 +653,7 @@ exit 1
     fn listing_includes_named_branch_whose_record_names_it_r7_3() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
-        testutil::commit_file(&repo, ".ai-sdlc.json", NAMED_S, "marker");
+        testutil::commit_file(&repo, ".hoshin.json", NAMED_S, "marker");
         branch_holding(
             &repo,
             "feat/PROJ-123-password-reset",
@@ -679,7 +679,7 @@ exit 1
     fn listing_follows_the_table() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
-        testutil::commit_file(&repo, ".ai-sdlc.json", NAMED_S, "marker");
+        testutil::commit_file(&repo, ".hoshin.json", NAMED_S, "marker");
         // Row 1: a plain change branch, whatever its tip holds.
         branch_holding(&repo, "change/2026-11-01-a", &[]);
         // Row 2: a pending branch an older Kata made, holding a new change without a record, is not listed.
@@ -815,7 +815,7 @@ mod copy_tests {
         git::run(&app, &["branch", &format!("change/{change}"), "main"]).unwrap();
         testutil::checkout(&app, "feat/x", true);
         testutil::commit_file(&app, "a.txt", "a\n", "work");
-        let copy = folder.join(".ai-sdlc").join("copies").join(change);
+        let copy = folder.join(".hoshin").join("copies").join(change);
         std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
         git::run(
             &master,
@@ -833,12 +833,12 @@ mod copy_tests {
         assert_eq!(got["app"], want);
     }
 
-    /// A master with `change/a` checked out in a copy under `<ws>/.ai-sdlc/copies/a` and `change/b` only a branch.
+    /// A master with `change/a` checked out in a copy under `<ws>/.hoshin/copies/a` and `change/b` only a branch.
     fn master_with_copy() -> (tempfile::TempDir, std::path::PathBuf) {
         let tmp = tempfile::tempdir().unwrap();
         let master = testutil::repo(tmp.path(), "m");
         git::run(&master, &["branch", "change/b"]).unwrap();
-        let copies = tmp.path().join(".ai-sdlc").join("copies");
+        let copies = tmp.path().join(".hoshin").join("copies");
         std::fs::create_dir_all(&copies).unwrap();
         let copy = copies.join("a");
         git::run(

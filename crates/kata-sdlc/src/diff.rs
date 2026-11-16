@@ -1386,14 +1386,14 @@ mod change_repos_tests {
         git::run(&checkout_path, &["config", "core.autocrlf", "false"]).unwrap();
         commit_file(
             &checkout_path,
-            ".ai-sdlc.json",
+            ".hoshin.json",
             &format!("{{\"version\":1,\"systems\":{{\"{SYS}\":{{\"repos\":[\"app\"]}}}}}}"),
             "marker",
         );
         let app = repo(&folder, "app");
         checkout(&app, "feat/x", true);
         commit_file(&app, "a.txt", "a\n", "work");
-        let copy = folder.join(".ai-sdlc").join("copies").join(CHG);
+        let copy = folder.join(".hoshin").join("copies").join(CHG);
         std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
         git::run(
             &checkout_path,

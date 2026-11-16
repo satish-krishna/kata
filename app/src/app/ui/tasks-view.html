@@ -19,7 +19,7 @@
   @if (picked(); as task) {
     <article class="k-detail" data-testid="task" [attr.aria-label]="task.id" (click)="onDetailClick($event)">
       <header class="k-detail__head">
-        <p class="k-task__meta k-mono">{{ task.id }} · {{ task.repo }} · depends on {{ dependsOn(task) }}</p>
+        <p class="k-task__meta k-mono">{{ task.id }} · {{ task.repo }} · depends on {{ dependsOn(task) }}@for (c of commandsOf(task); track c) { · {{ c }}}</p>
         <h2 class="k-detail__title"><app-markdown-inline [md]="task.name" /></h2>
       </header>
       @for (f of sections(); track $index) {

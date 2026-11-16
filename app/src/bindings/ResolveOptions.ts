@@ -6,7 +6,7 @@
 export type ResolveOptions = { 
 /**
  * Plugin names (without a marketplace) the run cannot work without. The
- * Workbench passes `["ai-sdlc"]` for an AI-SDLC run; the CLI passes none.
+ * Workbench passes `["hoshin"]` for an AI-SDLC run; the CLI passes none.
  */
 required_plugins: Array<string>, 
 /**

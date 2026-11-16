@@ -15,6 +15,8 @@ import type { Settings } from '@bindings/Settings';
 import type { WorkspaceChoice } from '@bindings/WorkspaceChoice';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
+import type { MigratePlan } from '@bindings/MigratePlan';
+import type { MigrationOffer } from '@bindings/MigrationOffer';
 import type { RunSpec } from '@bindings/RunSpec';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
@@ -33,7 +35,7 @@ import { HOME_STEPS, isStep, removalStopped, startStopped, stepOf, stepRef, stop
 import { StepStore } from '../../core/step/step.store';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import { shownChangeList } from '../../lib/doc-notice';
-import { hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
+import { hasHoshinPlugin, specFor, type StartTrack } from '../../lib/sdlc';
 import { DEMO_SETUP_FOLDER, DEMO_START_IDEA, DEMO_START_SYSTEM } from '../../lib/demo';
 import {
   folderName,
@@ -57,8 +59,8 @@ export type HomeState =
   | 'master-gone'
   | 'many-masters'
   | 'marker-error'
+  | 'migrate'
   | 'not-set-up'
-  | 'refused'
   | 'ready';
 
 /** The home page's progress entry, kept apart from the change page's. */
@@ -104,7 +106,7 @@ export class SdlcHomeViewModel {
 
   // --- what the current workspace holds
   private readonly catalog = signal<CatalogEntry[] | null>(null);
-  readonly pluginMissing = computed(() => this.catalog() !== null && !hasAiSdlcPlugin(this.catalog() ?? []));
+  readonly pluginMissing = computed(() => this.catalog() !== null && !hasHoshinPlugin(this.catalog() ?? []));
   readonly scan = signal<WorkspaceScan | null>(null);
   readonly scanError = signal<string | null>(null);
   readonly branches = signal<BranchInfo | null>(null);
@@ -163,7 +165,7 @@ export class SdlcHomeViewModel {
   readonly finishedCount = computed(() => this.listed()?.finishedCount ?? 0);
   readonly contexts = signal<Record<string, ContextState>>({});
   readonly lastRuns = signal<Record<string, number>>({});
-  private readonly readiness = signal<Readiness>({ kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' });
+  private readonly readiness = signal<Readiness>({ kind: 'blocked', reason: 'pluginMissing', message: 'Install the hoshin plugin' });
   /** Above the change list when a plan could not be read; null when every plan was. The plugin's own words come from the answer's problems. */
   readonly listNotice = computed(() => {
     const unreadable = this.rows().filter((r) => r.offer?.stage === 'plan-unreadable');
@@ -174,10 +176,9 @@ export class SdlcHomeViewModel {
     );
   });
   /** Whether a new change may be started across the workspace's systems, as the backend decided; false until the answer is in. */
-  readonly canStartChange = computed(() => !this.layoutRefused() && (this.listed()?.canStartChange ?? this.workspace()?.canStartChange ?? false));
+  readonly canStartChange = computed(() => this.listed()?.canStartChange ?? this.workspace()?.canStartChange ?? false);
   /** Why a new change may not be started, as the backend gave it; null when it may. */
   readonly startChangeReason = computed(() => {
-    if (this.layoutRefused()) return this.blockMessage();
     const l = this.listed();
     return l ? l.startChangeReason : (this.workspace()?.startChangeReason ?? null);
   });
@@ -198,16 +199,6 @@ export class SdlcHomeViewModel {
   });
   /** The apps of a single-repo system with their context health; null in a workspace. */
   readonly apps = signal<AppHealth[] | null>(null);
-  /** The message of a blocked readiness; null when the mode can run. */
-  readonly blockMessage = computed<string | null>(() => {
-    const r = this.readiness();
-    return r.kind === 'blocked' ? r.message : null;
-  });
-  /** The backend refused the layout of this folder on this machine: nothing else is offered. */
-  private readonly layoutRefused = computed(() => {
-    const r = this.readiness();
-    return r.kind === 'blocked' && r.reason === 'layoutNeedsNewerPlugin';
-  });
   readonly masterBranch = computed(() => this.branches()?.current ?? null);
   /** Never offered where the backend says the checkout cannot be switched. */
   readonly otherBranches = computed(() => {
@@ -228,17 +219,17 @@ export class SdlcHomeViewModel {
     const s = this.scan();
     if (!s?.marker) return '';
     if (s.layout === 'single-repo') return `${plural(this.systems().length, 'system', 'systems')} · this repository is its own master`;
-    return `.ai-sdlc.json in ${masterRepo(s) ?? 'the master repo'} · ${plural(this.systems().length, 'system', 'systems')}`;
+    return `.hoshin.json in ${masterRepo(s) ?? 'the master repo'} · ${plural(this.systems().length, 'system', 'systems')}`;
   });
 
   readonly state = computed<HomeState>(() => {
     if (!this.loaded()) return 'loading';
     if (this.pluginMissing()) return 'plugin-missing';
     if (this.current() === null) return 'no-workspaces';
+    if (this.migrationOffer()?.blocks === true) return 'migrate';
     if (this.scanError() !== null) return 'folder-missing';
     const scan = this.scan();
     if (scan === null) return 'loading';
-    if (this.layoutRefused()) return 'refused';
     if (scan.master.kind === 'none') return 'master-gone';
     if (scan.master.kind === 'many') return 'many-masters';
     if (scan.marker_error !== null) return 'marker-error';
@@ -251,6 +242,75 @@ export class SdlcHomeViewModel {
 
   // --- dialogs
   readonly candidate = signal<WorkspaceCandidate | null>(null);
+
+  // --- migrating an ai-sdlc workspace
+  /** The backend's offer for the current folder (the program's dry run, and whether it takes the whole page), whatever the scan found; null when there is none. */
+  readonly migrationOffer = signal<MigrationOffer | null>(null);
+  /** The program's dry run of the offer; null when there is none. */
+  readonly migration = computed(() => this.migrationOffer()?.plan ?? null);
+  /** What the offer says, by what it is about: the marker still has to move, or only this machine's files are left. */
+  readonly migrationTitle = computed(() =>
+    this.migrationOffer()?.kind === 'localFiles'
+      ? 'This machine still has ai-sdlc files for this workspace. Finish moving them to hoshin?'
+      : 'This workspace was set up with ai-sdlc. Migrate it to hoshin?',
+  );
+  /** The strip above the home of a workspace that opens: the offer's title, and whether the program refused its plan. Null when there is no offer or the offer takes the page. */
+  readonly migrationBanner = computed(() => {
+    const offer = this.migrationOffer();
+    if (offer === null || offer.blocks) return null;
+    return { title: this.migrationTitle(), refused: offer.plan.problems.length > 0 };
+  });
+  readonly migrationOpen = signal(false);
+  readonly migrationBusy = signal(false);
+  /** The program's words when asking for the dry run failed; null when it answered, with a plan or with none. */
+  readonly migrationCheckError = signal<string | null>(null);
+  /** The sentence the migration was refused or failed with. */
+  readonly migrationError = signal<string | null>(null);
+  /** The program's answer to the migration, once it ran. */
+  private readonly migrated = signal<MigratePlan | null>(null);
+  readonly migrationDone = computed(() => this.migrated() !== null);
+  /** What the dialog lists: the written plan after the migration, the dry run before it. */
+  readonly shownMigration = computed(() => this.migrated() ?? this.migration());
+  /** Migrating is offered while the dry run has no problems, and not while it runs. */
+  readonly canMigrate = computed(() => (this.migration()?.problems.length ?? 1) === 0 && !this.migrationBusy());
+
+  reviewMigration(): void {
+    this.migrationError.set(null);
+    this.migrationOpen.set(true);
+  }
+
+  async runMigration(): Promise<void> {
+    const w = this.current();
+    if (w === null || !this.canMigrate()) return;
+    this.migrationBusy.set(true);
+    this.migrationError.set(null);
+    try {
+      this.migrated.set(await this.transport.sdlcMigrate(w.folder));
+    } catch (e) {
+      this.migrationError.set(message(e));
+    } finally {
+      this.migrationBusy.set(false);
+    }
+  }
+
+  /** Close the dialog; after a migration the workspace is read again, so the home page shows it as it now is. */
+  async closeMigration(): Promise<void> {
+    if (this.migrationBusy()) return;
+    this.migrationOpen.set(false);
+    if (this.migrated() === null) return;
+    this.migrated.set(null);
+    this.migrationOffer.set(null);
+    await Promise.all([this.loadCurrent(), this.refreshMissing()]);
+  }
+
+  /** The backend's offer of the migration for a folder: a plan, or none; when the check itself failed, the program's words. */
+  private async readMigration(folder: string): Promise<{ offer: MigrationOffer | null; error: string | null }> {
+    try {
+      return { offer: await this.transport.sdlcMigration(folder), error: null };
+    } catch (e) {
+      return { offer: null, error: message(e) };
+    }
+  }
   readonly newChangeOpen = signal(false);
   /** Set when a triage ended with no change; null otherwise. */
   readonly triageNotice = signal<{ idea: string; runId: string | null } | null>(null);
@@ -521,7 +581,7 @@ export class SdlcHomeViewModel {
         },
       },
       {
-        label: 'Read .ai-sdlc.json',
+        label: 'Read .hoshin.json',
         run: async () => {
           const s = found.scan;
           if (s?.marker) return plural(Object.keys(s.marker.systems).length, 'system', 'systems');
@@ -557,7 +617,7 @@ export class SdlcHomeViewModel {
       return;
     }
     if (scan.marker_error !== null) {
-      this.toasts.error(`.ai-sdlc.json could not be read: ${scan.marker_error}`);
+      this.toasts.error(`.hoshin.json could not be read: ${scan.marker_error}`);
       return;
     }
     let contexts = found.contexts;
@@ -1049,7 +1109,7 @@ export class SdlcHomeViewModel {
       return null;
     }
     if (!isSetUp(after)) {
-      this.toasts.error('Setup finished, but .ai-sdlc.json is not committed in the master repo.');
+      this.toasts.error('Setup finished, but .hoshin.json is not committed in the master repo.');
       return null;
     }
     return after;
@@ -1282,29 +1342,39 @@ export class SdlcHomeViewModel {
     ++this.viewSeq;
     const w = this.current();
     this.scanError.set(null);
+    this.migrationCheckError.set(null);
     if (!w) {
       this.clearDetail();
+      this.migrationOffer.set(null);
       this.currentRead.set(true);
       return;
     }
-    let scan: WorkspaceScan;
-    try {
-      scan = await this.transport.sdlcScan(w.folder);
-    } catch (e) {
-      if (seq !== this.loadSeq) return;
+    // The scan and the migration check are asked together: the backend decides whether a migration is offered, whatever the scan finds.
+    const [scanned, offered] = await Promise.all([
+      this.transport.sdlcScan(w.folder).then(
+        (found) => ({ found }),
+        (e: unknown) => ({ failed: e }),
+      ),
+      this.readMigration(w.folder),
+    ]);
+    if (seq !== this.loadSeq) return;
+    this.migrationOffer.set(offered.offer);
+    this.migrationCheckError.set(offered.error);
+    if ('failed' in scanned) {
       this.clearDetail();
-      this.scanError.set(message(e));
+      this.scanError.set(message(scanned.failed));
       this.scanFailed.update((l) => (l.includes(w.id) ? l : [...l, w.id]));
       this.currentRead.set(true);
       return;
     }
+    const scan = scanned.found;
     let branches: BranchInfo | null = null;
     let views: WorkspaceView | null = null;
     let list: HomeList | null = null;
     let lastRuns: Record<string, number> = {};
     let readFailed = false;
     const repo = masterRepo(scan);
-    let readiness: Readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
+    let readiness: Readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the hoshin plugin' };
     try {
       readiness = await this.transport.sdlcPluginReadiness(w.folder);
     } catch {

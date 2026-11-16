@@ -3,8 +3,8 @@
 //! sorted by what the engineer can do about it.
 use crate::steps::{StepKind, StepTable};
 use kata_core::proc::LineSink;
-use kata_sdlc::ai_sdlc::{progress_of, HookFailure, Place, Program, StepOutcome};
 use kata_sdlc::holds::{ChangeKey, RepoKey};
+use kata_sdlc::hoshin::{progress_of, HookFailure, Place, Program, StepOutcome};
 use kata_sdlc::naming;
 use serde::Serialize;
 use std::path::Path;
@@ -156,7 +156,7 @@ pub fn place_for(program: &Program, folder: &std::path::Path) -> Result<Place, S
 }
 
 /// Asks the plugin to start a change named from `date` and the title, and reads its answer through
-/// `ai_sdlc::answer_of`. An `Err` is an answer that passed but named no branch or copy.
+/// `hoshin::answer_of`. An `Err` is an answer that passed but named no branch or copy.
 pub fn start_change(
     program: &Program,
     place: &Place,
@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn the_change_a_triage_started_is_the_one_its_own_change_start_answer_names() {
-        let started = r#"{"event":"change.start","system":"commerce","change":"2026-10-18-fix-login","outcome":"passed","details":{"branch":"fix/login","copy":"/ws/.ai-sdlc/copies/2026-10-18-fix-login","created":true}}"#;
+        let started = r#"{"event":"change.start","system":"commerce","change":"2026-10-18-fix-login","outcome":"passed","details":{"branch":"fix/login","copy":"/ws/.hoshin/copies/2026-10-18-fix-login","created":true}}"#;
         let events = vec![
             tool_result("intent.md written"),
             tool_result(started),
@@ -318,7 +318,7 @@ mod tests {
         Program {
             node: "node".into(),
             entry: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../crates/kata-sdlc/tests/ai-sdlc-tools/ai-sdlc.ts"),
+                .join("../../crates/kata-sdlc/tests/hoshin-tools/hoshin.ts"),
         }
     }
 
@@ -337,7 +337,7 @@ mod tests {
     fn workspace(marker: &str) -> (tempfile::TempDir, Place) {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path().to_path_buf();
-        for name in ["ai-sdlc", "app"] {
+        for name in ["hub", "app"] {
             let repo = ws.join(name);
             std::fs::create_dir_all(&repo).unwrap();
             git(&repo, &["init", "-q", "-b", "main"]);
@@ -345,8 +345,8 @@ mod tests {
             git(&repo, &["config", "user.email", "test@example.com"]);
             git(&repo, &["config", "commit.gpgsign", "false"]);
         }
-        let master = ws.join("ai-sdlc");
-        std::fs::write(master.join(".ai-sdlc.json"), marker).unwrap();
+        let master = ws.join("hub");
+        std::fs::write(master.join(".hoshin.json"), marker).unwrap();
         git(&master, &["add", "."]);
         git(&master, &["commit", "-q", "-m", "marker"]);
         std::fs::write(ws.join("app").join("a.txt"), "a").unwrap();
@@ -451,7 +451,7 @@ mod tests {
         git(&root, &["config", "commit.gpgsign", "false"]);
         let marker =
             r#"{"version":1,"layout":"single-repo","systems":{"kata":{"apps":{"kata":"app"}}}}"#;
-        std::fs::write(root.join(".ai-sdlc.json"), format!("{marker}\n")).unwrap();
+        std::fs::write(root.join(".hoshin.json"), format!("{marker}\n")).unwrap();
         std::fs::write(root.join("app/README.md"), "app\n").unwrap();
         std::fs::create_dir_all(root.join("intent/kata/context")).unwrap();
         std::fs::write(root.join("intent/kata/policies.md"), "# Policies\n").unwrap();
@@ -474,7 +474,7 @@ mod tests {
         let (dir, root) = single_repo();
         let before = (root_state(&root), git(&root, &["branch", "--show-current"]));
         assert_eq!(before.1, "main");
-        let copies = dir.path().join(".ai-sdlc").join("copies");
+        let copies = dir.path().join(".hoshin").join("copies");
         // Compared resolved: a temp folder can be spelled with an 8.3 short name (CI's `RUNNER~1`) the program
         // answers in its long form.
         let same = |a: &Path, b: &Path| a.canonicalize().unwrap() == b.canonicalize().unwrap();
@@ -600,11 +600,7 @@ mod tests {
                 "{label}"
             );
             assert!(
-                !place
-                    .workspace
-                    .join(".ai-sdlc/copies")
-                    .join(CHANGE)
-                    .exists(),
+                !place.workspace.join(".hoshin/copies").join(CHANGE).exists(),
                 "{label}"
             );
         }

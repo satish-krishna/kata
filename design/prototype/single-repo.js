@@ -72,8 +72,8 @@
       return {
         bar: toolbar({ workspace: 'kata', right: '<span class="sr-mark">single-repo</span>' + btn('New change', 'primary', 'disabled') }),
         body: '<div class="sr-page" style="margin:var(--space-12) auto;align-items:flex-start"><section class="k-card k-card--pad" style="display:flex;flex-direction:column;gap:var(--space-4)">' +
-          '<h1 style="margin:0;font:var(--font-title)">The single-repo layout needs ai-sdlc 1.4.0 or later</h1>' +
-          '<p style="margin:0;font-size:var(--text-sm)">The single-repo layout needs ai-sdlc 1.4.0 or later; this machine has 1.3.1.</p>' +
+          '<h1 style="margin:0;font:var(--font-title)">The single-repo layout needs hoshin 1.0.0 or later</h1>' +
+          '<p style="margin:0;font-size:var(--text-sm)">The single-repo layout needs hoshin 1.0.0 or later; this machine has 0.9.0.</p>' +
           '<p class="sr-note">Nothing else in this folder works until the plugin is updated. There is no action on this screen.</p></section></div>'
       };
     },
@@ -86,7 +86,7 @@
           '<div class="sr-row"><h1 style="margin:0;font:var(--font-title)" class="k-mono">' + CHANGE + '</h1>' + status('warning', 'building') + '</div>' +
           '<div class="k-seg"><button class="k-seg__opt" type="button">Intent</button><button class="k-seg__opt" type="button">Spec</button><button class="k-seg__opt" type="button">Plan</button><button class="k-seg__opt k-seg__opt--active" type="button" data-go="build-lanes">Build</button></div>' +
           '<section class="k-card k-card--pad" aria-label="This change\'s copy" style="display:flex;flex-direction:column;gap:var(--space-3)">' +
-          '<div class="sr-row"><span class="kata-eyebrow">Copy</span><span class="k-mono">D:/workspaces/kata/.ai-sdlc/copies/' + CHANGE + '</span>' +
+          '<div class="sr-row"><span class="kata-eyebrow">Copy</span><span class="k-mono">D:/workspaces/kata/.hoshin/copies/' + CHANGE + '</span>' +
           '<span class="sr-note">on ' + m('change/' + CHANGE) + '</span>' + btn('Open folder') + btn('Remove this copy') + '</div>' +
           '<p class="sr-note">This branch is held by this change\'s own copy, so your own checkout cannot switch to it while the copy exists. The copy holds the one repository: the apps ' + m('engine') + ' and ' + m('workbench') + ' are folders inside it.</p>' +
           '</section></div>'
@@ -178,7 +178,7 @@
       '<div class="sr-cols" style="grid-template-columns:360px 1fr;border:1px solid var(--border-subtle);border-radius:var(--radius-sm)"><div class="sr-col" style="padding:var(--space-3)">' +
       g('engine', [['crates/engine/src/order.rs', '+42 -3'], ['crates/engine/src/lib.rs', '+2 -0']]) +
       g('workbench', [['app/src/app/sdlc/build/build-page.html', '+61 -17'], ['app/src/app/ui/apps-table.html', '+38 -0']]) +
-      g('repository root', [['CLAUDE.md', '+4 -1'], ['.ai-sdlc.json', '+6 -2']]) +
+      g('repository root', [['CLAUDE.md', '+4 -1'], ['.hoshin.json', '+6 -2']]) +
       '</div><div class="sr-col"><pre class="sr-diff">@@ build-page.html\n- &lt;section class="k-lane" aria-label="Lane repo"&gt;\n+ &lt;section class="k-lane" aria-label="Lane app"&gt;</pre></div></div>',
       { tab: 'changes' });
   }

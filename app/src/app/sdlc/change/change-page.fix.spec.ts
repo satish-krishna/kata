@@ -15,7 +15,7 @@ import { ChangePageViewModel } from './change-page.view-model';
 const holdLock = (lock: LockStore): void => void lock.runSteps('Checking', [{ label: 'Check', run: () => new Promise<string | null>(() => undefined) }]);
 
 const FIX = '2026-10-12-product-photo-upload';
-const NEEDS = 'Needs ai-sdlc 1.1.0 or later.';
+const NEEDS = 'Needs hoshin 1.0.0 or later.';
 const BUSY = 'Another task is already running.';
 const FIX_ACTIONS: StageAction[] = ['finish-fix-draft', 'accept-fix', 'change-fix', 'reopen-fix'];
 
@@ -39,7 +39,7 @@ async function mountFix(stage: Stage, lightTrack = true, track: 'fix' | 'full' =
   const transport = new MockTransport();
   transport.patchChange(FIX, { stage, track, ...docs });
   const ready = await transport.sdlcPluginReadiness(null);
-  vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(lightTrack ? ready : { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 1.0.0.' });
+  vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(lightTrack ? ready : { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.0.' });
   const run = vi.spyOn(transport, 'sdlcRunChange').mockResolvedValue('1');
   const out = await render(ChangePage, {}, [
     provideRouter([]),

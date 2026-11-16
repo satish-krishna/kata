@@ -196,7 +196,7 @@ export function validateLocal(spec: RunSpec): string[] {
 }
 
 const SUPERPOWERS = "superpowers@claude-plugins-official";
-const SDLC_PLUGIN = "ai-sdlc@ai-sdlc";
+const SDLC_PLUGIN = "hoshin@hoshin";
 const UNSWITCHABLE: LockReason = { kind: "unswitchable", text: "Kata cannot switch this off for one run without editing your setup" };
 
 /** The repository folder whose settings enable a personal plugin the other repositories do not, so a two-repository build lists it once, from the second. */
@@ -216,7 +216,7 @@ function lastFolder(path: string): string {
  *  folder of `spec.workdir`, so two repositories preview differently. */
 export function previewFixture(spec: RunSpec): Resolved {
   const folder = lastFolder(spec.workdir);
-  const sdlcRequired = (spec.given?.required_plugins ?? []).includes("ai-sdlc");
+  const sdlcRequired = (spec.given?.required_plugins ?? []).includes("hoshin");
   const requiredLock: LockReason = { kind: "required", text: "AI-SDLC runs work through this plugin" };
   const kataLock: LockReason = { kind: "kata", text: "the run needs it to ask you questions" };
   const orgLock: LockReason = { kind: "organization", text: "set by your organization" };
@@ -305,11 +305,11 @@ export function previewFixture(spec: RunSpec): Resolved {
   return { items, settings, env, missing: [...listed].filter((id) => !known.has(id)), problems: [], empty_room: emptyRoom };
 }
 
-/** What a plain browser shows on the version line: the Workbench's version (the app's own unless one is given) and the plugin the fixtures say is installed. `?demo=versions-missing` answers that ai-sdlc is not installed. */
+/** What a plain browser shows on the version line: the Workbench's version (the app's own unless one is given) and the plugin the fixtures say is installed. `?demo=versions-missing` answers that hoshin is not installed. */
 export function mockVersions(demo: string | null, workbench: string = appVersion): Versions {
   if (demo === 'versions-missing') {
-    return { workbench, aiSdlc: { kind: 'notFound' }, line: `Workbench ${workbench} · ai-sdlc: not found`, copy: `Kata Workbench ${workbench}, ai-sdlc: not found` };
+    return { workbench, hoshin: { kind: 'notFound' }, line: `Workbench ${workbench} · hoshin: not found`, copy: `Kata Workbench ${workbench}, hoshin: not found` };
   }
-  const version = '1.3.0';
-  return { workbench, aiSdlc: { kind: 'found', version }, line: `Workbench ${workbench} · ai-sdlc ${version}`, copy: `Kata Workbench ${workbench}, ai-sdlc ${version}` };
+  const version = '1.0.0';
+  return { workbench, hoshin: { kind: 'found', version }, line: `Workbench ${workbench} · hoshin ${version}`, copy: `Kata Workbench ${workbench}, hoshin ${version}` };
 }

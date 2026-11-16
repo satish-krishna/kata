@@ -1,5 +1,5 @@
 //! How the Workbench and kata start a child process: hidden on Windows, and never `git` or `gh`:
-//! the ai-sdlc plugin starts those itself.
+//! the hoshin plugin starts those itself.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -28,7 +28,7 @@ pub struct SpawnRefused {
 /// A `Command` for `program` that opens no console window on Windows.
 ///
 /// Refuses `git` and `gh` on every build, tests included: Kata does that work in process, and the
-/// ai-sdlc plugin starts them itself.
+/// hoshin plugin starts them itself.
 pub fn hidden_command(program: impl AsRef<OsStr>) -> Result<Command, SpawnRefused> {
     let program = program.as_ref();
     if is_refused(Path::new(program)) {
@@ -536,7 +536,7 @@ impl Tail {
 
 /// Removes CSI sequences (`ESC [ ... final byte`), OSC sequences (`ESC ] ... BEL` or `ESC \`),
 /// and other two-character escapes.
-fn strip_ansi(text: &str) -> String {
+pub fn strip_ansi(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars();
     while let Some(c) = chars.next() {

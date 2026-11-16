@@ -16,7 +16,7 @@ const runButtons = (c: HTMLElement) =>
 
 describe('ReposTable', () => {
   it('shows each repo with its role and a labelled context state', async () => {
-    const { container } = await render(ReposTable, { rows, marker: '.ai-sdlc.json · 1 system' });
+    const { container } = await render(ReposTable, { rows, marker: '.hoshin.json · 1 system' });
     const t = text(container);
     expect(t).toContain('commerce-docs');
     expect(t).toContain('master');
@@ -24,7 +24,7 @@ describe('ReposTable', () => {
     expect(t).toContain('stale · 14 commits');
     expect(t).toContain('missing');
     expect(t).toContain('not checked out');
-    expect(t).toContain('.ai-sdlc.json · 1 system');
+    expect(t).toContain('.hoshin.json · 1 system');
   });
 
   it('lets only the context cell wrap, so the table fits its pane at the 1024 minimum width', async () => {

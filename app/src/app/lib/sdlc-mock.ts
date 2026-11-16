@@ -58,6 +58,7 @@ import type { ReadResult } from '@bindings/ReadResult';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { RepoState } from '@bindings/RepoState';
 import type { RepoStatus } from '@bindings/RepoStatus';
+import type { RedVerdict } from '@bindings/RedVerdict';
 import type { TaskStatus } from '@bindings/TaskStatus';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { ChangeView } from '@bindings/ChangeView';
@@ -98,6 +99,8 @@ import type { ParsedFinding } from '@bindings/ParsedFinding';
 import type { Severity } from '@bindings/Severity';
 import type { Concern } from '@bindings/Concern';
 import type { WorkspaceChoice } from '@bindings/WorkspaceChoice';
+import type { MigratePlan } from '@bindings/MigratePlan';
+import type { MigrationOffer } from '@bindings/MigrationOffer';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { DEMO_SETUP_FOLDER, DEMO_WORKSPACE_FOLDER } from './demo';
@@ -105,7 +108,7 @@ import { PENDING_PERMISSION, type ScriptStep } from './mock';
 import { masterPath } from './sdlc-workspace';
 
 export const MOCK_WORKSPACE_FOLDER = DEMO_WORKSPACE_FOLDER;
-/** A folder the demo can add that has repos but no committed `.ai-sdlc.json`, so adding it runs setup. */
+/** A folder the demo can add that has repos but no committed `.hoshin.json`, so adding it runs setup. */
 export const MOCK_SETUP_FOLDER = DEMO_SETUP_FOLDER;
 export const MOCK_MASTER = 'commerce-docs';
 /** The single-repo repository of `?demo=single-repo` and `?demo=single-repo-root`: its folder, its one system and the change it has open in a copy. */
@@ -114,6 +117,52 @@ export const MOCK_SINGLE_SYSTEM = 'kata';
 export const MOCK_SINGLE_CHANGE = '2026-11-12-single-repo-workbench';
 /** The workspace the single-repo demos list beside the repository. */
 export const MOCK_SINGLE_WORKSPACE = 'D:/workspaces';
+/** The one folder of the browser fixtures that is an ai-sdlc workspace: the migration is offered for it and for no other. */
+export const MOCK_LEGACY_FOLDER = 'D:/legacy-workspace';
+/** What migrating `MOCK_LEGACY_FOLDER` would do, one `would` step of each kind; with `write` the same steps `done`. */
+export function mockMigrationPlan(write: boolean): MigratePlan {
+  const status = write ? 'done' : 'would';
+  const old = `${MOCK_LEGACY_FOLDER}/.ai-sdlc`;
+  const next = `${MOCK_LEGACY_FOLDER}/.hoshin`;
+  return {
+    workspace: MOCK_LEGACY_FOLDER,
+    master: `${MOCK_LEGACY_FOLDER}/commerce-docs`,
+    write,
+    steps: [
+      { step: 'marker', path: `${MOCK_LEGACY_FOLDER}/commerce-docs/.ai-sdlc.json`, to: `${MOCK_LEGACY_FOLDER}/commerce-docs/.hoshin.json`, status, detail: null },
+      { step: 'copy', path: `${old}/copies/2026-10-19-build-demo`, to: `${next}/copies/2026-10-19-build-demo`, status, detail: null },
+      { step: 'state', path: `${MOCK_LEGACY_FOLDER}/commerce-docs/.git/ai-sdlc`, to: `${MOCK_LEGACY_FOLDER}/commerce-docs/.git/hoshin`, status, detail: null },
+      { step: 'instructions', path: `${MOCK_LEGACY_FOLDER}/CLAUDE.md`, to: null, status, detail: null },
+    ],
+    kept: [],
+    manual: ['Push the branches that got a marker commit.', 'Install hoshin@hoshin and uninstall ai-sdlc@ai-sdlc.'],
+    problems: [],
+  };
+}
+/** The legacy folder's offer: the marker still has to move, so the offer takes the whole page. */
+export function mockLegacyOffer(): MigrationOffer {
+  return { plan: mockMigrationPlan(false), blocks: true, kind: 'setUp' };
+}
+/** `?demo=migrate-local`: the demo workspace opens, but this machine's `.git/ai-sdlc` and `.git/hoshin` both exist, so the offer is a banner and its plan is refused. */
+export function mockLocalOffer(): MigrationOffer {
+  const state = `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}/.git`;
+  return {
+    plan: {
+      workspace: MOCK_WORKSPACE_FOLDER,
+      master: `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`,
+      write: false,
+      steps: [
+        { step: 'marker', path: `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}/.hoshin.json`, to: null, status: 'current', detail: null },
+        { step: 'state', path: `${state}/ai-sdlc`, to: `${state}/hoshin`, status: 'refused', detail: `${state}/hoshin already exists` },
+      ],
+      kept: [],
+      manual: [],
+      problems: [`${state}/hoshin already exists; move or remove one of the two folders, then check again.`],
+    },
+    blocks: false,
+    kind: 'localFiles',
+  };
+}
 /** The error the backend gives for switching the engineer's checkout in a single-repo repository. */
 export const MOCK_NOT_SWITCHABLE = 'Single-repo changes are never switched into your checkout.';
 /** The engineer's checkout of the master repository, which a change started before copies existed lives in. */
@@ -140,8 +189,8 @@ export const MOCK_COPY_CHANGE = '2026-11-02-copy-only';
 /** A drafted fix that lives only in its own copy. */
 export const MOCK_COPY_FIX = '2026-11-02-copy-fix';
 export const MOCK_DONE_CHANGE = '2026-10-18-photo-limits-shipped';
-/** The version the demo's `ai-sdlc` plugin reports. */
-export const MOCK_PLUGIN_VERSION = '1.1.0';
+/** The version the demo's `hoshin` plugin reports. */
+export const MOCK_PLUGIN_VERSION = '1.0.0';
 /** A fix awaiting acceptance: the light track's three documents are drafted. */
 export const MOCK_FIX_CHANGE = '2026-10-22-photo-retry-fix';
 /** A fix that was rejected, so it is closed. */
@@ -156,7 +205,7 @@ const plugin = (name: string, description: string, provides: string[] = []): Cat
 
 /** Plugins the catalog finds for the demo workspace, so the AI-SDLC screens render in a plain browser. */
 export const MOCK_SDLC_CATALOG: CatalogEntry[] = [
-  plugin('ai-sdlc', 'intent, spec, plan and build skills for a change', ['skill:build', 'skill:intent', 'skill:spec', 'skill:plan', 'skill:context', 'skill:setup']),
+  plugin('hoshin', 'intent, spec, plan and build skills for a change', ['skill:build', 'skill:intent', 'skill:spec', 'skill:plan', 'skill:context', 'skill:setup']),
   plugin('superpowers', 'planning and review skills'),
 ];
 
@@ -208,7 +257,7 @@ export const sdlcTriageScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
   ],
   mid: [
     // The fix skill starts the change through the plugin; its answer names the change, which is how the triage's change is found.
-    { delay: 300, ev: { type: 'tool.use', name: 'Bash', input_summary: `node ai-sdlc.ts change start --json --system commerce --change ${MOCK_STARTED_FIX} --type fix --scope commerce`, id: 'toolu_t1s', input: { command: `node ai-sdlc.ts change start --json --system commerce --change ${MOCK_STARTED_FIX} --type fix --scope commerce` } } },
+    { delay: 300, ev: { type: 'tool.use', name: 'Bash', input_summary: `node hoshin.ts change start --json --system commerce --change ${MOCK_STARTED_FIX} --type fix --scope commerce`, id: 'toolu_t1s', input: { command: `node hoshin.ts change start --json --system commerce --change ${MOCK_STARTED_FIX} --type fix --scope commerce` } } },
     { delay: 300, ev: { type: 'tool.result', name: 'Bash', ok: true, summary: 'change started', id: 'toolu_t1s', output: JSON.stringify({ event: 'change.start', system: 'commerce', change: MOCK_STARTED_FIX, outcome: 'passed', details: { branch: `fix/${MOCK_STARTED_FIX}`, created: true } }) } },
     { delay: 300, ev: { type: 'tool.use', name: 'Write', input_summary: 'commerce/2026-10-24-price-flag-fix/intent.md', id: 'toolu_t2', input: { file_path: 'commerce/2026-10-24-price-flag-fix/intent.md' } } },
     { delay: 400, ev: { type: 'tool.result', name: 'Write', ok: true, summary: 'intent.md written', id: 'toolu_t2', output: 'ok' } },
@@ -230,8 +279,8 @@ export const sdlcSetupScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
     ] } },
   ],
   mid: [
-    { delay: 300, ev: { type: 'tool.use', name: 'Write', input_summary: '.ai-sdlc.json', id: 'toolu_u2', input: { file_path: 'billing-intent/.ai-sdlc.json' } } },
-    { delay: 400, ev: { type: 'tool.result', name: 'Write', ok: true, summary: '.ai-sdlc.json written', id: 'toolu_u2', output: 'ok' } },
+    { delay: 300, ev: { type: 'tool.use', name: 'Write', input_summary: '.hoshin.json', id: 'toolu_u2', input: { file_path: 'billing-intent/.hoshin.json' } } },
+    { delay: 400, ev: { type: 'tool.result', name: 'Write', ok: true, summary: '.hoshin.json written', id: 'toolu_u2', output: 'ok' } },
     { delay: 400, ev: { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.02, duration_ms: 15000, result: 'Setup committed.' } },
   ],
 };
@@ -338,8 +387,8 @@ const fixDocs = (name: string, title: string): Record<string, string> => ({
 
 /** The demo build's plan: T3 waits for T1, which lives in the other repository. */
 const BUILD_PLAN: PlanTask[] = [
-  { id: 'T1', name: 'Refuse an eleventh photo in the attachment store', repo: 'commerce-core', dependsOn: [] },
-  { id: 'T2', name: 'Add the photo picker to the product form', repo: 'customer-portal', dependsOn: [] },
+  { id: 'T1', name: 'Refuse an eleventh photo in the attachment store', repo: 'commerce-core', dependsOn: [], test: ['cargo', 'test', '-p', 'attachment-store', 'limits'] },
+  { id: 'T2', name: 'Add the photo picker to the product form', repo: 'customer-portal', dependsOn: [], test: ['npm', 'test', '--', 'photo-picker'] },
   { id: 'T3', name: 'Show the upload limit message', repo: 'customer-portal', dependsOn: ['T1'] },
 ];
 /**
@@ -400,6 +449,8 @@ const parsedTasks = (plan: PlanTask[], plain = false): ParsedTask[] => plan.map(
   files: [],
   covers: [],
   supports: [],
+  test: t.test ?? null,
+  compile: null,
   sections: [{ title: 'Depends on', body: dependsBody(t) }, ...(plain ? [] : (TASK_SECTIONS[t.id] ?? []))],
   text: plain ? taskText(t, []) : taskText(t),
   line: 10 + i * 10,
@@ -463,12 +514,30 @@ const DEPARTED_TASKS = ['T2'];
 /** The long demo's departures: enough, with its findings, to overflow the findings area. */
 const LONG_DEPARTED_TASKS = ['T2', 'T5', 'T8', 'T9', 'T13', 'T14', 'T15', 'T16'];
 const DEPARTURE_TEXT = 'Reused the existing file picker instead of building a new one.';
+/** What the demo build log says about red, by task: T1 saw its test fail first, T2's test passed before the production code. A task the log leaves out has no red entry. */
+const DEMO_RED: Record<string, string> = { T1: 'observed', T2: 'not observed: the test passed at 3f2a9c1, before the production code' };
+
+/** The verdict the program reads from a built task's logged red, as the backend words it: no test, no entry, the two entries, or a value it cannot read. */
+function redVerdictOf(test: string[] | undefined, logged: string | null): RedVerdict {
+  if (test === undefined) return { kind: 'noTest' };
+  if (logged === null) return { kind: 'unrecorded' };
+  if (logged === 'observed') return { kind: 'observed' };
+  if (logged.startsWith('not observed: ')) return { kind: 'notObserved', reason: logged.slice('not observed: '.length) };
+  return { kind: 'unreadable', value: logged };
+}
+
+/** A built task's verdict and whether it stands out, the way the backend sends them: not observed, not recorded and unreadable stand out, and only not observed wants its stored record. None for a task that is not built. */
+function redOf(test: string[] | undefined, row: BuildRow | null): { red: RedVerdict | null; redStandsOut: boolean; redRecordWanted: boolean } {
+  if (row === null) return { red: null, redStandsOut: false, redRecordWanted: false };
+  const red = redVerdictOf(test, row.red);
+  return { red, redStandsOut: red.kind === 'notObserved' || red.kind === 'unrecorded' || red.kind === 'unreadable', redRecordWanted: red.kind === 'notObserved' };
+}
 
 const DOC_STEMS = new Set(['intent', 'spec', 'plan']);
 
 /** The copy of the change that lives only in a copy. */
-const COPY_ONLY_PATH = `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${MOCK_COPY_CHANGE}`;
-const COPY_FIX_PATH = `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${MOCK_COPY_FIX}`;
+const COPY_ONLY_PATH = `${MOCK_WORKSPACE_FOLDER}/.hoshin/copies/${MOCK_COPY_CHANGE}`;
+const COPY_FIX_PATH = `${MOCK_WORKSPACE_FOLDER}/.hoshin/copies/${MOCK_COPY_FIX}`;
 
 /** Document text a copy holds, keyed by the copy's folder and then `<change>/<stem>`. The checkout's fixture is `DOCS`. */
 const COPY_DOCS: Record<string, Record<string, string>> = {
@@ -704,6 +773,7 @@ export class SdlcMock {
         { id: 'kata', name: 'kata', folder: MOCK_SINGLE_FOLDER, last_opened: 1792281600, layout: 'single-repo' },
       ];
     }
+    if (demo === 'migrate') this.workspaces = [{ id: 'legacy-workspace', name: 'legacy-workspace', folder: MOCK_LEGACY_FOLDER, last_opened: 1792281700, layout: 'workspace' }];
     if (demo === 'sessions') {
       // `?demo=sessions&earlier=<n>` (browser only): the demo build runs in one repository, which has `earlier` sessions behind it.
       this.links = earlierSessions(earlier).map((r) => ({
@@ -951,9 +1021,8 @@ export class SdlcMock {
       return { change: `2026-09-${n}-finished-change-${n}`, title: `Finished change ${n}`, finished: i % 2 === 0 ? 'merged' : 'rejected' };
     });
   }
-  /** Like the backend's `sdlc_home_list`: `legacy` on a plugin older than 1.3.0 (`?demo=old-plugin`), else the shown system's open and finished changes. */
+  /** Like the backend's `sdlc_home_list`: the shown system's open and finished changes. */
   homeList(systems: string[], readiness: Readiness): HomeList {
-    if (this.demo === 'old-plugin') return { kind: 'legacy' };
     const system = this.shownSystem(systems);
     const open = system === this.homeSystem() ? this.stagePass().map((c) => ({ change: c.change, title: null })) : [];
     const finished = system === null ? [] : this.finishedChanges(system);
@@ -980,7 +1049,6 @@ export class SdlcMock {
   }
   /** Like `sdlc_home_open`: every open change as a row. The merge check is asked about the declared ones, except on a focus refresh; the light list is read again when the names on screen differ. */
   homeOpen(system: string, shown: string[], trigger: Refresh, readiness: Readiness): HomeOpen {
-    if (this.demo === 'old-plugin') throw new Error('the installed ai-sdlc plugin cannot read open changes alone');
     const rows = this.homeRows(system, readiness);
     const names = new Set(rows.map((r) => r.view.state.change));
     const check = trigger === 'focus' ? [] : rows.filter((r) => r.reading.action !== 'workflow').map((r) => r.view.state.change);
@@ -999,10 +1067,10 @@ export class SdlcMock {
 
   /** The copy folder of a change that has one, else null. */
   private copyOf(changeName: string): string | null {
-    if (this.singleRepo() !== null) return changeName === MOCK_SINGLE_CHANGE ? `D:/.ai-sdlc/copies/${changeName}` : null;
+    if (this.singleRepo() !== null) return changeName === MOCK_SINGLE_CHANGE ? `D:/.hoshin/copies/${changeName}` : null;
     if (changeName === MOCK_COPY_CHANGE) return COPY_ONLY_PATH;
     if (changeName === MOCK_COPY_FIX) return COPY_FIX_PATH;
-    return this.copies.has(changeName) ? `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${changeName}` : null;
+    return this.copies.has(changeName) ? `${MOCK_WORKSPACE_FOLDER}/.hoshin/copies/${changeName}` : null;
   }
   /** Removal is offered for the finished change with its pull requests merged; the done demos leave it undeclared, so nothing is offered. */
   copyRemoval(changeName: string): CopyRemoval {
@@ -1136,7 +1204,7 @@ export class SdlcMock {
     this.others = [...this.others, name];
     this.changes = [change(name, doc('draft', false), doc(null), doc(null), 'intent-awaiting'), ...this.changes];
     this.docs[`${name}/intent`] = '---\nstatus: draft\n---\n# New change\n\nDrafted from the idea you gave the agent.\n';
-    return { outcome: 'started', change: name, branch: made, copy: `${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${name}` };
+    return { outcome: 'started', change: name, branch: made, copy: `${MOCK_WORKSPACE_FOLDER}/.hoshin/copies/${name}` };
   }
 
   checkout(branch: string): void {
@@ -1147,7 +1215,7 @@ export class SdlcMock {
     this.current = branch;
   }
 
-  /** The demo system declares a naming setting; the patterns are the ones the ai-sdlc plugin documents. */
+  /** The demo system declares a naming setting; the patterns are the ones the hoshin plugin documents. */
   naming(): NamingState { return { kind: 'setting', branch: '{type}/{scope}-{slug}', pullRequestTitle: '{type}({scope}): {title}' }; }
   /** The plugin renames it everywhere; a change with a pull request recorded under the old name lists it to close by hand. */
   renameBranch(changeName: string, to: string): RenameOutcome {
@@ -1180,13 +1248,16 @@ export class SdlcMock {
 
   buildStatus(changeName: string): BuildStatus {
     this.homeOf(changeName);
-    if (!this.hasBuildLog(changeName) && changeName !== MOCK_DONE_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] };
+    if (!this.hasBuildLog(changeName) && changeName !== MOCK_DONE_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [], redShown: false };
     // The finished change has every task built; the demo build commits its rows one run at a time.
     const rowOf = (t: PlanTask): BuildRow | null =>
-      changeName === MOCK_DONE_CHANGE ? { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } : (this.rows.get(t.id) ?? null);
-    const tasks: TaskStatus[] = this.plan.map((t) => ({ ...t, dependsOn: [...t.dependsOn], text: this.singleRepo() !== null ? taskText(t, []) : taskText(t), row: rowOf(t) }));
+      changeName === MOCK_DONE_CHANGE ? { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null, red: DEMO_RED[t.id] ?? null } : (this.rows.get(t.id) ?? null);
+    const tasks: TaskStatus[] = this.plan.map(({ test, ...t }) => {
+      const row = rowOf({ ...t, test });
+      return { ...t, dependsOn: [...t.dependsOn], text: this.singleRepo() !== null ? taskText({ ...t, test }, []) : taskText({ ...t, test }), row, ...redOf(test, row) };
+    });
     const departures = tasks.flatMap((t) => (t.row?.departure ? [{ task: t.id, repo: t.repo, planText: t.name, departure: t.row.departure }] : []));
-    return { tasks, repos: this.repos.map((r) => (changeName === MOCK_DONE_CHANGE ? this.doneRepoStatus(r) : this.repoStatus(r))), departures, hasTasks: true, problems: [], logLayouts: [] };
+    return { tasks, repos: this.repos.map((r) => (changeName === MOCK_DONE_CHANGE ? this.doneRepoStatus(r) : this.repoStatus(r))), departures, hasTasks: true, problems: [], logLayouts: [], redShown: this.plan.some((t) => t.test !== undefined) };
   }
 
   /** A repository of the finished change: every task of it is built. */
@@ -1248,7 +1319,7 @@ export class SdlcMock {
     for (const t of tasks) {
       this.rows.set(t.id, {
         task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`],
-        departure: this.departed.has(t.id) ? DEPARTURE_TEXT : null,
+        departure: this.departed.has(t.id) ? DEPARTURE_TEXT : null, red: DEMO_RED[t.id] ?? null,
       });
     }
   }
@@ -1309,7 +1380,7 @@ export class SdlcMock {
     const finished = changeName === MOCK_DONE_CHANGE || this.rows.size >= this.plan.length;
     const output = ['running 14 tests', 'test store::keeps_the_upload ... FAILED', '', 'failures:', '    store::keeps_the_upload', '', 'test result: FAILED. 13 passed; 1 failed'].join('\n');
     const view = (repo: string, id: string): CheckView => {
-      if (this.demo === 'checks-config') return { kind: 'configBroken', output: '.ai-sdlc.json: hooks.build.finish[0]: timeout must be a whole number of seconds from 1 to 86400' };
+      if (this.demo === 'checks-config') return { kind: 'configBroken', output: '.hoshin.json: hooks.build.finish[0]: timeout must be a whole number of seconds from 1 to 86400' };
       if (!finished) return { kind: 'notRunYet' };
       if (repo === 'billing-api') return { kind: 'failedFix', id, output };
       switch (this.demo) {
@@ -1383,7 +1454,7 @@ export class SdlcMock {
       case 'done-gh':
         return { view: { kind: 'notReady', problems: ["Declaring done needs GitHub's command-line tool, gh. Install it from https://cli.github.com and reopen."] }, steps: [] };
       case 'done-cannot':
-        return { view: { kind: 'couldNotRun', message: 'ai-sdlc needs Node.js 22.18 or later; this machine has 20.11.0.' }, steps: [] };
+        return { view: { kind: 'couldNotRun', message: 'hoshin needs Node.js 22.18 or later; this machine has 20.11.0.' }, steps: [] };
       case 'done-refused':
         return {
           view: {

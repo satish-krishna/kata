@@ -1,11 +1,12 @@
-import type { StatusText } from '../sdlc/build/build-page.view-model';
+import type { RedView, StatusText } from '../sdlc/build/build-page.view-model';
 
-export type TaskLine = { id: string; name: string; status: StatusText; finished: boolean; departure: string | null; commits: string[] };
+export type TaskLine = { id: string; name: string; status: StatusText; finished: boolean; departure: string | null; commits: string[]; red: RedView | null };
 
 export type TaskFilter = 'all' | 'open' | 'departed' | 'done';
 
 export type TaskListView = {
-  fold: { range: string; done: number; departed: number; open: boolean } | null;
+  /** `red` counts the finished tasks whose verdict the backend says stands out. */
+  fold: { range: string; done: number; departed: number; red: number; open: boolean } | null;
   rows: { line: TaskLine; showDeparture: boolean }[];
   empty: string | null;
 };
@@ -35,6 +36,7 @@ export function taskList(tasks: TaskLine[], filter: TaskFilter, open: boolean, p
           range: finished.length === 1 ? first : `${first}–${last}`,
           done: finished.length,
           departed: departedOf(finished).length,
+          red: finished.filter((t) => t.red?.standsOut === true).length,
           open: shown,
         },
         rows: plain(shown ? [...finished, ...unfinished] : unfinished),

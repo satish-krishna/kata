@@ -20,7 +20,7 @@ const settle = async () => {
 };
 const text = (c: HTMLElement) => (c.textContent ?? '').replace(/\s+/g, ' ');
 const norm = (s: string | null) => (s ?? '').replace(/\s+/g, ' ').trim();
-const buildRow = (task: string, repo: string, commit: string): BuildRow => ({ task, repo, commits: [commit], departure: null });
+const buildRow = (task: string, repo: string, commit: string): BuildRow => ({ task, repo, commits: [commit], departure: null, red: null });
 const sha = (short: string) => short.padEnd(40, '0');
 
 async function mount(transport = new MockTransport(), inputs: Record<string, unknown> = {}) {

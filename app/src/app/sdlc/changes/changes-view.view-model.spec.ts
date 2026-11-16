@@ -111,7 +111,7 @@ describe('the Changes view follows the change reference (R2.2)', () => {
     expect(repos).toHaveBeenCalledWith(ref);
     expect(missing).toHaveBeenCalledWith(ref);
     const master = vm.repos().find((r) => r.repo === MOCK_MASTER)!;
-    expect(master.path).toBe(`${MOCK_WORKSPACE_FOLDER}/.ai-sdlc/copies/${MOCK_DONE_CHANGE}`);
+    expect(master.path).toBe(`${MOCK_WORKSPACE_FOLDER}/.hoshin/copies/${MOCK_DONE_CHANGE}`);
     expect(master.branch).toBe(`change/${MOCK_DONE_CHANGE}`);
   });
 });

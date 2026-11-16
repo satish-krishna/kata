@@ -22,9 +22,9 @@ describe('BuildRefusalDialog', () => {
   });
 
   it('shows the reason in the crimson banner', async () => {
-    await render(BuildRefusalDialog, { reason: 'Update the ai-sdlc plugin to 0.9.0 or later, then start the build again.' });
+    await render(BuildRefusalDialog, { reason: 'Update the hoshin plugin to 0.9.0 or later, then start the build again.' });
     const banner = alert()!.querySelector('[data-slot="alert"]')!;
-    expect(banner.textContent).toContain('Update the ai-sdlc plugin');
+    expect(banner.textContent).toContain('Update the hoshin plugin');
     expect(banner.className).toContain('wb-banner--error');
   });
 

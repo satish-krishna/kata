@@ -4,13 +4,13 @@ import type { Stage } from "./sdlc-mock-types";
 import type { WorkspaceScan } from "@bindings/WorkspaceScan";
 import type { KataEvent, RunDetail } from "./events";
 import { validateLocal } from "./mock";
-import { actionLabel, actionLabelAt, buildPreviewFor, givenFor, safetyRules, hasAiSdlcPlugin, isBuildRun, primaryAction, restrictedFor, reviewFindings, specFor, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type Restricted, type RunContext, type StageAction } from "./sdlc";
+import { actionLabel, actionLabelAt, buildPreviewFor, givenFor, safetyRules, hasHoshinPlugin, isBuildRun, primaryAction, restrictedFor, reviewFindings, specFor, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type Restricted, type RunContext, type StageAction } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
 });
 const skill = (name: string): CatalogEntry => ({ ...plugin(name), kind: "skill" });
-const both = [plugin("ai-sdlc"), plugin("superpowers")];
+const both = [plugin("hoshin"), plugin("superpowers")];
 const bypass: Settings = { mode: null, remember: false, permission_mode: "bypass" };
 const prompt: Settings = { ...bypass, permission_mode: "prompt" };
 const ctx: RunContext = { folder: "/ws", system: "commerce", change: "2026-10-12-photos" };
@@ -58,11 +58,11 @@ describe("action labels of a fix", () => {
   });
 });
 
-describe("hasAiSdlcPlugin", () => {
+describe("hasHoshinPlugin", () => {
   it("needs a plugin entry, not a skill", () => {
-    expect(hasAiSdlcPlugin(both)).toBe(true);
-    expect(hasAiSdlcPlugin([skill("ai-sdlc")])).toBe(false);
-    expect(hasAiSdlcPlugin([])).toBe(false);
+    expect(hasHoshinPlugin(both)).toBe(true);
+    expect(hasHoshinPlugin([skill("hoshin")])).toBe(false);
+    expect(hasHoshinPlugin([])).toBe(false);
   });
 });
 
@@ -71,8 +71,8 @@ describe("specFor", () => {
     const s = specFor("setup", null, { folder: "/ws", system: "", change: null }, bypass, both);
     expect(s.name).toBe("sdlc-setup");
     expect(s.workdir).toBe("/ws");
-    expect(s.task).toBe("Use the ai-sdlc setup skill.");
-    expect(Object.keys(s.plugins)).toEqual(["ai-sdlc"]);
+    expect(s.task).toBe("Use the hoshin setup skill.");
+    expect(Object.keys(s.plugins)).toEqual(["hoshin"]);
     expect(s.interactive.answer_timeout_secs).toBe(3600);
     expect(s.permissions.mode).toBe("bypass");
     expect(s.interactive.enabled).toBe(false);
@@ -98,25 +98,25 @@ describe("specFor", () => {
   });
   it("setup with a system", () => {
     const s = specFor("setup", null, { folder: "/ws", system: "commerce", change: null }, bypass, both);
-    expect(s.task).toBe("Use the ai-sdlc setup skill. System: commerce");
+    expect(s.task).toBe("Use the hoshin setup skill. System: commerce");
   });
   it("context", () => {
     const s = specFor("context", null, { ...ctx, change: null, repos: ["a", "b"] }, bypass, both);
     expect(s.name).toBe("sdlc-commerce-context");
     expect(s.task).toBe(
-      "Use the ai-sdlc context skill for system commerce, repositories: a, b. Refresh each existing context file, even one that is current.",
+      "Use the hoshin context skill for system commerce, repositories: a, b. Refresh each existing context file, even one that is current.",
     );
   });
   it("new intent", () => {
     const s = specFor("intent", null, { ...ctx, change: null, idea: "photo upload" }, bypass, both);
     expect(s.name).toBe("sdlc-commerce-new-intent");
-    expect(s.task).toBe("Use the ai-sdlc intent skill for system commerce. The idea: photo upload");
+    expect(s.task).toBe("Use the hoshin intent skill for system commerce. The idea: photo upload");
   });
   it("continue and reopen intent", () => {
     const c = specFor("intent", "continue-intent", ctx, bypass, both);
     expect(c.name).toBe("sdlc-commerce-2026-10-12-photos-intent");
     expect(c.task).toBe(
-      "Use the ai-sdlc intent skill for system commerce on the existing change folder 2026-10-12-photos. Resume the draft.",
+      "Use the hoshin intent skill for system commerce on the existing change folder 2026-10-12-photos. Resume the draft.",
     );
     const r = specFor("intent", "reopen-intent", ctx, bypass, both);
     expect(r.task).toBe(c.task + " The user has already confirmed reopening this accepted intent; do not ask again.");
@@ -124,21 +124,21 @@ describe("specFor", () => {
   it("spec", () => {
     const s = specFor("spec", "start-spec", ctx, bypass, both);
     expect(s.name).toBe("sdlc-commerce-2026-10-12-photos-spec");
-    expect(s.task).toBe("Use the ai-sdlc spec skill for system commerce on change folder 2026-10-12-photos.");
-    expect(Object.keys(s.plugins)).toEqual(["ai-sdlc"]);
+    expect(s.task).toBe("Use the hoshin spec skill for system commerce on change folder 2026-10-12-photos.");
+    expect(Object.keys(s.plugins)).toEqual(["hoshin"]);
   });
-  it("plan loads only ai-sdlc, even when superpowers is installed", () => {
-    for (const catalog of [both, [plugin("ai-sdlc")]]) {
+  it("plan loads only hoshin, even when superpowers is installed", () => {
+    for (const catalog of [both, [plugin("hoshin")]]) {
       const s = specFor("plan", "start-plan", ctx, bypass, catalog);
       expect(s.name).toBe("sdlc-commerce-2026-10-12-photos-plan");
-      expect(s.task).toBe("Use the ai-sdlc plan skill for system commerce on change folder 2026-10-12-photos.");
-      expect(Object.keys(s.plugins)).toEqual(["ai-sdlc"]);
+      expect(s.task).toBe("Use the hoshin plan skill for system commerce on change folder 2026-10-12-photos.");
+      expect(Object.keys(s.plugins)).toEqual(["hoshin"]);
     }
   });
   it("rerun plan carries the confirmation", () => {
     const s = specFor("plan", "rerun-plan", ctx, bypass, both);
     expect(s.task).toBe(
-      "Use the ai-sdlc plan skill for system commerce on change folder 2026-10-12-photos. " +
+      "Use the hoshin plan skill for system commerce on change folder 2026-10-12-photos. " +
         "The user has already confirmed replacing the existing plan; do not ask again.",
     );
   });
@@ -146,13 +146,13 @@ describe("specFor", () => {
     const s = specFor("spec", "reopen-spec", ctx, bypass, both);
     expect(s.name).toBe("sdlc-commerce-2026-10-12-photos-spec");
     expect(s.task).toBe(
-      "Use the ai-sdlc spec skill for system commerce on change folder 2026-10-12-photos. " +
+      "Use the hoshin spec skill for system commerce on change folder 2026-10-12-photos. " +
         "The user has already confirmed reopening this accepted spec; do not ask again.",
     );
   });
   it("continue spec carries the confirmation to regenerate", () => {
     expect(specFor("spec", "continue-spec", ctx, bypass, both).task).toBe(
-      "Use the ai-sdlc spec skill for system commerce on change folder 2026-10-12-photos. " +
+      "Use the hoshin spec skill for system commerce on change folder 2026-10-12-photos. " +
         "The user has already confirmed regenerating the spec; do not ask again.",
     );
   });
@@ -177,7 +177,7 @@ describe("specFor", () => {
         specFor("intent", null, { ...ctx, change: null, idea: "x" }, settings, both),
         specFor("intent", "reopen-intent", ctx, settings, both),
         specFor("spec", "start-spec", ctx, settings, both),
-        specFor("plan", "rerun-plan", ctx, settings, [plugin("ai-sdlc")]),
+        specFor("plan", "rerun-plan", ctx, settings, [plugin("hoshin")]),
       ];
       for (const s of specs) expect(validateLocal(s)).toEqual([]);
     }
@@ -316,7 +316,7 @@ describe("what a build's preview asks and which runs its choices reach", () => {
 });
 
 describe("what kind of run a spec is", () => {
-  it("every AI-SDLC spec requires the ai-sdlc plugin", () => {
+  it("every AI-SDLC spec requires the hoshin plugin", () => {
     const notBuilds = [
       specFor("setup", null, { folder: "/ws", system: "", change: null }, bypass, both),
       specFor("context", null, { ...ctx, change: null, repos: ["a"] }, bypass, both),
@@ -326,7 +326,7 @@ describe("what kind of run a spec is", () => {
       specFor("plan", "start-plan", ctx, prompt, both),
     ];
     for (const s of notBuilds) {
-      expect(s.given?.required_plugins).toEqual(["ai-sdlc"]);
+      expect(s.given?.required_plugins).toEqual(["hoshin"]);
       expect(s.given?.build).toBe(false);
       expect(s.given).toMatchObject({ hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [] });
     }
@@ -367,22 +367,22 @@ describe("triage and fix run-specs (T8)", () => {
 
   it("writes the four task texts out in full", () => {
     expect(specFor("triage", null, startCtx, bypass, both, restricted).task).toBe(
-      "Use the ai-sdlc start skill for system commerce. The change: Photos fail to upload. The person running this is both the engineer and the product owner and may take either route. If the route is the light track and the person takes it, run the fix skill in this session; the engineer accepts the fix later in the Workbench, so do not ask for acceptance.",
+      "Use the hoshin start skill for system commerce. The change: Photos fail to upload. The person running this is both the engineer and the product owner and may take either route. If the route is the light track and the person takes it, run the fix skill in this session; the engineer accepts the fix later in the Workbench, so do not ask for acceptance.",
     );
     expect(specFor("fix", "accept-fix", wsCtx, bypass, both, restricted).task).toBe(
-      "Use the ai-sdlc fix skill for system commerce with --accept 2026-10-23-fix-it. The engineer accepted this fix in the Workbench.",
+      "Use the hoshin fix skill for system commerce with --accept 2026-10-23-fix-it. The engineer accepted this fix in the Workbench.",
     );
     expect(specFor("fix", null, wsCtx, bypass, both, restricted).task).toBe(
-      "Use the ai-sdlc fix skill for system commerce on change folder 2026-10-23-fix-it. The engineer accepts the fix later in the Workbench, so do not ask for acceptance.",
+      "Use the hoshin fix skill for system commerce on change folder 2026-10-23-fix-it. The engineer accepts the fix later in the Workbench, so do not ask for acceptance.",
     );
     expect(specFor("setup", null, { folder: WS, system: "", change: null, instructions: true }, bypass, both).task).toBe(
-      "Use the ai-sdlc setup skill with --instructions.",
+      "Use the hoshin setup skill with --instructions.",
     );
   });
 
   it("the intent and triage task carries scope:<value> (R4.2)", () => {
     const intent = specFor("intent", null, { folder: WS, system: "commerce", change: null, idea: "photo upload", scope: "PROJ-123" }, bypass, both);
-    expect(intent.task).toBe("Use the ai-sdlc intent skill for system commerce. The idea: photo upload scope:PROJ-123");
+    expect(intent.task).toBe("Use the hoshin intent skill for system commerce. The idea: photo upload scope:PROJ-123");
     const triage = specFor("triage", null, { ...startCtx, scope: "PROJ-123" }, bypass, both, restricted);
     expect(triage.task).toContain("The change: Photos fail to upload scope:PROJ-123\nThe person running this");
     for (const task of [intent.task, triage.task]) {
@@ -398,7 +398,7 @@ describe("triage and fix run-specs (T8)", () => {
 
   it("the naming setup task names the system (R1.1)", () => {
     const s = specFor("setup", null, { folder: WS, system: "commerce", change: null, naming: true }, bypass, both);
-    expect(s.task).toBe("Use the ai-sdlc setup skill with --naming. System: commerce");
+    expect(s.task).toBe("Use the hoshin setup skill with --naming. System: commerce");
   });
 
   it("appends operator feedback as it does for every other kind", () => {

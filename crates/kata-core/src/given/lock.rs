@@ -151,7 +151,7 @@ mod tests {
 
     fn sdlc() -> ResolveOptions {
         ResolveOptions {
-            required_plugins: vec!["ai-sdlc".to_string()],
+            required_plugins: vec!["hoshin".to_string()],
             ..ResolveOptions::default()
         }
     }
@@ -192,23 +192,23 @@ mod tests {
         // Row 2 and the example "Kata's standing note on how to ask".
         let r2 = facts(K::Instruction, S::Kata, "standing-note", None);
         assert_eq!(lock_for(&r2, &none), kata);
-        // Row 3 and the example "the ai-sdlc plugin, in AI-SDLC mode".
-        let r3a = facts(K::Plugin, S::Personal, "ai-sdlc@mkt", None);
+        // Row 3 and the example "the hoshin plugin, in AI-SDLC mode".
+        let r3a = facts(K::Plugin, S::Personal, "hoshin@mkt", None);
         assert_eq!(lock_for(&r3a, &sdlc()), required);
-        let r3b = facts(K::Plugin, S::RunSpec, "ai-sdlc", None);
+        let r3b = facts(K::Plugin, S::RunSpec, "hoshin", None);
         assert_eq!(lock_for(&r3b, &sdlc()), required);
         let r3c = facts(
             K::Skill,
             S::Plugin,
-            "ai-sdlc@mkt:build",
-            Some("personal:plugin:ai-sdlc@mkt"),
+            "hoshin@mkt:build",
+            Some("personal:plugin:hoshin@mkt"),
         );
         assert_eq!(lock_for(&r3c, &sdlc()), required);
         assert_eq!(lock_for(&r3a, &none), None);
-        let r3d = facts(K::Plugin, S::Personal, "ai-sdlc-extra@mkt", None);
+        let r3d = facts(K::Plugin, S::Personal, "hoshin-extra@mkt", None);
         assert_eq!(lock_for(&r3d, &sdlc()), None);
         // Row 3 beats row 4 and row 9.
-        let r3e = facts(K::Plugin, S::Organization, "ai-sdlc@mkt", None);
+        let r3e = facts(K::Plugin, S::Organization, "hoshin@mkt", None);
         assert_eq!(lock_for(&r3e, &sdlc()), required);
         assert_eq!(lock_for(&shadowed(r3b.clone()), &sdlc()), required);
         // Row 4 and the example "anything the organization's managed settings set".

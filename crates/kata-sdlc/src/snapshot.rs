@@ -603,7 +603,7 @@ mod tests {
     const MARKER: &str = r#"{"version":1,"systems":{"demo":{"repos":["app"]}}}"#;
 
     /// A workspace: the engineer's checkout of the master with a marker, a product repo `app`, and a
-    /// copy of the master under `.ai-sdlc/copies/c`. The checkout and the copy both hold `notes.md`.
+    /// copy of the master under `.hoshin/copies/c`. The checkout and the copy both hold `notes.md`.
     struct Ws {
         _dir: tempfile::TempDir,
         ws: PathBuf,
@@ -615,14 +615,14 @@ mod tests {
     fn ws() -> Ws {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
-        let checkout = repo(&root, "ai-sdlc");
-        commit_file(&checkout, ".ai-sdlc.json", MARKER, "marker");
+        let checkout = repo(&root, "hub");
+        commit_file(&checkout, ".hoshin.json", MARKER, "marker");
         commit_file(&checkout, "notes.md", "orig", "notes");
         let app = repo(&root, "app");
-        let copies = root.join(".ai-sdlc").join("copies");
+        let copies = root.join(".hoshin").join("copies");
         std::fs::create_dir_all(&copies).unwrap();
         let copy = repo(&copies, "c");
-        commit_file(&copy, ".ai-sdlc.json", MARKER, "marker");
+        commit_file(&copy, ".hoshin.json", MARKER, "marker");
         commit_file(&copy, "notes.md", "orig", "notes");
         Ws {
             _dir: dir,
@@ -762,7 +762,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = crate::testutil::single_repo(dir.path(), "kata", &[("kata", "app")]);
         commit_file(&root, "notes.md", "orig", "notes");
-        let copies = dir.path().join(".ai-sdlc").join("copies");
+        let copies = dir.path().join(".hoshin").join("copies");
         std::fs::create_dir_all(&copies).unwrap();
         let copy = repo(&copies, "c");
         commit_file(&copy, "notes.md", "orig", "notes");

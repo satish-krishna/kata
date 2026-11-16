@@ -145,6 +145,13 @@ export const VIEWS = [
     } },
   { name: 'sdlc-done-pr', path: '/sdlc/commerce/2026-10-18-photo-limits-shipped', ready: '[data-testid="pr-menu"]',
     act: async (p) => { await p.locator('[data-testid="pr-menu"]').click(); await p.locator('[data-testid="pr-list"]').waitFor(); } },
+  { name: 'sdlc-red', path: '/sdlc/commerce/2026-10-18-photo-limits-shipped', ready: '[data-fold]',
+    act: async (p) => {
+      const folds = p.locator('[data-fold][aria-expanded="false"]');
+      while (await folds.count() > 0) await folds.first().click();
+      await p.locator('[data-task]', { hasText: 'T2' }).click();
+      await p.locator('[data-red-output]').waitFor();
+    } },
   { name: 'sdlc-start-triage', path: '/sdlc?demo=start', ready: '[role="dialog"]',
     act: async (p) => { await p.getByRole('dialog').getByRole('button', { name: /^Start run$/ }).click(); await p.getByText('Take the light track').first().waitFor({ timeout: 30000 }); } },
   { name: 'sdlc-fix', path: '/sdlc/commerce/2026-10-22-photo-retry-fix', ready: '[data-testid="track-tag"]' },

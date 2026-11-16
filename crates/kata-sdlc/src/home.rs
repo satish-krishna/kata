@@ -1,10 +1,10 @@
-//! Where a change lives. The ai-sdlc plugin's `state` answer says, for each change, the master it lives in
+//! Where a change lives. The hoshin plugin's `state` answer says, for each change, the master it lives in
 //! (its own copy, or the engineer's checkout) and the folder of its documents. This module is the one place
 //! Kata asks that, and the one place that checks the folder is on disk. Nothing falls back to the checkout:
 //! a change the plugin cannot place is an error with a message, never a guess.
-use crate::ai_sdlc::state::{self, ChangeState};
-use crate::ai_sdlc::{Place, Program, ProgramError};
 use crate::changes::{is_change_name, is_safe_system};
+use crate::hoshin::state::{self, ChangeState};
+use crate::hoshin::{Place, Program, ProgramError};
 use std::path::{Path, PathBuf};
 
 /// Where the plugin has a change, and how it stands there.
@@ -86,7 +86,7 @@ mod tests {
     fn program() -> Program {
         Program {
             node: "node".into(),
-            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts"),
+            entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools/hoshin.ts"),
         }
     }
 
@@ -102,8 +102,8 @@ mod tests {
         fn new() -> Fx {
             let dir = tempfile::tempdir().unwrap();
             let ws = dir.path().to_path_buf();
-            let master = testutil::repo(&ws, "ai-sdlc");
-            testutil::commit_file(&master, ".ai-sdlc.json", MARKER, "marker");
+            let master = testutil::repo(&ws, "hub");
+            testutil::commit_file(&master, ".hoshin.json", MARKER, "marker");
             testutil::repo(&ws, "app");
             let place = Place {
                 layout: crate::layout::Layout::Workspace,
@@ -122,7 +122,7 @@ mod tests {
                 )
                 .json;
             assert_eq!(started["outcome"], "passed", "{started}");
-            let copy = ws.join(".ai-sdlc").join("copies").join(CHANGE);
+            let copy = ws.join(".hoshin").join("copies").join(CHANGE);
             testutil::commit_file(
                 &copy,
                 &format!("intent/{SYSTEM}/{CHANGE}/intent.md"),
@@ -161,7 +161,7 @@ status: accepted
     fn resolve_errors_for_each_unanswered_case() {
         let fx = Fx::new();
 
-        // Row 1: the program is missing (a plugin folder with no tools/ai-sdlc.ts).
+        // Row 1: the program is missing (a plugin folder with no tools/hoshin.ts).
         let empty = tempfile::tempdir().unwrap();
         let missing = Program::locate(empty.path());
         let err = resolve(&missing, &fx.ws, SYSTEM, CHANGE).unwrap_err();
@@ -169,7 +169,7 @@ status: accepted
             panic!("expected Unanswered, got {err:?}");
         };
         assert!(
-            reason.starts_with("the installed ai-sdlc plugin is too old"),
+            reason.starts_with("the installed hoshin plugin is too old"),
             "{reason}"
         );
         assert_eq!(
@@ -181,7 +181,7 @@ status: accepted
         let bad = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(bad.path().join("tools")).unwrap();
         std::fs::write(
-            bad.path().join("tools").join("ai-sdlc.ts"),
+            bad.path().join("tools").join("hoshin.ts"),
             "console.error('boom'); process.exit(2);\n",
         )
         .unwrap();
@@ -191,7 +191,7 @@ status: accepted
             "{err:?}"
         );
         assert!(err.to_string().starts_with(
-            "Could not find where this change lives: the ai-sdlc program could not run"
+            "Could not find where this change lives: the hoshin program could not run"
         ));
 
         // Row 2: the change is not listed.
@@ -211,7 +211,7 @@ status: accepted
 
     /// A program that logs its arguments, one JSON line each, and runs the vendored program.
     fn recording_program(dir: &Path, log: &Path) -> Program {
-        let entry = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts");
+        let entry = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools/hoshin.ts");
         let quoted =
             |p: &Path| serde_json::to_string(&p.to_string_lossy().replace('\\', "/")).unwrap();
         std::fs::create_dir_all(dir.join("tools")).unwrap();
@@ -226,7 +226,7 @@ status: accepted
             log = quoted(log),
             entry = quoted(&entry),
         );
-        std::fs::write(dir.join("tools").join("ai-sdlc.ts"), text).unwrap();
+        std::fs::write(dir.join("tools").join("hoshin.ts"), text).unwrap();
         Program::locate(dir)
     }
 
@@ -283,10 +283,10 @@ status: accepted
 
         // A program that passes everything through but answers `state` with another exit 2.
         let tools = tempfile::tempdir().unwrap();
-        let entry = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts");
+        let entry = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools/hoshin.ts");
         std::fs::create_dir_all(tools.path().join("tools")).unwrap();
         std::fs::write(
-            tools.path().join("tools").join("ai-sdlc.ts"),
+            tools.path().join("tools").join("hoshin.ts"),
             format!(
                 "import {{ spawnSync }} from 'node:child_process';\n\
                  const a = process.argv.slice(2);\n\

@@ -11,7 +11,7 @@
     (remove)="vm.askRemove()"
     (openSettings)="vm.openSettings()"
   >
-    @if (vm.canWork() || vm.state() === 'refused') {
+    @if (vm.canWork()) {
       <button
         hlmBtn
         variant="primary"
@@ -49,6 +49,12 @@
       (decide)="vm.decide($event)"
     />
   } @else {
+    @if (vm.migrationBanner(); as banner) {
+      <div class="wb-banner wb-banner--warn" data-testid="migration-banner" role="status">
+        <span class="k-status k-status--warning"><span class="k-status__dot"></span>{{ banner.title }}</span>
+        <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.reviewMigration()">Review</button>
+      </div>
+    }
     @switch (vm.state()) {
       @case ('loading') {
         <main class="k-home__state"><p class="k-state__body" role="status">Reading the workspace…</p></main>
@@ -56,8 +62,8 @@
       @case ('plugin-missing') {
         <main class="k-home__state">
           <section class="k-state" aria-labelledby="state-title">
-            <h1 id="state-title" class="k-state__title">The ai-sdlc plugin was not found</h1>
-            <p class="k-state__body">Kata looked for a plugin named ai-sdlc in these places:</p>
+            <h1 id="state-title" class="k-state__title">The hoshin plugin was not found</h1>
+            <p class="k-state__body">Kata looked for a plugin named hoshin in these places:</p>
             <ul class="k-state__list">
               <li>~/.claude</li>
               <li>the .claude folder of the workspace</li>
@@ -86,8 +92,20 @@
           <section class="k-state" aria-labelledby="state-title">
             <h1 id="state-title" class="k-state__title">Workspace folder not found</h1>
             <p class="k-state__body">Kata could not read <code class="k-mono">{{ vm.current()?.folder }}</code>: {{ vm.scanError() }}</p>
+            @if (vm.migrationCheckError(); as why) {
+              <p class="k-state__body">Kata could not check whether this folder needs migrating: {{ why }}</p>
+            }
             <p class="k-state__body">Move the folder back, or forget this workspace. Forgetting touches nothing on disk.</p>
             <button hlmBtn variant="secondary" type="button" (click)="vm.askRemove()">Remove from list…</button>
+          </section>
+        </main>
+      }
+      @case ('migrate') {
+        <main class="k-home__state">
+          <section class="k-state" aria-labelledby="state-title">
+            <h1 id="state-title" class="k-state__title">{{ vm.migrationTitle() }}</h1>
+            <p class="k-state__body"><code class="k-mono">{{ vm.current()?.folder }}</code></p>
+            <button hlmBtn variant="primary" type="button" (click)="vm.reviewMigration()">Review</button>
           </section>
         </main>
       }
@@ -96,9 +114,12 @@
           <section class="k-state" aria-labelledby="state-title">
             <h1 id="state-title" class="k-state__title">No master repo found</h1>
             <p class="k-state__body">
-              The master repo is the one that holds <code class="k-mono">.ai-sdlc.json</code>. None of the repos in
+              The master repo is the one that holds <code class="k-mono">.hoshin.json</code>. None of the repos in
               <code class="k-mono">{{ vm.current()?.folder }}</code> has it any more.
             </p>
+            @if (vm.migrationCheckError(); as why) {
+              <p class="k-state__body">Kata could not check whether this folder needs migrating: {{ why }}</p>
+            }
             <button hlmBtn variant="secondary" type="button" (click)="vm.askRemove()">Remove from list…</button>
           </section>
         </main>
@@ -107,7 +128,7 @@
         <main class="k-home__state">
           <section class="k-state" aria-labelledby="state-title">
             <h1 id="state-title" class="k-state__title">More than one master repo</h1>
-            <p class="k-state__body">A workspace has exactly one <code class="k-mono">.ai-sdlc.json</code>. These repos each have one:</p>
+            <p class="k-state__body">A workspace has exactly one <code class="k-mono">.hoshin.json</code>. These repos each have one:</p>
             <ul class="k-state__list">
               @for (m of vm.masters(); track m) {
                 <li>{{ m }}</li>
@@ -120,17 +141,8 @@
       @case ('marker-error') {
         <main class="k-home__state">
           <section class="k-state" aria-labelledby="state-title">
-            <h1 id="state-title" class="k-state__title">.ai-sdlc.json could not be read</h1>
+            <h1 id="state-title" class="k-state__title">.hoshin.json could not be read</h1>
             <p class="k-state__body">{{ vm.scan()?.marker_error }}</p>
-          </section>
-        </main>
-      }
-      @case ('refused') {
-        <main class="k-home__state">
-          <section class="k-state" aria-labelledby="state-title">
-            <h1 id="state-title" class="k-state__title">The single-repo layout needs a newer ai-sdlc</h1>
-            <p class="k-state__body">{{ vm.blockMessage() }}</p>
-            <p class="k-state__body">Nothing else in this folder works until the plugin is updated. There is no action on this screen.</p>
           </section>
         </main>
       }
@@ -139,7 +151,7 @@
           <section class="k-state" aria-labelledby="state-title">
             <h1 id="state-title" class="k-state__title">This workspace is not set up</h1>
             <p class="k-state__body">
-              <code class="k-mono">.ai-sdlc.json</code> is not committed in the master repo. A cancelled setup leaves it uncommitted.
+              <code class="k-mono">.hoshin.json</code> is not committed in the master repo. A cancelled setup leaves it uncommitted.
             </p>
             <button hlmBtn variant="primary" type="button" [disabled]="vm.locked()" (click)="vm.addSystem()">Run setup</button>
           </section>
@@ -176,7 +188,7 @@
             @for (old of vm.oldChecks(); track old.system) {
               <section class="k-oldchecks" data-testid="old-checks" role="status" [attr.aria-label]="'Old checks for ' + old.system">
                 <p>
-                  These checks no longer run. Checks are now team settings in the master repository; check them in with the ai-sdlc setup skill's
+                  These checks no longer run. Checks are now team settings in the master repository; check them in with the hoshin setup skill's
                   <code class="k-mono">--hooks</code>.
                 </p>
                 <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.dismissOldChecks(old.system)">Dismiss</button>
@@ -280,6 +292,16 @@
       (cancel)="vm.closeSettings()"
     />
   }
+  <app-migrate-dialog
+    [open]="vm.migrationOpen()"
+    [plan]="vm.shownMigration()"
+    [done]="vm.migrationDone()"
+    [canMigrate]="vm.canMigrate()"
+    [busy]="vm.migrationBusy()"
+    [error]="vm.migrationError()"
+    (migrate)="vm.runMigration()"
+    (close)="vm.closeMigration()"
+  />
   <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />
   <app-confirm-dialog
     [open]="vm.switchPrompt() !== null"

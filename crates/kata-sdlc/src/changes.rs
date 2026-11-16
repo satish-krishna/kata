@@ -52,7 +52,7 @@ pub fn read_doc(master: &Path, system: &str, change: &str, doc: &str) -> Option<
 }
 
 /// The change's spec or plan as the file holds it now, read by the format program in `plugin` (the
-/// ai-sdlc plugin folder): the same read the checks make, so what the Workbench shows is what they
+/// hoshin plugin folder): the same read the checks make, so what the Workbench shows is what they
 /// check. `None` for any other document, a bad name, or a file that is not there.
 pub fn read_parsed(
     plugin: &Path,
@@ -84,8 +84,8 @@ mod tests {
     fn read_parsed_reads_a_spec_and_a_plan_and_refuses_the_rest() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
-        let spec = include_str!("../tests/ai-sdlc-tools/examples/spec/2/valid.md");
-        let plan = include_str!("../tests/ai-sdlc-tools/examples/plan/2/valid.md");
+        let spec = include_str!("../tests/hoshin-tools/examples/spec/2/valid.md");
+        let plan = include_str!("../tests/hoshin-tools/examples/plan/2/valid.md");
         testutil::write(&repo, "intent/s/2026-10-12-x/spec.md", spec);
         testutil::write(&repo, "intent/s/2026-10-12-x/plan.md", plan);
         let plugin = testutil::plugin_dir();

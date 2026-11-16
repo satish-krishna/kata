@@ -33,7 +33,7 @@ Before any run starts, Run opens a preview of what the run will start with: its 
 
 ## AI-SDLC mode
 
-The same app has a second mode for taking a change from an idea to open pull requests inside a workspace of git repos: one master repo holds the intents, specs, plans, build logs and reviews, and the product repos hold the code they describe. Kata drives the `ai-sdlc` plugin through the same `kata run` path and shows what a stopped run left behind before anything is discarded. The plugin (1.1.0 or later) owns the workflow itself: it starts, renames and removes changes, commits, accepts documents, finishes builds and declares changes done. Kata starts the agent runs, shows the plugin's answers and keeps the rules a run is held to. Pick the mode on first launch and switch any time from the toolbar.
+The same app has a second mode for taking a change from an idea to open pull requests inside a workspace of git repos: one master repo holds the intents, specs, plans, build logs and reviews, and the product repos hold the code they describe. Kata drives the `hoshin` plugin through the same `kata run` path and shows what a stopped run left behind before anything is discarded. The plugin (1.0.0 or later) owns the workflow itself: it starts, renames and removes changes, commits, accepts documents, finishes builds and declares changes done. Kata starts the agent runs, shows the plugin's answers and keeps the rules a run is held to. Pick the mode on first launch and switch any time from the toolbar.
 
 The workspace home lists your workspaces (add or remove one, switch between them) and each system's changes; the AI-SDLC settings dialog holds the mode's own preferences. One change has one page, and it follows the change through these steps:
 
@@ -41,6 +41,7 @@ The workspace home lists your workspaces (add or remove one, switch between them
 - **Intent, spec and plan.** The full pipeline. Each document opens on its own tab, and you accept it (or reject the intent, or send feedback) before the next step. A spec or plan that no longer matches the document above it is marked out of date.
 - **Fix.** The light track for a bug or a small enhancement in one repository: one run writes a short intent, spec and plan, which you accept once.
 - **Build.** One agent per repository, several at once, on a build page whose four areas (tasks, activity, changed files, findings) you can arrange; `Ctrl+1` to `Ctrl+4` pick the overview, watch, changes and review arrangements.
+- **Red.** Each plan task names the test that should fail before its code exists, and the build log records whether it did. The task list shows the verdict on every built task, and a task whose test was not seen failing first stands out; picking it shows the test run the plugin recorded on this machine, with its commit, outcome and output.
 - **Changes.** The files each commit on a change branch touched, with a side-by-side diff against the base branch.
 - **Review.** One reviewer per repository plus one across them. Findings are grouped by repository and read from the change's `build/review.md`.
 - **Done.** Declaring a change done is the plugin's step: it verifies the change, pushes every touched repository and opens one pull request per repository through `gh`, the master last, and records them in the change. A change declared done before the plugin recorded pull requests is shown as done, read only.
@@ -54,12 +55,14 @@ The workspace home lists your workspaces (add or remove one, switch between them
 | ![The build page in Watch mode](docs/images/sdlc-build.png) | ![The build page in Review mode](docs/images/sdlc-review.png) |
 | **A run paused on a question** | **Done, with one pull request per repository** |
 | ![A spec run paused on a question](docs/images/sdlc-lock-ask.png) | ![A finished change with its pull requests](docs/images/sdlc-done-pr.png) |
+| **Did each test fail first?** | |
+| ![A task whose test passed before its code, with the recorded run](docs/images/sdlc-red.png) | |
 
 ### Building a change
 
 Building and declaring a change done have prerequisites beyond an authenticated `claude` on your `PATH`:
 
-- The `ai-sdlc` plugin at version 1.1.0 or later, and Node.js 22.18 or later on your `PATH`. Kata reads and changes a change through the plugin's program, which runs on Node. Below that version the mode is blocked and says why.
+- The `hoshin` plugin at version 1.0.0 or later, and Node.js 22.18 or later on your `PATH`. Kata reads and changes a change through the plugin's program, which runs on Node. Below that version the mode is blocked and says why.
 - `git` and `gh` on your `PATH`, signed in to GitHub. The plugin starts them for commits, pushes and pull requests as you, and Kata stores no token. The Workbench mode needs neither.
 
 A build runs one agent per repository, inside that repository, with several running at once. Each run has its own time limit. Builds always run under `permissions.mode = "auto"` with deny rules (no `git push`, `gh` or `git remote`, no edits to another repository's work), whatever permission setting the rest of the app uses, because deny rules do not exist under the default bypass posture. The build runs in the Workbench's backend, so leaving the build page does not stop it.

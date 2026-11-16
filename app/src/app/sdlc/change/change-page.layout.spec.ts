@@ -204,7 +204,7 @@ describe('ChangePage layout', () => {
         return {
           ...got,
           repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })),
-          tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: ['c0ffee1'], departure: null } })),
+          tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: ['c0ffee1'], departure: null, red: null } })),
         };
       });
       await transport.sdlcDeclareDone({ workspace: 'f', system: 'commerce', change: MOCK_BUILD_CHANGE });

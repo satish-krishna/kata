@@ -431,7 +431,7 @@ mod tests {
                 row(
                     ItemKind::Plugin,
                     Source::Personal,
-                    "ai-sdlc@ai-sdlc",
+                    "hoshin@hoshin",
                     None,
                     true,
                 ),
@@ -442,7 +442,7 @@ mod tests {
         );
         let want = Applied {
             settings: obj(json!({"enabledPlugins": {
-                "ai-sdlc@ai-sdlc": false, "p@m": false, "l@m": false
+                "hoshin@hoshin": false, "p@m": false, "l@m": false
             }})),
             ..Applied::default()
         };

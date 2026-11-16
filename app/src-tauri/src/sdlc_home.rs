@@ -2,10 +2,10 @@
 //! merge check last said about each. The Tauri commands in `lib.rs` are one-line wrappers over [`home_list`],
 //! [`home_open`] and [`home_pull_requests`], so this module is testable without Tauri.
 use crate::sdlc_state::view_of;
-use kata_sdlc::ai_sdlc::list::ChangeList;
-use kata_sdlc::ai_sdlc::state::{ChangeState, SystemState};
-use kata_sdlc::ai_sdlc::{Place, Program, ProgramError};
 use kata_sdlc::copy_removal::CopyRemoval;
+use kata_sdlc::hoshin::list::ChangeList;
+use kata_sdlc::hoshin::state::{ChangeState, SystemState};
+use kata_sdlc::hoshin::{Place, Program, ProgramError};
 use kata_sdlc::layout::{AppHealth, Layout};
 use kata_sdlc::offer::{home_reading, LiveFacts};
 use kata_sdlc::open_changes::{
@@ -82,7 +82,7 @@ impl HomeSource for Program {
         let answer = self
             .run_in(&["list", "--json", "--system", system], folder, layout)
             .map_err(program_error)?;
-        kata_sdlc::ai_sdlc::list::read_list(answer).map_err(program_error)
+        kata_sdlc::hoshin::list::read_list(answer).map_err(program_error)
     }
     fn open_states(
         &self,
@@ -97,7 +97,7 @@ impl HomeSource for Program {
                 layout,
             )
             .map_err(program_error)?;
-        kata_sdlc::ai_sdlc::state::read_state(answer).map_err(program_error)
+        kata_sdlc::hoshin::state::read_state(answer).map_err(program_error)
     }
     fn declared(&self, folder: &Path, system: &str, change: &str) -> Result<bool, String> {
         let workspace_id = crate::build_host::workspace_id_in_store(folder);
@@ -135,8 +135,7 @@ pub struct HomeMemory {
     rows: Mutex<BTreeMap<Key, Remembered>>,
 }
 
-/// The home's list for the saved workspace: the shown system's open and finished changes. A plugin older than
-/// 1.3.0 answers `Legacy`, and the program is not asked.
+/// The home's list for the saved workspace: the shown system's open and finished changes.
 pub fn home_list(
     source: &dyn HomeSource,
     readiness: &Readiness,
@@ -145,9 +144,6 @@ pub fn home_list(
     layout: Layout,
     systems: &[String],
 ) -> Result<HomeList, String> {
-    if !kata_sdlc::plugin::lists_changes(readiness) {
-        return Ok(HomeList::Legacy);
-    }
     let system = shown_system(remembered, systems);
     let (open, finished) = match &system {
         Some(system) => split(source.list(folder, layout, system)?),
@@ -210,9 +206,6 @@ pub fn home_open(
     trigger: Refresh,
     memory: &HomeMemory,
 ) -> Result<HomeOpen, String> {
-    if !kata_sdlc::plugin::lists_changes(readiness) {
-        return Err("the installed ai-sdlc plugin cannot read open changes alone".into());
-    }
     let found = source.open_states(folder, layout, system)?;
     let mut problems = found.problems.clone();
     // Declaring done needs a committed review and every task logged, which is what the candidate means, so
@@ -285,15 +278,11 @@ pub fn home_open(
 /// read is skipped; a check that fails leaves its row out, so it keeps its last reading.
 pub fn home_pull_requests(
     source: &dyn HomeSource,
-    readiness: &Readiness,
     folder: &Path,
     system: &str,
     changes: &[String],
     memory: &HomeMemory,
 ) -> Result<HomeChecked, String> {
-    if !kata_sdlc::plugin::lists_changes(readiness) {
-        return Err("the installed ai-sdlc plugin cannot read open changes alone".into());
-    }
     let views: Vec<ChangeView> = {
         let remembered = memory.rows.lock().unwrap();
         changes
@@ -335,14 +324,14 @@ pub fn home_pull_requests(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kata_sdlc::ai_sdlc::list::{ChangeListing, Finished};
-    use kata_sdlc::ai_sdlc::state::read_state;
+    use kata_sdlc::hoshin::list::{ChangeListing, Finished};
+    use kata_sdlc::hoshin::state::read_state;
     use kata_sdlc::offer::HomeAction;
     use kata_sdlc::plugin::{GhPresence, Plugin};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    const STATE: &str = r#"{"system":"kata","changes":[{"change":"NAME","master":"/ws/.ai-sdlc/copies/NAME","folder":"/ws/.ai-sdlc/copies/NAME/intent/kata/NAME","inCopy":true,"title":"T","track":"full",
+    const STATE: &str = r#"{"system":"kata","changes":[{"change":"NAME","master":"/ws/.hoshin/copies/NAME","folder":"/ws/.hoshin/copies/NAME/intent/kata/NAME","inCopy":true,"title":"T","track":"full",
  "documents":{"intent":{"exists":true,"inHead":true,"headStatus":"accepted","workingStatus":"accepted","uncommitted":false},"spec":{"exists":true,"inHead":true,"headStatus":"accepted","workingStatus":"accepted","uncommitted":false,"pin":"holds"},"plan":{"exists":true,"inHead":true,"headStatus":"accepted","workingStatus":"accepted","uncommitted":false,"pin":"holds"}},
  "scenarios":2,"tasks":{"app":{"all":["T1"],"logged":["T1"],"unlogged":[],"commits":{"T1":["4f1c2a9e0b7d3c5a8e6f1b2d4c7a9e0f3b5d8c1a"]},"untasked":[],"uncommitted":[]}},"buildLogs":{"app":"clean"},"review":{"committed":0,"draft":"none"},"fix":null,
  "ready":{"spec":{"candidate":false,"stop":null,"accept":[]},"plan":{"candidate":false,"stop":null,"accept":[]},"build":{"candidate":false,"stop":null,"accept":[]},"review":{"candidate":false,"stop":null,"accept":[]},"done":{"candidate":DONE,"stop":null,"accept":[]},"reject":{"candidate":false,"stop":null,"accept":[]}}}],"problems":[]}"#;
@@ -401,7 +390,7 @@ mod tests {
                     .map(|(name, finished)| ChangeListing {
                         change: name.clone(),
                         title: None,
-                        track: kata_sdlc::ai_sdlc::state::ChangeTrack::Full,
+                        track: kata_sdlc::hoshin::state::ChangeTrack::Full,
                         master: "/m".into(),
                         in_copy: false,
                         finished: *finished,
@@ -454,7 +443,7 @@ mod tests {
     ) -> Result<HomeOpen, String> {
         home_open(
             fake,
-            &ready("1.3.1"),
+            &ready("1.0.0"),
             &no_live,
             Path::new("/ws"),
             Layout::Workspace,
@@ -493,15 +482,8 @@ mod tests {
 
         let mut fake = three();
         fake.merge.insert("a".into(), Ok(CopyRemoval::Offer));
-        let checked = home_pull_requests(
-            &fake,
-            &ready("1.3.1"),
-            Path::new("/ws"),
-            "kata",
-            &names(&["a"]),
-            &memory,
-        )
-        .unwrap();
+        let checked =
+            home_pull_requests(&fake, Path::new("/ws"), "kata", &names(&["a"]), &memory).unwrap();
         assert_eq!(
             checked.rows[0].reading.label.text,
             "Done · merged, remove the copy"
@@ -522,38 +504,6 @@ mod tests {
         let asked = fake.declared_asked.lock().unwrap();
         assert!(asked.iter().all(|c| c == "a" || c == "b"), "{asked:?}");
         assert!(!asked.iter().any(|c| c == "c"));
-    }
-
-    #[test]
-    fn an_older_plugin_answers_legacy_without_asking() {
-        struct Panics;
-        impl HomeSource for Panics {
-            fn list(&self, _: &Path, _: Layout, _: &str) -> Result<ChangeList, String> {
-                panic!("asked")
-            }
-            fn open_states(&self, _: &Path, _: Layout, _: &str) -> Result<SystemState, String> {
-                panic!("asked")
-            }
-            fn declared(&self, _: &Path, _: &str, _: &str) -> Result<bool, String> {
-                panic!("asked")
-            }
-            fn merge_check(&self, _: &Path, _: &ChangeState) -> Result<CopyRemoval, String> {
-                panic!("asked")
-            }
-        }
-        let blocked = Readiness::missing();
-        for readiness in [ready("1.2.0"), blocked] {
-            let answer = home_list(
-                &Panics,
-                &readiness,
-                Some("kata"),
-                Path::new("/ws"),
-                Layout::Workspace,
-                &names(&["kata"]),
-            )
-            .unwrap();
-            assert_eq!(answer, HomeList::Legacy);
-        }
     }
 
     #[test]
@@ -581,7 +531,7 @@ mod tests {
         };
         let answer = home_list(
             &fake,
-            &ready("1.3.1"),
+            &ready("1.0.0"),
             Some("kata"),
             Path::new("/ws"),
             Layout::Workspace,
@@ -609,7 +559,7 @@ mod tests {
         }
         let none = home_list(
             &fake,
-            &ready("1.3.1"),
+            &ready("1.0.0"),
             None,
             Path::new("/ws"),
             Layout::Workspace,
@@ -637,7 +587,6 @@ mod tests {
         fake.merge.insert("b".into(), Ok(CopyRemoval::Offer));
         let checked = home_pull_requests(
             &fake,
-            &ready("1.3.1"),
             Path::new("/ws"),
             "kata",
             &names(&["a", "b"]),
@@ -666,11 +615,11 @@ mod tests {
         assert!(answer.check.is_empty());
     }
 
-    /// A stand-in for the ai-sdlc program that logs each start as one line (its arguments), so a test can count
+    /// A stand-in for the hoshin program that logs each start as one line (its arguments), so a test can count
     /// the starts and the `resolve` ones. It answers `resolve`, `list`, `state`, `change show` and `status`; a
     /// `fail` file naming a command makes the next start of that command exit 2 and removes the file.
     fn recording_program(dir: &Path, done_candidate: bool) -> Program {
-        let entry = dir.join("ai-sdlc.ts");
+        let entry = dir.join("hoshin.ts");
         let script = r#"const fs = require('node:fs');
 const path = require('node:path');
 const here = __dirname;
@@ -727,7 +676,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
         for (layout, workspace_flag) in [(Layout::Workspace, true), (Layout::SingleRepo, false)] {
             let dir = tempfile::tempdir().unwrap();
             let program = recording_program(dir.path(), false);
-            let readiness = ready("1.3.1");
+            let readiness = ready("1.0.0");
             let folder = dir.path();
             home_list(
                 &program,
@@ -789,7 +738,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
     fn a_read_that_needs_the_master_resolves_once_and_again_after_an_error() {
         let dir = tempfile::tempdir().unwrap();
         let program = recording_program(dir.path(), true);
-        let readiness = ready("1.3.1");
+        let readiness = ready("1.0.0");
         let memory = HomeMemory::default();
         let folder = dir.path();
         let open = || {
@@ -842,7 +791,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
         std::fs::write(dir.path().join("state.json"), state.to_string()).unwrap();
         let answer = home_open(
             &program,
-            &ready("1.3.1"),
+            &ready("1.0.0"),
             &no_live,
             dir.path(),
             Layout::Workspace,
@@ -904,9 +853,9 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
     ) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path().canonicalize().unwrap();
-        let master = init_repo(&ws, "ai-sdlc");
+        let master = init_repo(&ws, "hub");
         std::fs::write(
-            master.join(".ai-sdlc.json"),
+            master.join(".hoshin.json"),
             r#"{"version":1,"systems":{"kata":{"repos":["kata"]}}}"#,
         )
         .unwrap();
@@ -936,7 +885,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
                 )
                 .json;
             assert_eq!(started["outcome"], "passed", "{started}");
-            let copy = ws.join(".ai-sdlc").join("copies").join(&name);
+            let copy = ws.join(".hoshin").join("copies").join(&name);
             let folder = copy.join(format!("intent/kata/{name}"));
             std::fs::create_dir_all(&folder).unwrap();
             std::fs::write(folder.join("intent.md"), INTENT).unwrap();
@@ -988,7 +937,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
                 assert_eq!(f.len(), finished);
                 open.iter().map(|c| c.change.clone()).collect()
             }
-            HomeList::Legacy => panic!("a 1.3.1 plugin answered Legacy"),
+            HomeList::Legacy => panic!("a ready plugin answered Legacy"),
         };
         assert_eq!(shown.len(), 3, "{shown:?}");
         shown
@@ -1003,9 +952,9 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
         let program = Program {
             node: "node".into(),
             entry: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../crates/kata-sdlc/tests/ai-sdlc-tools/ai-sdlc.ts"),
+                .join("../../crates/kata-sdlc/tests/hoshin-tools/hoshin.ts"),
         };
-        let readiness = ready("1.3.1");
+        let readiness = ready("1.0.0");
         let systems = names(&["kata"]);
         let mut misses = Vec::new();
         // The list call and the open call from one start, on the workspace it is given.
@@ -1090,7 +1039,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
         let read = |fake: &Fake, trigger| {
             home_open(
                 fake,
-                &ready("1.4.0"),
+                &ready("1.0.0"),
                 &no_live,
                 Path::new("/kata"),
                 Layout::Workspace,
@@ -1114,15 +1063,9 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
             ),
         ] {
             fake.merge.insert("a".into(), Ok(check));
-            let checked = home_pull_requests(
-                &fake,
-                &ready("1.4.0"),
-                Path::new("/kata"),
-                "kata",
-                &names(&["a"]),
-                &memory,
-            )
-            .unwrap();
+            let checked =
+                home_pull_requests(&fake, Path::new("/kata"), "kata", &names(&["a"]), &memory)
+                    .unwrap();
             assert_eq!(checked.rows[0].reading.label.text, reading);
             assert_eq!(text(&read(&fake, Refresh::Focus), "a"), reading);
         }
@@ -1131,7 +1074,7 @@ if (fs.existsSync(fail) && fs.readFileSync(fail, 'utf8') === command) {
     #[test]
     fn app_rows_follow_the_program() {
         let dir = tempfile::tempdir().unwrap();
-        let entry = dir.path().join("ai-sdlc.ts");
+        let entry = dir.path().join("hoshin.ts");
         let root = dir.path().display().to_string().replace("\\", "/");
         let script = format!(
             r#"const args = process.argv.slice(2);

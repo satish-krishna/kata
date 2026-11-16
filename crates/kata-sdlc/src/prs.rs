@@ -1,4 +1,4 @@
-//! What Kata saved about a change's pull requests in `pull-requests.json`, before the ai-sdlc program recorded
+//! What Kata saved about a change's pull requests in `pull-requests.json`, before the hoshin program recorded
 //! them in `change.yml`. Kata only reads it now: `pull_requests::view` shows it for a change an earlier version
 //! declared done. Kata keeps no credential here.
 use serde::{Deserialize, Serialize};

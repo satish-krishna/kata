@@ -1,6 +1,6 @@
 //! Which findings a change shows comes from its review document, `build/review.md` (R14, R15, R16).
 //!
-//! These tests run the vendored copy of the plugin's format program in `tests/ai-sdlc-tools/`.
+//! These tests run the vendored copy of the plugin's format program in `tests/hoshin-tools/`.
 #![allow(clippy::disallowed_methods)]
 use kata_sdlc::format::Severity;
 use kata_sdlc::review;
@@ -27,7 +27,7 @@ fn copy_dir(from: &Path, to: &Path) {
 fn plugin(tmp: &Path) -> PathBuf {
     let dir = tmp.join("plugin");
     copy_dir(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools"),
         &dir.join("tools"),
     );
     dir
@@ -176,12 +176,12 @@ fn a_master_that_gained_a_product_commit_after_the_review_lists_its_files() {
     let tmp = tempfile::tempdir().unwrap();
     let master = reviewed_master(tmp.path());
     fs::create_dir_all(master.join("plugin")).unwrap();
-    fs::write(master.join("plugin/ai-sdlc.ts"), "// changed\n").unwrap();
+    fs::write(master.join("plugin/hoshin.ts"), "// changed\n").unwrap();
     git(&master, &["add", "."]);
     git(&master, &["commit", "-q", "-m", "product"]);
     assert_eq!(
         moved_since_review(tmp.path(), &master),
-        serde_json::json!(["plugin/ai-sdlc.ts"])
+        serde_json::json!(["plugin/hoshin.ts"])
     );
 }
 
@@ -226,7 +226,7 @@ fn reviewed_then_renamed(tmp: &Path) -> PathBuf {
     git(&master, &["config", "user.email", "test@example.com"]);
     git(&master, &["config", "commit.gpgsign", "false"]);
     fs::write(
-        master.join(".ai-sdlc.json"),
+        master.join(".hoshin.json"),
         format!(r#"{{"version":1,"systems":{{"{SYS}":{{"repos":[]}}}}}}"#),
     )
     .unwrap();
@@ -279,7 +279,7 @@ commits: {{ master: {} }}
     git(&master, &["commit", "-q", "-m", "review"]);
     // The plugin renames the branch and commits the change's record.
     let out = Command::new("node")
-        .arg(plugin(tmp).join("tools/ai-sdlc.ts"))
+        .arg(plugin(tmp).join("tools/hoshin.ts"))
         .args([
             "change",
             "rename",
@@ -323,7 +323,7 @@ fn review_stays_current_after_the_plugin_renames_the_branch() {
     // Product code committed after the review still makes it not current.
     fs::create_dir_all(master.join("plugin")).unwrap();
     fs::write(
-        master.join("plugin/ai-sdlc.ts"),
+        master.join("plugin/hoshin.ts"),
         "// changed
 ",
     )
@@ -332,6 +332,6 @@ fn review_stays_current_after_the_plugin_renames_the_branch() {
     git(&master, &["commit", "-q", "-m", "product"]);
     assert_eq!(
         moved_since_review(tmp.path(), &master),
-        serde_json::json!(["plugin/ai-sdlc.ts"])
+        serde_json::json!(["plugin/hoshin.ts"])
     );
 }

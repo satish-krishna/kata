@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct ResolveOptions {
     /// Plugin names (without a marketplace) the run cannot work without. The
-    /// Workbench passes `["ai-sdlc"]` for an AI-SDLC run; the CLI passes none.
+    /// Workbench passes `["hoshin"]` for an AI-SDLC run; the CLI passes none.
     #[serde(default)]
     pub required_plugins: Vec<String>,
     /// True for a build run.
@@ -375,7 +375,7 @@ mod tests {
         );
         let spec = RunSpec {
             given: Some(Given {
-                required_plugins: vec!["ai-sdlc".into()],
+                required_plugins: vec!["hoshin".into()],
                 build: true,
                 ..Given::default()
             }),
@@ -384,7 +384,7 @@ mod tests {
         assert_eq!(
             ResolveOptions::from_spec(&spec),
             ResolveOptions {
-                required_plugins: vec!["ai-sdlc".into()],
+                required_plugins: vec!["hoshin".into()],
                 build: true
             }
         );

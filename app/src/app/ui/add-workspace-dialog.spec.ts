@@ -67,7 +67,7 @@ describe('AddWorkspaceDialog', () => {
     expect(button('Add workspace')).toBeUndefined();
   });
 
-  it('lists every marker when more than one repo holds .ai-sdlc.json and offers no Add', async () => {
+  it('lists every marker when more than one repo holds .hoshin.json and offers no Add', async () => {
     await render(AddWorkspaceDialog, { candidate: candidate({ master: { kind: 'many', repos: ['intent-a', 'intent-b'] } }) });
     await settle();
     const t = text();

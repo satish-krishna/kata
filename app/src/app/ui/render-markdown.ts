@@ -48,7 +48,7 @@ function taskCheckboxesToSpans() {
   return (tree: Root): void => walk(tree);
 }
 
-/** highlight.js's Gherkin grammar predates Gherkin 6, so it misses `Rule` and `Example`, which ai-sdlc specs use. */
+/** highlight.js's Gherkin grammar predates Gherkin 6, so it misses `Rule` and `Example`, which hoshin specs use. */
 function gherkin6(hljs: HLJSApi): Language {
   const g = gherkin(hljs);
   return { ...g, keywords: `${String(g.keywords)} Rule Example` };

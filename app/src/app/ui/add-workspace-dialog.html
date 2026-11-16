@@ -7,14 +7,14 @@
         @if (c.scan.repos.length === 0) {
           <p class="k-left__warn">No git repositories found in this folder. Nothing to add.</p>
         } @else if (masters().length > 1) {
-          <p class="k-left__warn">A workspace has exactly one .ai-sdlc.json. Found it in:</p>
+          <p class="k-left__warn">A workspace has exactly one .hoshin.json. Found it in:</p>
           <ul class="k-left__list">
             @for (m of masters(); track m) {
               <li class="k-mono">{{ m }}</li>
             }
           </ul>
         } @else if (!ready()) {
-          <p class="k-left__warn">This workspace is not set up yet: there is no committed .ai-sdlc.json.</p>
+          <p class="k-left__warn">This workspace is not set up yet: there is no committed .hoshin.json.</p>
         } @else {
           <dl class="k-facts">
             <dt>Systems</dt>

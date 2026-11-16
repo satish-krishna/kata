@@ -1,8 +1,8 @@
 //! The pull requests a change was declared done with, as the change shows them: the program's record in
 //! `change.yml` first, else what Kata saved before the program recorded them.
-use crate::ai_sdlc::show::ChangeShow;
-use crate::ai_sdlc::status::Status;
-use crate::ai_sdlc::{Place, Program};
+use crate::hoshin::show::ChangeShow;
+use crate::hoshin::status::Status;
+use crate::hoshin::{Place, Program};
 use crate::prs::{PrEntry, PrStateKind};
 use serde::Serialize;
 
@@ -217,7 +217,7 @@ pub fn read_view(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_sdlc::show::{ChangeRecord, RecordedByPlugin};
+    use crate::hoshin::show::{ChangeRecord, RecordedByPlugin};
     use crate::prs::PrStateKind;
 
     fn show(pull_requests: Vec<RecordedByPlugin>) -> ChangeShow {
@@ -574,7 +574,7 @@ mod tests {
         fn program() -> Program {
             Program {
                 node: "node".into(),
-                entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-tools/ai-sdlc.ts"),
+                entry: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hoshin-tools/hoshin.ts"),
             }
         }
 
@@ -587,8 +587,8 @@ mod tests {
         fn fx() -> Fx {
             let dir = tempfile::tempdir().unwrap();
             let ws = dir.path().to_path_buf();
-            let master = testutil::repo(&ws, "ai-sdlc");
-            testutil::commit_file(&master, ".ai-sdlc.json", MARKER, "marker");
+            let master = testutil::repo(&ws, "hub");
+            testutil::commit_file(&master, ".hoshin.json", MARKER, "marker");
             testutil::repo(&ws, "app");
             let place = Place {
                 layout: crate::layout::Layout::Workspace,
@@ -607,7 +607,7 @@ mod tests {
                 )
                 .json;
             assert_eq!(started["outcome"], "passed", "{started}");
-            let copy = ws.join(".ai-sdlc").join("copies").join(CHANGE);
+            let copy = ws.join(".hoshin").join("copies").join(CHANGE);
             Fx { dir, place, copy }
         }
 
@@ -642,7 +642,7 @@ mod tests {
                 )
                 .unwrap();
                 let folder = Path::new(common.trim())
-                    .join("ai-sdlc")
+                    .join("hoshin")
                     .join(SYSTEM)
                     .join(CHANGE);
                 std::fs::create_dir_all(&folder).unwrap();
@@ -666,13 +666,13 @@ mod tests {
             }
         }
 
-        /// Puts `AI_SDLC_GH` back to what it was, whatever happens in the test.
+        /// Puts `HOSHIN_GH` back to what it was, whatever happens in the test.
         struct GhEnv(Option<std::ffi::OsString>);
 
         impl GhEnv {
             fn set(value: String) -> GhEnv {
-                let guard = GhEnv(std::env::var_os("AI_SDLC_GH"));
-                std::env::set_var("AI_SDLC_GH", value);
+                let guard = GhEnv(std::env::var_os("HOSHIN_GH"));
+                std::env::set_var("HOSHIN_GH", value);
                 guard
             }
         }
@@ -680,8 +680,8 @@ mod tests {
         impl Drop for GhEnv {
             fn drop(&mut self) {
                 match &self.0 {
-                    Some(v) => std::env::set_var("AI_SDLC_GH", v),
-                    None => std::env::remove_var("AI_SDLC_GH"),
+                    Some(v) => std::env::set_var("HOSHIN_GH", v),
+                    None => std::env::remove_var("HOSHIN_GH"),
                 }
             }
         }

@@ -44,10 +44,10 @@ const task = (id: string, repo: string, built: boolean): TaskStatus => ({
   name: id,
   repo,
   dependsOn: [],
-  text: '',
-  row: built ? { task: id, repo, commits: [], departure: null } : null,
+  text: '', red: null, redStandsOut: false, redRecordWanted: false,
+  row: built ? { task: id, repo, commits: [], departure: null, red: null } : null,
 });
-const status = (tasks: TaskStatus[]): BuildStatus => ({ tasks, repos: [], departures: [], hasTasks: true, problems: [], logLayouts: [] });
+const status = (tasks: TaskStatus[]): BuildStatus => ({ tasks, repos: [], departures: [], hasTasks: true, problems: [], logLayouts: [], redShown: false });
 
 describe('newlyRecorded', () => {
   it("lists the repository's tasks that gained a row", () => {

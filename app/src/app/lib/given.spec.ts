@@ -222,8 +222,8 @@ describe('settingSourceLabel', () => {
 describe('modeOf', () => {
   const { type: _type, ...recorded } = runGivenFixture;
   it("modeOf reads the record's options", () => {
-    expect(modeOf({ ...recorded, options: { required_plugins: ['ai-sdlc'], build: true } })).toBe('sdlc');
-    expect(modeOf({ ...recorded, options: { required_plugins: ['ai-sdlc'], build: false } })).toBe('sdlc');
+    expect(modeOf({ ...recorded, options: { required_plugins: ['hoshin'], build: true } })).toBe('sdlc');
+    expect(modeOf({ ...recorded, options: { required_plugins: ['hoshin'], build: false } })).toBe('sdlc');
     expect(modeOf({ ...recorded, options: { required_plugins: [], build: false } })).toBe('workbench');
     expect(modeOf(recorded)).toBe('workbench');
   });
