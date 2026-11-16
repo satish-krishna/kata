@@ -612,7 +612,7 @@ export class SdlcHomeViewModel {
     if (outcome !== 'done' || scan === null) return;
 
     const name = folderName(dir);
-    if (scan.repos.length === 0 || scan.master.kind === 'many') {
+    if (scan.no_repositories || scan.master.kind === 'many') {
       this.candidate.set({ folder: dir, name, scan, contexts: {} });
       return;
     }
@@ -622,6 +622,10 @@ export class SdlcHomeViewModel {
     }
     let contexts = found.contexts;
     if (!isSetUp(scan)) {
+      if (!scan.setup_offered) {
+        this.candidate.set({ folder: dir, name, scan, contexts: {} });
+        return;
+      }
       const ran = await this.runSetup(dir, scan);
       if (ran === null) return;
       scan = ran;

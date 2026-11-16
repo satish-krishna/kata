@@ -68,6 +68,11 @@ pub struct WorkspaceScan {
     pub master_folder: Option<String>,
     pub marker: Option<Marker>,
     pub marker_error: Option<String>,
+    /// True when the folder holds no git repository at all.
+    pub no_repositories: bool,
+    /// True when the Workbench may run setup on this folder. A single-repo repository is set up with
+    /// the plugin's setup skill, never from the Workbench, so its scan is never offered setup.
+    pub setup_offered: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,6 +127,8 @@ pub fn scan_single_repo(root: &Path) -> WorkspaceScan {
         master_folder: Some(root.to_string_lossy().into_owned()),
         marker,
         marker_error,
+        no_repositories: false,
+        setup_offered: false,
     }
 }
 
@@ -164,6 +171,7 @@ pub fn scan(folder: &Path) -> Result<WorkspaceScan, ScanError> {
         },
     };
 
+    let no_repositories = repos.is_empty();
     let master_folder = match &master {
         MasterState::One { repo, .. } => Some(folder.join(repo).to_string_lossy().into_owned()),
         _ => None,
@@ -176,6 +184,8 @@ pub fn scan(folder: &Path) -> Result<WorkspaceScan, ScanError> {
         master_folder,
         marker,
         marker_error,
+        no_repositories,
+        setup_offered: true,
     })
 }
 
@@ -321,6 +331,8 @@ mod tests {
             master_folder: None,
             marker: None,
             marker_error: None,
+            no_repositories: false,
+            setup_offered: false,
         };
         assert!(system_repos(&scan, "kata").is_empty());
     }
@@ -454,7 +466,52 @@ mod tests {
         bare_repo(tmp.path(), "b");
         bare_repo(&tmp.path().join("c"), "deep");
         std::fs::create_dir(tmp.path().join("d")).unwrap();
-        assert_eq!(scan(tmp.path()).unwrap().repos, vec!["a", "b"]);
+        let found = scan(tmp.path()).unwrap();
+        assert_eq!(found.repos, vec!["a", "b"]);
+        assert!(!found.no_repositories);
+        assert!(found.setup_offered);
+    }
+
+    #[test]
+    fn scan_of_a_folder_without_repositories_says_so() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("plain")).unwrap();
+        let found = scan(tmp.path()).unwrap();
+        assert!(found.repos.is_empty());
+        assert!(found.no_repositories);
+    }
+
+    #[test]
+    fn a_single_repo_scan_is_never_without_repositories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::testutil::single_repo(tmp.path(), "kata", &[("engine", "engine")]);
+        let found = scan_single_repo(&root);
+        assert!(found.repos.is_empty());
+        assert!(!found.no_repositories);
+    }
+
+    /// C150: a single-repo repository is set up with the plugin's setup skill, so its scan is not
+    /// offered setup, whether or not the marker is committed.
+    #[test]
+    fn a_single_repo_scan_is_not_offered_setup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::testutil::single_repo(tmp.path(), "kata", &[("engine", "engine")]);
+        assert!(!scan_single_repo(&root).setup_offered);
+        // An edited marker is no longer committed (tracked and clean).
+        crate::testutil::write(
+            &root,
+            MARKER,
+            r#"{"version":1,"layout":"single-repo","systems":{}}"#,
+        );
+        let found = scan_single_repo(&root);
+        assert!(matches!(
+            found.master,
+            MasterState::One {
+                committed: false,
+                ..
+            }
+        ));
+        assert!(!found.setup_offered);
     }
 
     /// Compared resolved when both exist: a temp folder can be spelled with an 8.3 short name (CI's

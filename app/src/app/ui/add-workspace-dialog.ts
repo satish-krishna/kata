@@ -41,7 +41,7 @@ export class AddWorkspaceDialog {
   });
   protected readonly canAdd = computed(() => {
     const c = this.candidate();
-    return c !== null && c.scan.repos.length > 0 && this.masters().length <= 1 && this.ready();
+    return c !== null && !c.scan.no_repositories && this.masters().length <= 1 && this.ready();
   });
   protected readonly systems = computed(() => {
     const c = this.candidate();

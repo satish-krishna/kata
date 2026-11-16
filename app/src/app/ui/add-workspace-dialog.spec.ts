@@ -11,7 +11,7 @@ const SCAN: WorkspaceScan = {
   master: { kind: 'one', repo: 'commerce-docs', committed: true },
   marker: { version: 1, systems: { commerce: { repos: ['customer-portal', 'billing-api'] } } },
   master_folder: null,
-  marker_error: null,
+  marker_error: null, no_repositories: false, setup_offered: true,
 };
 const candidate = (scan: Partial<WorkspaceScan> = {}): WorkspaceCandidate => ({
   folder: 'D:/Work/acme-commerce',
@@ -61,10 +61,27 @@ describe('AddWorkspaceDialog', () => {
   });
 
   it('says so and offers no Add when the folder has no git repos', async () => {
-    await render(AddWorkspaceDialog, { candidate: candidate({ repos: [], master: { kind: 'none' }, marker: null }) });
+    await render(AddWorkspaceDialog, { candidate: candidate({ repos: [], no_repositories: true, master: { kind: 'none' }, marker: null }) });
     await settle();
     expect(text()).toContain('No git repositories found');
     expect(button('Add workspace')).toBeUndefined();
+  });
+
+  it('offers Add workspace for a single-repo repository, which lists no sibling repos', async () => {
+    await render(AddWorkspaceDialog, {
+      candidate: candidate({
+        layout: 'single-repo',
+        repos: [],
+        no_repositories: false,
+        setup_offered: false,
+        master: { kind: 'one', repo: 'kata', committed: true },
+        marker: { version: 1, systems: { kata: { repos: ['kata'] } } },
+      }),
+    });
+    await settle();
+    expect(text()).toContain('kata');
+    expect(text()).not.toContain('No git repositories found');
+    expect(button('Add workspace')).toBeDefined();
   });
 
   it('lists every marker when more than one repo holds .hoshin.json and offers no Add', async () => {

@@ -12,4 +12,13 @@ layout: Layout, folder: string, repos: Array<string>, master: MasterState,
  * The absolute folder of the master repository, when there is exactly one: the repository
  * itself in a single-repo layout, the master's folder in the workspace otherwise. The frontend never joins a path.
  */
-master_folder: string | null, marker: Marker | null, marker_error: string | null, };
+master_folder: string | null, marker: Marker | null, marker_error: string | null, 
+/**
+ * True when the folder holds no git repository at all.
+ */
+no_repositories: boolean, 
+/**
+ * True when the Workbench may run setup on this folder. A single-repo repository is set up with
+ * the plugin's setup skill, never from the Workbench, so its scan is never offered setup.
+ */
+setup_offered: boolean, };
