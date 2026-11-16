@@ -466,6 +466,15 @@ mod tests {
     }
 
     #[test]
+    fn scan_of_a_folder_without_repositories_says_so() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("plain")).unwrap();
+        let found = scan(tmp.path()).unwrap();
+        assert!(found.repos.is_empty());
+        assert!(found.no_repositories);
+    }
+
+    #[test]
     fn a_single_repo_scan_is_never_without_repositories() {
         let tmp = tempfile::tempdir().unwrap();
         let root = crate::testutil::single_repo(tmp.path(), "kata", &[("engine", "engine")]);
