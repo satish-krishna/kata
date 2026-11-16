@@ -37,3 +37,11 @@ line: 170
 ```
 
 No test asserts that `scan` sets `no_repositories` to true for a folder with no git repository: the only Rust assertions on the field are `false` (lines 465 and 474), and the R1.2 dialog test feeds a hand-written fixture. Replacing line 170 with `let no_repositories = false;` leaves every test green while the real Workbench offers Add workspace for an empty folder, breaking R1.2. The plan said the existing `scan` tests protect it, but no existing test could assert a field that did not exist; T1's test commit (`2c7f57e`) already held the real `scan` computation rather than a stub, so the stricter assertion never failed, and that was not logged as a `rule 1:` departure. What decides it: a `workspace::tests` test that scans an empty folder (or one with only plain subfolders) and asserts `no_repositories` is true.
+
+## Review 2
+
+```yaml
+review: 2
+reviewed_at: 2026-11-16
+commits: { kata: bb6884a }
+```
