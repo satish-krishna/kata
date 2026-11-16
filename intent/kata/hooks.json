@@ -1,6 +1,9 @@
 {
   "version": 1,
   "hooks": {
+    "build.start": [
+      { "id": "app-deps", "apps": ["kata"], "run": ["node", "${hooks}/app-deps.mjs"], "timeout": 900, "onFailure": "stop" }
+    ],
     "build.finish": [
       { "id": "app-responsive", "apps": ["kata"], "run": ["node", "${hooks}/app-check.mjs", "check:responsive"], "timeout": 900, "onFailure": "fix" },
       { "id": "app-interaction", "apps": ["kata"], "run": ["node", "${hooks}/app-check.mjs", "check:interaction"], "timeout": 900, "onFailure": "fix" },
