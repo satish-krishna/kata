@@ -1734,6 +1734,18 @@ describe('the build page folds, filters and explains a departure', () => {
     expect(area('tasks')!.querySelector('[data-fold] .k-bp__departed')!.querySelector('.k-status__dot')).not.toBeNull();
   });
 
+  const redOnT2 = (label: string, standsOut: boolean) => lines(false).map((l) => (l.id === 'T2' ? { ...l, red: { label, standsOut } } : l));
+
+  it('says on the closed fold how many finished tasks have a red verdict to check, with a status dot', async () => {
+    const flagged = (await open(false, {}, redOnT2('red not observed: passed first', true))).area('tasks')!.querySelector('[data-fold-red]');
+    expect(norm(flagged?.textContent)).toBe('1 red to check');
+    expect(flagged!.querySelector('.k-status__dot')).not.toBeNull();
+  });
+
+  it('says nothing about red on the fold when no finished verdict stands out', async () => {
+    expect((await open(false, {}, redOnT2('red observed', false))).area('tasks')!.querySelector('[data-fold-red]')).toBeNull();
+  });
+
   it('R1.2: the fold button opens the finished rows and closes them again', async () => {
     const { fixture, area } = await open(true);
     const fold = () => area('tasks')!.querySelector<HTMLButtonElement>('[data-fold]')!;

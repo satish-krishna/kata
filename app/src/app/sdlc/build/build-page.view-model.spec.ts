@@ -967,7 +967,7 @@ describe('the tasks area folds, filters and shows a departure with its task', ()
     const { vm } = await openedOn(buildStatus());
     const g = group(vm, CORE);
     expect(g.progress).toEqual({ done: 5, total: 8 });
-    expect(g.list.fold).toEqual({ range: 'T1–T5', done: 5, departed: 3, open: false });
+    expect(g.list.fold).toEqual({ range: 'T1–T5', done: 5, departed: 3, red: 0, open: false });
     expect(g.list.rows.map((r) => r.line.id)).toEqual(['T6', 'T7', 'T8']);
   });
 

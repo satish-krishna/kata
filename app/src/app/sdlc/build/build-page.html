@@ -83,6 +83,9 @@
                 @if (fold.departed > 0) {
                   <span class="k-bp__departed k-status k-status--warning"><span class="k-status__dot" aria-hidden="true"></span>{{ fold.departed }} departed</span>
                 }
+                @if (fold.red > 0) {
+                  <span class="k-bp__red k-status k-status--warning" data-fold-red><span class="k-status__dot" aria-hidden="true"></span>{{ fold.red }} red to check</span>
+                }
               </button>
             }
             @if (g.list.empty; as empty) {
