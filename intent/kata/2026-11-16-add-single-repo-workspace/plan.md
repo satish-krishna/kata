@@ -1,11 +1,11 @@
 ---
 layout: 2
 source_spec: 2026-11-16-add-single-repo-workspace/spec.md
-source_spec_commit: pending acceptance
+source_spec_commit: 1c5d58743a15f0677f29a10955d230c2e03f2f3b
 system: kata
 date: 2026-11-16
 author: SatishKrishna Pilla
-status: draft
+status: accepted
 ---
 
 # Plan: Add a single-repo repository from the Add workspace dialog
