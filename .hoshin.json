@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "layout": "single-repo",
+  "systems": {
+    "kata": {
+      "apps": {
+        "kata": "."
+      },
+      "naming": {
+        "branch": "change/{change}",
+        "pullRequestTitle": "{type}({scope}): {title}"
+      }
+    }
+  }
+}

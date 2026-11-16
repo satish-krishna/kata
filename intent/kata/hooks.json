@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "hooks": {
+    "build.finish": [
+      { "id": "app-responsive", "apps": ["kata"], "run": ["node", "${hooks}/app-check.mjs", "check:responsive"], "timeout": 900, "onFailure": "fix" },
+      { "id": "app-interaction", "apps": ["kata"], "run": ["node", "${hooks}/app-check.mjs", "check:interaction"], "timeout": 900, "onFailure": "fix" },
+      { "id": "app-build-page", "apps": ["kata"], "run": ["node", "${hooks}/app-check.mjs", "check:build"], "timeout": 900, "onFailure": "fix" },
+      { "id": "app-start-flow", "apps": ["kata"], "run": ["node", "${hooks}/app-check.mjs", "check:start-flow"], "timeout": 900, "onFailure": "fix" },
+      { "id": "app-boot", "apps": ["kata"], "run": ["node", "${hooks}/app-check.mjs", "check:boot"], "timeout": 900, "onFailure": "fix" },
+      { "id": "app-wiring", "apps": ["kata"], "run": ["node", "${hooks}/app-check.mjs", "check:wiring"], "timeout": 900, "onFailure": "fix" },
+      { "id": "app-speed", "apps": ["kata"], "run": ["node", "${hooks}/speed-check.mjs"], "timeout": 900, "onFailure": "fix" },
+      { "id": "rust-fmt", "apps": ["kata"], "run": ["cargo", "fmt", "--all", "--check"], "timeout": 300, "onFailure": "fix" },
+      { "id": "rust-clippy", "apps": ["kata"], "run": ["node", "${hooks}/cargo-staged.mjs", "clippy", "--all-targets", "--", "-D", "warnings"], "timeout": 1800, "onFailure": "fix" },
+      { "id": "rust-test", "apps": ["kata"], "run": ["node", "${hooks}/cargo-staged.mjs", "test", "--workspace"], "timeout": 2700, "onFailure": "fix" },
+      { "id": "app-unit", "apps": ["kata"], "run": ["node", "${hooks}/app-npm.mjs", "test", "--watch=false"], "timeout": 900, "onFailure": "fix" },
+      { "id": "app-lint", "apps": ["kata"], "run": ["node", "${hooks}/app-npm.mjs", "lint"], "timeout": 900, "onFailure": "fix" }
+    ]
+  }
+}
