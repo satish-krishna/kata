@@ -622,6 +622,10 @@ export class SdlcHomeViewModel {
     }
     let contexts = found.contexts;
     if (!isSetUp(scan)) {
+      if (!scan.setup_offered) {
+        this.candidate.set({ folder: dir, name, scan, contexts: {} });
+        return;
+      }
       const ran = await this.runSetup(dir, scan);
       if (ran === null) return;
       scan = ran;

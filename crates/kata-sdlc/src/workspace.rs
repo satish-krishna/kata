@@ -128,8 +128,7 @@ pub fn scan_single_repo(root: &Path) -> WorkspaceScan {
         marker,
         marker_error,
         no_repositories: false,
-        // Stub: not yet decided by the rule it will carry.
-        setup_offered: true,
+        setup_offered: false,
     }
 }
 
