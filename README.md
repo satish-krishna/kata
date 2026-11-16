@@ -41,6 +41,7 @@ The workspace home lists your workspaces (add or remove one, switch between them
 - **Intent, spec and plan.** The full pipeline. Each document opens on its own tab, and you accept it (or reject the intent, or send feedback) before the next step. A spec or plan that no longer matches the document above it is marked out of date.
 - **Fix.** The light track for a bug or a small enhancement in one repository: one run writes a short intent, spec and plan, which you accept once.
 - **Build.** One agent per repository, several at once, on a build page whose four areas (tasks, activity, changed files, findings) you can arrange; `Ctrl+1` to `Ctrl+4` pick the overview, watch, changes and review arrangements.
+- **Red.** Each plan task names the test that should fail before its code exists, and the build log records whether it did. The task list shows the verdict on every built task, and a task whose test was not seen failing first stands out; picking it shows the test run the plugin recorded on this machine, with its commit, outcome and output.
 - **Changes.** The files each commit on a change branch touched, with a side-by-side diff against the base branch.
 - **Review.** One reviewer per repository plus one across them. Findings are grouped by repository and read from the change's `build/review.md`.
 - **Done.** Declaring a change done is the plugin's step: it verifies the change, pushes every touched repository and opens one pull request per repository through `gh`, the master last, and records them in the change. A change declared done before the plugin recorded pull requests is shown as done, read only.
@@ -54,6 +55,8 @@ The workspace home lists your workspaces (add or remove one, switch between them
 | ![The build page in Watch mode](docs/images/sdlc-build.png) | ![The build page in Review mode](docs/images/sdlc-review.png) |
 | **A run paused on a question** | **Done, with one pull request per repository** |
 | ![A spec run paused on a question](docs/images/sdlc-lock-ask.png) | ![A finished change with its pull requests](docs/images/sdlc-done-pr.png) |
+| **Did each test fail first?** | |
+| ![A task whose test passed before its code, with the recorded run](docs/images/sdlc-red.png) | |
 
 ### Building a change
 

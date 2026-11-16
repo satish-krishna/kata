@@ -61,7 +61,7 @@ import type { OpenRun } from '@bindings/OpenRun';
 import type { Opens } from '@bindings/Opens';
 import type { RunningEntry } from '@bindings/RunningEntry';
 import type { RunRef } from '@bindings/RunRef';
-import { MOCK_BUILD_CHANGE, MOCK_LEGACY_FOLDER, mockLegacyOffer, mockLocalOffer, mockMigrationPlan, MOCK_LAYOUTS, MOCK_MASTER, MOCK_NOT_SWITCHABLE, MOCK_PLUGIN_VERSION, MOCK_SINGLE_FOLDER, MOCK_SINGLE_WORKSPACE, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_LEGACY_FOLDER, mockLegacyOffer, mockLocalOffer, mockMigrationPlan, MOCK_LAYOUTS, MOCK_MASTER, MOCK_NOT_SWITCHABLE, MOCK_PLUGIN_VERSION, MOCK_SINGLE_FOLDER, MOCK_SINGLE_WORKSPACE, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, mockBoard, mockChangeKey, mockDefaultPicks, mockStanding, mockReviewView, mockRoundOffer, mockRoundPlan, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import type { AppTurn } from '@bindings/AppTurn';
 import type { BuildState } from '@bindings/BuildState';
@@ -455,12 +455,13 @@ export class MockTransport extends KataTransport {
   /** The scripted run has no process to wait for. */
   sdlcWaitRunExit(_runId: string, _timeoutMs: number): Promise<boolean> { return Promise.resolve(true); }
   sdlcBuildStatus(ref: ChangeRef): Promise<BuildStatus> { return settled(() => this.sdlc.buildStatus(ref.change)); }
-  /** The demo change's T2 has a recorded test that passed before the production code, with 20 lines of output; any other task has no record on this machine. */
+  /** T2 of the build demo and of the finished change has a recorded test that passed before the production code, with 20 lines of output; any other task has no record on this machine. */
   sdlcRedRecord(ref: ChangeRef, _repo: string, task: string): Promise<RedRecord> {
-    if (ref.change !== MOCK_BUILD_CHANGE || task !== 'T2') {
+    if ((ref.change !== MOCK_BUILD_CHANGE && ref.change !== MOCK_DONE_CHANGE) || task !== 'T2') {
       return Promise.resolve({ observed: false, reason: `no red recorded for ${task} on this machine`, stored: null });
     }
-    const output = Array.from({ length: 20 }, (_, i) => `test upload::limits::case_${i + 1} ... ok`).join('\n');
+    const cases = ['opens the file dialog', 'lists the picked photos', 'keeps the order of the picked photos', 'shows a thumbnail for each photo', 'removes a photo', 'refuses a file that is not an image', 'refuses an eleventh photo', 'says how many photos are left', 'disables Add at ten photos', 'keeps the photos when the form is saved'];
+    const output = ['> customer-portal@2.8.0 test', '> vitest run photo-picker', '', ' RUN  v3.2.4 D:/Work/acme-commerce/customer-portal', '', ...cases.map((c) => ` ✓ photo picker > ${c}`), '', ' Test Files  1 passed (1)', '      Tests  10 passed (10)', '   Start at  10:42:07', '   Duration  1.84s'].join('\n');
     return Promise.resolve({ observed: false, reason: 'the test passed at 3f2a9c1, before the production code', stored: { commit: '3f2a9c1e0b7d3c5a8e6f1b2d4c7a9e0f3b5d8c1a', outcome: 'passed', output } });
   }
   sdlcBuildBoard(repos: string[], status: BuildStatus, going: string[], stopped: { [repo: string]: Stop | undefined }, appTurn?: AppTurn | null): Promise<RepoBoard[]> { return Promise.resolve(mockBoard(repos, status, going, stopped, appTurn ?? null)); }
