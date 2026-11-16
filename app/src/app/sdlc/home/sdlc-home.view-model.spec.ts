@@ -292,7 +292,7 @@ describe('SdlcHomeViewModel add workspace', () => {
     const { vm, transport, runAgent } = setup();
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
     await vm.init();
-    vi.spyOn(transport, 'sdlcScan').mockResolvedValueOnce(scanOf({ repos: [], master: { kind: 'none' }, marker: null }));
+    vi.spyOn(transport, 'sdlcScan').mockResolvedValueOnce(scanOf({ repos: [], no_repositories: true, master: { kind: 'none' }, marker: null }));
     await vm.addWorkspace();
     expect(runAgent).not.toHaveBeenCalled();
     expect(vm.candidate()?.scan.repos).toEqual([]);

@@ -61,7 +61,7 @@ describe('AddWorkspaceDialog', () => {
   });
 
   it('says so and offers no Add when the folder has no git repos', async () => {
-    await render(AddWorkspaceDialog, { candidate: candidate({ repos: [], master: { kind: 'none' }, marker: null }) });
+    await render(AddWorkspaceDialog, { candidate: candidate({ repos: [], no_repositories: true, master: { kind: 'none' }, marker: null }) });
     await settle();
     expect(text()).toContain('No git repositories found');
     expect(button('Add workspace')).toBeUndefined();

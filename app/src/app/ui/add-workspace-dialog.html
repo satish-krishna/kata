@@ -4,7 +4,7 @@
       <div hlmDialogTitle>Add workspace</div>
       <div class="k-form">
         <p class="k-mono">{{ c.folder }}</p>
-        @if (c.scan.repos.length === 0) {
+        @if (c.scan.no_repositories) {
           <p class="k-left__warn">No git repositories found in this folder. Nothing to add.</p>
         } @else if (masters().length > 1) {
           <p class="k-left__warn">A workspace has exactly one .hoshin.json. Found it in:</p>

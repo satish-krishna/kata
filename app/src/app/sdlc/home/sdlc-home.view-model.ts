@@ -612,7 +612,7 @@ export class SdlcHomeViewModel {
     if (outcome !== 'done' || scan === null) return;
 
     const name = folderName(dir);
-    if (scan.repos.length === 0 || scan.master.kind === 'many') {
+    if (scan.no_repositories || scan.master.kind === 'many') {
       this.candidate.set({ folder: dir, name, scan, contexts: {} });
       return;
     }
