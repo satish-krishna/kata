@@ -1,10 +1,10 @@
 ---
 layout: 2
 source_intent: 2026-11-16-add-single-repo-workspace/intent.md
-source_intent_commit: pending acceptance
+source_intent_commit: d6b8986e7008c1d6670f930cf8e7862a4d4495c6
 system: kata
 date: 2026-11-16
-status: draft
+status: accepted
 policies_applied: []
 policies_not_checked: [security, compliance, brand, UX, architecture]
 ---
