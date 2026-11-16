@@ -68,6 +68,8 @@ pub struct WorkspaceScan {
     pub master_folder: Option<String>,
     pub marker: Option<Marker>,
     pub marker_error: Option<String>,
+    /// True when the folder holds no git repository at all.
+    pub no_repositories: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,6 +124,7 @@ pub fn scan_single_repo(root: &Path) -> WorkspaceScan {
         master_folder: Some(root.to_string_lossy().into_owned()),
         marker,
         marker_error,
+        no_repositories: true,
     }
 }
 
@@ -164,6 +167,7 @@ pub fn scan(folder: &Path) -> Result<WorkspaceScan, ScanError> {
         },
     };
 
+    let no_repositories = repos.is_empty();
     let master_folder = match &master {
         MasterState::One { repo, .. } => Some(folder.join(repo).to_string_lossy().into_owned()),
         _ => None,
@@ -176,6 +180,7 @@ pub fn scan(folder: &Path) -> Result<WorkspaceScan, ScanError> {
         master_folder,
         marker,
         marker_error,
+        no_repositories,
     })
 }
 
@@ -321,6 +326,7 @@ mod tests {
             master_folder: None,
             marker: None,
             marker_error: None,
+            no_repositories: false,
         };
         assert!(system_repos(&scan, "kata").is_empty());
     }
@@ -454,7 +460,18 @@ mod tests {
         bare_repo(tmp.path(), "b");
         bare_repo(&tmp.path().join("c"), "deep");
         std::fs::create_dir(tmp.path().join("d")).unwrap();
-        assert_eq!(scan(tmp.path()).unwrap().repos, vec!["a", "b"]);
+        let found = scan(tmp.path()).unwrap();
+        assert_eq!(found.repos, vec!["a", "b"]);
+        assert!(!found.no_repositories);
+    }
+
+    #[test]
+    fn a_single_repo_scan_is_never_without_repositories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::testutil::single_repo(tmp.path(), "kata", &[("engine", "engine")]);
+        let found = scan_single_repo(&root);
+        assert!(found.repos.is_empty());
+        assert!(!found.no_repositories);
     }
 
     /// Compared resolved when both exist: a temp folder can be spelled with an 8.3 short name (CI's
