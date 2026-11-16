@@ -3,7 +3,7 @@ title: Add a single-repo repository from the Add workspace dialog
 system: kata
 author: SatishKrishna Pilla, engineer
 date: 2026-11-16
-status: draft
+status: accepted
 scope: kata
 track: fix
 kind: bug
