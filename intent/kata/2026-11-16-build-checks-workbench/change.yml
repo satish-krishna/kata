@@ -1,0 +1,6 @@
+# Written by the hoshin program (change start, change rename, change.done); do not edit by hand.
+version: 1
+branch: "change/2026-11-16-build-checks-workbench"
+type: feat
+scope: "kata"
+base: "main"
