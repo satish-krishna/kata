@@ -1,17 +1,17 @@
 ---
 layout: 2
 source_intent: 2026-11-16-build-checks-workbench/intent.md
-source_intent_commit: 65324c165be19f92acff70f2a0f600a63fd1912a
+source_intent_commit: b1c3d87172ee512848045ba688aa58129a00a4e5
 system: kata
-date: 2026-11-16
-status: draft
+date: 2026-11-18
+status: ready for product owner review
 policies_applied: [security-review, kata-design, house-style, kata-architecture]
 policies_not_checked: [compliance]
 ---
 
 # Spec: Show and settle the build's checks in the Workbench
 
-Policies: security (security-review), brand (kata-design), UX (house-style) and architecture (kata-architecture) were checked against this design. Compliance was not checked: `policies.md` lists no skill for it. The security-review skill reviews a diff; this change has no code yet, so its criteria were applied to the design below, with no finding. The context file `context/kata.md` is current (0 commits behind).
+Policies: security (security-review), brand (kata-design), UX (house-style) and architecture (kata-architecture) were checked against this design. Compliance was not checked: `policies.md` lists no skill for it. The security-review skill reviews a diff; this change has no code yet, so its criteria were applied to the design below, with no finding. The context file `context/kata.md` is current (0 commits behind). Regenerated on 2026-11-18 for the reopened intent (D10, D11) and for hoshin 1.1.0, which shipped the D1 change: R2.3 and R4.4 are retired, R2.4, R2.5, R9.1's last row, R13 and R14 are new, and the new parts were checked against kata-architecture and kata-design again.
 
 ## Requirements
 
@@ -37,7 +37,6 @@ Feature: Show and settle the build's checks in the Workbench
 
     @R2.1
     Scenario: The running check is named, with a count and each finished result
-      Given the workflow reports each check on the base as it starts and ends
       When the checks run on the base
       Then the page names the check running at that moment and how long it has run
       And it says how many of how many checks are done
@@ -51,13 +50,21 @@ Feature: Show and settle the build's checks in the Workbench
       Then the page names it as a preparation step, apart from the list of checks
       And it is never counted as one of the checks
 
-    @R2.3
-    Scenario: The workflow does not report each check yet
-      Given the workflow on this machine does not report each check on the base as it starts and ends
-      When the checks run on the base
-      Then the page names the step, checking the base, and how long it has run
-      And it lists the checks it will run, each marked as not reported
-      And it does not say which check is running
+    @R2.4
+    Scenario: A check whose run was cut off is shown as cut off, not as running
+      Given a check on the base started and the program running it ended without a result, because it was closed or crashed
+      When the change page reads where the change stands
+      Then the page shows that check as cut off, with when it started, the checks before it with their results, and the rest as not run
+      And it says that nothing was kept and that the next start runs every check on the base again
+      And it offers starting the build
+
+    @R2.5
+    Scenario: Checks running on the base in another session are shown as last read
+      Given the build is being prepared in another session, such as a Claude Code session in the change's copy
+      When the change page reads where the change stands
+      Then the page shows the checks on the base as the workflow reports them at that moment: the one running, how many are done and each result
+      And it says the checks are running in another session
+      And it reads them again only when the page reads again (R8.3), not continuously
 
   @R3 @from:outcome-3
   Rule: The first task starts when every check passes on the base, or each one that fails is already accepted for this build
@@ -109,14 +116,6 @@ Feature: Show and settle the build's checks in the Workbench
         | 2     | it shows no hint about the setup                                                                                        |
         | 3     | it says three failed at once, which usually means the setup is broken rather than the code, and to read one output first |
         | 9     | it says nine failed at once, which usually means the setup is broken rather than the code, and to read one output first  |
-
-    @R4.4
-    Scenario: The workflow kept the output of the first failing check only
-      Given several checks fail on the base without saying what failed
-      And the workflow on this machine reports the output of the first of them only
-      When the engineer asks to see the output of another of them
-      Then the page says the workflow on this machine does not report that check's output
-      And the check can still be accepted
 
     @R4.5
     Scenario: The start fails for another reason than a check on the base
@@ -280,6 +279,7 @@ Feature: Show and settle the build's checks in the Workbench
         | started and not finished  | has no live run of it and did not run it since it was opened   | it asks first, saying the build may be running in another session and that starting is safe if that session crashed or was closed |
         | started and not finished  | stopped it itself since it was opened                          | it starts without asking                                                                                 |
         | not started, or finished  | has no live run of it                                          | it starts without asking                                                                                 |
+        | started and not finished, with a check on the base reported running now | has no live run of it        | it asks first, saying the build is running in another session now and naming the check it is on         |
 
     @R9.2
     Scenario: The engineer confirms or declines starting anyway
@@ -295,7 +295,7 @@ Feature: Show and settle the build's checks in the Workbench
     Scenario: Stopping asks first and says the checks run again next time
       Given the checks are running on the base
       When the engineer asks to stop
-      Then the Workbench asks first, saying how many checks already ran when the workflow reports them, and that the next start runs every check on the base again because none is kept until the last one ends
+      Then the Workbench asks first, saying how many checks already ran, and that the next start runs every check on the base again because none is kept until the last one ends
 
     @R10.2
     Scenario: After stopping, the page says where the copy was left
@@ -346,24 +346,67 @@ Feature: Show and settle the build's checks in the Workbench
       Then each show-output, accept, start, stop and run-again action can be reached with the keyboard
       And each one names the check or step it acts on to a screen reader
       And each confirmation is a titled dialog that Escape closes as a cancel
+
+  @R13 @from:D10 @from:outcome-6
+  Rule: The list of active changes in the top bar counts each kind by name and never calls the whole list running
+
+    @R13.1
+    Scenario Outline: The label names what the list holds
+      Given the list of active changes holds <entries>
+      Then its label, and the list's title, read "<label>"
+
+      Examples:
+        | entries                                                                         | label                                       |
+        | one change whose run finished unseen                                            | 1 finished                                  |
+        | two changes working and one waiting on an answer                                | 2 running · 1 needs you                     |
+        | two working, one waiting on an answer, one finished unseen                      | 2 running · 1 needs you · 1 finished        |
+        | one change whose build stopped and one held by another change's build           | 1 needs you · 1 waiting                     |
+        | one change waiting for its review while another change holds its repositories   | 1 waiting                                   |
+
+    @R13.2
+    Scenario: The label is never shown for an empty list
+      Given no change is working, needs the engineer or finished unseen
+      Then the top bar shows no list of active changes
+
+  @R14 @from:D11 @from:outcome-6
+  Rule: A run that ends while the engineer is on its change's page, with the window in focus, counts as seen
+
+    @R14.1
+    Scenario Outline: Whether a finished run stays in the list of active changes
+      Given a run of a change ends while <where the engineer is>
+      And the Workbench window <focus>
+      Then the change <what happens>
+
+      Examples:
+        | where the engineer is         | focus                                    | what happens                                                              |
+        | on that change's page         | has focus                                | leaves the list at once, never shown as finished                          |
+        | on that change's page         | does not have focus                      | stays in the list as finished until the window regains focus on that page |
+        | on another page               | has focus                                | stays in the list as finished until the engineer opens that change        |
+        | on another page               | does not have focus                      | stays in the list as finished until the engineer opens that change        |
+
+    @R14.2
+    Scenario: A later run that ends brings the change back
+      Given a change left the list because its run was seen
+      When another run of it ends while the engineer is elsewhere
+      Then it is listed as finished again
 ```
 
 ## Out of scope
 
 - D6: checking the base again from the Workbench. A new base commit takes fresh results by itself; anything else stays a terminal step (`baseline retake`). The Workbench never offers it.
 - D5: undoing an acceptance. hoshin cannot undo one.
-- D1: the hoshin change that reports each check on the base as it starts and ends. It is a separate change in the hoshin repository; this change reads its reports when they come and does without them until then (R2.3).
+- D1: the hoshin change that reports each check as it starts and ends. It shipped separately in hoshin 1.1.0 (check events, read through `checks --json`, and each check's output in `baseline show`); this change only reads it.
 - The open question on the timing check (app-speed) failing on a busy machine: fixing the check is a separate fix.
 
 ## Design
 
 ### Apps touched
 
-The change touches the one app, `kata` (folder `.`): the `kata-sdlc` crate, the Workbench backend (`app/src-tauri`) and the Workbench frontend (`app/src`). The hoshin plugin is used as it is; its floor stays 1.0.0. No policy row names an app, so every row applies.
+The change touches the one app, `kata` (folder `.`): the `kata-sdlc` crate, the Workbench backend (`app/src-tauri`) and the Workbench frontend (`app/src`). The hoshin plugin is used as it is, at its 1.1.0 release: the plugin floor `kata_sdlc::plugin::MIN_VERSION` rises from 1.0.0 to 1.1.0, the vendored copy in `crates/kata-sdlc/tests/hoshin-tools/` is refreshed with `node scripts/vendor-hoshin-tools.mjs`, and `CLAUDE.md`'s floor line is updated. Below 1.1.0 the AI-SDLC mode is blocked with the existing floor message, so no screen has to work without check events. No policy row names an app, so every row applies.
 
 ### Screens
 
-The screens are prototyped in `design/prototype/build-checks.html` and `build-checks.js`, which the engineer adds to the change's branch before the plan (see area of concern 1). Each prototype screen maps to requirements: Checking the base (R1, R2.1, R2.2), Checking, hoshin not reporting (R2.3), Failed on the base (R4.1, R4.2, R5), Nine failed at once (R4.3), Stopped during the checks (R10.2), Already running elsewhere (R9), Failed at finish (R7), Moved on since (R8.2), First task running (R3, R6). Recreate in Angular, never copy.
+The screens are prototyped in `design/prototype/build-checks.html` and `build-checks.js`, committed with this spec. Each prototype screen maps to requirements: Checking the base (R1, R2.1, R2.2), A check cut off (R2.4), Failed on the base (R4.1, R4.2, R5), Nine failed at once (R4.3), Stopped during the checks (R10.2), Already running elsewhere (R9), Failed at finish (R7), Moved on since (R8.2, R2.5), First task running (R3, R6), Active changes label (R13, R14). Recreate in Angular, never copy.
 
 ```mermaid
 flowchart TD
@@ -383,9 +426,11 @@ flowchart TD
   FIN -->|fail| FF[Finish failure panel, once] -->|Run checks again| FIN
 ```
 
-**Preparing (R1, R2).** The Build strip shows the status pill, the progress line and a ghost Stop button on one line, replacing the padded row in `change-page.html` (lines 160 to 169). Below it, the Build tab's body shows two lists: Preparation (the team's `build.start` hooks) and Checks on the base, with the base commit, "n of m done", each check's result and time as it ends, the running one highlighted with its elapsed time, and the rest waiting. Without per-check reports (R2.3) the same list shows every check as "not reported" and the line names the step only. One wording for the step, owned by the backend: "Checking the base". Today the page says "Checking the base before building" and the backend "Checking every repository before building"; the backend's `StepKind::words` becomes the one owner. The usual time stays C144's eight and a half minutes.
+**Preparing (R1, R2).** The Build strip shows the status pill, the progress line and a ghost Stop button on one line, replacing the padded row in `change-page.html` (lines 160 to 169). Below it, the Build tab's body shows two lists: Preparation (the team's `build.start` hooks) and Checks on the base, with the base commit, "n of m done", each check's result and time as it ends, the running one highlighted with its elapsed time, and the rest waiting. A check whose run was cut off (R2.4) shows as "cut off" with its start time, the checks after it as "did not run", and a warning note above the list; Start build is the strip's action. A build being prepared in another session (R2.5) shows the same list as last read, with "running in another session" in place of Stop. One wording for the step, owned by the backend: "Checking the base". Today the page says "Checking the base before building" and the backend "Checking every repository before building"; the backend's `StepKind::words` becomes the one owner. The usual time stays C144's eight and a half minutes.
 
 **Failure on the base (R4, R5, R6).** The failure is a panel on the Build tab, never a dialog: the `build-refusal-dialog` stops being used for a build start. The panel has a status pill ("The build did not start"), a title ("1 check fails on the base and does not say what failed", or "n of m checks ..."), the one-line reason, the setup hint at three or more, one row per check (name, "failed on the base" or "accepted for this build" badge, exit code and base commit when known, Show output, Accept for this build…), and a folded count of the checks that passed. The output is a scrolling, fixed-width block with its line count, "the last 200 are kept" (hoshin keeps a 200-line tail) and a copy action. The panel never prints hoshin's `baseline approve` command; its Accept action replaces it. The Start build button stays visible and is off, with the reason, until nothing is left to settle. Dialogs carry confirmations only: accept (R5.1), stop (R10.1), and start anyway (R9).
+
+**The list of active changes (R13, R14).** The top bar's button and the popover title read the counts by kind, joined with " · " in the order running, needs you, waiting, finished, leaving out kinds with none; the list's accessible name becomes "Changes with activity". The entries themselves are unchanged.
 
 **Finish failure (R7).** The same panel shape, reading the latest `build.finish` record: which check failed, whether it passed on the base or added failures, its output, and whether the agent was sent back to fix it or the build stopped (from the hook's `onFailure`), plus the folded count of checks that passed. Its one action is Run checks again.
 
@@ -393,18 +438,20 @@ flowchart TD
 
 Every rule above is computed in Rust and reaches the frontend as data through Tauri commands and ts-rs bindings; the ViewModels only fold, format and hold dialog state (kata-architecture section 1).
 
-- **`kata_sdlc::checks_view`** grows the read for the Build tab. A new `start_checks` read returns, per repository in plan order (per app in the single-repo layout), a `StartChecks` value: the decision table of R8.1, computed from `Program::status` (the latest `build.start` and `build.finish` records, their `failed`, `problems`, `hooks` and `details.baseline`), `Program::baseline_show` (new: `baseline show --json`, giving `base`, `hooks`, `needsApproval` and `approved` at the current base commit) and `Program::hooks` (the checks and the preparation steps that apply). It carries the failing checks, each with whether it can be accepted (only those in `needsApproval`, R5.5), whether it is accepted, its output when hoshin gives one (R4.4: today only the first waiting check's, from `failed.output`), the count passed, the setup hint flag (three or more, R4.3), whether Start is held back and why (R6.2), and the finish failure (R7) built on the existing `CheckKind` rows. The frontend's `refusalOf` in `build-page.view-model.ts`, which words a failed start in TypeScript today, is removed: this read replaces it.
-- **`kata_sdlc::hoshin`** gains `baseline_show` and `baseline_approve` on `Program`, both through the one door. `progress_of` reads a line's phase: `when: "build.start"` is a preparation step (R2.2), a base check line (the line shape the D1 hoshin change settles) is a check on the base, and a `build.finish` line is a finish check. `StepProgress` gains the phase so `progress_line` words them apart.
-- **`app/src-tauri/src/build_host.rs`** holds the live list of R2.1 in the build's `BuildState`, so it survives the page (C38): each check's state, result and the time it started and ended, filled from the stream as `prepare` relays it. The page reads it; the elapsed time ticking on screen is formatting.
+- **`kata_sdlc::checks_view`** grows the read for the Build tab. A new `start_checks` read returns, per repository in plan order (per app in the single-repo layout), a `StartChecks` value: the decision table of R8.1, computed from `Program::status` (the latest `build.start` and `build.finish` records, their `failed`, `problems`, `hooks` and `details.baseline`), `Program::baseline_show` (new: `baseline show --json`, giving `base`, `hooks` with each check's `outcome`, `exitCode`, `ids` and `output`, `needsApproval` and `approved` at the current base commit), `Program::checks` (new: `checks --json`, the check events with each check's `state` decided by hoshin: `running`, `ended` or `abandoned`) and `Program::hooks` (the checks and the preparation steps that apply). It carries the failing checks, each with whether it can be accepted (only those in `needsApproval`, R5.5), whether it is accepted, its exit code and output from `baseline show`, the count passed, the latest base run's checks for R2.4 and R2.5 (a check hoshin reports `abandoned` is cut off; Kata never applies the abandoned rule itself, hoshin owns it), the setup hint flag (three or more, R4.3), whether Start is held back and why (R6.2), and the finish failure (R7) built on the existing `CheckKind` rows. The frontend's `refusalOf` in `build-page.view-model.ts`, which words a failed start in TypeScript today, is removed: this read replaces it.
+- **`kata_sdlc::hoshin`** gains `baseline_show`, `baseline_approve` and `checks` on `Program`, all through the one door. `progress_of` reads a stream line's phase: a `build.start` hook line is a preparation step (R2.2), and a `build.finish` line carrying `"check": true` is a finish check. `StepProgress` gains the phase so `progress_line` words them apart. Checks on the base never appear in the stream (hoshin runs them inside `build.start`'s baseline step), so they come from `checks` alone.
+- **`app/src-tauri/src/build_host.rs`** holds the live list of R2.1 in the build's `BuildState`, so it survives the page (C38): each check's state, result and the time it started and ended. While this Workbench's own `build.start` of a repository is live, the build host calls `checks --json --repo <repo>` every two seconds and keeps the latest `baseline` run; it stops when the event ends. This is the one place anything is read on a timer, and only while a preparation this Workbench started is live: the page itself still reads on opening, after actions and on focus only (D7, R8.3). The page reads the list; the elapsed time ticking on screen is formatting.
 - **Accepting (R5).** A new command `sdlc_accept_base_check(change, repo, check)` runs `baseline approve --json --change --repo --hook` through `Program`, one check per call by design (R5.4 forbids a batch, so kata-architecture section 3 does not apply). It is refused while this change's build is being prepared (R11.1) and returns hoshin's answer: `approved` or its `problems`, shown as they are (R5.6). Then the page reads `start_checks` again. No agent can reach a Tauri command, and the plugin's guard refuses `baseline approve` from any agent session (C133), which covers R5.7.
 - **Running the checks again at finish (R7.2).** A new workflow step, `sdlc_rerun_finish_checks(change, repo)`, runs `run build.finish --json --stream --again --repo <repo>` through the build host, as a stoppable workflow step with its progress line (C148). It takes the repository's hold like a build run (C114) and is refused while any run of the change is live. When it passes, the build host treats the repository as finished the way it does after a run whose finish passed, so the review starts by itself if this was the last repository (C42).
-- **Running elsewhere (R9).** `kata_sdlc::offer` (the few live facts only the Workbench has) gains `may_be_running_elsewhere`: true when `status` shows a `build.start` that passed with no later `build.finish` for a repository the next start needs, and the build host has neither a live run nor a run it stopped for this change since the Workbench opened. The start and continue commands take an `even_if_elsewhere` flag; without it, such a start returns a new `StartOutcome::MayBeRunningElsewhere` naming the repositories and the record's time, which the page turns into the confirm dialog. The question and the start use the same Rust call (kata-architecture section 2).
-- **Stopping (R10).** The stop confirmation reads the number of checks that ended from the live list (none when hoshin does not report them, R2.3: the dialog then says "the checks that ran"). The stopped note is the existing `StartOutcome::Stopped`, with the base-commit sentence added in the backend's wording.
+- **Running elsewhere (R9).** `kata_sdlc::offer` (the few live facts only the Workbench has) gains `may_be_running_elsewhere`: true when `status` shows a `build.start` that passed with no later `build.finish` for a repository the next start needs, and the build host has neither a live run nor a run it stopped for this change since the Workbench opened. When `checks` also reports a `baseline` check `running` for that repository, the answer says the build is running now and names the check (R9.1's last row): hoshin's `running` already means its program is alive. The start and continue commands take an `even_if_elsewhere` flag; without it, such a start returns a new `StartOutcome::MayBeRunningElsewhere` naming the repositories and the record's time, which the page turns into the confirm dialog. The question and the start use the same Rust call (kata-architecture section 2).
+- **Stopping (R10).** The stop confirmation reads the number of checks that ended from the live list. The stopped note is the existing `StartOutcome::Stopped`, with the base-commit sentence added in the backend's wording.
 - **Reading again (R8).** The change page reads `start_checks`, the change state and the check results on opening, after any action ends and on window focus, the same triggers the home uses (C136): a `window:focus` handler is added to the change page's ViewModel. The failure is no longer a signal kept in memory: the panel always shows the latest read, so a failure the record no longer holds disappears at the next read (R8.2).
+- **The list's label (R13).** Which entry counts as which kind is a rule, so `app/src-tauri/src/running.rs` computes it: `RunningStrip` gains `counts { running, needs_you, waiting, finished }`, with `Working` as running; `NeedsAnswer`, `NeedsPermission` and `Stopped` as needs you; `Held` and `ReviewWaiting` as waiting; and `Finished` as finished. The `RunningStripViewModel`'s `allLabel` only words those counts; it no longer counts `all.length`.
+- **Seen while on the page (R14).** The rule stays where it is: `OpenedMarks` counts a change as seen when it was opened after its last run ended. What changes is that the change page now reports every moment the engineer is looking: besides on opening, it calls `sdlc_mark_opened` again when one of its change's runs ends while `document.hasFocus()` is true, and on every window focus while the page is shown. `tellOpened`'s one-call-per-visit guard (`openedKey`) is removed. Whether the window has focus is a fact only the page has, so reporting it is not a decision; the backend still decides what is listed.
 
 ### Data between the systems
 
-The Workbench asks hoshin's program, as today, for `state`, `status`, `hooks`, and now `baseline show` (a quick read, never cached, C85) and `baseline approve` (a workflow write the engineer starts). `build.start` and `build.finish` stream their lines; the build host turns them into the live list. Nothing new is stored by Kata: acceptances and base results stay in hoshin's ledger and baseline store on this machine (constraint 4).
+The Workbench asks hoshin's program, as today, for `state`, `status`, `hooks`, and now `checks` and `baseline show` (quick reads, never cached, C85) and `baseline approve` (a workflow write the engineer starts). Kata never reads `checks.jsonl`, the ledger or the baseline store itself; hoshin's `CLIENTS.md` lists `checks` and keeps the file's format private. `build.start` and `build.finish` stream their lines; the build host turns them into the live list. Nothing new is stored by Kata: acceptances and base results stay in hoshin's ledger and baseline store on this machine (constraint 4).
 
 ### Accessibility and security notes
 
@@ -428,8 +475,8 @@ Status pills and badges use the andon palette with a label (running, passed, fai
 
 | Decision | Requirement |
 |---|---|
-| D1 | R2.3 now; R2.1 once hoshin reports each check. The hoshin change itself is out of scope. |
-| D2 | R9 |
+| D1 | R2.1, R2.4, R2.5; the hoshin change shipped in 1.1.0 and is out of scope here. |
+| D2 | R9, R2.5 |
 | D3 | R4.3, R5.4 |
 | D4 | R7 |
 | D5 | R5.1, R5.3; no undo, out of scope |
@@ -437,19 +484,21 @@ Status pills and badges use the andon palette with a label (running, passed, fai
 | D7 | R8 |
 | D8 | R10 |
 | D9 | R11, R12, R4.2, R7.1; engineer's call: accepting is allowed while another repository's run of the change is live and off while this change's build is being prepared; long output shows hoshin's 200-line tail in a scrolling block with a copy action; a build started before base results existed shows the workflow's reason once, with no accept action; a finish failure shows whether the agent was sent back to fix it or the build stopped; keyboard and screen-reader rules as R12. |
+| D10 | R13; engineer's call: held and review-waiting entries are counted as "waiting", a fourth kind the intent's three examples did not name, since calling them "needs you" would ask the engineer to act when nothing can be done until the other change ends. |
+| D11 | R14 |
 
 ## Open questions from the intent
 
 - The timing check (app-speed) fails on a busy machine: carried forward to the engineer as a separate fix; out of scope here.
-- The hoshin change D1 depends on is not yet written: carried forward to the engineer, in the hoshin repository, and widened by area of concern 2.
-- The screens are to be prototyped before the spec: answered. They are in `design/prototype/build-checks.html` and `build-checks.js`, mapped to requirements in the Design section, but not yet committed (area of concern 1).
+- The hoshin change D1 depends on: answered. It shipped in hoshin 1.1.0, with each check's output in `baseline show` as well.
+- The screens are to be prototyped before the spec: answered. They are in `design/prototype/build-checks.html` and `build-checks.js`, mapped to requirements in the Design section and committed with this spec.
 
 ## Areas of concern
 
-1. **The prototype is not committed.** Owner: Maintainer. `design/prototype/build-checks.html` and `build-checks.js` exist only as untracked files in the change's copy. The spec points at them, so they must be committed to the change's branch before the plan is written, or a builder on another machine has nothing to recreate.
-2. **hoshin 1.0.0 does not report every failing check's output.** Owner: Maintainer (the engineer, in the hoshin repository). hoshin stores each base check's output, but `baseline show` prints only `id`, `outcome` and `ids`, and a failed `build.start` carries the output of the first waiting check only. So with several failing checks (D3), outcome 4's "each one's output on request" holds for one of them only (R4.4). The D1 hoshin change should also print each hook's `output` and `exitCode` in `baseline show`. Until it ships, R4.4 is what the engineer sees. The product owner should confirm this partial result is acceptable for the first release.
-3. **The shape of hoshin's per-check base reports is not settled.** Owner: Maintainer. R2.1 depends on the line the D1 hoshin change prints for a check on the base (today's `hook-start` and `hook-end` lines carry `when` but nothing marks a baseline run). The plan must take the line shape from that change's accepted spec; if it is not accepted before the plan, the plan builds R2.3 only and leaves R2.1 for a follow-up.
-4. **Running elsewhere is inferred from the ledger, and asks after every restart.** Owner: Maintainer. A build this Workbench stopped, followed by a Workbench restart, looks the same as one running in another session, so R9 asks then too. The intent accepts this ("a crashed build leaves the same record"), but the engineer should know the question will appear after restarts. hoshin's `active-build.json` was not used, because Kata reads hoshin's records only through its program and `status` does not print it.
-5. **Running the checks again at finish feeds the build coordinator.** Owner: Maintainer. R7.2 makes a passing rerun count as the repository's finish, which can start the automatic review (C42). That is a new entry into the coordinator (`kata_sdlc::coordinator`) and must keep C39, C56 and C114 intact; the plan should give it its own task with coordinator tests.
-6. **The stopped note's sentence about the base commit is hoshin's behavior, stated by Kata.** Owner: Maintainer. Whether the copy is left on the base commit after a stop depends on where hoshin was in its baseline (a detached checkout of the base, restored on the next run). Kata cannot see that without reading hoshin's files, so R10.2 says "may stay"; the product owner should confirm that wording.
-7. **Parity baselines change.** Owner: Maintainer. The build strip and Build tab change visibly (R1, R4, R7), so `check:parity` views of the build page need re-blessing with the owner's sign-off.
+1. **The plugin floor rises to 1.1.0, and this machine has 1.0.0 installed.** Owner: Maintainer. Once this change ships, the AI-SDLC mode is blocked on any machine whose installed hoshin is older than 1.1.0, this one included (the plugin cache holds 1.0.0 although 1.1.0 is released). Update the plugin before the build of this change runs from the Workbench. The release notes of the Kata version that ships this must say so.
+2. **The build host reads `checks` on a timer while its own preparation runs.** Owner: Maintainer. Checks on the base never appear in `build.start`'s stream, so the live list of R2.1 needs a read every two seconds for the length of the baseline (tens of minutes, each read a `node` start). That is the only timed read in the change; the page itself never watches (D7). If two seconds proves costly on a slow machine, the interval is the place to change, not the design.
+3. **Running elsewhere is inferred from the ledger, and asks after every restart.** Owner: Maintainer. A build this Workbench stopped, followed by a Workbench restart, looks the same as one running in another session, so R9 asks then too. The intent accepts this ("a crashed build leaves the same record"). `checks` narrows it: while a check on the base is reported running, the question says the build is running now (R9.1's last row); outside the checks, the question still says "may".
+4. **Running the checks again at finish feeds the build coordinator.** Owner: Maintainer. R7.2 makes a passing rerun count as the repository's finish, which can start the automatic review (C42). That is a new entry into the coordinator (`kata_sdlc::coordinator`) and must keep C39, C56 and C114 intact; the plan should give it its own task with coordinator tests.
+5. **The stopped note's sentence about the base commit is hoshin's behavior, stated by Kata.** Owner: Maintainer. Whether the copy is left on the base commit after a stop depends on where hoshin was in its baseline (a detached checkout of the base, restored on the next run). Kata cannot see that without reading hoshin's files, so R10.2 says "may stay"; the product owner should confirm that wording.
+6. **Parity baselines change.** Owner: Maintainer. The build strip, the Build tab (R1, R4, R7) and the top bar's list of active changes (R13) change visibly, so `check:parity` views of the build page and the change page toolbar need re-blessing with the owner's sign-off.
+7. **A fourth kind in the label.** Owner: product owner. D10 names three kinds; R13 adds "waiting" for changes held by another change's build or waiting for their review (decided above as the engineer's call). Confirm it, or say which of the three they should count as.
