@@ -95,3 +95,18 @@ notes: |
   setup_hint is true only for BaseFailure and counts checks that are can_accept or accepted, so the hint stays steady while the engineer accepts them one by one.
   sdlc_start_checks(change: ChangeRef) takes the repository list from state.tasks keys, as sdlc_checks_view does. Generated bindings: BaseCheck, BaseCheckState, FinishFailure, StartChecks, StartShown.
 ```
+
+### T7
+
+```yaml
+task: T7
+commits: ["bc82d73", "d16eef3"]
+departure: |
+  T7 Change: whether the failing check passed on the base or added failures is read from the repository's BaseCheck rows (Failed gives AddedFailures; Passed or NotRun gives Passed), not from checks_view::of's CheckView rows, because of reads only the head and cannot say how a check stood on the base.
+red: observed
+notes: |
+  FinishFailure is { check, base: FinishBase (Passed | AddedFailures), output, passed: u32 (other checks that passed at finish, from the finish record's hooks), next: FinishNext (SentBackNotFixed for onFailure fix | Stopped otherwise), can_accept (always false) }.
+  A could-not-run finish takes the same path, next from the hook's onFailure; a finish record naming no failed check gives an empty check and Stopped; an empty hook output falls back to the record's problems joined by newlines.
+  StartShown::FinishFailure still carries no data; the detail is in StartChecks::finish.
+  The plan's test command was run as cargo test directly.
+```
