@@ -196,7 +196,7 @@ describe('RunningChanges', () => {
     const entries = [asking(A, 'Which branch?'), working(B, 3), working(key('c-three'), 4), working(key('c-four'), 5), working(key('c-five', 'bob'), 6)];
     const { container, fixture } = await mount(strip(...entries));
     expect(container.querySelectorAll('[data-testid="running-entry"]')).toHaveLength(3);
-    const all = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b).includes('All running (5)'))!;
+    const all = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b).includes('4 running · 1 needs you'))!;
     all.click();
     await settle();
     fixture.detectChanges();

@@ -22,7 +22,12 @@ export class RunningStripViewModel {
 
   readonly shown = computed(() => this.strip().shown.map(toRow));
   readonly all = computed(() => this.strip().all.map(toRow));
-  readonly allLabel = computed(() => `All running (${this.strip().all.length})`);
+  /** What the list holds, by kind in the backend's order: "2 running · 1 needs you". Empty when no entry counts. */
+  readonly allLabel = computed(() => {
+    const c = this.strip().counts;
+    const parts: [number, string][] = [[c.running, 'running'], [c.needsYou, 'needs you'], [c.waiting, 'waiting'], [c.finished, 'finished']];
+    return parts.filter(([n]) => n > 0).map(([n, word]) => `${n} ${word}`).join(' · ');
+  });
 
   constructor() {
     const gone = inject(DestroyRef);

@@ -27,7 +27,7 @@
         <hlm-popover-header>
           <div hlmPopoverTitle>{{ allLabel() }}</div>
         </hlm-popover-header>
-        <ul class="k-running__all-list" aria-label="All running changes">
+        <ul class="k-running__all-list" aria-label="Changes with activity">
           @for (row of all(); track row.id) {
             <li data-testid="running-all-entry">
               <button hlmBtn variant="bare" size="bare" class="k-running__entry" type="button" [attr.title]="row.title" (click)="choose(row, row.direct)">
