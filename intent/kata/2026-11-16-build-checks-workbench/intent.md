@@ -12,7 +12,7 @@ context: [kata@ac8191b]
 
 ## Problem
 
-Starting a build runs every team check on the base first, which takes tens of minutes, and the engineer cannot follow or settle that from the Workbench. On 2026-11-16 a build stopped because checks already failed on the base; the Workbench printed the way out as shell commands (accept a failing check, or check the base again) and offered no way to do either, so the engineer had to leave for a terminal. While checks ran, the Workbench did not say which one was running, so a one-second install step looked like a rerun of a check the engineer had just accepted. Failures showed twice, on the page and in a dialog, packed so tightly they were hard to read, and a failed start stayed on screen after the build had moved on, which led the engineer to believe the build was still failing. The preparing view also spends a whole padded row on its Stop button. The cost: a build that should start in one click took most of an afternoon and several wrong conclusions.
+Starting a build runs every team check on the base first, which takes tens of minutes, and the engineer cannot follow or settle that from the Workbench. On 2026-11-16 a build stopped because checks already failed on the base; the Workbench printed the way out as shell commands (accept a failing check, or check the base again) and offered no way to do either, so the engineer had to leave for a terminal. While checks ran, the Workbench did not say which one was running, so a one-second install step looked like a rerun of a check the engineer had just accepted. Failures showed twice, on the page and in a dialog, packed so tightly they were hard to read, and a failed start stayed on screen after the build had moved on, which led the engineer to believe the build was still failing. The preparing view also spends a whole padded row on its Stop button. The list of active changes in the top bar is labeled "All running" even when nothing in it is running (on 2026-11-17 it read "All running (1)" over one finished run), and a run that finished while the engineer was on that change's page stayed listed as if unseen. The cost: a build that should start in one click took most of an afternoon and several wrong conclusions.
 
 ## Proposed outcome
 
@@ -28,7 +28,7 @@ Starting a build runs every team check on the base first, which takes tens of mi
 ## Affected users and systems
 
 - **Users:** the engineer running a build in the Workbench, the only person who may accept a failing check; the agent never may. The product owner is not affected.
-- **Systems:** the Kata Workbench (the build page and the change page). The hoshin plugin, which runs the checks and keeps the base results and accepted checks, is used as it is, apart from one dependency: it must report each check on the base as it starts and ends, which is a separate hoshin change (D1). The team's checks are unchanged.
+- **Systems:** the Kata Workbench (the build page, the change page and the list of active changes in the top bar). The hoshin plugin, which runs the checks and keeps the base results and accepted checks, is used as it is, apart from one dependency: it must report each check on the base as it starts and ends, which is a separate hoshin change (D1). The team's checks are unchanged.
 
 ## Constraints
 
@@ -51,6 +51,8 @@ Starting a build runs every team check on the base first, which takes tens of mi
 | D7 | The change has moved on since the page last read it (a build that failed to start has since started, from the Workbench or elsewhere) | handle it | The change page reads where the change stands on opening, after any action and when the window regains focus, as the home does; a failure the current state no longer holds is cleared. No continuous watching. |
 | D8 | The engineer stops the build while the checks run on the base | handle it | Before stopping, the page says how many checks already ran and that the next start runs them all again, since hoshin keeps none until the last one ends. After stopping, it says the copy stays on the base commit until the build starts again and the work is safe on the branch. Nothing is rolled back. |
 | D9 | Accepting a check while a run of this change is live; very long check output; builds started before this change; showing whether a finish failure sends the agent back to fix or stops; keyboard and screen-reader use | engineer's call | Confirmed as one batch. |
+| D10 | The list of active changes in the top bar holds changes that are not running (finished, needing an answer, held) | handle it | Its label counts each kind by name (running, needs you, finished) and never calls the whole list "running". |
+| D11 | A run of the change ends while the engineer is on that change's page | handle it | It counts as seen and the change leaves the list of active changes, unless the Workbench window is not in focus at that moment; then it leaves when the window regains focus on that page, so a run that ends while the engineer is in another app is still announced. |
 
 ## Open questions
 
