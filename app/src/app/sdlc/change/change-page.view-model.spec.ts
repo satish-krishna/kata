@@ -32,7 +32,7 @@ import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/g
 import { safetyRules, type StageAction } from '../../lib/sdlc';
 import { MOCK_BUILD_CHANGE, MOCK_COPY_CHANGE, MOCK_COPY_FIX, MOCK_DONE_CHANGE, MOCK_NOT_LISTED, MOCK_REFUSED_CHANGE, MOCK_SINGLE_CHANGE, MOCK_SINGLE_SYSTEM, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
-import { ChangePageViewModel } from './change-page.view-model';
+import { ChangePageViewModel, WindowFocus } from './change-page.view-model';
 
 /** Hold the lock the way Kata's own checks do, and never finish: the screen stays locked for the rest of the test. */
 const holdLock = (lock: LockStore): void => void lock.runSteps('Checking', [{ label: 'Check', run: () => new Promise<string | null>(() => undefined) }]);
@@ -1690,6 +1690,41 @@ describe('ChangePageViewModel: the change copy', () => {
     const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
     await vi.waitFor(() => expect(mark).toHaveBeenCalledWith(REF));
+  });
+
+  // R14.1, the rows on the change's own page; on another page this page is not shown and calls nothing.
+  describe('a run that ends on its page counts as seen when focused r14.1', () => {
+    const runEnds = async (focused: boolean) => {
+      const transport = new MockTransport();
+      const mark = vi.spyOn(transport, 'sdlcMarkOpened');
+      const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+      runAgent.mockRestore();
+      vi.spyOn(TestBed.inject(WindowFocus), 'has').mockReturnValue(focused);
+      await ready(vm);
+      await vi.waitFor(() => expect(mark).toHaveBeenCalledTimes(1));
+      mark.mockClear();
+      const runs = TestBed.inject(ChangeRunStore);
+      const key = changeRunKey(REF);
+      void vm.act('start-spec');
+      await vi.waitFor(() => expect(runs.session(key)?.runId).toBeTruthy());
+      const id = runs.session(key)!.runId!;
+      (transport as unknown as { emit(id: string, ev: unknown): void }).emit(id, { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 1, cost_usd: 0, duration_ms: 1, result: 'done' });
+      await vi.waitFor(() => expect(runs.session(key)?.finished).not.toBeNull());
+      TestBed.tick();
+      return { vm, mark };
+    };
+
+    it('on that change\'s page with focus: seen at once', async () => {
+      const { mark } = await runEnds(true);
+      await vi.waitFor(() => expect(mark).toHaveBeenCalledWith(REF));
+    });
+
+    it('on that change\'s page without focus: not seen until the window regains focus', async () => {
+      const { vm, mark } = await runEnds(false);
+      expect(mark).not.toHaveBeenCalled();
+      vm.windowFocused();
+      await vi.waitFor(() => expect(mark).toHaveBeenCalledWith(REF));
+    });
   });
 
   it('Open folder opens the change copy folder through the backend', async () => {

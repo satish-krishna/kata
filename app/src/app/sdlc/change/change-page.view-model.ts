@@ -200,6 +200,14 @@ function docFor(c: ChangeView): Tab {
  * One change: its stage, its current document, and every action that moves it on. Runs go through
  * `SdlcRunner`; decisions go straight to the engine. Both end by reading the change again from disk.
  */
+/** Whether the Workbench window has focus: the one place the page asks the browser, so a spec can set it. */
+@Injectable({ providedIn: 'root' })
+export class WindowFocus {
+  has(): boolean {
+    return document.hasFocus();
+  }
+}
+
 @Injectable()
 export class ChangePageViewModel {
   private readonly transport = inject(KataTransport);
@@ -1649,6 +1657,11 @@ export class ChangePageViewModel {
     } else {
       this.drafts.setTab(ref, null);
     }
+  }
+
+  /** The window regained focus while this page is shown. */
+  windowFocused(): void {
+    // not implemented yet
   }
 
   /** The change leaves the running changes once nothing of it needs them: best effort, a failure changes nothing on the page. */
