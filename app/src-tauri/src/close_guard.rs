@@ -269,9 +269,10 @@ mod tests {
     fn step(change: &str, kind: StepKind) -> RunningStep {
         RunningStep {
             change: run(0, change, RunKind::Build, None).lane_key(),
-            kind,
             doing: kind.doing(),
+            kind,
             progress: None,
+            live_checks: Vec::new(),
         }
     }
 
@@ -353,7 +354,7 @@ mod tests {
             (StepKind::DeclaringDone, "being declared done"),
         ];
         for (kind, words) in rows {
-            let steps = vec![step("A", kind)];
+            let steps = vec![step("A", kind.clone())];
             assert_eq!(
                 on_close(&[], &[], &steps, CloseAnswer::NotAsked),
                 CloseOutcome::Ask {

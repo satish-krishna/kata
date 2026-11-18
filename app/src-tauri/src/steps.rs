@@ -4,8 +4,9 @@
 use crate::build_host::ChangeRef;
 use kata_core::proc::CancelToken;
 use kata_sdlc::accept::ChangeDocument;
+use kata_sdlc::checks_view::BaseCheck;
 use kata_sdlc::holds::ChangeKey;
-use kata_sdlc::hoshin::{StepProgress, StepProgressKind};
+use kata_sdlc::hoshin::{StepPhase, StepProgress, StepProgressKind};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -18,11 +19,17 @@ pub const STEP_EVENT: &str = "sdlc://step";
 pub const STEP_END_EVENT: &str = "sdlc://step-end";
 
 /// What a long step of a change is.
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum StepKind {
+    /// One step of the team's `build.start`, named for the hook that runs it.
+    PreparationHook {
+        id: String,
+    },
+    /// The checks on the base, run before the first task.
+    CheckingBase,
     PreparingBuild,
     PreparingReview,
     Starting,
@@ -43,7 +50,9 @@ impl StepKind {
             ChangeDocument::Plan => "plan",
         };
         match self {
-            StepKind::PreparingBuild => "preparing".into(),
+            StepKind::PreparationHook { .. }
+            | StepKind::CheckingBase
+            | StepKind::PreparingBuild => "preparing".into(),
             StepKind::PreparingReview => "preparing the review".into(),
             StepKind::Starting => "starting".into(),
             StepKind::Renaming => "being renamed".into(),
@@ -57,29 +66,24 @@ impl StepKind {
 }
 
 impl StepKind {
-    /// The step's own words, the start of every progress line it shows: what the step is doing, or, for a
-    /// preparation of one repository, that repository.
-    pub fn words(&self, repo: Option<&str>) -> String {
-        let doc = |d: &ChangeDocument| match d {
-            ChangeDocument::Intent => "intent",
-            ChangeDocument::Spec => "spec",
-            ChangeDocument::Plan => "plan",
-        };
-        match (self, repo) {
-            (StepKind::PreparingBuild | StepKind::PreparingReview, Some(repo)) => {
-                format!("Preparing {repo}")
-            }
-            (StepKind::PreparingBuild, None) => "Checking every repository before building".into(),
-            (StepKind::PreparingReview, None) => {
-                "Checking every repository before the review".into()
-            }
-            (StepKind::Starting, _) => "Starting the change".into(),
-            (StepKind::Renaming, _) => "Renaming the change".into(),
-            (StepKind::RemovingCopy, _) => "Removing the change's copy".into(),
-            (StepKind::Accepting(d), _) => format!("Accepting the {}", doc(d)),
-            (StepKind::Rejecting(d), _) => format!("Rejecting the {}", doc(d)),
-            (StepKind::RejectingFix, _) => "Rejecting the fix".into(),
-            (StepKind::DeclaringDone, _) => "Declaring the change done".into(),
+    /// The step's own words, the start of every progress line it shows: what the step is doing.
+    pub fn words(&self) -> &'static str {
+        match self {
+            StepKind::PreparationHook { .. } => "",
+            StepKind::CheckingBase => "",
+            StepKind::PreparingBuild => "Checking every repository before building",
+            StepKind::PreparingReview => "Checking every repository before the review",
+            StepKind::Starting => "Starting the change",
+            StepKind::Renaming => "Renaming the change",
+            StepKind::RemovingCopy => "Removing the change's copy",
+            StepKind::Accepting(ChangeDocument::Intent) => "Accepting the intent",
+            StepKind::Accepting(ChangeDocument::Spec) => "Accepting the spec",
+            StepKind::Accepting(ChangeDocument::Plan) => "Accepting the plan",
+            StepKind::Rejecting(ChangeDocument::Intent) => "Rejecting the intent",
+            StepKind::Rejecting(ChangeDocument::Spec) => "Rejecting the spec",
+            StepKind::Rejecting(ChangeDocument::Plan) => "Rejecting the plan",
+            StepKind::RejectingFix => "Rejecting the fix",
+            StepKind::DeclaringDone => "Declaring the change done",
         }
     }
 }
@@ -93,7 +97,12 @@ pub fn progress_line(
     repo: Option<&str>,
     line: Option<&StepProgress>,
 ) -> StepProgress {
-    let words = kind.words(repo);
+    let words = match (&kind, repo) {
+        (StepKind::PreparingBuild | StepKind::PreparingReview, Some(repo)) => {
+            format!("Preparing {repo}")
+        }
+        _ => kind.words().to_string(),
+    };
     let Some(line) = line else {
         return StepProgress {
             kind: if repo.is_some() {
@@ -104,6 +113,7 @@ pub fn progress_line(
             label: words,
             repo: repo.map(str::to_string),
             check: None,
+            phase: StepPhase::Other,
         };
     };
     // A line that opens with a check's id keeps it as the check spelled it; the others open with a verb.
@@ -126,6 +136,7 @@ pub fn progress_line(
         },
         repo: repo.map(str::to_string).or_else(|| line.repo.clone()),
         check: line.check.clone(),
+        phase: line.phase,
     }
 }
 
@@ -150,6 +161,8 @@ pub struct RunningStep {
     pub kind: StepKind,
     pub doing: String,
     pub progress: Option<StepProgress>,
+    /// The checks on the base while this Workbench's own preparation runs them; empty otherwise.
+    pub live_checks: Vec<BaseCheck>,
 }
 
 /// The change already has a long step running.
@@ -160,6 +173,7 @@ struct Entry {
     kind: StepKind,
     token: CancelToken,
     progress: Option<StepProgress>,
+    live_checks: Vec<BaseCheck>,
 }
 
 type Emitter = Arc<dyn Fn(StepEvent) + Send + Sync>;
@@ -224,7 +238,7 @@ impl StepTable {
 
     /// Register a step of `change`, or `Busy` when it already has one.
     pub fn begin(&self, change: ChangeKey, kind: StepKind) -> Result<StepGuard, Busy> {
-        let first = progress_line(kind, None, None);
+        let first = progress_line(kind.clone(), None, None);
         let token = CancelToken::new();
         {
             let mut entries = self.entries.lock().unwrap();
@@ -234,9 +248,10 @@ impl StepTable {
             entries.insert(
                 change.clone(),
                 Entry {
-                    kind,
+                    kind: kind.clone(),
                     token: token.clone(),
                     progress: Some(first.clone()),
+                    live_checks: Vec::new(),
                 },
             );
         }
@@ -262,9 +277,9 @@ impl StepTable {
             let Some(entry) = entries.get_mut(change) else {
                 return;
             };
-            let progress = progress_line(entry.kind, repo, line.as_ref());
+            let progress = progress_line(entry.kind.clone(), repo, line.as_ref());
             entry.progress = Some(progress.clone());
-            (entry.kind, progress)
+            (entry.kind.clone(), progress)
         };
         (self.emit)(StepEvent {
             change: change.clone(),
@@ -293,9 +308,10 @@ impl StepTable {
             .iter()
             .map(|(change, entry)| RunningStep {
                 change: change.clone(),
-                kind: entry.kind,
+                kind: entry.kind.clone(),
                 doing: entry.kind.doing(),
                 progress: entry.progress.clone(),
+                live_checks: entry.live_checks.clone(),
             })
             .collect();
         steps.sort_by(|a, b| order_key(&a.change).cmp(&order_key(&b.change)));
@@ -361,15 +377,15 @@ mod tests {
         let push = r#"{"type":"push","repo":"kata"}"#;
         let spec = StepKind::Accepting(ChangeDocument::Spec);
         let rows: Vec<(StepKind, Option<&str>, Option<StepProgress>, &str)> = vec![
-            (spec, None, None, "Accepting the spec"),
+            (spec.clone(), None, None, "Accepting the spec"),
             (
-                spec,
+                spec.clone(),
                 None,
                 line(start),
                 "Accepting the spec: running base-tests",
             ),
             (
-                spec,
+                spec.clone(),
                 None,
                 line(end),
                 "Accepting the spec: base-tests passed",
@@ -445,7 +461,7 @@ mod tests {
             ),
         ];
         for (kind, repo, line, label) in rows {
-            let made = progress_line(kind, repo, line.as_ref());
+            let made = progress_line(kind.clone(), repo, line.as_ref());
             assert_eq!(made.label, label, "{kind:?} {repo:?} {line:?}");
         }
     }
@@ -560,6 +576,38 @@ mod tests {
         assert!(t.begin(key("b"), StepKind::DeclaringDone).is_ok());
     }
 
+    // R2.2: the wording lives here, and a preparation step is named apart from the checks on the base.
+    #[test]
+    fn words_name_preparation_and_checks() {
+        assert_eq!(StepKind::CheckingBase.words(), "Checking the base");
+        assert_eq!(StepKind::PreparingBuild.words(), "Checking the base");
+        assert_eq!(
+            StepKind::PreparationHook {
+                id: "install".into()
+            }
+            .words(),
+            "Preparing"
+        );
+        let hook = |when: &str| {
+            progress_of(&format!(
+                r#"{{"type":"hook-start","id":"install","when":"{when}"}}"#
+            ))
+        };
+        let none = progress_line(StepKind::PreparingBuild, None, None);
+        assert_eq!(none.label, "Checking the base");
+        let step = progress_line(StepKind::PreparingBuild, None, hook("build.start").as_ref());
+        assert_eq!(step.label, "Preparing: running install");
+        assert_eq!(step.phase, StepPhase::Preparation);
+        let other = progress_line(StepKind::PreparingBuild, None, hook("change.done").as_ref());
+        assert_eq!(other.label, "Checking the base: running install");
+        let in_repo = progress_line(
+            StepKind::PreparingBuild,
+            Some("kata"),
+            hook("build.start").as_ref(),
+        );
+        assert_eq!(in_repo.label, "Preparing kata: running install");
+    }
+
     #[test]
     fn label_records_and_emits_the_latest_progress() {
         let seen: Arc<Mutex<Vec<StepEvent>>> = Arc::default();
@@ -571,12 +619,14 @@ mod tests {
             label: "Declaring the change done: pushing kata".into(),
             repo: Some("kata".into()),
             check: None,
+            phase: StepPhase::Other,
         };
         let pushing = StepProgress {
             kind: StepProgressKind::Push,
             label: "Pushing kata".into(),
             repo: Some("kata".into()),
             check: None,
+            phase: StepPhase::Other,
         };
         t.report(&key("a"), None, Some(pushing));
         let events = seen.lock().unwrap();

@@ -658,6 +658,20 @@ pub enum StepProgressKind {
     Repository,
 }
 
+/// Which part of the build a team hook line belongs to.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum StepPhase {
+    /// A hook of `build.start`: a preparation step, never counted as a check.
+    Preparation,
+    /// A check of `build.finish` (the line carries `"check": true`).
+    FinishCheck,
+    /// Any other line.
+    Other,
+}
+
 /// A progress line: what the plugin is doing, named for the engineer, with the repository and the team
 /// check it names when the line names them.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -669,6 +683,7 @@ pub struct StepProgress {
     pub label: String,
     pub repo: Option<String>,
     pub check: Option<String>,
+    pub phase: StepPhase,
 }
 
 /// The progress line a `--stream` line stands for, if it stands for a step.
@@ -728,6 +743,7 @@ pub fn progress_of(line: &str) -> Option<StepProgress> {
         label,
         repo,
         check,
+        phase: StepPhase::Other,
     })
 }
 
@@ -1349,11 +1365,22 @@ mod tests {
         repo: Option<&str>,
         check: Option<&str>,
     ) -> Option<StepProgress> {
+        phased(kind, label, repo, check, StepPhase::Other)
+    }
+
+    fn phased(
+        kind: StepProgressKind,
+        label: &str,
+        repo: Option<&str>,
+        check: Option<&str>,
+        phase: StepPhase,
+    ) -> Option<StepProgress> {
         Some(StepProgress {
             kind,
             label: label.to_string(),
             repo: repo.map(str::to_string),
             check: check.map(str::to_string),
+            phase,
         })
     }
 
@@ -1400,6 +1427,36 @@ mod tests {
                     "Opening a pull request in kata",
                     Some("kata"),
                     None,
+                ),
+            ),
+            (
+                r#"{"type":"hook-start","id":"install","when":"build.start"}"#,
+                phased(
+                    Hook,
+                    "Running install",
+                    None,
+                    Some("install"),
+                    StepPhase::Preparation,
+                ),
+            ),
+            (
+                r#"{"type":"hook-end","id":"install","when":"build.start","outcome":"passed","repo":"kata"}"#,
+                phased(
+                    Hook,
+                    "install passed in kata",
+                    Some("kata"),
+                    Some("install"),
+                    StepPhase::Preparation,
+                ),
+            ),
+            (
+                r#"{"type":"hook-start","id":"unit","when":"build.finish","check":true,"repo":"kata"}"#,
+                phased(
+                    Hook,
+                    "Running unit in kata",
+                    Some("kata"),
+                    Some("unit"),
+                    StepPhase::FinishCheck,
                 ),
             ),
             (r#"{"type":"outcome","outcome":"passed"}"#, None),

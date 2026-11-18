@@ -30,10 +30,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
 /// Channel every change of the build is announced on, one [`BuildEvent`] per event.
 pub const BUILD_EVENT: &str = "sdlc://build";
+
+/// How often the checks on the base are read while a repository's preparation runs.
+const CHECKS_POLL_MS: u64 = 2000;
 
 /// The time limit of a run when a build is continued with nothing the engineer chose.
 pub const DEFAULT_TIMEOUT_SECS: u64 = 3600;
@@ -156,6 +160,10 @@ pub enum StartOutcome {
     Failed {
         problems: Vec<String>,
         hook: Option<HookFailure>,
+        /// The checks that failed on the base without saying what failed and are not accepted for this
+        /// build, when that is why the start failed.
+        #[serde(default)]
+        needs_approval: Vec<String>,
     },
     /// The machine could not run the plugin's step; `repo` is the repository the plugin names, if any.
     CouldNotRun {
@@ -495,6 +503,8 @@ pub struct BuildHost {
     workbench_dir: PathBuf,
     /// The long steps that are running: a build's preparation is one entry of it.
     steps: StepTable,
+    /// How often the checks on the base are read while a repository's preparation runs, in milliseconds.
+    checks_poll_ms: AtomicU64,
     inner: Mutex<Inner>,
 }
 
@@ -570,7 +580,11 @@ fn failure(outcome: StepOutcome, prepared: &[String]) -> Option<StartOutcome> {
     match outcome {
         StepOutcome::Passed { .. } => None,
         StepOutcome::Refused { problems } => Some(StartOutcome::Refused { problems }),
-        StepOutcome::Failed { problems, hook } => Some(StartOutcome::Failed { problems, hook }),
+        StepOutcome::Failed { problems, hook } => Some(StartOutcome::Failed {
+            problems,
+            hook,
+            needs_approval: Vec::new(),
+        }),
         StepOutcome::CouldNotRun { reason, repo, hook } => Some(StartOutcome::CouldNotRun {
             output: match hook.map(|h| h.output) {
                 Some(output) if !output.trim().is_empty() => format!(
@@ -628,6 +642,7 @@ impl BuildHost {
             launcher,
             workbench_dir,
             steps,
+            checks_poll_ms: AtomicU64::new(CHECKS_POLL_MS),
             inner: Mutex::new(Inner {
                 builds: HashMap::new(),
                 holds: HoldTable::default(),
@@ -637,6 +652,15 @@ impl BuildHost {
                 stopped: false,
             }),
         })
+    }
+
+    /// Read the checks on the base every `every` instead of every two seconds.
+    #[cfg(test)]
+    fn set_checks_poll(&self, every: std::time::Duration) {
+        self.checks_poll_ms.store(
+            every.as_millis() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     /// Start `change`'s build: nothing starts unless every repository it needs is free and the
@@ -1981,6 +2005,7 @@ struct Before {
 mod tests {
     use super::*;
     use crate::steps::{StepEvent, StepKind};
+    use kata_sdlc::checks_view::{BaseCheck, BaseCheckState};
     use kata_sdlc::coordinator::BuildPhase;
     use kata_sdlc::format::{ParsedReviewSection, ParsedTask};
     use kata_sdlc::holds::{Purpose, RepoKey};
@@ -2131,6 +2156,10 @@ mod tests {
         probe: Mutex<Option<Box<dyn Fn() + Send>>>,
         /// The stream lines a call prints, by call (`check` or a repository).
         lines: Mutex<HashMap<String, Vec<String>>>,
+        /// What `checks` and `hooks` answer, and how many times `checks` was read.
+        checks_answer: Mutex<Option<Value>>,
+        hooks_answer: Mutex<Option<Value>>,
+        check_reads: std::sync::atomic::AtomicUsize,
     }
 
     impl FakeTools {
@@ -2155,6 +2184,9 @@ mod tests {
                 stopper: Mutex::new(None),
                 probe: Mutex::new(None),
                 lines: Mutex::new(HashMap::new()),
+                checks_answer: Mutex::new(None),
+                hooks_answer: Mutex::new(None),
+                check_reads: std::sync::atomic::AtomicUsize::new(0),
             })
         }
 
@@ -2341,6 +2373,21 @@ mod tests {
                 let repos: BTreeMap<&String, Value> =
                     self.system_repos.iter().map(|r| (r, json!({}))).collect();
                 return Ok(json!({"repos": repos}));
+            }
+            if command.first() == Some(&"checks") {
+                self.check_reads
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                return Ok(self.checks_answer.lock().unwrap().clone().unwrap_or_else(
+                    || json!({"system": SYSTEM, "change": "x", "runs": [], "problems": []}),
+                ));
+            }
+            if command.first() == Some(&"hooks") {
+                return Ok(self
+                    .hooks_answer
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(|| json!({"hooks": [], "problems": []})));
             }
             panic!("a step goes through exec: {command:?}")
         }
@@ -3037,7 +3084,8 @@ mod tests {
                         id: "deps".into(),
                         on_failure: Some("stop".into()),
                         output: "npm ci: lockfile out of date".into()
-                    })
+                    }),
+                    needs_approval: Vec::new(),
                 }
             );
             assert_eq!(r.launcher.count(), 0);
@@ -3693,7 +3741,7 @@ mod tests {
             let seen: Arc<Mutex<Vec<Vec<StepKind>>>> = Arc::default();
             let (steps, sink) = (self.steps.clone(), seen.clone());
             *self.tools.probe.lock().unwrap() = Some(Box::new(move || {
-                let kinds = steps.running().iter().map(|s| s.kind).collect();
+                let kinds = steps.running().iter().map(|s| s.kind.clone()).collect();
                 sink.lock().unwrap().push(kinds);
             }));
             seen
@@ -3809,6 +3857,7 @@ mod tests {
                 want: StartOutcome::Failed {
                     problems: strs(&["hook deps failed with exit code 1"]),
                     hook: Some(failed_hook),
+                    needs_approval: Vec::new(),
                 },
                 real_starts: &[],
                 launched: 0,
@@ -3867,6 +3916,7 @@ mod tests {
                         on_failure: Some("stop".into()),
                         output: "npm ci: lockfile out of date".into(),
                     }),
+                    needs_approval: Vec::new(),
                 },
                 real_starts: &["kata", "bob"],
                 launched: 0,
@@ -4042,6 +4092,267 @@ mod tests {
         let spec: Value =
             serde_json::from_str(&r.launcher.spec_of(r.launcher.launched("kata")[0])).unwrap();
         assert_eq!(spec["leash"]["timeout_secs"], 1, "{spec}");
+    }
+
+    /// A `build.start` answer of `kata` that passed with `baseline` as its details say.
+    fn started_with_base(baseline: Value) -> Value {
+        let mut answer = passed_start("kata", &[]);
+        answer["details"]["baseline"] = baseline;
+        answer
+    }
+
+    /// The hooks and the `checks` answer of a repository whose checks are `ids`, with the events of the latest
+    /// run on the base given as `(id, state, outcome)`; the other checks have no event yet.
+    fn script_checks(r: &Rig, ids: &[&str], events: &[(&str, &str, Option<&str>)]) {
+        *r.tools.hooks_answer.lock().unwrap() = Some(
+            json!({"problems": [], "hooks": ids.iter().map(|id|
+            json!({"id": id, "event": "build.finish", "when": "before", "blocking": true, "onFailure": "stop"})).collect::<Vec<_>>()}),
+        );
+        let checks: Vec<Value> = events
+            .iter()
+            .map(|(id, state, outcome)| {
+                json!({"check": id, "state": state, "startedAt": "2026-11-18T10:00:00Z",
+                    "endedAt": if *state == "ended" { json!("2026-11-18T10:00:07Z") } else { Value::Null },
+                    "timeout": 600, "outcome": outcome, "ids": null, "blocks": null})
+            })
+            .collect();
+        *r.tools.checks_answer.lock().unwrap() = Some(
+            json!({"system": SYSTEM, "change": "A", "problems": [],
+            "runs": [
+                {"run": "r1", "event": "build.finish", "repo": "kata", "phase": "baseline", "checks": checks},
+                {"run": "r2", "event": "build.finish", "repo": "kata", "phase": "head", "checks": []}]}),
+        );
+    }
+
+    // R3.1
+    #[test]
+    fn base_checks_decide_the_first_task_r3_1() {
+        const WHY: &str = "check lint failed on the base without saying what failed; accept it with baseline approve";
+        struct Row {
+            label: &'static str,
+            answer: Value,
+            needs_approval: Option<Vec<String>>,
+        }
+        let rows = [
+            Row {
+                label: "every check passing",
+                answer: started_with_base(
+                    json!({"base": "b1", "reused": false, "failing": [], "approved": []}),
+                ),
+                needs_approval: None,
+            },
+            Row {
+                label: "a failing check that says what failed",
+                answer: started_with_base(
+                    json!({"base": "b1", "reused": false, "failing": [{"id": "lint", "ids": ["a.rs"]}], "approved": []}),
+                ),
+                needs_approval: None,
+            },
+            Row {
+                label: "a failing check that does not say what failed, already accepted",
+                answer: started_with_base(
+                    json!({"base": "b1", "reused": false, "failing": [{"id": "lint", "ids": null}], "approved": ["lint"]}),
+                ),
+                needs_approval: None,
+            },
+            Row {
+                label: "a failing check that does not say what failed, not accepted",
+                answer: json!({"event": "build.start", "repo": "kata", "outcome": "failed",
+                    "problems": [WHY], "hooks": [], "failed": null,
+                    "details": {"baseline": {"base": "b1", "reused": false, "failing": [{"id": "lint", "ids": null}],
+                        "approved": [], "needsApproval": ["lint"]}}}),
+                needs_approval: Some(strs(&["lint"])),
+            },
+        ];
+        for row in rows {
+            let r = rig();
+            r.simple("A", &["kata"]);
+            r.tools.start_answer("kata", row.answer.clone());
+            let outcome = r.host.start(&cref("A"), form());
+            match row.needs_approval {
+                Some(needs_approval) => {
+                    assert_eq!(
+                        outcome,
+                        StartOutcome::Failed {
+                            problems: strs(&[WHY]),
+                            hook: None,
+                            needs_approval,
+                        },
+                        "{}",
+                        row.label
+                    );
+                    assert_eq!(r.launcher.launched("kata").len(), 0, "{}", row.label);
+                }
+                None => {
+                    assert!(
+                        matches!(outcome, StartOutcome::Started { .. }),
+                        "{}: {outcome:?}",
+                        row.label
+                    );
+                    assert_eq!(r.launcher.launched("kata").len(), 1, "{}", row.label);
+                }
+            }
+        }
+    }
+
+    /// What `running()` showed of the live checks while `A` started on a thread.
+    type Watched = Arc<Mutex<Vec<Vec<BaseCheck>>>>;
+
+    fn start_watching(r: &Rig) -> (std::thread::JoinHandle<StartOutcome>, Watched) {
+        let seen: Watched = Arc::default();
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (steps, sink, flag) = (r.steps.clone(), seen.clone(), done.clone());
+        let watcher = std::thread::spawn(move || {
+            while !flag.load(std::sync::atomic::Ordering::SeqCst) {
+                for step in steps.running() {
+                    sink.lock().unwrap().push(step.live_checks);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        });
+        let host = r.host.clone();
+        let starter = std::thread::spawn(move || {
+            let outcome = host.start(&cref("A"), form());
+            done.store(true, std::sync::atomic::Ordering::SeqCst);
+            watcher.join().unwrap();
+            outcome
+        });
+        (starter, seen)
+    }
+
+    // R6.1
+    #[test]
+    fn second_start_reuses_the_base_results_r6_1() {
+        let r = rig();
+        r.simple("A", &["kata"]);
+        r.host.set_checks_poll(std::time::Duration::from_millis(5));
+        r.tools.start_answer(
+            "kata",
+            started_with_base(
+                json!({"base": "b1", "reused": true, "failing": [{"id": "lint", "ids": null}], "approved": ["lint"]}),
+            ),
+        );
+        // The earlier start's run on the base is all there is: nothing runs again.
+        script_checks(&r, &["lint"], &[("lint", "ended", Some("failed"))]);
+        *r.tools.delay.lock().unwrap() = std::time::Duration::from_millis(120);
+        let (starter, seen) = start_watching(&r);
+        let outcome = starter.join().unwrap();
+        assert!(
+            matches!(outcome, StartOutcome::Started { .. }),
+            "{outcome:?}"
+        );
+        assert_eq!(r.launcher.launched("kata").len(), 1);
+        let seen = seen.lock().unwrap();
+        let lists: Vec<&Vec<BaseCheck>> = seen.iter().filter(|l| !l.is_empty()).collect();
+        assert!(
+            !lists.is_empty(),
+            "the live list never showed the reused result"
+        );
+        for list in lists {
+            assert!(
+                list.iter().all(|c| c.state != BaseCheckState::Running),
+                "{list:?}"
+            );
+            assert_eq!(list[0].state, BaseCheckState::Failed);
+        }
+    }
+
+    // R2.1: the table of a check's state on the step.
+    #[test]
+    fn live_checks_follow_the_checks_answer() {
+        let r = rig();
+        r.simple("A", &["kata"]);
+        r.host.set_checks_poll(std::time::Duration::from_millis(5));
+        *r.tools.hang_in.lock().unwrap() = Some("kata".into());
+        script_checks(
+            &r,
+            &["c-running", "c-passed", "c-failed", "c-cut", "c-waiting"],
+            &[
+                ("c-running", "running", None),
+                ("c-passed", "ended", Some("passed")),
+                ("c-failed", "ended", Some("failed")),
+                ("c-cut", "abandoned", None),
+            ],
+        );
+        let host = r.host.clone();
+        let starter = std::thread::spawn(move || host.start(&cref("A"), form()));
+        let began = std::time::Instant::now();
+        let live = loop {
+            let live = r
+                .steps
+                .running()
+                .first()
+                .map(|s| s.live_checks.clone())
+                .unwrap_or_default();
+            if !live.is_empty() {
+                break live;
+            }
+            assert!(
+                began.elapsed() < std::time::Duration::from_secs(3),
+                "no live checks"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert!(r.steps.stop(&key("A")));
+        assert!(matches!(
+            starter.join().unwrap(),
+            StartOutcome::Stopped { .. }
+        ));
+        let states: Vec<(&str, BaseCheckState)> =
+            live.iter().map(|c| (c.check.as_str(), c.state)).collect();
+        assert_eq!(
+            states,
+            vec![
+                ("c-running", BaseCheckState::Running),
+                ("c-passed", BaseCheckState::Passed),
+                ("c-failed", BaseCheckState::Failed),
+                ("c-cut", BaseCheckState::CutOff),
+                ("c-waiting", BaseCheckState::NotRun),
+            ]
+        );
+        assert!(live[0].started_at.is_some() && live[0].ended_at.is_none());
+        assert!(live[1].ended_at.is_some() && live[2].ended_at.is_some());
+        assert!(live[4].started_at.is_none());
+    }
+
+    #[test]
+    fn checks_poll_stops_when_the_event_ends() {
+        for how in ["passes", "fails", "stops"] {
+            let r = rig();
+            r.simple("A", &["kata"]);
+            r.host.set_checks_poll(std::time::Duration::from_millis(5));
+            script_checks(&r, &["lint"], &[("lint", "running", None)]);
+            *r.tools.delay.lock().unwrap() = std::time::Duration::from_millis(80);
+            match how {
+                "fails" => r.tools.start_answer(
+                    "kata",
+                    json!({"event": "build.start", "repo": "kata", "outcome": "refused", "problems": ["no"], "details": null}),
+                ),
+                "stops" => {
+                    let (steps, k) = (r.steps.clone(), key("A"));
+                    *r.tools.stopper.lock().unwrap() = Some(Box::new(move || {
+                        steps.stop(&k);
+                    }));
+                    *r.tools.stop_after.lock().unwrap() = Some("kata".into());
+                }
+                _ => {}
+            }
+            r.host.start(&cref("A"), form());
+            let reads = r
+                .tools
+                .check_reads
+                .load(std::sync::atomic::Ordering::SeqCst);
+            assert!(reads > 0, "{how}: the poll never read");
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            assert_eq!(
+                r.tools
+                    .check_reads
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                reads,
+                "{how}: the poll went on after the event ended"
+            );
+            assert!(r.steps.running().is_empty(), "{how}");
+        }
     }
 
     // The page learns which runs are the build's from the announcement, not from a launch of its own.
