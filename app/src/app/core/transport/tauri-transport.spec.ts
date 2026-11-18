@@ -231,7 +231,7 @@ describe('TauriTransport', () => {
 
   it.each([
     ['onBuildState', 'sdlc://build', { change: { workspace: { key: 'w', name: 'w' }, system: 's', change: 'c' }, state: { phase: 'building', going: [], stopped: {}, rounds: {}, waiting: [], report: null, appTurn: null }, reviewWaiting: [], runs: [] } as BuildEvent],
-    ['onRunning', 'sdlc://running', { shown: [], all: [] } as RunningStrip],
+    ['onRunning', 'sdlc://running', { shown: [], all: [], counts: { running: 0, needsYou: 0, waiting: 0, finished: 0 } } as RunningStrip],
     ['onCloseAsked', 'sdlc://close-asked', { type: 'ask', running: [{ change: 'c', what: 'building in kata' }] } as CloseOutcome],
   ] as const)('%s hands the payload of %s over as it is', async (method, channel, payload) => {
     const ipc = fakeIpc();

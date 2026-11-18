@@ -18,7 +18,7 @@ export class RunningStripViewModel {
   private readonly router = inject(Router);
   private readonly landing = inject(RunLandingStore);
 
-  private readonly strip = signal<RunningStrip>({ shown: [], all: [] });
+  private readonly strip = signal<RunningStrip>({ shown: [], all: [], counts: { running: 0, needsYou: 0, waiting: 0, finished: 0 } });
 
   readonly shown = computed(() => this.strip().shown.map(toRow));
   readonly all = computed(() => this.strip().all.map(toRow));

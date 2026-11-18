@@ -229,7 +229,7 @@ export class MockTransport extends KataTransport {
       if (v.heldStart.length > 0) return { ...base, state: 'held', holder: v.heldStart[0].holder };
       return { ...base, state: 'finished' };
     });
-    return { shown: entries.slice(0, 3), all: entries };
+    return { shown: entries.slice(0, 3), all: entries, counts: { running: 0, needsYou: 0, waiting: 0, finished: 0 } };
   }
 
   private announceRunning(): void {

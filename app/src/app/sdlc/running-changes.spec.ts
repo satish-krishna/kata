@@ -38,7 +38,7 @@ const working = (change: ChangeKey, run: number): RunningEntry => ({
   repo: 'kata',
   run,
 });
-const strip = (...entries: RunningEntry[]): Strip => ({ shown: entries.slice(0, 3), all: entries });
+const strip = (...entries: RunningEntry[]): Strip => ({ shown: entries.slice(0, 3), all: entries, counts: { running: entries.filter((e) => e.state === 'working').length, needsYou: entries.filter((e) => e.state === 'needsAnswer').length, waiting: 0, finished: 0 } });
 
 /** A transport that reports a strip, and reports the next one when the test says the backend did. */
 class FakeTransport {
