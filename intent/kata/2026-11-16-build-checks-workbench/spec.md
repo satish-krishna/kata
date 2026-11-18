@@ -4,7 +4,7 @@ source_intent: 2026-11-16-build-checks-workbench/intent.md
 source_intent_commit: b1c3d87172ee512848045ba688aa58129a00a4e5
 system: kata
 date: 2026-11-18
-status: ready for product owner review
+status: accepted
 policies_applied: [security-review, kata-design, house-style, kata-architecture]
 policies_not_checked: [compliance]
 ---
@@ -501,4 +501,4 @@ Status pills and badges use the andon palette with a label (running, passed, fai
 4. **Running the checks again at finish feeds the build coordinator.** Owner: Maintainer. R7.2 makes a passing rerun count as the repository's finish, which can start the automatic review (C42). That is a new entry into the coordinator (`kata_sdlc::coordinator`) and must keep C39, C56 and C114 intact; the plan should give it its own task with coordinator tests.
 5. **The stopped note's sentence about the base commit is hoshin's behavior, stated by Kata.** Owner: Maintainer. Whether the copy is left on the base commit after a stop depends on where hoshin was in its baseline (a detached checkout of the base, restored on the next run). Kata cannot see that without reading hoshin's files, so R10.2 says "may stay"; the product owner should confirm that wording.
 6. **Parity baselines change.** Owner: Maintainer. The build strip, the Build tab (R1, R4, R7) and the top bar's list of active changes (R13) change visibly, so `check:parity` views of the build page and the change page toolbar need re-blessing with the owner's sign-off.
-7. **A fourth kind in the label.** Owner: product owner. D10 names three kinds; R13 adds "waiting" for changes held by another change's build or waiting for their review (decided above as the engineer's call). Confirm it, or say which of the three they should count as.
+7. **A fourth kind in the label.** Owner: product owner. D10 names three kinds; R13 adds "waiting" for changes held by another change's build or waiting for their review. Confirmed by the product owner on 2026-11-18.
