@@ -230,7 +230,7 @@ export function shrinkOrderFails(m, width, at) {
 }
 
 /**
- * The running changes strip (order 2 of the table): with a running change it is there and the All running button is whole; an entry is
+ * The running changes strip (order 2 of the table): with a running change it is there and the list button ("1 needs you") is whole; an entry is
  * either whole or gone, never cut in half; a question's text may be cut but its title carries it whole; and the strip never makes the
  * page scroll or overlap another item (the overlap and page checks above cover those).
  */
@@ -240,8 +240,8 @@ export function runningStripFails(m, fixture, width, at) {
   if (!expected) return m.strip === null ? [] : [`${at}: the strip shows with no running change`];
   if (m.strip === null) return [`${at}: a change is running but the toolbar has no strip`];
   const s = m.strip;
-  if (s.allText !== 'All running (1)') fails.push(`${at}: the All running button reads ${JSON.stringify(s.allText)}, not "All running (1)"`);
-  if (s.allClipped > 0 || !s.allInside) fails.push(`${at}: the All running button is clipped or outside the strip (${s.allClipped.toFixed(2)}px cut off)`);
+  if (s.allText !== '1 needs you') fails.push(`${at}: the list button reads ${JSON.stringify(s.allText)}, not "1 needs you"`);
+  if (s.allClipped > 0 || !s.allInside) fails.push(`${at}: the list button is clipped or outside the strip (${s.allClipped.toFixed(2)}px cut off)`);
   if (s.width < 144 - EPS) fails.push(`${at}: the strip shrank to ${s.width.toFixed(2)}px, below its 9rem floor`);
   for (const e of s.entries) {
     if (!e.inside) fails.push(`${at}: the entry "${e.text}" is cut off by the strip`);
@@ -256,7 +256,7 @@ export function runningStripFails(m, fixture, width, at) {
   // At 1280 the strip has no room for an entry, so the check above would pass with nothing cut; a cut entry must exist there.
   if (width === 1280 && !s.focus.some((e) => e.cut)) fails.push(`${at}: expected an entry cut off by the strip at 1280, found none, so the focus check proved nothing`);
   // From 1600 up the strip has room for its entry, unless a long workspace or change name has taken it.
-  if (width >= 1600 && !(fixture.change || fixture.workspace) && s.entries.length === 0) fails.push(`${at}: from 1600 the strip shows no entry, only the All running button`);
+  if (width >= 1600 && !(fixture.change || fixture.workspace) && s.entries.length === 0) fails.push(`${at}: from 1600 the strip shows no entry, only the list button`);
   return fails;
 }
 
