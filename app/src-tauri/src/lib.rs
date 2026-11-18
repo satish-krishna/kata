@@ -2065,7 +2065,9 @@ fn sdlc_start_checks(
         .map_err(|e| e.to_string())
 }
 
-/// Accept one failing check of a repository on the base for this build. Not written yet.
+/// Accept one failing check of a repository on the base for this build, through the plugin (R5.4: one check per
+/// call). The answer is the plugin's approval or its problems as they are (R5.6). Only the engineer's own action
+/// calls this; the plugin's guard refuses the agent (R5.7).
 #[tauri::command(async)]
 fn sdlc_accept_base_check(
     steps: State<'_, steps::StepTable>,
@@ -2077,15 +2079,36 @@ fn sdlc_accept_base_check(
     accept_base_check_in(&steps, &program, &change, &repo, &check)
 }
 
-/// The accept step of `sdlc_accept_base_check`, with the program given.
+/// Why accepting a check is off while the build of the change is being prepared (R11.1).
+const BUILD_BEING_PREPARED: &str = "The build is being prepared";
+
+/// The accept step of `sdlc_accept_base_check`, with the program given. It is refused while this change's
+/// build is being prepared; another repository's live run of the change, and another change's preparation,
+/// do not refuse it, and it changes no file and stops no run.
 fn accept_base_check_in(
-    _steps: &steps::StepTable,
-    _program: &sdlc::hoshin::Program,
-    _change: &build_host::ChangeRef,
-    _repo: &str,
-    _check: &str,
+    steps: &steps::StepTable,
+    program: &sdlc::hoshin::Program,
+    change: &build_host::ChangeRef,
+    repo: &str,
+    check: &str,
 ) -> Result<sdlc::hoshin::BaselineApproved, String> {
-    Err(String::new())
+    let key = build_host::key_of(change);
+    let preparing = steps.running().iter().any(|s| {
+        s.change == key
+            && matches!(
+                s.kind,
+                steps::StepKind::PreparingBuild
+                    | steps::StepKind::CheckingBase
+                    | steps::StepKind::PreparationHook { .. }
+            )
+    });
+    if preparing {
+        return Err(BUILD_BEING_PREPARED.to_string());
+    }
+    let home = change_home(program, change)?;
+    program
+        .baseline_approve(&home.place, &change.change, repo, check)
+        .map_err(|e| e.to_string())
 }
 
 /// Declare a change done through the plugin: it verifies the change, pushes every touched repository and
