@@ -18,3 +18,15 @@ notes: |
   format_conformance.rs needed no edit: both its version assertions use MIN_VERSION, which the vendored VERSION file (now 1.1.0) satisfies.
   The vendored tools came from D:\workspaces\hoshin at tag v1.1.0.
 ```
+
+### T2
+
+```yaml
+task: T2
+commits: ["9317284", "b92ad5d"]
+red: observed
+notes: |
+  StripCounts fields are u32 (number in the binding); EntryKind derives no Serialize or TS, since only StripCounts crosses to the frontend.
+  strip_counts_by_kind_r13_1 also covers an empty strip (zero counts) and one kind_of assertion per EntryState variant.
+  later_run_brings_the_change_back_r14_2 passed once written, as the plan says.
+```
