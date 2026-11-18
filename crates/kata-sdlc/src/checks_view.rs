@@ -440,6 +440,42 @@ fn other_reason(start: &RunRecord) -> StartShown {
     }
 }
 
+/// The failure shown for a `build.finish` record that failed or could not run. `base` holds the repository's
+/// checks on the base: a check that failed there failed at finish naming failures this build added, and one
+/// that passed or has no result there passed on the base. The hook's `onFailure` says what happened next.
+fn finish_failure(finish: &RunRecord, base: &[BaseCheck]) -> FinishFailure {
+    let check = finish.failed.as_ref().map(|f| f.id.clone());
+    let output = check
+        .as_ref()
+        .and_then(|id| finish.hooks.iter().find(|h| &h.id == id))
+        .map(|h| h.output.clone())
+        .filter(|o| !o.is_empty())
+        .unwrap_or_else(|| finish.problems.join("\n"));
+    let failed_on_base = check.as_ref().is_some_and(|id| {
+        base.iter()
+            .any(|c| &c.check == id && c.state == BaseCheckState::Failed)
+    });
+    FinishFailure {
+        passed: finish
+            .hooks
+            .iter()
+            .filter(|h| h.outcome == "passed" && Some(&h.id) != check.as_ref())
+            .count() as u32,
+        base: if failed_on_base {
+            FinishBase::AddedFailures
+        } else {
+            FinishBase::Passed
+        },
+        next: match finish.failed.as_ref().map(|f| f.on_failure) {
+            Some(OnFailure::Fix) => FinishNext::SentBackNotFixed,
+            _ => FinishNext::Stopped,
+        },
+        check: check.unwrap_or_default(),
+        output,
+        can_accept: false,
+    }
+}
+
 /// What the Build tab shows for each of `repos`, in order, from the first row of this table that matches
 /// (R8.1). The latest `build.start` record of the repository decides; a `build.finish` record counts only
 /// when it comes after that start.
@@ -512,7 +548,11 @@ pub fn start_checks(
                     Some("failed" | "could-not-run") => StartShown::FinishFailure,
                     _ => StartShown::UnderWay,
                 };
-                return Ok(of(shown, String::new(), None));
+                let mut shown = of(shown, String::new(), None);
+                if shown.shown == StartShown::FinishFailure {
+                    shown.finish = finish.map(|f| finish_failure(f, &shown.checks));
+                }
+                return Ok(shown);
             }
             let recorded = start
                 .details
