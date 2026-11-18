@@ -819,6 +819,22 @@ pub struct BaselineApproved {
     pub problems: Vec<String>,
 }
 
+/// Fails with the program's problems when it listed any: a read with problems is no answer.
+fn no_problems(answer: &Value, what: &str) -> Result<(), ProgramError> {
+    let problems = strings(&answer["problems"]);
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(could_not_run(format!("{what}: {}", problems.join("; "))))
+    }
+}
+
+fn unreadable(what: &str, e: serde_json::Error) -> ProgramError {
+    could_not_run(format!(
+        "the {what} answer is not what this version reads: {e}"
+    ))
+}
+
 impl Program {
     /// Reads the check events of `change` in `repo`. A non-empty `problems` is an error.
     pub fn checks(
@@ -827,8 +843,12 @@ impl Program {
         change: &str,
         repo: &str,
     ) -> Result<ChecksAnswer, ProgramError> {
-        let _ = (place, change, repo);
-        Ok(ChecksAnswer::default())
+        let answer = self.run(
+            &["checks", "--json", "--change", change, "--repo", repo],
+            place,
+        )?;
+        no_problems(&answer, "checks")?;
+        serde_json::from_value(answer).map_err(|e| unreadable("checks", e))
     }
 
     /// Reads the stored baseline of `repo` for `change`; runs nothing. A non-empty `problems` is an error.
@@ -838,8 +858,14 @@ impl Program {
         change: &str,
         repo: &str,
     ) -> Result<BaselineShow, ProgramError> {
-        let _ = (place, change, repo);
-        Ok(BaselineShow::default())
+        let answer = self.run(
+            &[
+                "baseline", "show", "--json", "--change", change, "--repo", repo,
+            ],
+            place,
+        )?;
+        no_problems(&answer, "baseline show")?;
+        serde_json::from_value(answer).map_err(|e| unreadable("baseline show", e))
     }
 
     /// Accepts the failing check `hook` on the base for `change` in `repo`. The answer carries the
@@ -851,8 +877,13 @@ impl Program {
         repo: &str,
         hook: &str,
     ) -> Result<BaselineApproved, ProgramError> {
-        let _ = (place, change, repo, hook);
-        Ok(BaselineApproved::default())
+        let answer = self.run(
+            &[
+                "baseline", "approve", "--json", "--change", change, "--repo", repo, "--hook", hook,
+            ],
+            place,
+        )?;
+        serde_json::from_value(answer).map_err(|e| unreadable("baseline approve", e))
     }
 }
 
