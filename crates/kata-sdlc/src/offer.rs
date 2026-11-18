@@ -3,6 +3,8 @@
 //! The frontend arranges this answer; it decides nothing.
 use crate::copy_removal::CopyRemoval;
 use crate::hoshin::state::{ChangeState, ChangeTrack, SourcePin, StateDocument};
+use crate::hoshin::status::Status;
+use crate::hoshin::ChecksAnswer;
 use serde::{Deserialize, Serialize};
 
 /// What only the Workbench knows about a change right now. Per change: another change's run never counts.
@@ -17,6 +19,32 @@ pub struct LiveFacts {
     pub build_stopped: bool,
     /// Its build is live.
     pub build_live: bool,
+    /// This Workbench has run a build of this change since it was opened, so it knows where that build stands.
+    pub stopped_here: bool,
+}
+
+/// A start of the build that may be running in another session.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct Elsewhere {
+    /// The repositories whose build the record shows started and not finished.
+    pub repos: Vec<String>,
+    /// When the earliest of those starts was recorded.
+    pub since: String,
+    /// The check on the base reported running now, when one is.
+    pub running_check: Option<String>,
+}
+
+/// Whether a start of the build may be running elsewhere.
+pub fn may_be_running_elsewhere(
+    _status: &Status,
+    _checks: &[ChecksAnswer],
+    _live: &LiveFacts,
+    _repos: &[String],
+) -> Option<Elsewhere> {
+    None
 }
 
 /// Why an accepted plan cannot be built.
@@ -489,7 +517,82 @@ mod tests {
         run_live: false,
         build_stopped: false,
         build_live: false,
+        stopped_here: false,
     };
+
+    // R9.1
+    #[test]
+    fn may_be_running_elsewhere_rows() {
+        use serde_json::json;
+        let status = |runs: serde_json::Value| -> Status {
+            serde_json::from_value(json!({"repos": [{"repo": "kata", "runs": runs}]})).unwrap()
+        };
+        let run = |event: &str, outcome: &str, at: &str| {
+            json!({"event": event, "key": "k", "outcome": outcome, "at": at})
+        };
+        let started = status(json!([run("build.start", "passed", "2026-11-16T10:00:00Z")]));
+        let finished = status(json!([
+            run("build.start", "passed", "2026-11-16T10:00:00Z"),
+            run("build.finish", "passed", "2026-11-16T11:00:00Z")
+        ]));
+        let none = Status { repos: vec![] };
+        let base = |state: &str| -> ChecksAnswer {
+            serde_json::from_value(json!({
+                "system": "s", "change": "c",
+                "runs": [{"run": "r1", "event": "build.start", "repo": "kata", "phase": "baseline",
+                    "checks": [{"check": "unit", "state": state, "startedAt": null, "endedAt": null,
+                        "timeout": null, "outcome": null, "ids": null, "blocks": null}]}]
+            }))
+            .unwrap()
+        };
+        let repos = vec!["kata".to_string()];
+        let here = LiveFacts {
+            stopped_here: true,
+            ..NOT_LIVE
+        };
+        let elsewhere = |repos: &[&str], since: &str, check: Option<&str>| {
+            Some(Elsewhere {
+                repos: repos.iter().map(|r| r.to_string()).collect(),
+                since: since.to_string(),
+                running_check: check.map(String::from),
+            })
+        };
+        // Row 1: started and not finished, nothing known here.
+        assert_eq!(
+            may_be_running_elsewhere(&started, &[base("ended")], &NOT_LIVE, &repos),
+            elsewhere(&["kata"], "2026-11-16T10:00:00Z", None)
+        );
+        // Row 2: the same record, but this Workbench stopped it itself.
+        assert_eq!(
+            may_be_running_elsewhere(&started, &[], &here, &repos),
+            None
+        );
+        // Row 3: not started, or finished.
+        assert_eq!(
+            may_be_running_elsewhere(&none, &[], &NOT_LIVE, &repos),
+            None
+        );
+        assert_eq!(
+            may_be_running_elsewhere(&finished, &[], &NOT_LIVE, &repos),
+            None
+        );
+        // Row 4: started and not finished, a check on the base running now.
+        assert_eq!(
+            may_be_running_elsewhere(&started, &[base("running")], &NOT_LIVE, &repos),
+            elsewhere(&["kata"], "2026-11-16T10:00:00Z", Some("unit"))
+        );
+        // A live build of this change here is known, not elsewhere.
+        let live = LiveFacts {
+            build_live: true,
+            ..NOT_LIVE
+        };
+        assert_eq!(may_be_running_elsewhere(&started, &[], &live, &repos), None);
+        // A repository the next start does not need does not count.
+        assert_eq!(
+            may_be_running_elsewhere(&started, &[], &NOT_LIVE, &["other".to_string()]),
+            None
+        );
+    }
 
     fn accepted_doc(pin: Option<SourcePin>) -> StateDocument {
         StateDocument {

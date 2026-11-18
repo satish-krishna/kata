@@ -1477,6 +1477,7 @@ fn live_facts_of<C>(table: &RunTable<C>, system: &str, change: &str) -> sdlc::of
         run_live: table.change_live(system, change),
         build_stopped: false,
         build_live: table.group_live(&format!("build:{system}/{change}")),
+        stopped_here: false,
     }
 }
 

@@ -174,6 +174,13 @@ pub enum StartOutcome {
         output: String,
         repo: Option<String>,
     },
+    /// The record shows the build started and not finished, and no run of it is known here: nothing started.
+    /// The page asks, and starts again with `even_if_elsewhere` when the engineer confirms.
+    MayBeRunningElsewhere {
+        repos: Vec<String>,
+        since: String,
+        running_check: Option<String>,
+    },
     /// The engineer stopped the preparation; nothing was launched. `prepared` names the repositories the
     /// plugin had prepared before the stop, in plan order.
     Stopped { prepared: Vec<String> },
@@ -681,6 +688,17 @@ impl BuildHost {
     /// Start `change`'s build: nothing starts unless every repository it needs is free and the
     /// plugin's `build.start` passes in all of them.
     pub fn start(self: &Arc<Self>, change: &ChangeRef, form: StartForm) -> StartOutcome {
+        self.start_with(change, form, false)
+    }
+
+    /// [`BuildHost::start`], and with `even_if_elsewhere` the start goes ahead although the record shows the
+    /// build started and not finished and this Workbench knows no run of it.
+    pub fn start_with(
+        self: &Arc<Self>,
+        change: &ChangeRef,
+        form: StartForm,
+        _even_if_elsewhere: bool,
+    ) -> StartOutcome {
         self.begin(change, Some(form), None, None, StepKind::PreparingBuild)
     }
 
@@ -691,6 +709,17 @@ impl BuildHost {
         change: &ChangeRef,
         repo: &str,
         off: Option<Vec<String>>,
+    ) -> StartOutcome {
+        self.continue_repo(change, repo, off, false)
+    }
+
+    /// [`BuildHost::continue_with`], and with `even_if_elsewhere` it goes ahead as [`BuildHost::start_with`] does.
+    pub fn continue_repo(
+        self: &Arc<Self>,
+        change: &ChangeRef,
+        repo: &str,
+        off: Option<Vec<String>>,
+        _even_if_elsewhere: bool,
     ) -> StartOutcome {
         self.begin(change, None, Some(repo), off, StepKind::PreparingBuild)
     }
@@ -2262,6 +2291,8 @@ mod tests {
         lines: Mutex<HashMap<String, Vec<String>>>,
         /// What `checks` and `hooks` answer, and how many times `checks` was read.
         checks_answer: Mutex<Option<Value>>,
+        /// What `status` answers; none is an empty ledger.
+        status_answer: Mutex<Option<Value>>,
         hooks_answer: Mutex<Option<Value>>,
         check_reads: std::sync::atomic::AtomicUsize,
     }
@@ -2289,6 +2320,7 @@ mod tests {
                 probe: Mutex::new(None),
                 lines: Mutex::new(HashMap::new()),
                 checks_answer: Mutex::new(None),
+                status_answer: Mutex::new(None),
                 hooks_answer: Mutex::new(None),
                 check_reads: std::sync::atomic::AtomicUsize::new(0),
             })
@@ -2484,6 +2516,14 @@ mod tests {
                 return Ok(self.checks_answer.lock().unwrap().clone().unwrap_or_else(
                     || json!({"system": SYSTEM, "change": "x", "runs": [], "problems": []}),
                 ));
+            }
+            if command.first() == Some(&"status") {
+                return Ok(self
+                    .status_answer
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(|| json!({"repos": []})));
             }
             if command.first() == Some(&"hooks") {
                 return Ok(self
@@ -3283,6 +3323,92 @@ mod tests {
             StartOutcome::AlreadyRunning
         );
         assert_eq!(r.launcher.launched("kata").len(), 1);
+    }
+
+    // R9.1, R9.2
+    #[test]
+    fn start_asks_when_the_build_may_run_elsewhere_r9_1() {
+        const SINCE: &str = "2026-11-16T10:00:00Z";
+        let ledger = |runs: Vec<Value>| json!({"repos": [{"repo": "kata", "runs": runs}]});
+        let run = |event: &str| json!({"event": event, "key": "k", "outcome": "passed", "at": SINCE});
+        let started = || ledger(vec![run("build.start")]);
+        let ask = |running_check: Option<&str>| StartOutcome::MayBeRunningElsewhere {
+            repos: strs(&["kata"]),
+            since: SINCE.to_string(),
+            running_check: running_check.map(String::from),
+        };
+        let rig_with_status = |status: Option<Value>| {
+            let r = rig();
+            r.simple("A", &["kata"]);
+            *r.tools.status_answer.lock().unwrap() = status;
+            r
+        };
+
+        // Row 1: started and not finished, nothing known here: it asks, and starts nothing.
+        let r = rig_with_status(Some(started()));
+        assert_eq!(r.host.start_with(&cref("A"), form(), false), ask(None));
+        assert_eq!(r.launcher.count(), 0, "row 1: nothing started");
+        assert!(r.tools.real_starts("A").is_empty(), "row 1: nothing prepared");
+        // The same through the continue command.
+        assert_eq!(
+            r.host.continue_repo(&cref("A"), "kata", None, false),
+            ask(None)
+        );
+        assert_eq!(r.launcher.count(), 0);
+        // Confirming starts the build as usual (R9.2); the question held nothing back.
+        assert!(matches!(
+            r.host.start_with(&cref("A"), form(), true),
+            StartOutcome::Started { .. }
+        ));
+        assert_eq!(r.launcher.launched("kata").len(), 1);
+
+        // Row 2: this Workbench ran the build and it stopped since: it starts without asking.
+        let r = rig_with_status(None);
+        assert!(matches!(
+            r.host.start_with(&cref("A"), form(), true),
+            StartOutcome::Started { .. }
+        ));
+        r.launcher.finish(r.launcher.launched("kata")[0], 1);
+        *r.tools.status_answer.lock().unwrap() = Some(started());
+        assert!(
+            matches!(
+                r.host.start_with(&cref("A"), form(), false),
+                StartOutcome::Started { .. }
+            ),
+            "row 2"
+        );
+
+        // Row 3: not started, or finished: it starts without asking.
+        for (label, status) in [
+            ("not started", None),
+            (
+                "finished",
+                Some(ledger(vec![run("build.start"), run("build.finish")])),
+            ),
+        ] {
+            let r = rig_with_status(status);
+            assert!(
+                matches!(
+                    r.host.start_with(&cref("A"), form(), false),
+                    StartOutcome::Started { .. }
+                ),
+                "row 3: {label}"
+            );
+        }
+
+        // Row 4: started and not finished, a check on the base running now: it names the check.
+        let r = rig_with_status(Some(started()));
+        *r.tools.checks_answer.lock().unwrap() = Some(
+            json!({"system": SYSTEM, "change": "A", "problems": [],
+            "runs": [{"run": "r1", "event": "build.start", "repo": "kata", "phase": "baseline",
+                "checks": [{"check": "unit", "state": "running", "startedAt": SINCE, "endedAt": null,
+                    "timeout": 600, "outcome": null, "ids": null, "blocks": null}]}]}),
+        );
+        assert_eq!(
+            r.host.start_with(&cref("A"), form(), false),
+            ask(Some("unit"))
+        );
+        assert_eq!(r.launcher.count(), 0, "row 4: nothing started");
     }
 
     // R11.5
