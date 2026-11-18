@@ -144,3 +144,23 @@ notes: |
   Test helpers Fx, fixture() and real_program() in lib.rs's steps_commands test module became pub(super).
   The command is registered but no transport method or UI calls it yet; T15 wires it.
 ```
+
+### T10
+
+```yaml
+task: T10
+commits: ["382ca2c", "d932ec5"]
+departure: |
+  T10 files: app/src/app/lib/sdlc-mock.ts and app/src/app/sdlc/home/sdlc-home.view-model.spec.ts gained stoppedHere: false on their LiveFacts literals, to type-check.
+  T10 Change: sdlc_build_start and sdlc_build_continue take even_if_elsewhere as Option<bool>, a missing value read as false, not a required bool, because the frontend transport does not send it until T17 wires it.
+  rule 5: the shared test fake FakeTools::run answers status without recording it in calls, because existing tests assert that no calls were made for a change and status is a read of the record, not a build step; no assertion changed.
+red: observed
+notes: |
+  BuildHost gained start_with(change, form, even_if_elsewhere) and continue_repo(change, repo, off, even_if_elsewhere); start and continue_with stay as #[cfg(test)] wrappers passing false.
+  offer::may_be_running_elsewhere keeps the planned signature (status, checks, live, repos) -> Option<Elsewhere>; LiveFacts gained stopped_here; Elsewhere is exported to TypeScript; StartOutcome gained MayBeRunningElsewhere { repos, since, running_check }.
+  A repository is asked about when its latest passed build.start has no later build.finish; since is the earliest such start's at; running_check is the first Running check in the latest baseline run of an open repository.
+  The host reads status first and checks only for open repositories; a failed read of either comes back as CouldNotRun.
+  stopped_here comes from the host's memory of the changes this Workbench ran a build of since it opened (ran_here, keyed by workspace folder, system and change).
+  A review start never asks (even_if_elsewhere passed as true internally).
+  live_facts in lib.rs takes the build host and the folder; sdlc_state, sdlc_home_open, sdlc_change_state and sdlc_open_change gained a host state parameter.
+```
