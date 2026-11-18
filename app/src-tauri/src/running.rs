@@ -151,8 +151,15 @@ pub struct StripCounts {
 }
 
 /// Which kind an entry counts as.
-pub fn kind_of(_state: &EntryState) -> EntryKind {
-    todo!("kind_of")
+pub fn kind_of(state: &EntryState) -> EntryKind {
+    match state {
+        EntryState::Working { .. } => EntryKind::Running,
+        EntryState::NeedsAnswer { .. }
+        | EntryState::NeedsPermission { .. }
+        | EntryState::Stopped { .. } => EntryKind::NeedsYou,
+        EntryState::Held { .. } | EntryState::ReviewWaiting { .. } => EntryKind::Waiting,
+        EntryState::Finished => EntryKind::Finished,
+    }
 }
 
 /// When the engineer last opened each change and when its last run last ended, in one counter, so
@@ -390,11 +397,16 @@ pub fn entries(
         ))
     });
     let shown = all.iter().take(SHOWN).cloned().collect();
-    RunningStrip {
-        shown,
-        all,
-        counts: StripCounts::default(),
+    let mut counts = StripCounts::default();
+    for e in &all {
+        match kind_of(&e.state) {
+            EntryKind::Running => counts.running += 1,
+            EntryKind::NeedsYou => counts.needs_you += 1,
+            EntryKind::Waiting => counts.waiting += 1,
+            EntryKind::Finished => counts.finished += 1,
+        }
     }
+    RunningStrip { shown, all, counts }
 }
 
 /// Name each entry's workspace by its id in the workspace list, so the webview compares equal strings
