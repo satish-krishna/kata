@@ -520,8 +520,9 @@ fn sdlc_build_start(
     host: State<Arc<build_host::BuildHost>>,
     change: build_host::ChangeRef,
     form: build_host::StartForm,
+    even_if_elsewhere: Option<bool>,
 ) -> build_host::StartOutcome {
-    let outcome = host.start(&change, form);
+    let outcome = host.start_with(&change, form, even_if_elsewhere.unwrap_or(false));
     announce_running(&app);
     outcome
 }
@@ -534,8 +535,9 @@ fn sdlc_build_continue(
     change: build_host::ChangeRef,
     repo: String,
     off: Option<Vec<String>>,
+    even_if_elsewhere: Option<bool>,
 ) -> build_host::StartOutcome {
-    let outcome = host.continue_with(&change, &repo, off);
+    let outcome = host.continue_repo(&change, &repo, off, even_if_elsewhere.unwrap_or(false));
     announce_running(&app);
     outcome
 }
@@ -1467,8 +1469,16 @@ fn sdlc_build_heads(
 
 /// What the run table knows about a change: any of its runs (build, review or document) makes it live, and
 /// only a build or review run makes its build live. `build_stopped` is false here.
-fn live_facts(control: &RunControl, system: &str, change: &str) -> sdlc::offer::LiveFacts {
-    live_facts_of(&control.state.lock().unwrap(), system, change)
+fn live_facts(
+    control: &RunControl,
+    host: &build_host::BuildHost,
+    folder: &str,
+    system: &str,
+    change: &str,
+) -> sdlc::offer::LiveFacts {
+    let mut facts = live_facts_of(&control.state.lock().unwrap(), system, change);
+    facts.stopped_here = host.ran_here(folder, system, change);
+    facts
 }
 
 /// The live facts of a change in `table`.
@@ -1507,11 +1517,13 @@ fn state_inputs(folder: &str) -> (Option<sdlc::hoshin::Program>, sdlc::plugin::R
 #[tauri::command(async)]
 fn sdlc_state(
     control: State<'_, RunControl>,
+    host: State<'_, Arc<build_host::BuildHost>>,
     folder: String,
     systems: Vec<String>,
 ) -> Result<sdlc_state::WorkspaceView, String> {
     let (program, readiness) = state_inputs(&folder);
     let control: &RunControl = &control;
+    let host: &build_host::BuildHost = &host;
     let views = std::thread::scope(|scope| {
         let reads: Vec<_> = systems
             .iter()
@@ -1522,7 +1534,7 @@ fn sdlc_state(
                     sdlc_state::system_view(
                         source,
                         readiness,
-                        &|s, c| live_facts(control, s, c),
+                        &|s, c| live_facts(control, host, folder, s, c),
                         Path::new(folder),
                         system,
                     )
@@ -1585,6 +1597,7 @@ fn sdlc_home_pick(
 #[tauri::command(async)]
 fn sdlc_home_open(
     control: State<'_, RunControl>,
+    host: State<'_, Arc<build_host::BuildHost>>,
     memory: State<'_, sdlc_home::HomeMemory>,
     folder: String,
     system: String,
@@ -1598,7 +1611,7 @@ fn sdlc_home_open(
     sdlc_home::home_open(
         &program,
         &readiness,
-        &|s, c| live_facts(&control, s, c),
+        &|s, c| live_facts(&control, &host, &folder, s, c),
         Path::new(&folder),
         layout,
         &system,
@@ -1625,6 +1638,7 @@ fn sdlc_home_pull_requests(
 #[tauri::command(async)]
 fn sdlc_change_state(
     control: State<'_, RunControl>,
+    host: State<'_, Arc<build_host::BuildHost>>,
     folder: String,
     system: String,
     change: String,
@@ -1634,7 +1648,7 @@ fn sdlc_change_state(
     let mut view = sdlc_state::change_view(
         source,
         &readiness,
-        &|s, c| live_facts(&control, s, c),
+        &|s, c| live_facts(&control, &host, &folder, s, c),
         Path::new(&folder),
         &system,
         &change,
@@ -1943,6 +1957,7 @@ fn resolved(
 #[tauri::command(async)]
 fn sdlc_open_change(
     control: State<'_, RunControl>,
+    host: State<'_, Arc<build_host::BuildHost>>,
     change: build_host::ChangeRef,
     doc: String,
 ) -> Result<OpenedChange, String> {
@@ -1950,7 +1965,13 @@ fn sdlc_open_change(
     let plugin_dir = plugin_of(&readiness).map_err(|e| e.to_string())?;
     let program = sdlc::hoshin::Program::locate(&plugin_dir);
     let home = change_home(&program, &change)?;
-    let live = live_facts(&control, &change.system, &change.change);
+    let live = live_facts(
+        &control,
+        &host,
+        &change.workspace,
+        &change.system,
+        &change.change,
+    );
     let mut opened = open_change_in(&home, &plugin_dir, &readiness, live, &change.system, &doc)?;
     drop_declare_done_after_earlier_declaration(
         &program,

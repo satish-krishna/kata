@@ -955,7 +955,7 @@ const stateOf = (change: string): ChangeState => ({
 const viewOf = (change: string, text: string, readiness: Readiness): ChangeView => ({
   state: stateOf(change),
   offer: { stage: 'spec-ready', label: { step: 'spec', text, tone: 'muted' }, actions: [] },
-  live: { runLive: false, buildStopped: false, buildLive: false },
+  live: { runLive: false, buildStopped: false, buildLive: false, stoppedHere: false },
   readiness,
 });
 const READY: Readiness = { kind: 'ready', plugin: { dir: '/p', version: '1.0.0', layouts: [1, 2] }, gh: 'present' };

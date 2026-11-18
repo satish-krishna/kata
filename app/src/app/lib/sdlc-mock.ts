@@ -710,7 +710,7 @@ export function changeViewOf(
   refused: Partial<Record<StageAction, string>> = {},
   copy: string | null = null,
 ): ChangeView {
-  const live: LiveFacts = { runLive: false, buildStopped: false, buildLive: false };
+  const live: LiveFacts = { runLive: false, buildStopped: false, buildLive: false, stoppedHere: false };
   // A fix stands at the row of its own table whatever its plan reads as; only the full pipeline has a stage for an unreadable plan.
   const shown: ChangeInfo = c.plan_unreadable && c.track !== 'fix' ? { ...c, stage: 'plan-unreadable' } : c;
   const stop = refused['start-build'] ?? refused['continue-build'] ?? null;

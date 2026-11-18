@@ -4,7 +4,7 @@
 use crate::copy_removal::CopyRemoval;
 use crate::hoshin::state::{ChangeState, ChangeTrack, SourcePin, StateDocument};
 use crate::hoshin::status::Status;
-use crate::hoshin::ChecksAnswer;
+use crate::hoshin::{CheckState, ChecksAnswer};
 use serde::{Deserialize, Serialize};
 
 /// What only the Workbench knows about a change right now. Per change: another change's run never counts.
@@ -38,13 +38,60 @@ pub struct Elsewhere {
 }
 
 /// Whether a start of the build may be running elsewhere.
+///
+/// It may when, for a repository the next start needs, the record shows a `build.start` that passed with no
+/// later `build.finish`, and this Workbench has neither a live build of the change nor ran one since it was
+/// opened. A check on the base that `checks` reports running for such a repository names the check: the build
+/// is running in another session now.
 pub fn may_be_running_elsewhere(
-    _status: &Status,
-    _checks: &[ChecksAnswer],
-    _live: &LiveFacts,
-    _repos: &[String],
+    status: &Status,
+    checks: &[ChecksAnswer],
+    live: &LiveFacts,
+    repos: &[String],
 ) -> Option<Elsewhere> {
-    None
+    if live.build_live || live.stopped_here {
+        return None;
+    }
+    let mut open: Vec<String> = Vec::new();
+    let mut since: Option<String> = None;
+    for repo in repos {
+        let runs: Vec<_> = status
+            .repos
+            .iter()
+            .filter(|r| &r.repo == repo)
+            .flat_map(|r| r.runs.iter())
+            .collect();
+        let Some(start) = runs
+            .iter()
+            .rposition(|r| r.event == "build.start" && r.outcome == "passed")
+        else {
+            continue;
+        };
+        if runs[start + 1..].iter().any(|r| r.event == "build.finish") {
+            continue;
+        }
+        open.push(repo.clone());
+        let at = runs[start].at.clone().unwrap_or_default();
+        if since.as_ref().is_none_or(|s| at < *s) {
+            since = Some(at);
+        }
+    }
+    if open.is_empty() {
+        return None;
+    }
+    let running_check = open.iter().find_map(|repo| {
+        checks
+            .iter()
+            .flat_map(|a| a.runs.iter())
+            .rfind(|run| run.phase == "baseline" && &run.repo == repo)
+            .and_then(|run| run.checks.iter().find(|c| c.state == CheckState::Running))
+            .map(|c| c.check.clone())
+    });
+    Some(Elsewhere {
+        repos: open,
+        since: since.unwrap_or_default(),
+        running_check,
+    })
 }
 
 /// Why an accepted plan cannot be built.
@@ -527,10 +574,12 @@ mod tests {
         let status = |runs: serde_json::Value| -> Status {
             serde_json::from_value(json!({"repos": [{"repo": "kata", "runs": runs}]})).unwrap()
         };
-        let run = |event: &str, outcome: &str, at: &str| {
-            json!({"event": event, "key": "k", "outcome": outcome, "at": at})
-        };
-        let started = status(json!([run("build.start", "passed", "2026-11-16T10:00:00Z")]));
+        let run = |event: &str, outcome: &str, at: &str| json!({"event": event, "key": "k", "outcome": outcome, "at": at});
+        let started = status(json!([run(
+            "build.start",
+            "passed",
+            "2026-11-16T10:00:00Z"
+        )]));
         let finished = status(json!([
             run("build.start", "passed", "2026-11-16T10:00:00Z"),
             run("build.finish", "passed", "2026-11-16T11:00:00Z")
@@ -563,10 +612,7 @@ mod tests {
             elsewhere(&["kata"], "2026-11-16T10:00:00Z", None)
         );
         // Row 2: the same record, but this Workbench stopped it itself.
-        assert_eq!(
-            may_be_running_elsewhere(&started, &[], &here, &repos),
-            None
-        );
+        assert_eq!(may_be_running_elsewhere(&started, &[], &here, &repos), None);
         // Row 3: not started, or finished.
         assert_eq!(
             may_be_running_elsewhere(&none, &[], &NOT_LIVE, &repos),

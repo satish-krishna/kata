@@ -31,7 +31,7 @@ use kata_sdlc::round::{self, RoundOffer, RoundPicks, RoundPlan, RoundRequest};
 use kata_sdlc::runspec::{change_spec, given_for, RunForm};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -503,6 +503,8 @@ struct Inner {
     /// The last start of each change that another change held, with when; cleared when the change
     /// is started again and gets its repositories.
     held_starts: HashMap<ChangeKey, (Vec<HeldRepo>, u64)>,
+    /// The changes this Workbench has run a build of since it was opened, whether or not it still runs.
+    ran_here: HashSet<ChangeKey>,
     next_generation: u64,
     /// The Workbench is closing: no run of any change is launched any more.
     stopped: bool,
@@ -672,6 +674,7 @@ impl BuildHost {
                 holds: HoldTable::default(),
                 migrating: Vec::new(),
                 held_starts: HashMap::new(),
+                ran_here: HashSet::new(),
                 next_generation: 0,
                 stopped: false,
             }),
@@ -685,8 +688,9 @@ impl BuildHost {
             .store(every.as_millis() as u64, Ordering::Relaxed);
     }
 
-    /// Start `change`'s build: nothing starts unless every repository it needs is free and the
+    /// Start `change`'s build, asking first (`start_with` with `even_if_elsewhere` false): nothing starts unless every repository it needs is free and the
     /// plugin's `build.start` passes in all of them.
+    #[cfg(test)]
     pub fn start(self: &Arc<Self>, change: &ChangeRef, form: StartForm) -> StartOutcome {
         self.start_with(change, form, false)
     }
@@ -697,13 +701,21 @@ impl BuildHost {
         self: &Arc<Self>,
         change: &ChangeRef,
         form: StartForm,
-        _even_if_elsewhere: bool,
+        even_if_elsewhere: bool,
     ) -> StartOutcome {
-        self.begin(change, Some(form), None, None, StepKind::PreparingBuild)
+        self.begin(
+            change,
+            Some(form),
+            None,
+            None,
+            StepKind::PreparingBuild,
+            even_if_elsewhere,
+        )
     }
 
     /// Continue `change`'s build in `repo` with the given items the engineer switched off in the preview
     /// (none: the build's own); a build with no live run is rebuilt from where the change stands.
+    #[cfg(test)]
     pub fn continue_with(
         self: &Arc<Self>,
         change: &ChangeRef,
@@ -719,9 +731,16 @@ impl BuildHost {
         change: &ChangeRef,
         repo: &str,
         off: Option<Vec<String>>,
-        _even_if_elsewhere: bool,
+        even_if_elsewhere: bool,
     ) -> StartOutcome {
-        self.begin(change, None, Some(repo), off, StepKind::PreparingBuild)
+        self.begin(
+            change,
+            None,
+            Some(repo),
+            off,
+            StepKind::PreparingBuild,
+            even_if_elsewhere,
+        )
     }
 
     /// Start a document run (intent, spec, plan, triage or fix) of an existing change: the change's
@@ -899,7 +918,8 @@ impl BuildHost {
                 held: held_repos(held),
             };
         }
-        let outcome = self.begin(change, None, None, off, StepKind::PreparingReview);
+        // A review does not ask: the question is about the build.
+        let outcome = self.begin(change, None, None, off, StepKind::PreparingReview, true);
         // The hold stays only with a review that is running.
         let mut guard = self.inner.lock().unwrap();
         let reviewing = guard
@@ -1268,6 +1288,7 @@ impl BuildHost {
         only: Option<&str>,
         off: Option<Vec<String>>,
         kind: StepKind,
+        even_if_elsewhere: bool,
     ) -> StartOutcome {
         let place = match self.tools.resolve(Path::new(&change.workspace)) {
             Ok(p) => p,
@@ -1293,6 +1314,7 @@ impl BuildHost {
                 generation: existing.map(|b| b.generation),
                 form: existing.map(|b| b.form.clone()),
                 off,
+                even_if_elsewhere,
             };
             // The change's long step: a second start, or any other step of the change, is refused as busy.
             let Ok(step) = self.steps.begin(key.clone(), kind) else {
@@ -1320,6 +1342,7 @@ impl BuildHost {
             generation: existing_generation,
             form: existing_form,
             off,
+            even_if_elsewhere,
         } = before;
         let mut form = form.or(existing_form).unwrap_or(StartForm {
             timeout_secs: DEFAULT_TIMEOUT_SECS,
@@ -1354,6 +1377,27 @@ impl BuildHost {
             }
             _ => needed_repos(&plan, &snapshot.state, &rounds, &master),
         };
+        // Before anything is held or prepared: a build the record shows started and not finished, and
+        // that this Workbench knows nothing of, may be running in another session (R9.1).
+        if !even_if_elsewhere {
+            let live = kata_sdlc::offer::LiveFacts {
+                run_live: false,
+                build_stopped: false,
+                build_live: live_build,
+                stopped_here: self.inner.lock().unwrap().ran_here.contains(key),
+            };
+            match self.running_elsewhere(place, change, &needed, &live) {
+                Ok(Some(e)) => {
+                    return StartOutcome::MayBeRunningElsewhere {
+                        repos: e.repos,
+                        since: e.since,
+                        running_check: e.running_check,
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => return could_not_run(&e),
+            }
+        }
         let folders = keys_for(place.layout, &place.master, &place.workspace, &needed);
         // The one step that must be atomic: the first change to ask for a repository gets it.
         let taken = {
@@ -1427,6 +1471,7 @@ impl BuildHost {
                 };
                 guard.next_generation += 1;
                 let generation = guard.next_generation;
+                guard.ran_here.insert(key.clone());
                 replaced = guard.builds.insert(
                     key.clone(),
                     Build {
@@ -1496,6 +1541,60 @@ impl BuildHost {
         let mut uncommitted = uncommitted;
         uncommitted.extend(driven.uncommitted);
         StartOutcome::Started { uncommitted }
+    }
+
+    /// Whether this Workbench has run a build of the change since it was opened. It only reads.
+    pub fn ran_here(&self, workspace: &str, system: &str, change: &str) -> bool {
+        let key = ChangeKey {
+            workspace: RepoKey::of(Path::new(workspace)),
+            system: system.to_string(),
+            change: change.to_string(),
+        };
+        self.inner.lock().unwrap().ran_here.contains(&key)
+    }
+
+    /// Whether a start of `needed` may be running elsewhere: the ledger first, and the checks on the base
+    /// only for the repositories it shows started and not finished.
+    fn running_elsewhere(
+        &self,
+        place: &Place,
+        change: &ChangeRef,
+        needed: &[String],
+        live: &kata_sdlc::offer::LiveFacts,
+    ) -> Result<Option<kata_sdlc::offer::Elsewhere>, ProgramError> {
+        let status: kata_sdlc::hoshin::status::Status = serde_json::from_value(
+            self.tools
+                .run(&["status", "--json", "--change", &change.change], place)?,
+        )
+        .map_err(|e| ProgramError::CouldNotRun {
+            message: format!("the status answer is not what this version reads: {e}"),
+        })?;
+        let Some(open) = kata_sdlc::offer::may_be_running_elsewhere(&status, &[], live, needed)
+        else {
+            return Ok(None);
+        };
+        let mut checks = Vec::new();
+        for repo in &open.repos {
+            let answer = self.tools.run(
+                &[
+                    "checks",
+                    "--json",
+                    "--change",
+                    &change.change,
+                    "--repo",
+                    repo,
+                ],
+                place,
+            )?;
+            checks.push(
+                serde_json::from_value(answer).map_err(|e| ProgramError::CouldNotRun {
+                    message: format!("the checks answer is not what this version reads: {e}"),
+                })?,
+            );
+        }
+        Ok(kata_sdlc::offer::may_be_running_elsewhere(
+            &status, &checks, live, needed,
+        ))
     }
 
     /// The change's state and plan as the plugin reports them now.
@@ -2132,6 +2231,8 @@ struct Before {
     form: Option<StartForm>,
     /// The choices the start was given, which become the build's.
     off: Option<Vec<String>>,
+    /// The start goes ahead without asking whether the build may be running elsewhere.
+    even_if_elsewhere: bool,
 }
 
 #[cfg(test)]
@@ -2501,6 +2602,15 @@ mod tests {
             Ok(self.place.clone())
         }
         fn run(&self, command: &[&str], _place: &Place) -> Result<Value, ProgramError> {
+            // A read of the ledger is not a step of the build: it is not a recorded call.
+            if command.first() == Some(&"status") {
+                return Ok(self
+                    .status_answer
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(|| json!({"repos": []})));
+            }
             self.calls
                 .lock()
                 .unwrap()
@@ -2516,14 +2626,6 @@ mod tests {
                 return Ok(self.checks_answer.lock().unwrap().clone().unwrap_or_else(
                     || json!({"system": SYSTEM, "change": "x", "runs": [], "problems": []}),
                 ));
-            }
-            if command.first() == Some(&"status") {
-                return Ok(self
-                    .status_answer
-                    .lock()
-                    .unwrap()
-                    .clone()
-                    .unwrap_or_else(|| json!({"repos": []})));
             }
             if command.first() == Some(&"hooks") {
                 return Ok(self
@@ -3330,7 +3432,8 @@ mod tests {
     fn start_asks_when_the_build_may_run_elsewhere_r9_1() {
         const SINCE: &str = "2026-11-16T10:00:00Z";
         let ledger = |runs: Vec<Value>| json!({"repos": [{"repo": "kata", "runs": runs}]});
-        let run = |event: &str| json!({"event": event, "key": "k", "outcome": "passed", "at": SINCE});
+        let run =
+            |event: &str| json!({"event": event, "key": "k", "outcome": "passed", "at": SINCE});
         let started = || ledger(vec![run("build.start")]);
         let ask = |running_check: Option<&str>| StartOutcome::MayBeRunningElsewhere {
             repos: strs(&["kata"]),
@@ -3348,7 +3451,10 @@ mod tests {
         let r = rig_with_status(Some(started()));
         assert_eq!(r.host.start_with(&cref("A"), form(), false), ask(None));
         assert_eq!(r.launcher.count(), 0, "row 1: nothing started");
-        assert!(r.tools.real_starts("A").is_empty(), "row 1: nothing prepared");
+        assert!(
+            r.tools.real_starts("A").is_empty(),
+            "row 1: nothing prepared"
+        );
         // The same through the continue command.
         assert_eq!(
             r.host.continue_repo(&cref("A"), "kata", None, false),
