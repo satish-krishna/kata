@@ -1,0 +1,101 @@
+<!-- Kata Workbench: build start and checks prototype (change 2026-11-16-build-checks-workbench). Opens from disk. Recreate in Angular, never copy. -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Kata Workbench: build checks prototype</title>
+<link rel="stylesheet" href="../design_system/styles.css" />
+<link rel="stylesheet" href="workbench.css" />
+<style>
+  /* Prototype-only layout. Tokens only, no color literals. */
+  html, body { margin: 0; height: 100%; }
+  [hidden] { display: none !important; }
+  .bc { display: flex; flex-direction: column; height: 100vh; background: var(--surface-app); color: var(--text-primary); font: var(--text-base)/1.4 var(--font-sans); }
+  .bc-eyebrow { margin: 0; font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-faint); }
+  .bc-mono { font-family: var(--font-mono); }
+  .bc-faint { color: var(--text-faint); }
+  .bc-muted { color: var(--text-muted); }
+
+  /* Prototype switcher (not part of the design) */
+  .bc-switch { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-5); background: var(--surface-card); border-bottom: 1px solid var(--accent-border); }
+  .bc-switch .k-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent-text); }
+
+  /* Change header */
+  .bc-change { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+  .bc-change__name { font: var(--weight-semibold) var(--text-md)/1.1 var(--font-sans); white-space: nowrap; }
+  .bc-change__meta { font: var(--text-2xs)/1 var(--font-mono); color: var(--text-faint); white-space: nowrap; }
+
+  /* The strip: tabs, status, the one progress line with its Stop, actions. One row, always. */
+  .bc-strip { flex: none; display: flex; align-items: center; gap: var(--space-4); min-height: var(--rail-toolbar); padding: 0 var(--space-5); background: var(--surface-panel); border-bottom: 1px solid var(--border-default); }
+  .bc-tabs { display: flex; gap: var(--space-1); }
+  .bc-tab { padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); color: var(--text-muted); font: var(--weight-medium) var(--text-sm)/1 var(--font-sans); }
+  .bc-tab--on { background: var(--surface-active); color: var(--text-primary); }
+  .bc-progress { display: flex; align-items: center; gap: var(--space-3); min-width: 0; font: var(--text-sm)/1 var(--font-sans); color: var(--text-secondary); }
+  .bc-progress__check { font: var(--weight-medium) var(--text-sm)/1 var(--font-mono); color: var(--text-primary); }
+  .bc-progress__count { font: var(--text-xs)/1 var(--font-mono); color: var(--text-faint); }
+  .bc-spacer { flex: 1; }
+
+  /* Page body */
+  .bc-main { flex: 1; min-height: 0; overflow: auto; }
+  .bc-page { display: flex; flex-direction: column; gap: var(--space-5); padding: var(--space-5) var(--space-6); max-width: 980px; }
+  .bc-note { margin: 0; font: var(--text-sm)/1.5 var(--font-sans); color: var(--text-muted); }
+
+  /* Check list */
+  .bc-list { display: flex; flex-direction: column; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-card); }
+  .bc-list__head { display: flex; align-items: baseline; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border-default); }
+  .bc-row { display: grid; grid-template-columns: 200px 1fr auto; align-items: center; gap: var(--space-4); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border-subtle); }
+  .bc-row:last-child { border-bottom: 0; }
+  .bc-row--now { background: var(--accent-subtle); }
+  .bc-row__name { font: var(--weight-medium) var(--text-sm)/1.2 var(--font-mono); }
+  .bc-row__what { font: var(--text-xs)/1.4 var(--font-sans); color: var(--text-muted); }
+  .bc-row__time { font: var(--text-xs)/1 var(--font-mono); color: var(--text-faint); text-align: right; white-space: nowrap; }
+
+  /* The one failure panel: on the page, never also in a dialog */
+  .bc-fail { display: flex; flex-direction: column; border: 1px solid var(--error-border); border-radius: var(--radius-md); background: var(--surface-card); }
+  .bc-fail__head { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); border-bottom: 1px solid var(--border-subtle); background: var(--error-subtle); border-radius: var(--radius-md) var(--radius-md) 0 0; }
+  .bc-fail--settled { border-color: var(--border-default); }
+  .bc-fail--settled .bc-fail__head { background: var(--surface-inset); }
+  .bc-hint .k-status { white-space: nowrap; }
+  .bc-fail__title { margin: 0; font: var(--weight-semibold) var(--text-md)/1.3 var(--font-sans); }
+  .bc-item { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); border-bottom: 1px solid var(--border-subtle); }
+  .bc-item:last-child { border-bottom: 0; }
+  .bc-item__top { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+  .bc-item__why { margin: 0; font: var(--text-sm)/1.5 var(--font-sans); color: var(--text-secondary); max-width: 72ch; }
+  .bc-out { margin: 0; padding: var(--space-3) var(--space-4); max-height: 260px; overflow: auto; background: var(--surface-inset); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); font: var(--font-code-sm); color: var(--text-secondary); white-space: pre-wrap; }
+  .bc-out__foot { font: var(--text-2xs)/1 var(--font-mono); color: var(--text-faint); }
+  .bc-hint { display: flex; gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 1px solid var(--warning-border); border-radius: var(--radius-sm); background: var(--warning-subtle); color: var(--warning-text); font: var(--text-sm)/1.5 var(--font-sans); }
+  .bc-ok { display: flex; gap: var(--space-3); align-items: center; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border-subtle); }
+  .bc-fold { padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border-subtle); font: var(--text-sm)/1 var(--font-sans); color: var(--text-muted); }
+
+  .bc-row--cut { background: var(--warning-subtle); }
+
+  /* The top bar's list of active changes (D10) */
+  .bc-act { position: relative; }
+  .bc-pop { position: absolute; top: calc(100% + var(--space-2)); left: 0; z-index: 10; min-width: 360px; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); background: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); }
+  .bc-pop__title { margin: 0; font: var(--weight-semibold) var(--text-sm)/1.2 var(--font-sans); }
+  .bc-pop__list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-1); }
+  .bc-pop__list li { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+
+  /* Running page */
+  .bc-task { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-card); }
+
+  /* Dialogs (one at a time, for a confirmation only) */
+  .bc-scrim { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--surface-app) 80%, transparent); z-index: 20; }
+  .bc-dialog { width: 520px; max-width: 90vw; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-5); background: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); }
+  .bc-dialog__title { margin: 0; font: var(--weight-semibold) var(--text-md)/1.3 var(--font-sans); }
+  .bc-dialog p { margin: 0; font: var(--text-sm)/1.55 var(--font-sans); color: var(--text-secondary); }
+  .bc-dialog__foot { display: flex; justify-content: flex-end; gap: var(--space-2); }
+  .bc-why { margin: 0; padding: var(--space-3) var(--space-4); border-left: 2px solid var(--accent-border); background: var(--surface-inset); font: var(--text-xs)/1.5 var(--font-sans); color: var(--text-muted); }
+</style>
+</head>
+<body>
+<div class="bc">
+  <nav class="bc-switch" id="switch" aria-label="Prototype screens"></nav>
+  <div class="wb-toolbar" id="toolbar"></div>
+  <div class="bc-strip" id="strip"></div>
+  <main class="bc-main" id="screen"></main>
+</div>
+<div id="overlay"></div>
+<script src="build-checks.js"></script>
+</body>
+</html>
