@@ -30,3 +30,21 @@ notes: |
   strip_counts_by_kind_r13_1 also covers an empty strip (zero counts) and one kind_of assertion per EntryState variant.
   later_run_brings_the_change_back_r14_2 passed once written, as the plan says.
 ```
+
+### T3
+
+```yaml
+task: T3
+commits: ["196530d", "1239feb", "b6f9e01"]
+departure: |
+  rule 1: the red commit carries zero-valued counts stubs in running-strip.view-model.ts and mock-transport.ts beyond tests, because T2 made counts required on RunningStrip and nothing compiled without it; they compute nothing the test asserts.
+  T3 files: app/src/app/core/transport/tauri-transport.spec.ts got counts on its fixture (compile fix only).
+  rule 5: app/src/app/sdlc/running-changes.spec.ts (outside the task's files) got counts on its strip helper, and its "All running lists every entry" test now looks for "4 running · 1 needs you" instead of "All running (5)", since the old label no longer exists.
+  T3 files: app/scripts/check-change-toolbar.mjs now expects the list button to read "1 needs you" (its fixture asks a question), so check:responsive does not fail on the old label; the gate was not run in the task.
+red: observed
+notes: |
+  The label is computed in RunningStripViewModel, as the plan's Change says; the R13 tests mount the real view-model with a fake transport and pass its label into the component.
+  With every count zero the label is '' and no button renders, through the template's existing all().length guard.
+  The mock strip in mock-transport.ts computes counts from entry states with the same table as T2.
+  The outer group's aria-label="Running changes" is unchanged; only the list was renamed.
+```
