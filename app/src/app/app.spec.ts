@@ -167,7 +167,7 @@ describe('App version line', () => {
   }, 15000);
 
   it('an hoshin older than the minimum shows its version while the home keeps its message', async () => {
-    const tooOld = { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.3.' } as const;
+    const tooOld = { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.9.3.' } as const;
     const base = new MockTransport();
     vi.spyOn(base, 'appVersions').mockResolvedValue(found('1.3.0'));
     vi.spyOn(base, 'sdlcPluginReadiness').mockResolvedValue(tooOld);

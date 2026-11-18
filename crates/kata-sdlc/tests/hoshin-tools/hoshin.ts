@@ -12,6 +12,7 @@ import { baseline } from './commands/baseline.ts';
 import { branchName } from './commands/branch-name.ts';
 import { change } from './commands/change.ts';
 import { check } from './commands/check.ts';
+import { checks } from './commands/checks.ts';
 import { commit } from './commands/commit.ts';
 import { fixState } from './commands/fix-state.ts';
 import { gate } from './commands/gate.ts';
@@ -46,6 +47,7 @@ const COMMANDS: Record<string, Command> = {
   run,
   hooks,
   status,
+  checks,
   change,
   commit,
   gate,

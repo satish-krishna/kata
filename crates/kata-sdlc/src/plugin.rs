@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 /// The first plugin release with every plugin step Kata relies on.
-pub const MIN_VERSION: &str = "1.0.0";
+pub const MIN_VERSION: &str = "1.1.0";
 
 /// The oldest Node.js the plugin's program runs on.
 pub const MIN_NODE: &str = "22.18";
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn plugin_version_reads_plugin_json_r2_5() {
-        for ok in ["1.0.0", "1.10.1", "2.0.0"] {
+        for ok in ["1.1.0", "1.10.1", "2.0.0"] {
             let dir = plugin_with(Some(&format!(r#"{{"name":"hoshin","version":"{ok}"}}"#)));
             let v = version(dir.path()).unwrap();
             assert_eq!(v, ok);
@@ -252,7 +252,7 @@ mod tests {
         for (json, expect) in [
             (Some(r#"{"version":"0.5.0"}"#), Some("0.5.0")),
             (Some(r#"{"version":"0.9.9"}"#), Some("0.9.9")),
-            (Some(r#"{"version":"1.0.0-rc1"}"#), Some("1.0.0-rc1")),
+            (Some(r#"{"version":"1.1.0-rc1"}"#), Some("1.1.0-rc1")),
             (Some(r#"{"name":"hoshin"}"#), None),
             (None, None),
         ] {
@@ -307,11 +307,11 @@ mod tests {
                 blocked_with(BlockReason::PluginMissing, "Install the hoshin plugin"),
             ),
             (
-                "2 plugin below 1.0.0 (R10.1)",
+                "2 plugin below 1.1.0 (R10.1)",
                 machine(Some("0.9.0"), None, false, false),
                 blocked_with(
                     BlockReason::PluginTooOld,
-                    "The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.0.",
+                    "The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.9.0.",
                 ),
             ),
             (
@@ -319,12 +319,12 @@ mod tests {
                 machine(Some("0.9.9"), Some("v22.18.0"), true, true),
                 blocked_with(
                     BlockReason::PluginTooOld,
-                    "The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.9.",
+                    "The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.9.9.",
                 ),
             ),
             (
                 "3 node missing",
-                machine(Some("1.0.0"), None, false, false),
+                machine(Some("1.1.0"), None, false, false),
                 blocked_with(
                     BlockReason::NodeMissing,
                     "The AI-SDLC mode needs Node.js 22.18 or later; install it and reopen.",
@@ -332,7 +332,7 @@ mod tests {
             ),
             (
                 "4 node below 22.18",
-                machine(Some("1.0.0"), Some("v22.17.9"), false, false),
+                machine(Some("1.1.0"), Some("v22.17.9"), false, false),
                 blocked_with(
                     BlockReason::NodeTooOld,
                     "The AI-SDLC mode needs Node.js 22.18 or later; this machine has 22.17.9.",
@@ -340,7 +340,7 @@ mod tests {
             ),
             (
                 "5 git missing",
-                machine(Some("1.0.0"), Some("v22.18.0"), false, true),
+                machine(Some("1.1.0"), Some("v22.18.0"), false, true),
                 blocked_with(
                     BlockReason::GitMissing,
                     "The AI-SDLC mode needs git. Install it from https://git-scm.com and reopen.",
@@ -348,8 +348,8 @@ mod tests {
             ),
             (
                 "6 gh missing",
-                machine(Some("1.0.0"), Some("v22.18.0"), true, false),
-                ready("1.0.0", GhPresence::Missing),
+                machine(Some("1.1.0"), Some("v22.18.0"), true, false),
+                ready("1.1.0", GhPresence::Missing),
             ),
             (
                 "7 everything present",

@@ -11,6 +11,7 @@
 // baseline is scoped to the app's folder, so another app's untracked files stay.
 import { hooksFor, type Hook, type HookConfig } from '../events/config.ts';
 import { uncommittedOf, type EventContext } from '../events/context.ts';
+import { loggedCheck, openCheckLog } from '../events/check-log.ts';
 import { runHook } from '../events/runner.ts';
 import { exportScripts } from '../events/scripts.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -156,7 +157,15 @@ export async function takeBaseline(ctx: EventContext, config: HookConfig, option
     }
     // On the base, the branch is not checked out: a check that looks it up must not find it.
     const asFinish: EventContext = { ...ctx, event: 'build.finish', head: base, branch: atBase ? ctx.branch : null };
-    for (const check of checks) records.push(await runHook(check, asFinish, scripts, {}, { HOSHIN_BASELINE: '1' }));
+    // Every baseline line is written as build.finish, whichever event asked for the baseline, since the checks are
+    // those of build.finish. The log opens here, past the stored-entry return and every refusal, so a reused or
+    // refused baseline writes nothing.
+    const log = openCheckLog(asFinish, ctx.checkProblems ?? []);
+    for (const check of checks) {
+      const record = await loggedCheck(log, check.id, 'baseline', check.timeout, null, () => runHook(check, asFinish, scripts, {}, { HOSHIN_BASELINE: '1' }));
+      records.push(record);
+      log.end(check.id, 'baseline', record, null);
+    }
   } finally {
     if (!atBase) restored = restore(ctx.root, { branch: ctx.branch as string, head: head as string, ...(folder === null ? {} : { folder }) });
     scripts.remove();

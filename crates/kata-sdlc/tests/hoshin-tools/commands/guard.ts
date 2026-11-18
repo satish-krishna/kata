@@ -3,8 +3,8 @@
 // It reads Claude Code's hook input (`tool_name`, `tool_input`) on standard input and refuses:
 //
 //   - editing the hook configuration and the records the gates read: `.hoshin.json`, `intent/hooks/`,
-//     `intent/<system>/hooks.json` and `intent/<system>/hooks/`, a change's `change.yml`, and the ledger and build
-//     records in a git folder's `hoshin/`, whether by an edit tool or by a shell command that writes to them;
+//     `intent/<system>/hooks.json` and `intent/<system>/hooks/`, a change's `change.yml`, and the ledger, build
+//     records and `checks.jsonl` in a git folder's `hoshin/`, whether by an edit tool or by a shell command that writes to them;
 //   - pushing, and the GitHub commands that change something (opening, merging or editing a pull request, an API
 //     call that writes), because those happen only in the change.done event, after its gates;
 //   - skipping a repository's own git hooks (`--no-verify`, `commit -n`, `core.hooksPath`).
@@ -23,10 +23,10 @@ const PROTECTED: { pattern: RegExp; what: string }[] = [
   { pattern: /(^|[\\/\s'"=])intent[\\/]hooks([\\/]|\b)/, what: 'the global hook scripts in intent/hooks/' },
   { pattern: /(^|[\\/\s'"=])intent[\\/][^\\/\s'"]+[\\/]hooks(\.json\b|[\\/])/, what: "a system's hooks (intent/<system>/hooks.json or hooks/)" },
   { pattern: /(^|[\\/\s'"=])intent[\\/][^\\/\s'"]+[\\/][^\\/\s'"]+[\\/]change\.yml\b/, what: "a change's record, change.yml, which only the hoshin program writes" },
-  { pattern: /[\\/]hoshin[\\/][^\s'"]*\.json\b/, what: 'the hoshin ledger and build records in the git folder' },
+  { pattern: /[\\/]hoshin[\\/][^\s'"]*\.jsonl?\b/, what: 'the hoshin ledger, build records and check events in the git folder' },
 ];
 
-const WRITES = /(^|[^<>&0-9])>{1,2}(?!&)|\btee\b|\bsed\b[^|;&\n]*\s-i|\bperl\b[^|;&\n]*\s-i|\b(rm|mv|cp|truncate|touch|install|ln)\s|\bgit\s+(?:-\S+\s+(?:\S+\s+)?)*(add|rm|mv|checkout|restore|commit|apply|stash)\b|writeFileSync|\bOut-File\b|\bSet-Content\b/;
+const WRITES = /(^|[^<>&0-9])>{1,2}(?!&)|\btee\b|\bsed\b[^|;&\n]*\s-i|\bperl\b[^|;&\n]*\s-i|\b(rm|mv|cp|truncate|touch|install|ln)\s|\bgit\s+(?:-\S+\s+(?:\S+\s+)?)*(add|rm|mv|checkout|restore|commit|apply|stash)\b|writeFileSync|appendFileSync|\bOut-File\b|\bSet-Content\b/;
 
 /** git, then its own options (`-C <dir>`, `-c <key=value>`, `--flag`), then the subcommand. */
 const GIT = String.raw`\bgit\s+(?:(?:-C|-c)\s+\S+\s+|--?[\w-]+(?:=\S+)?\s+)*`;

@@ -605,7 +605,7 @@ describe('SdlcHomeViewModel runs', () => {
 
   it('offers the light track only when the plugin is ready', async () => {
     const { vm, transport } = setup();
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.0.' });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.9.0.' });
     await vm.init();
     expect(vm.lightTrack()).toBe(false);
     vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', plugin: { dir: '/p', version: '1.0.0', layouts: [1] }, gh: 'present' });
@@ -854,9 +854,9 @@ describe('SdlcHomeViewModel plan notice (F20)', () => {
   it('says to update the plugin when it is too old', async () => {
     const { vm, transport } = setup();
     withUnreadablePlan(transport);
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.6.0.' });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.6.0.' });
     await vm.init();
-    expect(noticeOf(vm)?.text).toBe('The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.6.0.');
+    expect(noticeOf(vm)?.text).toBe('The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.6.0.');
   });
 
   it('says a plan could not be read when the plugin is usable but gave no reason', async () => {
@@ -887,7 +887,7 @@ describe('SdlcHomeViewModel workspace instructions', () => {
   it('reads the instructions state only when the plugin supports the light track', async () => {
     const { vm, transport } = setup();
     const read = vi.spyOn(transport, 'sdlcInstructions');
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.0.' });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.9.0.' });
     await vm.init();
     expect(read).not.toHaveBeenCalled();
     expect(vm.instructions()).toBeNull();
@@ -959,7 +959,7 @@ const viewOf = (change: string, text: string, readiness: Readiness): ChangeView 
   readiness,
 });
 const READY: Readiness = { kind: 'ready', plugin: { dir: '/p', version: '1.0.0', layouts: [1, 2] }, gh: 'present' };
-const BLOCKED: Readiness = { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.0.' };
+const BLOCKED: Readiness = { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.9.0.' };
 /** The plugin's answer for a system with `n` changes, each labeled by the plugin with words of its own. */
 const systemViewOf = (n: number, readiness: Readiness = READY): SystemView => ({
   system: 'commerce',

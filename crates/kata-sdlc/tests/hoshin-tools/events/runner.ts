@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deprecations, hooksFor, readHookConfig, type Hook, type HookConfig, type OnFailure } from './config.ts';
+import { isCheck, loggedCheck, openCheckLog, type CheckLog } from './check-log.ts';
 import type { EventContext } from './context.ts';
 import { appendRun, emptyLedger, latest, ledgerFolder, readLedger, writeLedger, type EventRecord, type HookRecord, type Outcome } from './ledger.ts';
 import { runProcess } from './process.ts';
@@ -29,8 +30,8 @@ export type EventOutcome = {
   details: Record<string, unknown>;
 };
 
-/** Called for each hook as it starts and ends, for `run --stream`. */
-export type Progress = (event: { type: 'hook-start' | 'hook-end'; id: string; when: Hook['when']; outcome?: HookRecord['outcome'] }) => void;
+/** Called for each hook as it starts and ends, for `run --stream`. `check` is true for a hook that is a check. */
+export type Progress = (event: { type: 'hook-start' | 'hook-end'; id: string; when: Hook['when']; outcome?: HookRecord['outcome']; check?: true }) => void;
 
 /** `${hooks}`, `${repo}` and `${master}` in a hook's arguments. */
 function expand(arg: string, hook: Hook, ctx: EventContext, scripts: ScriptFolders): string {
@@ -81,17 +82,21 @@ export async function runHook(hook: Hook, ctx: EventContext, scripts: ScriptFold
 
 type Stopped = { hook: Hook; problem: string | null; onFailure: OnFailure };
 
-/** Runs hooks in order; a blocking hook's failure stops the rest, unless the judge allows it. */
-async function runHooks(hooks: Hook[], ctx: EventContext, scripts: ScriptFolders, details: Record<string, unknown>, progress?: Progress, judge?: Judge): Promise<{ records: HookRecord[]; stoppedBy: Stopped | null }> {
+/** Runs hooks in order; a blocking hook's failure stops the rest, unless the judge allows it. `log` records each check's start and end. */
+async function runHooks(hooks: Hook[], ctx: EventContext, scripts: ScriptFolders, details: Record<string, unknown>, progress?: Progress, judge?: Judge, log?: CheckLog): Promise<{ records: HookRecord[]; stoppedBy: Stopped | null }> {
   const records: HookRecord[] = [];
   for (const hook of hooks) {
-    progress?.({ type: 'hook-start', id: hook.id, when: hook.when });
-    const record = await runHook(hook, ctx, scripts, details);
+    const check = isCheck(ctx.event, hook);
+    const mark = check ? ({ check: true } as const) : {};
+    progress?.({ type: 'hook-start', id: hook.id, when: hook.when, ...mark });
+    const record = check ? await loggedCheck(log, hook.id, 'head', hook.timeout, true, () => runHook(hook, ctx, scripts, details)) : await runHook(hook, ctx, scripts, details);
     records.push(record);
-    progress?.({ type: 'hook-end', id: hook.id, when: hook.when, outcome: record.outcome });
+    progress?.({ type: 'hook-end', id: hook.id, when: hook.when, outcome: record.outcome, ...mark });
     if (!hook.blocking) continue;
     const verdict = judge?.(hook, record) ?? { allow: record.outcome === 'passed' };
-    if (record.outcome !== 'passed' && !verdict.allow) return { records, stoppedBy: { hook, problem: verdict.problem ?? null, onFailure: verdict.onFailure ?? hook.onFailure } };
+    const blocks = record.outcome !== 'passed' && !verdict.allow;
+    if (check) log?.end(hook.id, 'head', record, blocks);
+    if (blocks) return { records, stoppedBy: { hook, problem: verdict.problem ?? null, onFailure: verdict.onFailure ?? hook.onFailure } };
   }
   return { records, stoppedBy: null };
 }
@@ -127,13 +132,16 @@ export async function runEvent(ctx: EventContext, options: RunOptions = {}): Pro
 
   const config = options.config ?? readHookConfig(ctx.master, ctx.system);
   if (config.problems.length > 0) return result('could-not-run', { problems: config.problems.map((p) => `the hook configuration on the base branch: ${p}`) });
+  // Only the before hooks can be checks, so only they get the log. A write that fails surfaces as a problem in the record.
+  ctx.checkProblems = [];
+  const log = openCheckLog(ctx, ctx.checkProblems);
   const scripts = exportScripts(ctx.master, config.revision, ctx.system);
   try {
     const details: Record<string, unknown> = {};
     const prepared = (await step.prepare?.(ctx, config)) ?? { problems: [] };
     Object.assign(details, prepared.details ?? {});
     if (prepared.problems.length > 0) return record(result(prepared.outcome ?? 'failed', { problems: prepared.problems, details, failed: prepared.failed ?? null }));
-    const before = await runHooks(hooksFor(config, ctx.event, 'before', ctx.repo), ctx, scripts, details, options.progress, prepared.judge);
+    const before = await runHooks(hooksFor(config, ctx.event, 'before', ctx.repo), ctx, scripts, details, options.progress, prepared.judge, log);
     if (before.stoppedBy) {
       const failure = before.records[before.records.length - 1] as HookRecord;
       const outcome: Outcome = failure.outcome === 'could-not-run' ? 'could-not-run' : 'failed';
@@ -158,6 +166,7 @@ export async function runEvent(ctx: EventContext, options: RunOptions = {}): Pro
   }
 
   function record(outcome: EventOutcome): EventOutcome {
+    outcome.problems = [...outcome.problems, ...(ctx.checkProblems ?? [])];
     const failed = outcome.failed ? { id: outcome.failed.id, onFailure: outcome.failed.onFailure } : null;
     const details = Object.keys(outcome.details).length > 0 ? { details: outcome.details } : {};
     const entry: EventRecord = { event: ctx.event, repo: ctx.repo, key, subject, outcome: outcome.outcome, at: new Date().toISOString(), hooks: outcome.hooks, problems: outcome.problems, failed, ...details };

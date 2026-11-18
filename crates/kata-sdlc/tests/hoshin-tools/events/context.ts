@@ -11,6 +11,7 @@ import { uncommittedFiles } from '../workspace/own-files.ts';
 import { readMarker } from '../workspace/marker.ts';
 import { resolveWorkspace, type ResolveOptions } from '../workspace/resolve.ts';
 import { PER_REPOSITORY, type EventName } from './config.ts';
+import { ledgerFolder } from './ledger.ts';
 
 export type EventContext = {
   event: EventName;
@@ -34,6 +35,8 @@ export type EventContext = {
   repos: string[];
   /** Arguments an event's own step uses: `document` for doc.accept, `task` for task.done. */
   extra: Record<string, string>;
+  /** Where a run's check log reports a write that failed; the runner adds them to the run's problems. */
+  checkProblems?: string[];
 };
 
 /** Where copies of the master live: `<workspace>/.hoshin/copies/<change>/`. */
@@ -76,6 +79,33 @@ export function findChange(master: string, workspace: string, change: string, sy
     if (systems.length > 1) throw new CouldNotRun(`${change} is a change of several systems (${systems.join(', ')}); pass --system`);
   }
   throw new CouldNotRun(`no change ${change}${system ? ` in system ${system}` : ''} in ${master}${candidates.length > 1 ? ' or its copy' : ''}`);
+}
+
+/**
+ * Like `findChange`, for a reader that needs only the change's ledger, not its documents: when no master holds the change's
+ * folder (a baseline has the single-repo copy on the base commit, which predates the change), the system is the one whose
+ * ledger folder exists, looked up in the change's copy first and then in the resolved master. Nothing found rethrows what
+ * `findChange` threw.
+ */
+export function findChangeLedger(master: string, workspace: string, change: string, system?: string): { master: string; system: string } {
+  try {
+    return findChange(master, workspace, change, system);
+  } catch (error) {
+    if (!(error instanceof CouldNotRun)) throw error;
+    const names = Object.keys(readMarker(join(master, '.hoshin.json')).systems).filter((s) => system === undefined || s === system);
+    for (const holder of changeHolders(master, workspace, change)) {
+      const held = names.filter((s) => {
+        try {
+          return existsSync(ledgerFolder(holder, s, change));
+        } catch {
+          return false;
+        }
+      });
+      if (held.length === 1) return { master: holder, system: held[0] as string };
+      if (held.length > 1) throw new CouldNotRun(`${change} is a change of several systems (${held.join(', ')}); pass --system`);
+    }
+    throw error;
+  }
 }
 
 export type ContextArgs = { event: EventName; change: string; system?: string; repo?: string; options: ResolveOptions; extra: Record<string, string> };

@@ -188,12 +188,12 @@ describe('ChangePage', () => {
 
     it('a refused build opens the refusal dialog', async () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
-      vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'refused', problems: ['The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.7.9.', 'customer-portal: uncommitted files: a.txt'] });
+      vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'refused', problems: ['The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.7.9.', 'customer-portal: uncommitted files: a.txt'] });
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
       await settle();
       await confirmPreview();
       await vi.waitFor(() => expect(document.body.textContent).toContain('The build did not start'));
-      expect(document.body.textContent).toContain('The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.7.9.');
+      expect(document.body.textContent).toContain('The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.7.9.');
       expect(document.body.textContent).toContain('customer-portal: uncommitted files: a.txt');
     });
 

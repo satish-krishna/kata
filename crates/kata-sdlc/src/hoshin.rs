@@ -75,6 +75,8 @@ const PLACED: &[&str] = &[
     "change",
     "red",
     "migrate",
+    "baseline",
+    "checks",
 ];
 
 /// Where an hoshin command works: the master repository and the workspace around it.
