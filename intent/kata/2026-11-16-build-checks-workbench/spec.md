@@ -4,7 +4,7 @@ source_intent: 2026-11-16-build-checks-workbench/intent.md
 source_intent_commit: 65324c165be19f92acff70f2a0f600a63fd1912a
 system: kata
 date: 2026-11-16
-status: ready for product owner review
+status: draft
 policies_applied: [security-review, kata-design, house-style, kata-architecture]
 policies_not_checked: [compliance]
 ---

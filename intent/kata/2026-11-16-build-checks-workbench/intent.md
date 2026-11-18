@@ -3,7 +3,7 @@ title: Show and settle the build's checks in the Workbench
 system: kata
 author: SatishKrishna Pilla, product owner
 date: 2026-11-16
-status: accepted
+status: draft
 scope: kata
 context: [kata@ac8191b]
 ---
