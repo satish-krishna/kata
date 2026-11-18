@@ -39,6 +39,7 @@ import { ChangePageViewModel } from './change-page.view-model';
   providers: [ChangePageViewModel, BuildPageViewModel, BuildLayoutViewModel,RunPreviewViewModel, provideIcons({ lucideChevronDown, lucideSquare, lucideTriangleAlert })],
   imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, HlmTabsImports, SdlcToolbar, RunningChanges, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, BranchNameDialog, ConfirmDialog, NewChangeDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildPage, RunPreviewDialog, ProgressLine, StoppedNote],
   templateUrl: './change-page.html',
+  host: { '(window:focus)': 'vm.windowFocused()' },
 })
 export class ChangePage {
   protected readonly vm = inject(ChangePageViewModel);

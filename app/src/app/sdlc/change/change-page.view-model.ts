@@ -1,4 +1,5 @@
 import { Injectable, computed, effect, inject, linkedSignal, signal, untracked } from '@angular/core';
+import type { RunState } from '../../lib/events';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
 import type { OpenRun } from '@bindings/OpenRun';
@@ -221,6 +222,7 @@ export class ChangePageViewModel {
   private readonly givens = inject(GivenStore);
   private readonly runs = inject(RunStore);
   private readonly runner = inject(SdlcRunner);
+  private readonly windowFocus = inject(WindowFocus);
   /** The build, which lives as long as this page: it starts here and the page shows it. */
   private readonly build = inject(BuildPageViewModel);
   private readonly modes = inject(ModeStore);
@@ -361,8 +363,6 @@ export class ChangePageViewModel {
       this.toasts.error(`Could not open the copy folder: ${message(e)}`);
     }
   }
-  /** The key of the change the backend was last told is open; the page tells it once per change, however often it reads the change. */
-  private openedKey = '';
   private readonly linksFrom = signal<PullRequestsView['source']>(null);
   /** The shown document, raw as it is on disk, or null when the file is missing. */
   readonly doc = signal<string | null>(null);
@@ -997,9 +997,25 @@ export class ChangePageViewModel {
       untracked(() => {
         const ended = this.wasBuilding && !building;
         this.wasBuilding = building;
-        if (ended) void this.load();
+        if (ended) void this.load().then(() => this.seenIfFocused());
       });
     });
+    // A run of this change ends on its page: with the window in focus the engineer saw it end.
+    effect(() => {
+      const finished = this.ownRun()?.finished ?? null;
+      untracked(() => {
+        const ended = finished !== null && this.wasFinished === null;
+        this.wasFinished = finished;
+        if (ended) this.seenIfFocused();
+      });
+    });
+  }
+
+  /** How this page's own run had ended the last time it changed; null while it was live or there was none. */
+  private wasFinished: RunState | null = null;
+
+  private seenIfFocused(): void {
+    if (this.windowFocus.has() && this.state() === 'ready') this.markSeen();
   }
 
   /** The branches named so far, as this page last saw them: the page reads the change again when a confirmation names one. */
@@ -1659,16 +1675,19 @@ export class ChangePageViewModel {
     }
   }
 
-  /** The window regained focus while this page is shown. */
+  /** The window regained focus while this page is shown: the engineer is looking at the change, so it counts as seen. */
   windowFocused(): void {
-    // not implemented yet
+    if (this.state() === 'ready') this.markSeen();
+  }
+
+  /** Tell the backend the engineer is looking at this change now. Every moment of looking is told; the backend's marks decide what it means. */
+  private markSeen(): void {
+    const w = this.current();
+    if (w) this.tellOpened(w.folder, this.system(), this.changeName());
   }
 
   /** The change leaves the running changes once nothing of it needs them: best effort, a failure changes nothing on the page. */
   private tellOpened(workspace: string, system: string, change: string): void {
-    const key = `${workspace}|${system}/${change}`;
-    if (key === this.openedKey) return;
-    this.openedKey = key;
     this.transport.sdlcMarkOpened({ workspace, system, change }).catch(() => undefined);
   }
 
