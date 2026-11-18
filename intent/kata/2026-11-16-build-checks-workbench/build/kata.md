@@ -129,3 +129,18 @@ notes: |
   The list reaches the page only through sdlc_steps (RunningStep.live_checks); no StepEvent carries it, so a page polls sdlc_steps to see updates.
   sdlc-home.view-model.spec.ts "a blocked readiness offers no new change (R10.1)" fails, still expecting 1.0.0: left by T1's floor change, not by this task; build.finish's app-unit check catches it.
 ```
+
+### T9
+
+```yaml
+task: T9
+commits: ["0a28924", "141c558", "fec51b1"]
+red: observed
+notes: |
+  The first check failed on scenarios: R11.1 row 2 was set up with another change's preparation step; fec51b1 puts a live build run of this same change, for repository web, in a RunControl table and asserts the acceptance is recorded, the run stays live and the table is unchanged.
+  The command reads only the step table: the refusal applies to this change's PreparingBuild, CheckingBase or PreparationHook step; accept_base_check_in takes no run table, so a live run cannot refuse it.
+  guard_refuses_baseline_approve_to_an_agent_r5_7 and acceptance_holds_for_one_base_commit_r5_8 passed when written, since the vendored 1.1.0 plugin already guards the approval command and ties an acceptance to one base commit.
+  Approval and BaselineApproved gained Serialize and ts-rs derives (bindings Approval.ts, BaselineApproved.ts), in the test commit as stubs.
+  Test helpers Fx, fixture() and real_program() in lib.rs's steps_commands test module became pub(super).
+  The command is registered but no transport method or UI calls it yet; T15 wires it.
+```
