@@ -110,3 +110,22 @@ notes: |
   StartShown::FinishFailure still carries no data; the detail is in StartChecks::finish.
   The plan's test command was run as cargo test directly.
 ```
+
+### T8
+
+```yaml
+task: T8
+commits: ["e07b52b", "fe506da"]
+departure: |
+  R3.1, R6.1: in the single-repo layout the live check list is never filled. build.start for an app runs in start_app just before the app launches, outside prepare, with no preparation step to hold the list, so the base checks of a single-repo build (this repository's own layout) show no running check; the plan's Change placed the read inside prepare only.
+  T8 files: crates/kata-sdlc/src/checks_view.rs gained a public live_checks, because check_ids and base_checks are private there and the live list needs the same rows as the Build tab.
+  T8 files: app/src-tauri/src/close_guard.rs, mock-transport.ts, sdlc-mock.ts and sdlc-steps.ts changed, because StepKind lost Copy and StepProgress, RunningStep and StartOutcome::Failed gained phase, liveChecks and needsApproval.
+  rule 5: existing tests changed for compilation and the retired wording, nothing weakened: progress_of_table, StepProgress literals in steps.rs, StepKind clones in close_guard.rs and build_host.rs, needs_approval in three StartOutcome::Failed expectations; preparation_labels_name_repo_and_check and the_progress_line_is_the_step_and_the_line_it_names now expect "Checking the base"; the same wording in progress.store.spec.ts and build-page.view-model.spec.ts; type-only additions in step.store.spec.ts, tauri-transport.spec.ts, change-page.view-model.spec.ts, sdlc-home.view-model.spec.ts and build-page.view-model.spec.ts.
+red: observed
+notes: |
+  StepKind::words(&self) -> &'static str: "Checking the base" for CheckingBase and PreparingBuild, "Preparing" for PreparationHook; the "Preparing <repo>" prefix is built in progress_line; PreparingReview keeps its wording. StepKind lost Copy, since PreparationHook { id } carries a String.
+  Added: StepPhase { Preparation, FinishCheck, Other } on StepProgress.phase (from the stream line's when and check fields), RunningStep.live_checks, StepTable::set_live_checks, StartOutcome::Failed.needs_approval from details.baseline.needsApproval (defaults to empty).
+  The poll reads hooks once and checks every 2 seconds (CHECKS_POLL_MS, with a test-only setter) through Tools::run in a scoped thread that stops when build.start returns; it keeps only the latest baseline run, clears the list at each repository's start, skips a failed read and does no final read.
+  The list reaches the page only through sdlc_steps (RunningStep.live_checks); no StepEvent carries it, so a page polls sdlc_steps to see updates.
+  sdlc-home.view-model.spec.ts "a blocked readiness offers no new change (R10.1)" fails, still expecting 1.0.0: left by T1's floor change, not by this task; build.finish's app-unit check catches it.
+```
