@@ -125,6 +125,34 @@ pub struct RunningEntry {
 pub struct RunningStrip {
     pub shown: Vec<RunningEntry>,
     pub all: Vec<RunningEntry>,
+    /// How many entries of `all` are of each kind.
+    pub counts: StripCounts,
+}
+
+/// The kind an entry of the strip counts as in the top bar's label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryKind {
+    Running,
+    NeedsYou,
+    Waiting,
+    Finished,
+}
+
+/// How many entries of the strip are of each kind.
+#[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct StripCounts {
+    pub running: u32,
+    pub needs_you: u32,
+    pub waiting: u32,
+    pub finished: u32,
+}
+
+/// Which kind an entry counts as.
+pub fn kind_of(_state: &EntryState) -> EntryKind {
+    todo!("kind_of")
 }
 
 /// When the engineer last opened each change and when its last run last ended, in one counter, so
@@ -362,7 +390,11 @@ pub fn entries(
         ))
     });
     let shown = all.iter().take(SHOWN).cloned().collect();
-    RunningStrip { shown, all }
+    RunningStrip {
+        shown,
+        all,
+        counts: StripCounts::default(),
+    }
 }
 
 /// Name each entry's workspace by its id in the workspace list, so the webview compares equal strings
@@ -670,6 +702,108 @@ mod tests {
         marks.open(&key("A"));
         let s = entries(&[], &[view("N", None)], &h, &marks);
         assert!(s.all.is_empty());
+    }
+
+    fn counts(running: u32, needs_you: u32, waiting: u32, finished: u32) -> StripCounts {
+        StripCounts {
+            running,
+            needs_you,
+            waiting,
+            finished,
+        }
+    }
+
+    #[test]
+    fn strip_counts_by_kind_r13_1() {
+        // One change whose run finished unseen: 1 finished.
+        let marks = OpenedMarks::default();
+        marks.ended(&key("A"));
+        let s = entries(&[], &[], &RunHistory::default(), &marks);
+        assert_eq!(s.counts, counts(0, 0, 0, 1));
+        // Two working and one waiting on an answer: 2 running, 1 needs you.
+        let h = RunHistory::default();
+        ask(&h, 3, "which?");
+        let live = vec![
+            run(1, "A", RunKind::Build, Some("app")),
+            run(2, "B", RunKind::Build, Some("app")),
+            run(3, "C", RunKind::Build, Some("app")),
+        ];
+        assert_eq!(strip(&live, &[], &h).counts, counts(2, 1, 0, 0));
+        // The same, with one finished unseen.
+        let marks = OpenedMarks::default();
+        marks.ended(&key("D"));
+        let s = entries(&live, &[], &h, &marks);
+        assert_eq!(s.counts, counts(2, 1, 0, 1));
+        // One build stopped and one held by another change's build: 1 needs you, 1 waiting.
+        let mut stopped = state(BuildPhase::Stopped);
+        stopped.stopped.insert("app".into(), stop("boom"));
+        let mut v = view("B", None);
+        v.held_start = held("app", "X");
+        let s = strip(&[], &[view("A", Some(stopped)), v], &RunHistory::default());
+        assert_eq!(s.counts, counts(0, 1, 1, 0));
+        // One change waiting for its review while another change holds its repositories: 1 waiting.
+        let mut review_stopped = state(BuildPhase::Stopped);
+        review_stopped.stopped.insert("review".into(), stop("held"));
+        let mut v = view("A", Some(review_stopped));
+        v.review_waiting = held("app", "X");
+        let s = strip(&[], &[v], &RunHistory::default());
+        assert_eq!(s.counts, counts(0, 0, 1, 0));
+        // Nothing listed: all zero.
+        let s = strip(&[], &[], &RunHistory::default());
+        assert_eq!(s.counts, counts(0, 0, 0, 0));
+        // Every state variant, by the table.
+        let all = [
+            (
+                EntryState::Working {
+                    stage: RunKind::Build,
+                    repo: None,
+                    run: 1,
+                },
+                EntryKind::Running,
+            ),
+            (
+                EntryState::NeedsAnswer {
+                    text: "q".into(),
+                    run: 1,
+                },
+                EntryKind::NeedsYou,
+            ),
+            (
+                EntryState::NeedsPermission {
+                    action: "a".into(),
+                    run: 1,
+                },
+                EntryKind::NeedsYou,
+            ),
+            (
+                EntryState::Stopped {
+                    repo: "app".into(),
+                    reason: "r".into(),
+                },
+                EntryKind::NeedsYou,
+            ),
+            (EntryState::Held { holder: key("B") }, EntryKind::Waiting),
+            (
+                EntryState::ReviewWaiting { holder: key("B") },
+                EntryKind::Waiting,
+            ),
+            (EntryState::Finished, EntryKind::Finished),
+        ];
+        for (state, kind) in &all {
+            assert_eq!(kind_of(state), *kind, "{state:?}");
+        }
+    }
+
+    #[test]
+    fn later_run_brings_the_change_back_r14_2() {
+        let marks = OpenedMarks::default();
+        let h = RunHistory::default();
+        marks.ended(&key("A"));
+        marks.open(&key("A"));
+        assert!(entries(&[], &[], &h, &marks).all.is_empty());
+        marks.ended(&key("A"));
+        let s = entries(&[], &[], &h, &marks);
+        assert_eq!(only(s).state, EntryState::Finished);
     }
 
     fn open_run(run: u64, kind: RunKind, repo: Option<&str>, waiting: bool) -> OpenRun {
