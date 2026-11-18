@@ -48,3 +48,16 @@ notes: |
   The mock strip in mock-transport.ts computes counts from entry states with the same table as T2.
   The outer group's aria-label="Running changes" is unchanged; only the list was renamed.
 ```
+
+### T4
+
+```yaml
+task: T4
+commits: ["124d95a", "2e54d00"]
+red: observed
+notes: |
+  R14.1's two "on another page" rows have no test on the change page, as the plan's Change and Tests say: the page is not shown there and calls nothing; the backend's OpenedMarks rule is guarded by T2's later_run_brings_the_change_back_r14_2.
+  WindowFocus (root-provided, wraps document.hasFocus()) is declared in change-page.view-model.ts; windowFocused() is bound through host '(window:focus)' in change-page.ts.
+  "A run ends" means this change's own ChangeRunStore session finishing, or the backend build ending; for the build the page reads the change again before marking it seen.
+  The unfocused row asserts "not called" right after the run ends without waiting, so it would not catch a late asynchronous call.
+```
