@@ -5,7 +5,7 @@ source_spec_commit: bb8c7b2c724b313511cdf7d31329f09233e2d8ec
 system: kata
 date: 2026-11-18
 author: SatishKrishna Pilla
-status: draft
+status: accepted
 ---
 
 # Plan: Show and settle the build's checks in the Workbench
