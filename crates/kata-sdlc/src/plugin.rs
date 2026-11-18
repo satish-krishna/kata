@@ -362,6 +362,29 @@ mod tests {
         }
     }
 
+    /// A plugin at 1.0.0 lacks the checks and baseline commands, so it is below the floor.
+    #[test]
+    fn plugin_1_0_0_is_below_the_floor() {
+        let dir = plugin_with(Some(r#"{"name":"hoshin","version":"1.0.0"}"#));
+        let found = version(dir.path()).unwrap();
+        let env = Machine {
+            plugin: Some(Installed {
+                dir: dir.path().to_path_buf(),
+                version: found,
+            }),
+            node: Some("v22.18.0".to_string()),
+            git: true,
+            gh: true,
+        };
+        assert_eq!(
+            readiness(&env),
+            blocked_with(
+                BlockReason::PluginTooOld,
+                "The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 1.0.0.",
+            )
+        );
+    }
+
     /// R9.1: git and gh are looked up as files on `PATH` (with `PATHEXT`), never started.
     #[test]
     fn git_and_gh_are_found_without_starting_them() {

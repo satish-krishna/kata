@@ -793,6 +793,17 @@ mod tests {
     }
 
     #[test]
+    fn placed_commands_include_baseline_and_checks() {
+        for command in ["checks", "baseline"] {
+            let args = with_place(&[command, "--json"], "/m", "/w");
+            assert_eq!(
+                args,
+                [command, "--json", "--master", "/m", "--workspace", "/w"]
+            );
+        }
+    }
+
+    #[test]
     fn change_commands_get_the_master_and_the_workspace() {
         let args = with_place(
             &["change", "start", "--json", "--system", "demo"],
