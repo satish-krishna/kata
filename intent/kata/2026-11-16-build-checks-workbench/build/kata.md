@@ -61,3 +61,18 @@ notes: |
   "A run ends" means this change's own ChangeRunStore session finishing, or the backend build ending; for the build the page reads the change again before marking it seen.
   The unfocused row asserts "not called" right after the run ends without waiting, so it would not catch a late asynchronous call.
 ```
+
+### T5
+
+```yaml
+task: T5
+commits: ["f8b2142", "d7e61e9"]
+departure: |
+  Shared decision "What hoshin's checks and baseline answers hold": Program::checks, baseline_show and baseline_approve take place: &Place first (checks(&self, place, change, repo)), like Program::status, because run needs the place; the plan's signatures leave it out.
+red: observed
+notes: |
+  Approval { hook, base } is the inner value of BaselineApproved.approved: Option<Approval>.
+  ChecksAnswer and BaselineShow carry no problems field: a non-empty problems on either becomes ProgramError::CouldNotRun with the problems joined by "; "; on approve, BaselineApproved.problems is the answer itself, and a refused approve (exit 1) comes back as JSON.
+  Extra tests: checks_with_problems_is_an_error and baseline_show_with_problems_is_an_error.
+  The types derive Deserialize, Clone, Debug, PartialEq and Eq, and Default on the answers.
+```
