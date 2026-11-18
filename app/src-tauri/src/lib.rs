@@ -3690,25 +3690,37 @@ if (args[0] === 'baseline' && args[1] === 'approve') {{
         assert!(logged.contains("\"--repo\",\"app\""), "{logged}");
         assert!(logged.contains("\"--hook\",\"unit\""), "{logged}");
 
-        // Row 2: another repository's run of the same change is live. A live run is not a step of the table
-        // (only a preparation or a document step is), so nothing refuses and no run is stopped.
-        let other = steps_commands::fixture();
-        let _other_prepares = steps
-            .begin(
-                build_host::key_of(&other.change),
-                steps::StepKind::PreparingBuild,
-            )
-            .unwrap();
+        // Row 2: a build run of this same change, for another repository, is live in the run table. The
+        // acceptance is recorded, it changes no file, and the run is still live afterwards.
+        let control = RunControl::default();
+        let key = build_host::key_of(&fx.change);
+        let workdir = dir.path().join("web");
+        control.state.lock().unwrap().insert(LiveRun {
+            id: 7,
+            workdir,
+            group: Some(format!("build:{}/{}", key.system, key.change)),
+            lane: runs::Lane::Change {
+                key: key.clone(),
+                build: true,
+            },
+            kind: runs::RunKind::Build,
+            repo: Some("web".into()),
+            child: None,
+        });
+        let before = control.state.lock().unwrap().live();
         let answer = accept_base_check_in(&steps, &program, &fx.change, "web", "lint").unwrap();
         assert_eq!(
             answer.approved.as_ref().map(|a| a.hook.as_str()),
             Some("lint")
         );
         assert_eq!(calls().lines().count(), 2);
-        assert!(
-            steps.stop(&build_host::key_of(&other.change)),
-            "the other change's step is still there"
-        );
+        {
+            let table = control.state.lock().unwrap();
+            assert!(table.is_live(7), "the run was stopped");
+            assert!(table.change_live(&key.system, &key.change));
+            assert_eq!(table.live(), before, "the run table changed");
+        }
+        assert!(steps.running().is_empty(), "a step was begun");
 
         // Row 3: the build of this change is being prepared. The accept action is off and says so, and the
         // program is not asked.
