@@ -293,6 +293,30 @@ pub enum StartShown {
     FinishFailure,
 }
 
+/// How a check that failed at finish stood on the base.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum FinishBase {
+    /// The check passed on the base, so the build broke it.
+    Passed,
+    /// The check failed on the base, so it failed at finish naming failures this build added.
+    AddedFailures,
+}
+
+/// What happened after a check failed at finish, from the hook's `onFailure`.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum FinishNext {
+    /// The agent was sent back to fix it and did not get it to pass.
+    SentBackNotFixed,
+    /// The build stopped here.
+    Stopped,
+}
+
 /// The failure of a repository's finish.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -300,7 +324,13 @@ pub enum StartShown {
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct FinishFailure {
     pub check: String,
+    pub base: FinishBase,
     pub output: String,
+    /// How many other checks passed at finish (R7.3), shown folded.
+    pub passed: u32,
+    pub next: FinishNext,
+    /// Always false: a failure at finish can be run again, never accepted (D4).
+    pub can_accept: bool,
 }
 
 /// What the Build tab shows for one repository's start and its checks on the base.
@@ -1144,6 +1174,70 @@ mod tests {
             2,
             "a hook of another repository is not listed"
         );
+    }
+
+    /// R7.1 and R7.3: a failure at finish says which check, how it stood on the base, its output, what
+    /// happened next and how many other checks passed; it is never accepted.
+    #[test]
+    fn finish_failure_says_what_happens_next_r7_1() {
+        let rows = [
+            (
+                "app-speed",
+                "fix",
+                "passed",
+                FinishBase::Passed,
+                FinishNext::SentBackNotFixed,
+            ),
+            (
+                "rust-test",
+                "stop",
+                "passed",
+                FinishBase::Passed,
+                FinishNext::Stopped,
+            ),
+            (
+                "app-lint",
+                "fix",
+                "failed",
+                FinishBase::AddedFailures,
+                FinishNext::SentBackNotFixed,
+            ),
+        ];
+        for (check, on_failure, base_outcome, base, next) in rows {
+            let mut hooks: Vec<Value> = ["a-ok", "b-ok"]
+                .iter()
+                .map(|id| json!({"id": id, "outcome": "passed", "output": ""}))
+                .collect();
+            hooks.push(json!({"id": check, "outcome": "failed", "output": "it broke"}));
+            let mut finish = finish_run("failed");
+            finish["hooks"] = json!(hooks);
+            finish["failed"] = json!({"id": check, "onFailure": on_failure});
+            let s = scripted(json!({
+                "status": ledger_of(vec![
+                    start_run("passed", Some(failing_base("b1", &[])), &[]),
+                    finish,
+                ]),
+                "checks": checks_answer(vec![base_run(
+                    "r1",
+                    "baseline",
+                    vec![event(check, "ended", json!(base_outcome))],
+                )]),
+                "hooks": hook_list(&[check, "a-ok", "b-ok"])}));
+            let got = read(&s);
+            assert_eq!(got.shown, StartShown::FinishFailure, "{check}");
+            assert_eq!(
+                got.finish,
+                Some(FinishFailure {
+                    check: check.into(),
+                    base,
+                    output: "it broke".into(),
+                    passed: 2,
+                    next,
+                    can_accept: false,
+                }),
+                "{check}"
+            );
+        }
     }
 
     /// R5.5: a check that names its failures cannot be accepted and does not stop the build.
