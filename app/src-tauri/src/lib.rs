@@ -2047,6 +2047,24 @@ fn sdlc_checks_view(
         .map_err(|e| e.to_string())
 }
 
+/// What the Build tab shows for each repository's start and its checks on the base, read from the plugin's
+/// record each time it is asked (R8.1): the decision is `checks_view::start_checks`, never the page's.
+#[tauri::command(async)]
+fn sdlc_start_checks(
+    change: build_host::ChangeRef,
+) -> Result<Vec<sdlc::checks_view::StartChecks>, String> {
+    let program = sdlc::hoshin::Program::locate(&change_plugin_dir(&change.workspace)?);
+    let home = change_home(&program, &change)?;
+    let (place, state) = (home.place, home.state);
+    let repos: Vec<String> = state
+        .tasks
+        .as_ref()
+        .map(|tasks| tasks.keys().cloned().collect())
+        .unwrap_or_default();
+    sdlc::checks_view::start_checks(&program, &place, &change.system, &change.change, &repos)
+        .map_err(|e| e.to_string())
+}
+
 /// Declare a change done through the plugin: it verifies the change, pushes every touched repository and
 /// opens one pull request each, the master's last. Each step it reports goes out on `sdlc://step`. A
 /// step the machine cannot run is the answer, not an error.
@@ -2637,6 +2655,7 @@ pub fn run() {
             sdlc_diff_pair,
             sdlc_diff_base,
             sdlc_checks_view,
+            sdlc_start_checks,
             sdlc_declare_done,
             sdlc_pull_requests_view,
             sdlc_copy_removal,

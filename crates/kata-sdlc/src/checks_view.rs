@@ -2,7 +2,8 @@
 //! `build.finish` hooks, committed to the master's base branch and run by the plugin when a repository's
 //! build finishes; Kata runs none of them. This module only reads the plugin's ledger and hook list and
 //! names the state the page shows, in the words it shows.
-use crate::hoshin::status::{Hooks, OnFailure, Status};
+use crate::hoshin::status::{Hooks, OnFailure, RunRecord, Status};
+use crate::hoshin::{BaselineShow, CheckRun, CheckState};
 use crate::hoshin::{Place, Program, ProgramError};
 use crate::layout::Layout;
 use serde::Serialize;
@@ -323,7 +324,110 @@ pub struct StartChecks {
     pub finish: Option<FinishFailure>,
 }
 
-/// What the Build tab shows for each of `repos`, in order.
+/// The reason Start is off while a failing check is not accepted (R6.2).
+const HELD: &str = "Accept or fix the failing checks first.";
+
+/// Three or more checks failing together without saying what failed point at the setup (R4.3).
+const SETUP_HINT_AT: usize = 3;
+
+/// The ids of the checks that apply to `repo`: the blocking `before` hooks of `build.finish`, in the hook
+/// list's order.
+fn check_ids(hooks: &Hooks, repo: &str, layout: Layout) -> Vec<String> {
+    hooks
+        .hooks
+        .iter()
+        .filter(|h| h.event == EVENT && h.when == "before" && h.blocking)
+        .filter(|h| {
+            let names = match layout {
+                Layout::Workspace => &h.repos,
+                Layout::SingleRepo => &h.apps,
+            };
+            names
+                .as_ref()
+                .is_none_or(|names| names.iter().any(|n| n == repo))
+        })
+        .map(|h| h.id.clone())
+        .collect()
+}
+
+/// Each of `ids` with its state in `latest`, the latest run on the base, and what `baseline` stored for it. An
+/// event of the run decides the state; a check with no event takes its stored result, else it is not run.
+fn base_checks(
+    ids: &[String],
+    latest: Option<&CheckRun>,
+    baseline: Option<&BaselineShow>,
+) -> Vec<BaseCheck> {
+    ids.iter()
+        .map(|id| {
+            let event = latest.and_then(|run| run.checks.iter().find(|c| &c.check == id));
+            let stored = baseline.and_then(|b| b.hooks.iter().find(|h| &h.id == id));
+            let state = match (event, stored) {
+                (Some(e), _) => match e.state {
+                    CheckState::Running => BaseCheckState::Running,
+                    CheckState::Abandoned => BaseCheckState::CutOff,
+                    CheckState::Ended if e.outcome.as_deref() == Some("passed") => {
+                        BaseCheckState::Passed
+                    }
+                    CheckState::Ended => BaseCheckState::Failed,
+                },
+                (None, Some(h)) if h.outcome == "passed" => BaseCheckState::Passed,
+                (None, Some(_)) => BaseCheckState::Failed,
+                (None, None) => BaseCheckState::NotRun,
+            };
+            let output = stored.map(|h| h.output.clone()).unwrap_or_default();
+            BaseCheck {
+                check: id.clone(),
+                state,
+                exit_code: stored.and_then(|h| h.exit_code),
+                line_count: output.lines().count() as u32,
+                output,
+                can_accept: baseline.is_some_and(|b| b.needs_approval.contains(id)),
+                accepted: baseline.is_some_and(|b| b.approved.contains(id)),
+                started_at: event.and_then(|e| e.started_at.clone()),
+                ended_at: event.and_then(|e| e.ended_at.clone()),
+            }
+        })
+        .collect()
+}
+
+/// The plugin's reason for a start that stopped for something other than a check failing on the base.
+fn other_reason(start: &RunRecord) -> StartShown {
+    let reason = if start.problems.is_empty() {
+        format!("The build start ended as {}.", start.outcome)
+    } else {
+        start.problems.join("\n")
+    };
+    let step = start.failed.as_ref().map(|f| f.id.clone());
+    let output = step
+        .as_ref()
+        .and_then(|id| start.hooks.iter().find(|h| &h.id == id))
+        .map(|h| h.output.clone())
+        .unwrap_or_default();
+    StartShown::OtherReason {
+        reason,
+        step,
+        output,
+    }
+}
+
+/// What the Build tab shows for each of `repos`, in order, from the first row of this table that matches
+/// (R8.1). The latest `build.start` record of the repository decides; a `build.finish` record counts only
+/// when it comes after that start.
+///
+/// | # | latest `build.start` | still needing | latest finish | shown |
+/// |---|---|---|---|---|
+/// | 1 | none | | | `Startable` |
+/// | 2 | passed | | none or refused | `UnderWay` |
+/// | 3 | passed | | passed | `Finished` |
+/// | 4 | passed | | failed or could not run | `FinishFailure` |
+/// | 5 | not passed, base results recorded with failing checks | the base commit moved | | `BaseMoved` |
+/// | 6 | same | some | | `BaseFailure` |
+/// | 7 | same | none | | `AllAccepted` |
+/// | 8 | not passed, no base results recorded (a build started before hoshin kept them) or none failing | | | `OtherReason` |
+///
+/// `baseline show` is read only for rows 5 to 7. The checks are those of the hook list, each in the state
+/// the latest `baseline` run of `checks` gives it, except for `BaseMoved`, where the results belong to a
+/// base commit that is gone and none are shown.
 pub fn start_checks(
     program: &Program,
     place: &Place,
@@ -331,20 +435,85 @@ pub fn start_checks(
     change: &str,
     repos: &[String],
 ) -> Result<Vec<StartChecks>, ProgramError> {
-    let _ = (program, place, system, change);
-    Ok(repos
+    let status = program.status(place, change)?;
+    let hooks = program.hooks(place, system, Some(EVENT))?;
+    repos
         .iter()
-        .map(|repo| StartChecks {
-            repo: repo.clone(),
-            shown: StartShown::Startable,
-            base: String::new(),
-            checks: Vec::new(),
-            passed: 0,
-            setup_hint: false,
-            start_held: None,
-            finish: None,
+        .map(|repo| {
+            let runs: &[RunRecord] = status
+                .repos
+                .iter()
+                .find(|r| &r.repo == repo)
+                .map_or(&[], |r| r.runs.as_slice());
+            let start_at = runs.iter().rposition(|r| r.event == "build.start");
+            let ids = check_ids(&hooks, repo, place.layout);
+            let answer = program.checks(place, change, repo)?;
+            let latest = answer
+                .runs
+                .iter()
+                .rfind(|run| run.phase == "baseline" && run.repo == *repo);
+            let of = |shown, base: String, baseline: Option<&BaselineShow>| {
+                let checks = base_checks(&ids, latest, baseline);
+                let passed = checks
+                    .iter()
+                    .filter(|c| c.state == BaseCheckState::Passed)
+                    .count() as u32;
+                StartChecks {
+                    repo: repo.clone(),
+                    shown,
+                    base,
+                    checks,
+                    passed,
+                    setup_hint: false,
+                    start_held: None,
+                    finish: None,
+                }
+            };
+            let Some(start_at) = start_at else {
+                return Ok(of(StartShown::Startable, String::new(), None));
+            };
+            let start = &runs[start_at];
+            if start.outcome == "passed" {
+                let finish = runs[start_at + 1..]
+                    .iter()
+                    .rfind(|r| r.event == "build.finish");
+                let shown = match finish.map(|f| f.outcome.as_str()) {
+                    Some("passed") => StartShown::Finished,
+                    Some("failed" | "could-not-run") => StartShown::FinishFailure,
+                    _ => StartShown::UnderWay,
+                };
+                return Ok(of(shown, String::new(), None));
+            }
+            let recorded = start
+                .details
+                .as_ref()
+                .map(|d| &d["baseline"])
+                .filter(|b| b["failing"].as_array().is_some_and(|f| !f.is_empty()));
+            let Some(recorded) = recorded else {
+                return Ok(of(other_reason(start), String::new(), None));
+            };
+            let show = program.baseline_show(place, change, repo)?;
+            if recorded["base"].as_str() != Some(show.base.as_str()) {
+                return Ok(StartChecks {
+                    checks: Vec::new(),
+                    passed: 0,
+                    ..of(StartShown::BaseMoved, show.base.clone(), None)
+                });
+            }
+            let mut shown = of(StartShown::AllAccepted, show.base.clone(), Some(&show));
+            if !show.needs_approval.is_empty() {
+                let unnamed = shown
+                    .checks
+                    .iter()
+                    .filter(|c| c.can_accept || c.accepted)
+                    .count();
+                shown.shown = StartShown::BaseFailure;
+                shown.setup_hint = unnamed >= SETUP_HINT_AT;
+                shown.start_held = Some(HELD.to_string());
+            }
+            Ok(shown)
         })
-        .collect())
+        .collect()
 }
 
 #[cfg(test)]
