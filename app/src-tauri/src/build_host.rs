@@ -9,6 +9,7 @@ use crate::steps::{StepGuard, StepKind, StepTable};
 use kata_core::proc::{CancelToken, LineSink};
 use kata_core::spec::PermissionMode;
 use kata_core::RunSpec;
+use kata_sdlc::checks_view;
 use kata_sdlc::coordinator::{
     self, BuildChoices, BuildFacts, BuildPhase, BuildState, Command, Coordinator, Input,
 };
@@ -18,8 +19,10 @@ use kata_sdlc::holds::{
     keys_for, needed_repos, review_repos, ChangeKey, HoldTable, Purpose, RepoKey,
 };
 use kata_sdlc::hoshin::state::{self, ChangeState};
+use kata_sdlc::hoshin::status::Hooks;
 use kata_sdlc::hoshin::{
-    progress_of, Answer, HookFailure, Place, Program, ProgramError, StepOutcome, StepProgressKind,
+    progress_of, Answer, ChecksAnswer, HookFailure, Place, Program, ProgramError, StepOutcome,
+    StepProgressKind,
 };
 use kata_sdlc::layout::Layout;
 use kata_sdlc::permissions::{RunKind, RunPlace};
@@ -30,8 +33,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// Channel every change of the build is announced on, one [`BuildEvent`] per event.
 pub const BUILD_EVENT: &str = "sdlc://build";
@@ -601,6 +605,19 @@ fn failure(outcome: StepOutcome, prepared: &[String]) -> Option<StartOutcome> {
     }
 }
 
+/// [`failure`] for a step's whole answer: a start that failed because checks on the base need approval names them.
+fn failure_of(answer: &Answer, prepared: &[String]) -> Option<StartOutcome> {
+    let needs_approval = strings(&answer.json["details"]["baseline"]["needsApproval"]);
+    failure(answer.outcome.clone(), prepared).map(|outcome| match outcome {
+        StartOutcome::Failed { problems, hook, .. } => StartOutcome::Failed {
+            problems,
+            hook,
+            needs_approval,
+        },
+        other => other,
+    })
+}
+
 /// What the commands of a step need, copied out of the build so they run without the lock.
 struct Exec {
     place: Place,
@@ -656,11 +673,9 @@ impl BuildHost {
 
     /// Read the checks on the base every `every` instead of every two seconds.
     #[cfg(test)]
-    fn set_checks_poll(&self, every: std::time::Duration) {
-        self.checks_poll_ms.store(
-            every.as_millis() as u64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
+    fn set_checks_poll(&self, every: Duration) {
+        self.checks_poll_ms
+            .store(every.as_millis() as u64, Ordering::Relaxed);
     }
 
     /// Start `change`'s build: nothing starts unless every repository it needs is free and the
@@ -1508,7 +1523,7 @@ impl BuildHost {
 
     /// Tell the page which repository the preparation is on, and give a sink that does the same for each hook
     /// line the plugin streams while it runs. `repo` is the repository of the call, which the lines never name.
-    /// The step's own first label ("Checking every repository before building") went out when the step began, so
+    /// The step's own first label ("Checking the base") went out when the step began, so
     /// the call that is for no repository says nothing more until a line arrives. The words are the step
     /// table's.
     fn announce(&self, key: &ChangeKey, repo: Option<&str>) -> LineSink {
@@ -1526,6 +1541,93 @@ impl BuildHost {
             }
             steps.report(&key, repo.as_deref(), Some(progress));
         })
+    }
+
+    /// Run `work`, the plugin's `build.start` for `repo`, and read the checks on the base for the preparation
+    /// step's page every `checks_poll_ms` while it runs. The read stops when `work` returns, whatever it came to.
+    fn while_reading_checks<T: Send>(
+        &self,
+        place: &Place,
+        change: &ChangeRef,
+        repo: &str,
+        work: impl FnOnce() -> T,
+    ) -> T {
+        let key = key_of(change);
+        self.steps.set_live_checks(&key, Vec::new());
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| self.read_checks(place, change, repo, &key, &stop));
+            let out = work();
+            stop.store(true, Ordering::SeqCst);
+            out
+        })
+    }
+
+    /// Read the hook list once, then the `checks` answer on every tick, until `stop`. A read that fails is
+    /// skipped: the next tick tries again.
+    fn read_checks(
+        &self,
+        place: &Place,
+        change: &ChangeRef,
+        repo: &str,
+        key: &ChangeKey,
+        stop: &AtomicBool,
+    ) {
+        let hooks = self
+            .tools
+            .run(
+                &[
+                    "hooks",
+                    "--json",
+                    "--system",
+                    &change.system,
+                    "--event",
+                    checks_view::EVENT,
+                ],
+                place,
+            )
+            .ok()
+            .and_then(|answer| serde_json::from_value::<Hooks>(answer).ok());
+        let Some(hooks) = hooks else {
+            return;
+        };
+        let tick = Duration::from_millis(self.checks_poll_ms.load(Ordering::Relaxed));
+        loop {
+            let began = Instant::now();
+            while began.elapsed() < tick {
+                if stop.load(Ordering::SeqCst) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(2).min(tick));
+            }
+            if stop.load(Ordering::SeqCst) {
+                return;
+            }
+            let read = self.tools.run(
+                &[
+                    "checks",
+                    "--json",
+                    "--change",
+                    &change.change,
+                    "--repo",
+                    repo,
+                ],
+                place,
+            );
+            let Ok(answer) = read else {
+                continue;
+            };
+            if !strings(&answer["problems"]).is_empty() {
+                continue;
+            }
+            let Ok(answer) = serde_json::from_value::<ChecksAnswer>(answer) else {
+                continue;
+            };
+            self.steps.set_live_checks(
+                key,
+                checks_view::live_checks(&hooks, &answer, repo, place.layout),
+            );
+        }
     }
 
     fn prepare(
@@ -1563,7 +1665,7 @@ impl BuildHost {
         }
         let sink = self.announce(&key, None);
         let answer = self.tools.step_long(&check, place, token, Some(sink));
-        if let Some(outcome) = failure(answer.outcome, &[]) {
+        if let Some(outcome) = failure_of(&answer, &[]) {
             return Err(outcome);
         }
         if place.layout == Layout::SingleRepo {
@@ -1578,8 +1680,10 @@ impl BuildHost {
             let mut command: Vec<&str> = base.to_vec();
             command.extend(["--repo", repo]);
             let sink = self.announce(&key, Some(repo));
-            let answer = self.tools.step_long(&command, place, token, Some(sink));
-            if let Some(outcome) = failure(answer.outcome, &prepared) {
+            let answer = self.while_reading_checks(place, change, repo, || {
+                self.tools.step_long(&command, place, token, Some(sink))
+            });
+            if let Some(outcome) = failure_of(&answer, &prepared) {
                 return Err(outcome);
             }
             prepared.push(repo.clone());
@@ -1865,7 +1969,7 @@ impl BuildHost {
             app,
         ];
         let answer = self.tools.step_long(&command, &exec.place, &token, None);
-        match failure(answer.outcome, &[]) {
+        match failure_of(&answer, &[]) {
             Some(outcome) => Err(outcome),
             None => Ok(strings(&answer.json["details"]["uncommitted"])),
         }
@@ -4033,13 +4137,13 @@ mod tests {
         let expected = vec![
             (
                 StepProgressKind::Verifying,
-                "Checking every repository before building".to_string(),
+                "Checking the base".to_string(),
                 None,
                 None,
             ),
             (
                 StepProgressKind::Hook,
-                "Checking every repository before building: running base-tests".to_string(),
+                "Checking the base: running base-tests".to_string(),
                 None,
                 some("base-tests"),
             ),

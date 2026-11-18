@@ -144,7 +144,7 @@ describe('the build page follows the build the backend hosts', () => {
     const progress = TestBed.inject(ProgressStore);
     const starting = s.vm.startBuild({ timeoutSecs: 60 });
     await advance(600);
-    expect(progress.view('build')()?.label).toBe('Checking the base before building');
+    expect(progress.view('build')()?.label).toBe('Checking the base');
     release();
     await starting;
     expect(progress.view('build')()).toBeNull();
@@ -158,7 +158,7 @@ describe('the build page follows the build the backend hosts', () => {
     void s.vm.startBuild({ timeoutSecs: 60 });
     await advance(60_000);
     const entry = progress.view('build')();
-    expect(entry?.label).toBe('Checking the base before building');
+    expect(entry?.label).toBe('Checking the base');
     expect(entry?.long).toBe(false);
   });
 
@@ -1245,6 +1245,7 @@ describe('the build page reads the backend\'s build and starts it through the ho
       kind: 'failed',
       problems: ['hook deps failed with exit code 1'],
       hook: { id: 'deps', onFailure: 'stop', output: 'npm ci: lockfile out of date\n' },
+      needsApproval: [],
     });
     expect(await vm.startBuild({ timeoutSecs: 60 })).toBe('failed');
     expect(vm.refusal()).toEqual({ reason: "The team's hook deps failed", problems: ['hook deps failed with exit code 1', 'npm ci: lockfile out of date'] });
@@ -1262,7 +1263,7 @@ describe('the build page reads the backend\'s build and starts it through the ho
     const cases: { name: string; outcome: StartOutcome; stopped: string | null; refusal: object | null }[] = [
       { name: 'started', outcome: { kind: 'started', uncommitted: {} }, stopped: null, refusal: null },
       { name: 'refused', outcome: { kind: 'refused', problems: ['kata: the plan is not accepted'] }, stopped: null, refusal: { reason: 'The plugin refused to start the build', problems: ['kata: the plan is not accepted'] } },
-      { name: 'failed', outcome: { kind: 'failed', problems: ['hook deps failed'], hook: { id: 'deps', onFailure: 'stop', output: 'boom' } }, stopped: null, refusal: { reason: "The team's hook deps failed", problems: ['hook deps failed', 'boom'] } },
+      { name: 'failed', outcome: { kind: 'failed', problems: ['hook deps failed'], hook: { id: 'deps', onFailure: 'stop', output: 'boom' }, needsApproval: [] }, stopped: null, refusal: { reason: "The team's hook deps failed", problems: ['hook deps failed', 'boom'] } },
       { name: 'could not run', outcome: { kind: 'couldNotRun', output: 'no node', repo: null }, stopped: null, refusal: { reason: "This machine could not run the plugin's step", problems: ['no node'] } },
       { name: 'stopped during the check of every repository', outcome: { kind: 'stopped', prepared: [] }, stopped: 'Preparation stopped', refusal: null },
       { name: 'stopped during one repository', outcome: { kind: 'stopped', prepared: ['kata', 'bob'] }, stopped: 'Preparation stopped. Prepared: kata, bob', refusal: null },
@@ -1295,7 +1296,7 @@ describe('the build page reads the backend\'s build and starts it through the ho
     const starting = vm.startBuild({ timeoutSecs: 60 });
     await advance(100);
     expect(vm.preparing()).toBe(true);
-    const progress = { kind: 'repository' as const, label: 'Preparing kata: running base-tests', repo: 'kata', check: 'base-tests' };
+    const progress = { kind: 'repository' as const, label: 'Preparing kata: running base-tests', repo: 'kata', check: 'base-tests', phase: 'other' as const };
     push({ change: keyOf('2026-01-01-other'), kind: 'preparingBuild', progress });
     expect(update).not.toHaveBeenCalled();
     push({ change: { ...keyOf(MOCK_BUILD_CHANGE), system: 'other-system' }, kind: 'preparingBuild', progress });
@@ -1314,7 +1315,8 @@ describe('the build page reads the backend\'s build and starts it through the ho
       change: keyOf(change),
       kind: 'preparingBuild',
       doing: 'preparing',
-      progress: { kind: 'repository', label: 'Preparing commerce-core: running base-tests', repo: 'commerce-core', check: 'base-tests' },
+      progress: { kind: 'repository', label: 'Preparing commerce-core: running base-tests', repo: 'commerce-core', check: 'base-tests', phase: 'other' },
+      liveChecks: [],
     });
 
     it('a page opened while the preparation runs shows it and offers Stop, which stops that change (R6.1)', async () => {

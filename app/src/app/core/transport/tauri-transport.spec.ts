@@ -224,7 +224,7 @@ describe('TauriTransport', () => {
     await t.onStep((step) => seen.push(step));
     const [event, handler] = ipc.listen.mock.calls[0] as unknown as [string, (e: { payload: StepEvent }) => void];
     expect(event).toBe('sdlc://step');
-    const payload: StepEvent = { change: { workspace: { key: 'w', name: 'w' }, system: 's', change: 'c' }, kind: 'declaringDone', progress: { kind: 'push', label: 'Pushing commerce-core', repo: 'commerce-core', check: null } };
+    const payload: StepEvent = { change: { workspace: { key: 'w', name: 'w' }, system: 's', change: 'c' }, kind: 'declaringDone', progress: { kind: 'push', label: 'Pushing commerce-core', repo: 'commerce-core', check: null, phase: 'other' } };
     handler({ payload });
     expect(seen).toEqual([payload]);
   });

@@ -12,7 +12,8 @@ const running = (change: string, kind: StepKind, label: string): RunningStep => 
   change: keyOf(change),
   kind,
   doing: 'doing',
-  progress: { kind: 'repository', label, repo: null, check: null },
+  progress: { kind: 'repository', label, repo: null, check: null, phase: 'other' },
+  liveChecks: [],
 });
 
 function setup() {
@@ -28,7 +29,7 @@ function setup() {
     return () => void endings.delete(cb);
   });
   TestBed.configureTestingModule({ providers: [{ provide: KataTransport, useValue: transport }] });
-  const push = (change: string, kind: StepKind, label: string) => listeners.forEach((cb) => cb({ change: keyOf(change), kind, progress: { kind: 'repository', label, repo: null, check: null } }));
+  const push = (change: string, kind: StepKind, label: string) => listeners.forEach((cb) => cb({ change: keyOf(change), kind, progress: { kind: 'repository', label, repo: null, check: null, phase: 'other' } }));
   const end = (change: string) => endings.forEach((cb) => cb(keyOf(change)));
   return { transport, store: TestBed.inject(StepStore), push, end, listening: () => listeners.size };
 }
@@ -46,7 +47,7 @@ describe('StepStore', () => {
 
   it('falls back to what the step is doing when the backend has no line yet', async () => {
     const { store, transport } = setup();
-    vi.spyOn(transport, 'steps').mockResolvedValue([{ change: keyOf('a'), kind: 'starting', doing: 'starting', progress: null }]);
+    vi.spyOn(transport, 'steps').mockResolvedValue([{ change: keyOf('a'), kind: 'starting', doing: 'starting', progress: null, liveChecks: [] }]);
     await store.follow();
     expect(store.running()[0].label).toBe('starting');
   });

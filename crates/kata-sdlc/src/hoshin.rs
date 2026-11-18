@@ -738,12 +738,19 @@ pub fn progress_of(line: &str) -> Option<StepProgress> {
         ),
         _ => return None,
     };
+    // A hook line says which event it ran for: the team's `build.start` hooks are preparation steps, and a
+    // `build.finish` hook the plugin marks `"check": true` is a finish check.
+    let phase = match (line["when"].as_str(), line["check"].as_bool()) {
+        (Some("build.start"), _) => StepPhase::Preparation,
+        (Some("build.finish"), Some(true)) => StepPhase::FinishCheck,
+        _ => StepPhase::Other,
+    };
     Some(StepProgress {
         kind,
         label,
         repo,
         check,
-        phase: StepPhase::Other,
+        phase,
     })
 }
 

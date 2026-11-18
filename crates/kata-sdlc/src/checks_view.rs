@@ -3,7 +3,7 @@
 //! build finishes; Kata runs none of them. This module only reads the plugin's ledger and hook list and
 //! names the state the page shows, in the words it shows.
 use crate::hoshin::status::{Hooks, OnFailure, RunRecord, Status};
-use crate::hoshin::{BaselineShow, CheckRun, CheckState};
+use crate::hoshin::{BaselineShow, CheckRun, CheckState, ChecksAnswer};
 use crate::hoshin::{Place, Program, ProgramError};
 use crate::layout::Layout;
 use serde::Serialize;
@@ -418,6 +418,22 @@ fn base_checks(
             }
         })
         .collect()
+}
+
+/// The checks of `repo` as the preparation of a build shows them while the base is being checked: each check
+/// of the hook list in the state the latest `baseline` run of `answer` gives it, and a check with no event yet
+/// not run. Nothing stored is read, so a check shows only what the run has written.
+pub fn live_checks(
+    hooks: &Hooks,
+    answer: &ChecksAnswer,
+    repo: &str,
+    layout: Layout,
+) -> Vec<BaseCheck> {
+    let latest = answer
+        .runs
+        .iter()
+        .rfind(|run| run.phase == "baseline" && run.repo == repo);
+    base_checks(&check_ids(hooks, repo, layout), latest, None)
 }
 
 /// The plugin's reason for a start that stopped for something other than a check failing on the base.

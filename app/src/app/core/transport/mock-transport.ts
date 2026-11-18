@@ -521,11 +521,11 @@ export class MockTransport extends KataTransport {
    * `stopped`, so a spec or a browser check can press Stop; otherwise it answers at once.
    */
   private longStep<T>(change: ChangeRef, kind: StepKind, doing: string, run: () => T, stopped: T): Promise<T> {
-    const progress: StepProgress = { kind: 'verifying', label: doing, repo: null, check: null };
+    const progress: StepProgress = { kind: 'verifying', label: doing, repo: null, check: null, phase: 'other' };
     this.announceStep(change, kind, progress);
     if (demoParam() !== 'steps-hold') return settled(run).finally(() => this.endStep(change));
     return new Promise<T>((resolve) => {
-      const step: RunningStep = { change: mockChangeKey(change), kind, doing, progress };
+      const step: RunningStep = { change: mockChangeKey(change), kind, doing, progress, liveChecks: [] };
       this.heldSteps.set(change.change, { step, stop: () => resolve(stopped) });
     }).finally(() => this.endStep(change));
   }
@@ -600,7 +600,7 @@ export class MockTransport extends KataTransport {
     return id;
   }
   async sdlcBuildStart(change: ChangeRef, form: StartForm): Promise<StartOutcome> {
-    return this.longStep(change, 'preparingBuild', 'Checking every repository before building', () => this.host.start(change, form), { kind: 'stopped', prepared: [] });
+    return this.longStep(change, 'preparingBuild', 'Checking the base', () => this.host.start(change, form), { kind: 'stopped', prepared: [] });
   }
   // The scripted host runs no agent, so the choices a continue or review carries change nothing it shows.
   async sdlcBuildContinue(change: ChangeRef, repo: string, _off?: string[]): Promise<StartOutcome> {

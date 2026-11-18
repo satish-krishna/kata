@@ -1443,11 +1443,11 @@ export class SdlcMock {
   declareDone(_changeName: string): { view: DeclareView; steps: StepProgress[] } {
     // What the plugin's --stream prints is a hook-start and a hook-end for each team check, so the mock reports the step, then a check, worded
     // as the backend words it ("<step>: <check line>"); the plugin prints nothing for a push or a pull request.
-    const verifying: StepProgress = { kind: 'verifying', label: 'Declaring the change done', repo: null, check: null };
+    const verifying: StepProgress = { kind: 'verifying', label: 'Declaring the change done', repo: null, check: null, phase: 'other' };
     const reported: StepProgress[] = [
       verifying,
-      { kind: 'hook', label: 'Declaring the change done: running base-tests', repo: null, check: 'base-tests' },
-      { kind: 'hook', label: 'Declaring the change done: base-tests passed', repo: null, check: 'base-tests' },
+      { kind: 'hook', label: 'Declaring the change done: running base-tests', repo: null, check: 'base-tests', phase: 'other' },
+      { kind: 'hook', label: 'Declaring the change done: base-tests passed', repo: null, check: 'base-tests', phase: 'other' },
     ];
     const link = (repo: string, number: number) => ({ repo, url: prUrl(repo), number, source: 'plugin' as const });
     switch (this.demo) {

@@ -86,6 +86,7 @@ export function stopWords(kind: StepKind): string {
     switch (kind) {
       case 'preparingBuild':
       case 'preparingReview':
+      case 'checkingBase':
         return 'Stop preparing the build';
       case 'starting':
         return 'Stop starting the change';
@@ -99,6 +100,7 @@ export function stopWords(kind: StepKind): string {
         return 'Stop declaring the change done';
     }
   }
+  if ('preparationHook' in kind) return 'Stop preparing the build';
   return 'accepting' in kind ? `Stop accepting the ${kind.accepting}` : `Stop rejecting the ${kind.rejecting}`;
 }
 

@@ -1988,7 +1988,7 @@ describe('each long step shows Stop and says it was stopped', () => {
   const REF = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: PHOTOS_CHANGE };
   const keyOf = (change: string, system = 'commerce'): ChangeKey => ({ workspace: { key: MOCK_WORKSPACE_FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system, change });
   const pr = (repo: string): RecordedPullRequest => ({ repo, url: `https://github.com/acme/${repo}/pull/1`, number: 1, source: 'plugin' });
-  const progress = (label: string): StepProgress => ({ kind: 'repository', label, repo: null, check: null });
+  const progress = (label: string): StepProgress => ({ kind: 'repository', label, repo: null, check: null, phase: 'other' });
 
   /** A call the test releases when it likes, and the backend's step reports the test pushes by hand. */
   function hold<T>(transport: MockTransport) {
@@ -2154,7 +2154,8 @@ describe('a step the backend runs is the page\x27s, whoever started it (F3, F5)'
     change: keyOf(change),
     kind: { accepting: 'spec' },
     doing: 'accepting its spec',
-    progress: { kind: 'verifying', label: 'Accepting the spec: running docs-lint', repo: null, check: 'docs-lint' },
+    progress: { kind: 'verifying', label: 'Accepting the spec: running docs-lint', repo: null, check: 'docs-lint', phase: 'other' },
+    liveChecks: [],
   });
 
   it('a page opened while the spec is being accepted shows the label and Stop, and Stop stops that change', async () => {

@@ -1794,7 +1794,7 @@ describe('SdlcHomeViewModel master folder', () => {
 
 describe('New change and copy removal can be stopped', () => {
   const keyOf = (change: string, system = 'commerce'): ChangeKey => ({ workspace: { key: MOCK_WORKSPACE_FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system, change });
-  const progress = (label: string): StepProgress => ({ kind: 'repository', label, repo: null, check: null });
+  const progress = (label: string): StepProgress => ({ kind: 'repository', label, repo: null, check: null, phase: 'other' });
 
   /** The backend's step reports, pushed by hand, and Stop as a spy. */
   function steps(transport: MockTransport) {
@@ -1929,7 +1929,8 @@ describe('a start or a removal the backend runs is the home\'s, whoever started 
     change: keyOf(change, system),
     kind,
     doing: 'doing',
-    progress: { kind: 'repository', label, repo: null, check: null },
+    progress: { kind: 'repository', label, repo: null, check: null, phase: 'other' },
+    liveChecks: [],
   });
 
   it.each<[string, StepKind, string]>([

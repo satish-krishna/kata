@@ -66,12 +66,28 @@ impl StepKind {
 }
 
 impl StepKind {
+    /// The kind whose words start a progress line of this step: a line of the team's `build.start` hooks is a
+    /// preparation step named for its hook, never one of the checks on the base, which a build's other lines are.
+    fn of_line(&self, line: Option<&StepProgress>) -> StepKind {
+        match (self, line) {
+            (
+                StepKind::PreparingBuild,
+                Some(StepProgress {
+                    phase: StepPhase::Preparation,
+                    check: Some(id),
+                    ..
+                }),
+            ) => StepKind::PreparationHook { id: id.clone() },
+            (StepKind::PreparingBuild, _) => StepKind::CheckingBase,
+            (other, _) => other.clone(),
+        }
+    }
+
     /// The step's own words, the start of every progress line it shows: what the step is doing.
     pub fn words(&self) -> &'static str {
         match self {
-            StepKind::PreparationHook { .. } => "",
-            StepKind::CheckingBase => "",
-            StepKind::PreparingBuild => "Checking every repository before building",
+            StepKind::PreparationHook { .. } => "Preparing",
+            StepKind::CheckingBase | StepKind::PreparingBuild => "Checking the base",
             StepKind::PreparingReview => "Checking every repository before the review",
             StepKind::Starting => "Starting the change",
             StepKind::Renaming => "Renaming the change",
@@ -101,7 +117,7 @@ pub fn progress_line(
         (StepKind::PreparingBuild | StepKind::PreparingReview, Some(repo)) => {
             format!("Preparing {repo}")
         }
-        _ => kind.words().to_string(),
+        _ => kind.of_line(line).words().to_string(),
     };
     let Some(line) = line else {
         return StepProgress {
@@ -288,6 +304,13 @@ impl StepTable {
         });
     }
 
+    /// Keep `checks` as the latest the preparation of the change read, for the page that opens with the step.
+    pub fn set_live_checks(&self, change: &ChangeKey, checks: Vec<BaseCheck>) {
+        if let Some(entry) = self.entries.lock().unwrap().get_mut(change) {
+            entry.live_checks = checks;
+        }
+    }
+
     /// Cancel the change's step; whether there was one.
     pub fn stop(&self, change: &ChangeKey) -> bool {
         match self.entries.lock().unwrap().get(change) {
@@ -396,12 +419,7 @@ mod tests {
                 line(failed),
                 "Accepting the plan: docs-lint failed",
             ),
-            (
-                StepKind::PreparingBuild,
-                None,
-                None,
-                "Checking every repository before building",
-            ),
+            (StepKind::PreparingBuild, None, None, "Checking the base"),
             (
                 StepKind::PreparingReview,
                 None,
@@ -412,7 +430,7 @@ mod tests {
                 StepKind::PreparingBuild,
                 None,
                 line(start),
-                "Checking every repository before building: running base-tests",
+                "Checking the base: running base-tests",
             ),
             (
                 StepKind::PreparingBuild,
