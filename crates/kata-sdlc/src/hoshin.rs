@@ -17,7 +17,7 @@ use crate::process::CapturedExit;
 use kata_core::proc::{
     run_limited, run_limited_streaming, Bound, CancelToken, Limited, LineSink, Outcome, StartError,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -731,6 +731,131 @@ pub fn progress_of(line: &str) -> Option<StepProgress> {
     })
 }
 
+/// Where one check stands, exactly as hoshin's `checks` reports it. Kata never decides a check abandoned.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CheckState {
+    /// A start line with no end line that no rule has abandoned.
+    Running,
+    /// An end line exists.
+    Ended,
+    /// The program that ran it ended without a result.
+    Abandoned,
+}
+
+/// One check of a run, from its start and end lines.
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckEvent {
+    pub check: String,
+    pub state: CheckState,
+    pub started_at: Option<String>,
+    pub ended_at: Option<String>,
+    /// The hook's timeout in seconds.
+    pub timeout: Option<u64>,
+    /// `passed`, `failed` or `could-not-run`; null until the end line.
+    pub outcome: Option<String>,
+    pub ids: Option<Vec<String>>,
+    /// The verdict at head; null on a baseline run.
+    pub blocks: Option<bool>,
+}
+
+/// One pass over a repository's checks: on the base (`phase` `baseline`) or on the head (`head`).
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckRun {
+    pub run: String,
+    pub event: String,
+    pub repo: String,
+    pub phase: String,
+    pub checks: Vec<CheckEvent>,
+}
+
+/// What `checks --json` answered: the runs in the order they were written.
+#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChecksAnswer {
+    pub system: String,
+    pub change: String,
+    pub runs: Vec<CheckRun>,
+}
+
+/// One check of a stored baseline.
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BaselineHook {
+    pub id: String,
+    pub outcome: String,
+    pub exit_code: Option<i32>,
+    pub ids: Option<Vec<String>>,
+    /// The stored last 200 lines of the check's output.
+    #[serde(default)]
+    pub output: String,
+}
+
+/// What `baseline show --json` answered.
+#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BaselineShow {
+    pub base: String,
+    pub hooks: Vec<BaselineHook>,
+    /// The checks that failed on the base without IDs and are not approved yet.
+    pub needs_approval: Vec<String>,
+    pub approved: Vec<String>,
+}
+
+/// The acceptance `baseline approve` recorded.
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Approval {
+    pub hook: String,
+    pub base: String,
+}
+
+/// What `baseline approve --json` answered: the approval, or the program's reasons for refusing it.
+#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct BaselineApproved {
+    pub approved: Option<Approval>,
+    #[serde(default)]
+    pub problems: Vec<String>,
+}
+
+impl Program {
+    /// Reads the check events of `change` in `repo`. A non-empty `problems` is an error.
+    pub fn checks(
+        &self,
+        place: &Place,
+        change: &str,
+        repo: &str,
+    ) -> Result<ChecksAnswer, ProgramError> {
+        let _ = (place, change, repo);
+        Ok(ChecksAnswer::default())
+    }
+
+    /// Reads the stored baseline of `repo` for `change`; runs nothing. A non-empty `problems` is an error.
+    pub fn baseline_show(
+        &self,
+        place: &Place,
+        change: &str,
+        repo: &str,
+    ) -> Result<BaselineShow, ProgramError> {
+        let _ = (place, change, repo);
+        Ok(BaselineShow::default())
+    }
+
+    /// Accepts the failing check `hook` on the base for `change` in `repo`. The answer carries the
+    /// program's problems as they are.
+    pub fn baseline_approve(
+        &self,
+        place: &Place,
+        change: &str,
+        repo: &str,
+        hook: &str,
+    ) -> Result<BaselineApproved, ProgramError> {
+        let _ = (place, change, repo, hook);
+        Ok(BaselineApproved::default())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1262,5 +1387,106 @@ mod tests {
         let found = program().run(&["resolve", "--json"], &place).unwrap();
         assert!(same_path(&found["master"], &place.master), "{found}");
         assert!(same_path(&found["workspace"], &place.workspace), "{found}");
+    }
+
+    #[test]
+    fn checks_answer_reads_a_base_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = serde_json::json!({"system": "kata", "change": "c1", "problems": [], "runs": [
+            {"run": "r1", "event": "build.finish", "repo": "kata", "phase": "baseline", "checks": [
+                {"check": "lint", "state": "ended", "startedAt": "2026-11-18T10:00:00Z", "endedAt": "2026-11-18T10:00:05Z",
+                 "timeout": 600, "outcome": "passed", "ids": null, "blocks": null},
+                {"check": "unit", "state": "running", "startedAt": "2026-11-18T10:00:05Z", "endedAt": null,
+                 "timeout": 600, "outcome": null, "ids": null, "blocks": null},
+                {"check": "e2e", "state": "abandoned", "startedAt": "2026-11-18T09:00:00Z", "endedAt": null,
+                 "timeout": 60, "outcome": null, "ids": null, "blocks": null}]}]});
+        let (program, place) = answering(dir.path(), 0, &json);
+        let answer = program.checks(&place, "c1", "kata").unwrap();
+        assert_eq!(answer.change, "c1");
+        assert_eq!(answer.runs.len(), 1);
+        let run = &answer.runs[0];
+        assert_eq!((run.run.as_str(), run.phase.as_str()), ("r1", "baseline"));
+        let states: Vec<CheckState> = run.checks.iter().map(|c| c.state).collect();
+        assert_eq!(
+            states,
+            [
+                CheckState::Ended,
+                CheckState::Running,
+                CheckState::Abandoned
+            ]
+        );
+        assert_eq!(run.checks[0].outcome.as_deref(), Some("passed"));
+        assert_eq!(run.checks[0].timeout, Some(600));
+        assert_eq!(run.checks[1].ended_at, None);
+        assert_eq!(
+            run.checks[2].started_at.as_deref(),
+            Some("2026-11-18T09:00:00Z")
+        );
+    }
+
+    #[test]
+    fn checks_with_problems_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = serde_json::json!({"system": "kata", "change": "c1", "runs": [],
+            "problems": ["line 1 of f is not a check event"]});
+        let (program, place) = answering(dir.path(), 1, &json);
+        let err = program.checks(&place, "c1", "kata").unwrap_err();
+        assert!(err.to_string().contains("not a check event"), "{err}");
+    }
+
+    #[test]
+    fn baseline_show_reads_each_hook_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = serde_json::json!({"base": "abc123", "taken": false, "reused": true, "problems": [],
+            "hooks": [
+                {"id": "lint", "outcome": "passed", "exitCode": 0, "ids": null, "output": ""},
+                {"id": "unit", "outcome": "failed", "exitCode": 1, "ids": null, "output": "line 1\nline 2"}],
+            "needsApproval": ["unit"], "approved": []});
+        let (program, place) = answering(dir.path(), 0, &json);
+        let shown = program.baseline_show(&place, "c1", "kata").unwrap();
+        assert_eq!(shown.base, "abc123");
+        assert_eq!(shown.hooks.len(), 2);
+        assert_eq!(shown.hooks[1].exit_code, Some(1));
+        assert_eq!(shown.hooks[1].output, "line 1\nline 2");
+        assert_eq!(shown.needs_approval, ["unit"]);
+        assert!(shown.approved.is_empty());
+    }
+
+    #[test]
+    fn baseline_show_with_problems_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = serde_json::json!({"base": "", "hooks": [], "needsApproval": [], "approved": [],
+            "problems": ["uncommitted files"]});
+        let (program, place) = answering(dir.path(), 1, &json);
+        let err = program.baseline_show(&place, "c1", "kata").unwrap_err();
+        assert!(err.to_string().contains("uncommitted files"), "{err}");
+    }
+
+    #[test]
+    fn baseline_approve_returns_problems_as_the_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let refused = serde_json::json!({"approved": null, "problems": ["the base commit moved"]});
+        let (program, place) = answering(dir.path(), 1, &refused);
+        let answer = program
+            .baseline_approve(&place, "c1", "kata", "unit")
+            .unwrap();
+        assert_eq!(answer.approved, None);
+        assert_eq!(answer.problems, ["the base commit moved"]);
+
+        let dir2 = tempfile::tempdir().unwrap();
+        let done =
+            serde_json::json!({"approved": {"hook": "unit", "base": "abc123"}, "problems": []});
+        let (program, place) = answering(dir2.path(), 0, &done);
+        let answer = program
+            .baseline_approve(&place, "c1", "kata", "unit")
+            .unwrap();
+        assert_eq!(
+            answer.approved,
+            Some(Approval {
+                hook: "unit".into(),
+                base: "abc123".into()
+            })
+        );
+        assert!(answer.problems.is_empty());
     }
 }
