@@ -828,14 +828,18 @@ pub struct BaselineShow {
 }
 
 /// The acceptance `baseline approve` recorded.
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct Approval {
     pub hook: String,
     pub base: String,
 }
 
 /// What `baseline approve --json` answered: the approval, or the program's reasons for refusing it.
-#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct BaselineApproved {
     pub approved: Option<Approval>,
     #[serde(default)]
@@ -1583,5 +1587,95 @@ mod tests {
             })
         );
         assert!(answer.problems.is_empty());
+    }
+
+    /// R5.7: the vendored program's guard refuses `baseline approve` from an agent's shell, so the protection
+    /// Kata relies on is in the plugin floor.
+    #[test]
+    fn guard_refuses_baseline_approve_to_an_agent_r5_7() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let entry = program().entry;
+        let ask = |command: &str| -> String {
+            let mut child = Command::new("node")
+                .arg(&entry)
+                .arg("guard")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let call = serde_json::json!({"tool_name": "Bash", "tool_input": {"command": command}});
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(call.to_string().as_bytes())
+                .unwrap();
+            let out = child.wait_with_output().unwrap();
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        };
+        let refused =
+            ask("node hoshin.ts baseline approve --json --change c --repo kata --hook unit");
+        assert!(
+            refused.contains("\"permissionDecision\":\"deny\""),
+            "{refused}"
+        );
+        assert!(refused.contains("Only the engineer"), "{refused}");
+        let allowed = ask("node hoshin.ts baseline show --json --change c --repo kata");
+        assert!(allowed.trim().is_empty(), "{allowed}");
+    }
+
+    /// R5.8: an acceptance holds for one base commit: with the base commit moved, the check is not approved.
+    #[test]
+    fn acceptance_holds_for_one_base_commit_r5_8() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_path_buf();
+        let master = testutil::repo(&ws, "hub");
+        let marker = serde_json::json!({"version": 1, "systems": {"demo": {"repos": ["app"]}},
+            "hooks": {"build.finish": [{"id": "unit", "run": ["node", "-e", "process.exit(1)"], "repos": ["app"]}]}});
+        testutil::commit_file(&master, ".hoshin.json", &marker.to_string(), "marker");
+        let app = testutil::repo(&ws, "app");
+        let place = Place {
+            layout: crate::layout::Layout::Workspace,
+            master,
+            workspace: ws,
+        };
+        let program = program();
+        let change = "2026-11-01-greeting";
+        let started = program
+            .step_long(
+                &[
+                    "change", "start", "--json", "--system", "demo", "--change", change, "--type",
+                    "feat", "--scope", "demo", "--title", "Greeting",
+                ],
+                &place,
+                &kata_core::proc::CancelToken::new(),
+                None,
+            )
+            .json;
+        assert_eq!(started["outcome"], "passed", "{started}");
+        // Take the baseline: the check fails on the base without saying what failed.
+        let _ = program.run(
+            &[
+                "baseline", "retake", "--json", "--change", change, "--repo", "app",
+            ],
+            &place,
+        );
+        let before = program.baseline_show(&place, change, "app").unwrap();
+        assert_eq!(before.needs_approval, ["unit"], "{before:?}");
+
+        let approved = program
+            .baseline_approve(&place, change, "app", "unit")
+            .unwrap();
+        assert_eq!(approved.problems, Vec::<String>::new());
+        let held = program.baseline_show(&place, change, "app").unwrap();
+        assert_eq!(held.approved, ["unit"], "{held:?}");
+        assert!(held.needs_approval.is_empty(), "{held:?}");
+
+        // The base branch moves: the acceptance was for the old base commit.
+        testutil::commit_file(&app, "more.txt", "x\n", "move the base");
+        let moved = program.baseline_show(&place, change, "app").unwrap();
+        assert_ne!(moved.base, held.base);
+        assert!(moved.approved.is_empty(), "{moved:?}");
     }
 }

@@ -2065,6 +2065,29 @@ fn sdlc_start_checks(
         .map_err(|e| e.to_string())
 }
 
+/// Accept one failing check of a repository on the base for this build. Not written yet.
+#[tauri::command(async)]
+fn sdlc_accept_base_check(
+    steps: State<'_, steps::StepTable>,
+    change: build_host::ChangeRef,
+    repo: String,
+    check: String,
+) -> Result<sdlc::hoshin::BaselineApproved, String> {
+    let program = sdlc::hoshin::Program::locate(&change_plugin_dir(&change.workspace)?);
+    accept_base_check_in(&steps, &program, &change, &repo, &check)
+}
+
+/// The accept step of `sdlc_accept_base_check`, with the program given.
+fn accept_base_check_in(
+    _steps: &steps::StepTable,
+    _program: &sdlc::hoshin::Program,
+    _change: &build_host::ChangeRef,
+    _repo: &str,
+    _check: &str,
+) -> Result<sdlc::hoshin::BaselineApproved, String> {
+    Err(String::new())
+}
+
 /// Declare a change done through the plugin: it verifies the change, pushes every touched repository and
 /// opens one pull request each, the master's last. Each step it reports goes out on `sdlc://step`. A
 /// step the machine cannot run is the answer, not an error.
@@ -2656,6 +2679,7 @@ pub fn run() {
             sdlc_diff_base,
             sdlc_checks_view,
             sdlc_start_checks,
+            sdlc_accept_base_check,
             sdlc_declare_done,
             sdlc_pull_requests_view,
             sdlc_copy_removal,
@@ -3588,6 +3612,94 @@ name: build
             item.lock
         );
     }
+
+    /// A program that answers `baseline approve` itself and logs each such call's arguments, one JSON line each;
+    /// every other command goes to the real program.
+    fn approving_program(dir: &Path) -> (sdlc::hoshin::Program, std::path::PathBuf) {
+        let log = dir.join("approvals.log");
+        let real = steps_commands::real_program().entry;
+        let script = format!(
+            "import {{ spawnSync }} from 'node:child_process';
+import {{ appendFileSync }} from 'node:fs';
+const args = process.argv.slice(2);
+if (args[0] === 'baseline' && args[1] === 'approve') {{
+  appendFileSync({log:?}, JSON.stringify(args) + '\\n');
+  const hook = args[args.indexOf('--hook') + 1];
+  console.log(JSON.stringify({{ approved: {{ hook, base: 'abc123' }}, problems: [] }}));
+}} else {{
+  const r = spawnSync(process.execPath, [{real:?}, ...args], {{ stdio: 'inherit' }});
+  process.exit(r.status ?? 2);
+}}
+",
+            log = log.display().to_string(),
+            real = real.display().to_string(),
+        );
+        let entry = dir.join("approving-hoshin.mjs");
+        std::fs::write(&entry, script).unwrap();
+        (
+            sdlc::hoshin::Program {
+                node: "node".into(),
+                entry,
+            },
+            log,
+        )
+    }
+
+    /// R11.1, row by row: accepting a failing check is recorded when no run of the change is live and when
+    /// another repository's run of it is, and is refused while the build of this change is being prepared.
+    #[test]
+    fn accept_base_check_while_work_is_live_r11_1() {
+        let fx = steps_commands::fixture();
+        let dir = tempfile::tempdir().unwrap();
+        let (program, log) = approving_program(dir.path());
+        let calls = || std::fs::read_to_string(&log).unwrap_or_default();
+        let steps = steps::StepTable::new(Arc::new(|_| {}));
+
+        // Row 1: no run of the change is live. The acceptance is recorded, for this one check.
+        let answer = accept_base_check_in(&steps, &program, &fx.change, "app", "unit").unwrap();
+        assert_eq!(
+            answer.approved.as_ref().map(|a| a.hook.as_str()),
+            Some("unit")
+        );
+        assert!(answer.problems.is_empty(), "{answer:?}");
+        let logged = calls();
+        assert_eq!(logged.lines().count(), 1, "{logged}");
+        assert!(logged.contains("\"--repo\",\"app\""), "{logged}");
+        assert!(logged.contains("\"--hook\",\"unit\""), "{logged}");
+
+        // Row 2: another repository's run of the same change is live. A live run is not a step of the table
+        // (only a preparation or a document step is), so nothing refuses and no run is stopped.
+        let other = steps_commands::fixture();
+        let _other_prepares = steps
+            .begin(
+                build_host::key_of(&other.change),
+                steps::StepKind::PreparingBuild,
+            )
+            .unwrap();
+        let answer = accept_base_check_in(&steps, &program, &fx.change, "web", "lint").unwrap();
+        assert_eq!(
+            answer.approved.as_ref().map(|a| a.hook.as_str()),
+            Some("lint")
+        );
+        assert_eq!(calls().lines().count(), 2);
+        assert!(
+            steps.stop(&build_host::key_of(&other.change)),
+            "the other change's step is still there"
+        );
+
+        // Row 3: the build of this change is being prepared. The accept action is off and says so, and the
+        // program is not asked.
+        let _preparing = steps
+            .begin(
+                build_host::key_of(&fx.change),
+                steps::StepKind::PreparingBuild,
+            )
+            .unwrap();
+        let refused =
+            accept_base_check_in(&steps, &program, &fx.change, "app", "unit").unwrap_err();
+        assert_eq!(refused, "The build is being prepared");
+        assert_eq!(calls().lines().count(), 2, "the program was asked");
+    }
 }
 
 /// Every long-step command takes part in the step table: it begins a step of its kind, a stop ends the call
@@ -3610,7 +3722,7 @@ mod steps_commands {
     const CHANGE: &str = "2026-11-01-password-reset";
     const MARKER: &str = r#"{"version":1,"systems":{"demo":{"repos":["app"]}}}"#;
 
-    fn real_program() -> Program {
+    pub(super) fn real_program() -> Program {
         Program {
             node: "node".into(),
             entry: Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -3630,12 +3742,12 @@ mod steps_commands {
 
     /// A workspace with a master, a product repository and a change the plugin started in its own copy, with
     /// an intent in it.
-    struct Fx {
+    pub(super) struct Fx {
         _dir: tempfile::TempDir,
-        change: build_host::ChangeRef,
+        pub(super) change: build_host::ChangeRef,
     }
 
-    fn fixture() -> Fx {
+    pub(super) fn fixture() -> Fx {
         fixture_with("")
     }
 
