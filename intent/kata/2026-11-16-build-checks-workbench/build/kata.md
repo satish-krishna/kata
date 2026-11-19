@@ -185,3 +185,21 @@ notes: |
   The "finished" rows are modeled by logging the repository's last task before the rerun passes, since the coordinator counts a repository finished from its logged tasks in status.
   No frontend calls the command yet (T16).
 ```
+
+### T12
+
+```yaml
+task: T12
+commits: ["e9f84c5", "00fdba1"]
+departure: |
+  T12 files: app/src-tauri/src/close_guard.rs got stop_question: None in its test helper, to compile, in the test commit.
+  rule 5: existing build_host.rs tests that build StartOutcome::Stopped { prepared } literals (the stopping-a-preparation test and the Row table) gained note: None to compile; their assertions are unchanged.
+  R10.1, R10.2: in the single-repo layout neither the stop question nor the stopped note appears, because both hang off the live checks that T8 reads only inside prepare's per-repository loop (see T8's departure); a stop at the top of the loop or during the dry --check call also gets no note.
+red: observed
+notes: |
+  StartOutcome::Stopped gained note: Option<String>; RunningStep gained stop_question: Option<String>; steps.rs holds the pure stop_question(&[BaseCheck]) and stopped_note(bool).
+  "Already ran" counts Passed and Failed rows only; CutOff, Running and NotRun do not; a step with no live checks has no question.
+  The note is set only when a stop interrupts a repository's build.start after live checks were read (StepTable::has_live_checks).
+  Extra test: stopping_during_the_checks_asks_and_notes_where_the_copy_was_left in build_host.rs stops a start while checks run and asserts the question on the step and the note on StartOutcome::Stopped.
+  stop_question and note are not wired to the frontend yet (T13).
+```
