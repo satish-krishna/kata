@@ -203,3 +203,21 @@ notes: |
   Extra test: stopping_during_the_checks_asks_and_notes_where_the_copy_was_left in build_host.rs stops a start while checks run and asserts the question on the step and the note on StartOutcome::Stopped.
   stop_question and note are not wired to the frontend yet (T13).
 ```
+
+### T13
+
+```yaml
+task: T13
+commits: ["b81cca0", "c582e5b", "a36c0f8"]
+departure: |
+  rule 1: red record was refused ("T13 already has production commits before HEAD (b81cca0): red is recorded only before the task's first production commit"), because compile repairs to mock-transport.ts and sdlc-steps.ts were committed before the test commit; the subagent reports its own run showed all 3 new tests failing on their assertions.
+  T13 files, rule 5: the app did not type-check after T8, T11 and T12, so b81cca0 adds stopQuestion: null to RunningStep fixtures in step.store.spec.ts, change-page.view-model.spec.ts, sdlc-home.view-model.spec.ts and build-page.view-model.spec.ts, note: null to stopped outcomes in mock-transport.ts and build-page.view-model.spec.ts, and a stopWords case "Stop running the checks again" for rerunningFinishChecks in sdlc-steps.ts; no assertion weakened.
+  T13 files: change-page.css does not exist; the one new rule, .k-progress-run, is in app/src/styles/kata/components.css; package.json is unchanged.
+  R10.1, R12.2: the question uses the existing app-confirm-dialog, so its buttons read "Cancel" and "Stop", with the question as the dialog title; Escape cancels.
+red: "not observed: red record refused, a production commit (b81cca0) came before the test commit"
+notes: |
+  BuildPageViewModel gained stopAsked, askStop(), confirmStop() and keepChecking(); askStop() reads transport.steps() fresh, since no step report carries stopQuestion.
+  The progress line's host element is display: contents and projects the Stop button through ng-content; where no progress entry exists yet, the Stop button renders alone in the same row.
+  No --route was added to check:boot or check:interaction: the dialog is the existing confirm overlay.
+  An extra test, "confirming the question stops the preparation r10.1", asserts the stop is called once on confirm.
+```
