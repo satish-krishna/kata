@@ -38,6 +38,16 @@ function Get-WorkspaceVersion {
     $Matches[1]
 }
 
+# The README's gallery against docs/images: every image shown, and every image
+# the README shows present. Returns one line per problem.
+function Get-ReadmeImageProblems {
+    $readme = Get-Content (Join-Path $repoRoot 'README.md') -Raw
+    $files = Get-ChildItem (Join-Path $repoRoot 'docs/images') -Filter *.png | ForEach-Object { "docs/images/$($_.Name)" }
+    $shown = [regex]::Matches($readme, 'docs/images/[^)\s]+\.png') | ForEach-Object { $_.Value } | Sort-Object -Unique
+    @($files | Where-Object { $_ -notin $shown } | ForEach-Object { "not in README.md: $_" }) +
+    @($shown | Where-Object { $_ -notin $files } | ForEach-Object { "in README.md but missing: $_" })
+}
+
 Push-Location $repoRoot
 try {
     # 1. Pre-flight: a valid, newer version on an up-to-date, clean main, with
@@ -68,6 +78,8 @@ try {
             throw "main is $ahead ahead and $behind behind origin/main; sync it first"
         }
     }
+    $problems = Get-ReadmeImageProblems
+    if ($problems) { throw "the README gallery does not match docs/images:`n  $($problems -join "`n  ")" }
     if (git tag --list $tag) { throw "tag $tag already exists locally" }
     if (git ls-remote --tags origin "refs/tags/$tag") { throw "tag $tag already exists on origin" }
 
@@ -99,6 +111,15 @@ try {
     $images = @($touched | Where-Object { $_ -like 'docs/images/*' })
     $stray = $touched | Where-Object { $_ -notlike 'docs/images/*' }
     if ($stray) { throw "the screenshots touched files outside docs/images: $($stray -join ', ')" }
+    # A view added since the last release has a new image the README lacks.
+    # Pre-flight proved the tree clean, so resetting it drops only this run's
+    # bump and screenshots, and the rerun starts from a clean main again.
+    $problems = Get-ReadmeImageProblems
+    if ($problems) {
+        git reset --quiet --hard HEAD
+        git clean --quiet -f -- docs/images
+        throw "the README gallery does not match the new screenshots; add them to README.md, commit, and rerun:`n  $($problems -join "`n  ")"
+    }
     if ($images) { Invoke-Checked 'git add images' { git add -- docs/images } }
 
     # 4. Commit the bump and the screenshots together. On a rerun whose bump is
