@@ -1293,6 +1293,23 @@ describe('the build page reads the backend\'s build and starts it through the ho
     }
   });
 
+  describe('a stop during the checks says where the copy was left r10.2', () => {
+    const NOTE = "The copy may stay on the base commit. Your work is safe on the change's branch, and the next start puts it back first.";
+    for (const c of [
+      { name: 'the note from the backend follows the stopped message', note: NOTE as string | null, expected: `Preparation stopped. ${NOTE}` },
+      { name: 'no note leaves the stopped message alone', note: null, expected: 'Preparation stopped' },
+    ]) {
+      it(c.name, async () => {
+        const { vm, transport, load } = await opened();
+        await load();
+        vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'stopped', prepared: [], note: c.note });
+        expect(await vm.startBuild({ timeoutSecs: 60 })).toBe('stopped');
+        await advance(200);
+        expect(vm.stoppedNote()).toBe(c.expected);
+      });
+    }
+  });
+
   it('Stop calls stopStep, and the step label feeds the progress line for this change only', async () => {
     const { vm, transport, load } = await opened();
     await load();
