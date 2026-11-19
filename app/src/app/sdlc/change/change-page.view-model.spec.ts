@@ -4,6 +4,8 @@ import { ToastStore } from '../../core/toast/toast.store';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import type { ChangeInfo } from '../../lib/sdlc-mock-types';
 import type { AcceptOutcome } from '@bindings/AcceptOutcome';
+import type { BaseCheck } from '@bindings/BaseCheck';
+import type { StartChecks } from '@bindings/StartChecks';
 import type { ChangeKey } from '@bindings/ChangeKey';
 import type { CopyRemoval } from '@bindings/CopyRemoval';
 import type { DeclareView } from '@bindings/DeclareView';
@@ -2304,5 +2306,47 @@ describe('ChangePageViewModel: the run pane shows only the run in front of it (R
     expect(JSON.stringify(again.events())).not.toContain(EARLIER_SAYS);
     expect(again.events().slice(0, whole.length)).toEqual(whole.slice(0, again.events().length));
     TestBed.inject(ChangeRunStore).cancel(KEY);
+  });
+});
+
+// R8: the change page reads where the change stands on opening, after any action and when the window regains focus.
+describe('the change page reads where the change stands again', () => {
+  const check = (name: string, state: BaseCheck['state']): BaseCheck => ({ check: name, state, exitCode: state === 'failed' ? 1 : null, output: 'boom', lineCount: 1, canAccept: state === 'failed', accepted: false, startedAt: null, endedAt: null });
+  const stopped = (): StartChecks[] => [{ repo: 'kata', shown: { kind: 'baseFailure' }, base: '3c504eb', checks: [check('app-speed', 'failed')], passed: 0, setupHint: false, startHeld: 'Accept or fix the failing checks first', finish: null }];
+  const underWay = (): StartChecks[] => [{ repo: 'kata', shown: { kind: 'underWay' }, base: '3c504eb', checks: [check('app-speed', 'running')], passed: 0, setupHint: false, startHeld: null, finish: null }];
+
+  it('a failure the change no longer holds is cleared on focus r8.2', async () => {
+    const transport = new MockTransport();
+    const reads = vi.spyOn(transport, 'sdlcStartChecks').mockResolvedValue(stopped());
+    const { vm } = setup(MOCK_BUILD_CHANGE, transport);
+    await ready(vm);
+    const build = TestBed.inject(BuildPageViewModel);
+    await vi.waitFor(() => expect(build.view().failures?.map((f) => f.start.shown.kind)).toEqual(['baseFailure']));
+    const before = reads.mock.calls.length;
+    // Since then the check was accepted and the build started from a session in the change's copy.
+    reads.mockResolvedValue(underWay());
+    vm.windowFocused();
+    await vi.waitFor(() => expect(build.view().failures).toEqual([]));
+    expect(reads.mock.calls.length).toBeGreaterThan(before);
+    expect(build.view().baseChecks?.elsewhere).toBe(true);
+  });
+
+  it('reads on opening and after actions, not on its own r8.3', async () => {
+    const transport = new MockTransport();
+    const reads = vi.spyOn(transport, 'sdlcStartChecks');
+    const { vm } = setup(MOCK_BUILD_CHANGE, transport);
+    await ready(vm);
+    await vi.waitFor(() => expect(reads).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+    const opened = reads.mock.calls.length;
+    vi.useFakeTimers();
+    try {
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(reads.mock.calls.length).toBe(opened);
+    } finally {
+      vi.useRealTimers();
+    }
+    await vm.act('accept-spec');
+    await vi.waitFor(() => expect(reads.mock.calls.length).toBeGreaterThan(opened));
   });
 });
