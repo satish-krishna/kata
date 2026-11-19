@@ -3,6 +3,7 @@ import type { CopyRemoval } from '@bindings/CopyRemoval';
 import type { RemoveOutcome } from '@bindings/RemoveOutcome';
 import type { ChangeInfo } from '../../lib/sdlc-mock-types';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
+import { ToastStore } from '../../core/toast/toast.store';
 import { By } from '@angular/platform-browser';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter, type Routes } from '@angular/router';
 import { of } from 'rxjs';
@@ -186,15 +187,17 @@ describe('ChangePage', () => {
       await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
     });
 
-    it('a refused build opens the refusal dialog', async () => {
+    it('a refused build with nothing to show on the page says so in a toast and opens no dialog', async () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
+      const toast = vi.spyOn(TestBed.inject(ToastStore), 'error');
       vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'refused', problems: ['The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.7.9.', 'customer-portal: uncommitted files: a.txt'] });
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
       await settle();
       await confirmPreview();
-      await vi.waitFor(() => expect(document.body.textContent).toContain('The build did not start'));
-      expect(document.body.textContent).toContain('The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.7.9.');
-      expect(document.body.textContent).toContain('customer-portal: uncommitted files: a.txt');
+      await vi.waitFor(() => expect(toast).toHaveBeenCalled());
+      expect(toast.mock.calls[0][0]).toContain('The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.7.9.');
+      expect(toast.mock.calls[0][0]).toContain('customer-portal: uncommitted files: a.txt');
+      expect(document.body.querySelector('[role="dialog"], [role="alertdialog"]')).toBeNull();
     });
 
   });

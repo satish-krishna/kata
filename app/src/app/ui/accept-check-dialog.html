@@ -1,0 +1,19 @@
+<hlm-dialog [state]="request() !== null ? 'open' : 'closed'" (stateChanged)="onState($event)">
+  <hlm-dialog-content *hlmDialogPortal="let ctx">
+    @if (request(); as req) {
+      <div hlmDialogTitle>Accept {{ req.check }} for this build?</div>
+      <div hlmDialogDescription class="grid gap-3">
+        <p>
+          <span class="k-mono">{{ req.check }}</span> already fails on the base <span class="k-mono">{{ req.base }}</span> and does not say what failed. Accepted, it will not block this build at finish while the base stays at
+          <span class="k-mono">{{ req.base }}</span
+          >, so a new failure in it would go through unseen.
+        </p>
+        <p>It still runs, and its result is shown. This cannot be undone for this base commit.</p>
+      </div>
+      <hlm-dialog-footer>
+        <button hlmBtn variant="ghost" size="sm" type="button" (click)="cancel.emit()">Cancel</button>
+        <button hlmBtn variant="danger" size="sm" type="button" (click)="confirm.emit()">Accept {{ req.check }}</button>
+      </hlm-dialog-footer>
+    }
+  </hlm-dialog-content>
+</hlm-dialog>

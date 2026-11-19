@@ -1,5 +1,6 @@
 import { Injector, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { ToastStore } from '../../core/toast/toast.store';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import type { ChangeInfo } from '../../lib/sdlc-mock-types';
 import type { AcceptOutcome } from '@bindings/AcceptOutcome';
@@ -692,8 +693,9 @@ describe('ChangePageViewModel', () => {
       await settleBuild();
     });
 
-    it('a refusal by the plugin lists its problems for every repository, starts nothing and leaves the tab alone (R8.1)', async () => {
+    it('a refusal by the plugin says its problems for every repository in a toast, starts nothing and leaves the tab alone (R8.1)', async () => {
       const { vm, transport, preview } = setup(BUILD, new MockTransport(), 'real');
+      const toast = vi.spyOn(TestBed.inject(ToastStore), 'error');
       const problems = ['commerce-core: a build log does not pass the check', 'customer-portal: uncommitted files: a.txt'];
       vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'refused', problems });
       await ready(vm);
@@ -701,11 +703,10 @@ describe('ChangePageViewModel', () => {
       await vm.act('start-build');
       await previewReady(preview);
       preview.start();
-      await vi.waitFor(() => expect(build().refusal()).toMatchObject({ problems }));
+      await vi.waitFor(() => expect(toast).toHaveBeenCalled());
+      for (const p of problems) expect(toast.mock.calls[0][0]).toContain(p);
       expect(build().started()).toBe(false);
       expect(vm.shownDoc()).toBe(tab);
-      build().closeRefusal();
-      expect(build().refusal()).toBeNull();
     });
 
     it('names the workspace, folder, system, change and every product repository of the system for the build view (R18.5)', async () => {

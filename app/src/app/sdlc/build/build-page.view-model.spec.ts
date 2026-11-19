@@ -1235,8 +1235,10 @@ describe('the build page reads the backend\'s build and starts it through the ho
     await load();
     const problems = ['commerce-core: the plan is not accepted', 'customer-portal: uncommitted files: src/a.ts'];
     vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'refused', problems });
+    const toast = vi.spyOn(TestBed.inject(ToastStore), 'error');
     expect(await vm.startBuild({ timeoutSecs: 60 })).toBe('refused');
-    expect(vm.refusal()).toMatchObject({ problems });
+    await advance(200);
+    for (const p of problems) expect(toast.mock.calls[0][0]).toContain(p);
     expect(vm.view().held).toBeNull();
   });
 
@@ -1249,35 +1251,42 @@ describe('the build page reads the backend\'s build and starts it through the ho
       hook: { id: 'deps', onFailure: 'stop', output: 'npm ci: lockfile out of date\n' },
       needsApproval: [],
     });
+    const toast = vi.spyOn(TestBed.inject(ToastStore), 'error');
     expect(await vm.startBuild({ timeoutSecs: 60 })).toBe('failed');
-    expect(vm.refusal()).toEqual({ reason: "The team's hook deps failed", problems: ['hook deps failed with exit code 1', 'npm ci: lockfile out of date'] });
+    await advance(200);
+    expect(toast.mock.calls[0][0]).toContain("The team's hook deps failed\nhook deps failed with exit code 1\nnpm ci: lockfile out of date");
   });
 
   it("a step the machine could not run names the repository the plugin names (F3)", async () => {
     const { vm, transport, load } = await opened();
     await load();
     vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'couldNotRun', output: 'hook prep could not run', repo: 'commerce-core' });
+    const toast = vi.spyOn(TestBed.inject(ToastStore), 'error');
     expect(await vm.startBuild({ timeoutSecs: 60 })).toBe('couldNotRun');
-    expect(vm.refusal()).toEqual({ reason: "This machine could not run the plugin's step in commerce-core", problems: ['hook prep could not run'] });
+    await advance(200);
+    expect(toast.mock.calls[0][0]).toContain("This machine could not run the plugin's step in commerce-core\nhook prep could not run");
   });
 
   describe('the preparation message, by outcome and step', () => {
-    const cases: { name: string; outcome: StartOutcome; stopped: string | null; refusal: object | null }[] = [
-      { name: 'started', outcome: { kind: 'started', uncommitted: {} }, stopped: null, refusal: null },
-      { name: 'refused', outcome: { kind: 'refused', problems: ['kata: the plan is not accepted'] }, stopped: null, refusal: { reason: 'The plugin refused to start the build', problems: ['kata: the plan is not accepted'] } },
-      { name: 'failed', outcome: { kind: 'failed', problems: ['hook deps failed'], hook: { id: 'deps', onFailure: 'stop', output: 'boom' }, needsApproval: [] }, stopped: null, refusal: { reason: "The team's hook deps failed", problems: ['hook deps failed', 'boom'] } },
-      { name: 'could not run', outcome: { kind: 'couldNotRun', output: 'no node', repo: null }, stopped: null, refusal: { reason: "This machine could not run the plugin's step", problems: ['no node'] } },
-      { name: 'stopped during the check of every repository', outcome: { kind: 'stopped', prepared: [], note: null }, stopped: 'Preparation stopped', refusal: null },
-      { name: 'stopped during one repository', outcome: { kind: 'stopped', prepared: ['kata', 'bob'], note: null }, stopped: 'Preparation stopped. Prepared: kata, bob', refusal: null },
+    const cases: { name: string; outcome: StartOutcome; stopped: string | null; toasted: string | null }[] = [
+      { name: 'started', outcome: { kind: 'started', uncommitted: {} }, stopped: null, toasted: null },
+      { name: 'refused', outcome: { kind: 'refused', problems: ['kata: the plan is not accepted'] }, stopped: null, toasted: 'The plugin refused to start the build\nkata: the plan is not accepted' },
+      { name: 'failed', outcome: { kind: 'failed', problems: ['hook deps failed'], hook: { id: 'deps', onFailure: 'stop', output: 'boom' }, needsApproval: [] }, stopped: null, toasted: "The team's hook deps failed\nhook deps failed\nboom" },
+      { name: 'could not run', outcome: { kind: 'couldNotRun', output: 'no node', repo: null }, stopped: null, toasted: "This machine could not run the plugin's step\nno node" },
+      { name: 'stopped during the check of every repository', outcome: { kind: 'stopped', prepared: [], note: null }, stopped: 'Preparation stopped', toasted: null },
+      { name: 'stopped during one repository', outcome: { kind: 'stopped', prepared: ['kata', 'bob'], note: null }, stopped: 'Preparation stopped. Prepared: kata, bob', toasted: null },
     ];
     for (const c of cases) {
       it(c.name, async () => {
         const { vm, transport, load } = await opened();
         await load();
         vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue(c.outcome);
+        const toast = vi.spyOn(TestBed.inject(ToastStore), 'error');
         expect(await vm.startBuild({ timeoutSecs: 60 })).toBe(c.outcome.kind);
+        await advance(200);
         expect(vm.stoppedNote()).toBe(c.stopped);
-        expect(vm.refusal()).toEqual(c.refusal);
+        if (c.toasted === null) expect(toast).not.toHaveBeenCalled();
+        else expect(toast.mock.calls[0][0]).toContain(c.toasted);
         expect(vm.preparing()).toBe(false);
       });
     }

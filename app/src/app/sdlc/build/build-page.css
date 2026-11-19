@@ -543,3 +543,9 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+
+.k-bp__failure {
+  max-height: 60vh;
+  overflow: auto;
+  padding: var(--space-3) var(--space-5);
+}

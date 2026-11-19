@@ -1,0 +1,86 @@
+<section class="bfp" [attr.aria-label]="'Why the build did not start in ' + start().repo" data-failure-panel>
+  <div class="bfp__head">
+    <span class="bfp__pill">
+      @if (settled()) {
+        <span class="k-status k-status--success"><span class="k-status__dot"></span>Ready to start</span>
+      } @else {
+        <span class="k-status k-status--error"><span class="k-status__dot"></span>The build did not start</span>
+      }
+      <span class="bfp__repo k-mono">{{ start().repo }}</span>
+    </span>
+    <h3 class="bfp__title" data-failure-title>{{ title() }}</h3>
+    @if (kind() === 'baseFailure') {
+      <p class="bfp__note" data-failure-reason>
+        A failure already on the base cannot be told apart from a new one when the check does not say what failed. Accept a check to let it through for this build, or fix it on the base first.
+      </p>
+    }
+    @if (hint(); as words) {
+      <p class="bfp__hint" data-setup-hint role="note">
+        <span class="k-status k-status--warning"><span class="k-status__dot"></span>Check the setup</span>
+        {{ words }}
+      </p>
+    }
+  </div>
+
+  @for (r of rows(); track r.name) {
+    <div class="bfp__item" [attr.data-failure-row]="r.name">
+      <div class="bfp__top">
+        <span class="bfp__name k-mono">{{ r.name }}</span>
+        <span [class]="'k-badge k-badge--' + r.badge.tone">{{ r.badge.word }}</span>
+        @if (r.facts !== '') {
+          <span class="bfp__facts k-mono">{{ r.facts }}</span>
+        }
+        <span class="bfp__actions">
+          @if (r.output !== '') {
+            <button hlmBtn variant="ghost" size="sm" type="button" [attr.aria-expanded]="isOpen(r.name)" (click)="toggle(r.name)">
+              {{ isOpen(r.name) ? 'Hide output' : 'Show output' }}<span class="sr-only"> of {{ r.name }}</span>
+            </button>
+          }
+          @if (r.canAccept) {
+            <button hlmBtn variant="secondary" size="sm" type="button" data-accept (click)="accept.emit(r.name)">Accept for this build…<span class="sr-only"> {{ r.name }}</span></button>
+          }
+        </span>
+      </div>
+      @if (r.why !== '') {
+        <p class="bfp__why">{{ r.why }}</p>
+      }
+      @if (refusalFor(r.name); as problems) {
+        @if (problems.length > 0) {
+          <div class="bfp__refusal" role="alert">
+            <p class="bfp__refusal-head">The workflow refused to accept {{ r.name }}</p>
+            <ul>
+              @for (p of problems; track $index) {
+                <li class="k-mono">{{ p }}</li>
+              }
+            </ul>
+          </div>
+        }
+      }
+      @if (isOpen(r.name)) {
+        <pre class="bfp__out k-mono" data-output tabindex="0" [attr.aria-label]="'Output of ' + r.name">{{ r.output }}</pre>
+        <div class="bfp__foot" data-output-foot>
+          <span class="k-mono">{{ r.lines }} {{ r.lines === 1 ? 'line' : 'lines' }} · the last 200 are kept</span>
+          <button hlmBtn variant="ghost" size="sm" type="button" (click)="copy.emit(r.output)">Copy output<span class="sr-only"> of {{ r.name }}</span></button>
+        </div>
+      }
+    </div>
+  }
+
+  @if (start().passed > 0) {
+    <details class="bfp__fold" data-passed-fold>
+      <summary>{{ passedWords() }}</summary>
+      <ul class="bfp__passed k-mono">
+        @for (n of passedNames(); track n) {
+          <li>{{ n }}</li>
+        }
+      </ul>
+    </details>
+  }
+
+  @if (settled()) {
+    <p class="bfp__ok" data-nothing-left>
+      <span class="k-status k-status--success"><span class="k-status__dot"></span>Nothing left to settle</span>
+      Start build again: it reuses the base results, so no check reruns on the base.
+    </p>
+  }
+</section>

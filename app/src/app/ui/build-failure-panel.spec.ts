@@ -157,9 +157,12 @@ describe('BuildFailurePanel shows why the build did not start, once, on the page
 describe('AcceptCheckDialog confirms one acceptance', () => {
   const request = { repo: 'kata', check: 'app-speed', base: BASE };
 
-  it('opens only for a request and is a titled dialog naming the check and the base commit r5.1', async () => {
+  it('stays closed without a request r5.1', async () => {
     await render(AcceptCheckDialog, { request: null });
     expect(dialogOpen()).toBe(false);
+  });
+
+  it('is a titled dialog naming the check and the base commit r5.1', async () => {
     await render(AcceptCheckDialog, { request });
     const dialog = document.body.querySelector('[role="dialog"]')!;
     expect(text(dialog.querySelector('[data-slot="dialog-title"]')!)).toBe('Accept app-speed for this build?');

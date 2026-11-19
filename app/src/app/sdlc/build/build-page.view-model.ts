@@ -312,9 +312,6 @@ export type BuildChanges = { ref: ChangeRef; masterRepo: string };
 /** What starting a build came to, as the page needs to tell it. */
 export type StartKind = StartOutcome['kind'];
 
-/** Why a start did not go on: the reason and, one line each, what the plugin found. */
-export type StartRefusal = { reason: string; problems: string[] };
-
 /**
  * A run the page follows: which row it belongs to, when the page first saw it, and the change it is a run of, with that change's master
  * and repositories as the page knew them then. A run stays the run of its own change when the page moves to another one.
@@ -328,18 +325,15 @@ type Clock = { work: number; paused: number; current: number };
 /** A review of the whole change: one section of its review document, or the closing text of its run. */
 type Review = { at: number | null; label: string | null; number: number | null; repos: string[]; findings: Finding[] };
 
-/** Why a start that was refused, failed or could not run did not go on, as the page says it; null for any other outcome. */
-function refusalOf(outcome: StartOutcome): StartRefusal | null {
+/** What a start that was refused, failed or could not run found, one line each, for a toast; null for any other outcome. */
+function startProblemsOf(outcome: StartOutcome): string[] | null {
   switch (outcome.kind) {
     case 'refused':
-      return { reason: 'The plugin refused to start the build', problems: outcome.problems };
+      return ['The plugin refused to start the build', ...outcome.problems];
     case 'failed':
-      return {
-        reason: outcome.hook === null ? "The plugin's build start failed" : `The team's hook ${outcome.hook.id} failed`,
-        problems: [...outcome.problems, ...(outcome.hook === null || outcome.hook.output.trim() === '' ? [] : [outcome.hook.output.trim()])],
-      };
+      return [outcome.hook === null ? "The plugin's build start failed" : `The team's hook ${outcome.hook.id} failed`, ...outcome.problems, ...(outcome.hook === null || outcome.hook.output.trim() === '' ? [] : [outcome.hook.output.trim()])];
     case 'couldNotRun':
-      return { reason: outcome.repo === null ? "This machine could not run the plugin's step" : `This machine could not run the plugin's step in ${outcome.repo}`, problems: [outcome.output] };
+      return [outcome.repo === null ? "This machine could not run the plugin's step" : `This machine could not run the plugin's step in ${outcome.repo}`, outcome.output];
     default:
       return null;
   }
@@ -514,8 +508,6 @@ export class BuildPageViewModel {
   /** When each open question or approval first showed, in clock seconds, keyed by run and pause id. */
   private readonly pendingSince = signal<Readonly<Record<string, number>>>({});
 
-  /** Why a start did not go on, with what the plugin found; the refusal dialog is open exactly while this is set. */
-  readonly refusal = signal<StartRefusal | null>(null);
   /** How a stopped preparation is worded on the page; null while there is none. */
   readonly stoppedNote = signal<string | null>(null);
   /** The change whose preparation this page started and waits for; null while it waits for none. */
@@ -1067,7 +1059,8 @@ export class BuildPageViewModel {
     this.chosen.set(null);
     this.startHeld.set([]);
     this.lastForm = null;
-    this.refusal.set(null);
+    this.acceptRequest.set(null);
+    this.acceptRefusal.set(null);
     this.buildState.set(null);
     this.reviewHeld.set([]);
     this.runRefs.set([]);
@@ -1453,6 +1446,8 @@ export class BuildPageViewModel {
       waiting: this.waitingNotices(),
       announcement: this.announcement(),
       baseChecks: this.baseChecks(),
+      failures: this.failures(),
+      startHold: this.startHold(),
       areas: shownAreas({ stage, hasSessions, hasChanges }),
       counts: { files: this.changedFileTotal(), findings: findingsArea.review === null ? 0 : findingsArea.review.findings.length },
     };
@@ -1694,7 +1689,7 @@ export class BuildPageViewModel {
       outcome = await call();
     } catch (e) {
       this.endLine(ctx, true);
-      this.refuse(ctx, { reason: message(e), problems: [] });
+      this.refuse(ctx, [message(e)]);
       return 'couldNotRun';
     } finally {
       unlisten();
@@ -1705,9 +1700,9 @@ export class BuildPageViewModel {
     else this.endLine(ctx, false);
     if (this.shows(ctx)) return this.settle(outcome);
     // The page moved to another change while the start ran: what it came to is not shown on that change, it is said once.
-    const held = outcome.kind === 'held' ? { reason: 'The build waits for other changes', problems: outcome.held.map((h) => `${h.repo}: ${h.holder.change}`) } : null;
-    const refusal = held ?? refusalOf(outcome);
-    if (refusal !== null) this.refuse(ctx, refusal);
+    const held = outcome.kind === 'held' ? ['The build waits for other changes', ...outcome.held.map((h) => `${h.repo}: ${h.holder.change}`)] : null;
+    const problems = held ?? startProblemsOf(outcome);
+    if (problems !== null) this.refuse(ctx, problems);
     if (outcome.kind === 'stopped') this.toasts.info(`${ctx?.change ?? 'The build'}: ${stoppedMessage(outcome.prepared)}`);
     return outcome.kind;
   }
@@ -1743,17 +1738,17 @@ export class BuildPageViewModel {
     }
   }
 
-  /** Show why a start did not go on, on the change it was for; a start of a change the page moved away from says it in a toast. */
-  private refuse(ctx: BuildContext | null, refusal: StartRefusal): void {
-    if (this.shows(ctx)) this.refusal.set(refusal);
-    else this.toasts.error([`${ctx?.change ?? 'The build'}: ${refusal.reason}`, ...refusal.problems].join('\n'));
+  /** Say in a toast why a start did not go on, when the page has no failure to show for it. */
+  private refuse(ctx: BuildContext | null, lines: string[]): void {
+    const [reason, ...rest] = lines;
+    this.toasts.error([`${ctx?.change ?? 'The build'}: ${reason}`, ...rest].join('\n'));
   }
 
   private settle(outcome: StartOutcome): StartKind {
     switch (outcome.kind) {
       case 'started': {
         this.startHeld.set([]);
-        this.refusal.set(null);
+        this.acceptRefusal.set(null);
         const lines = Object.entries(outcome.uncommitted).flatMap(([repo, files]) => (files ?? []).map((f) => `${repo}: ${f}`));
         if (lines.length > 0) this.toasts.info(`The build goes on over uncommitted files · ${lines.join(' · ')}`);
         const ref = this.ref();
@@ -1769,7 +1764,7 @@ export class BuildPageViewModel {
       case 'refused':
       case 'failed':
       case 'couldNotRun':
-        this.refusal.set(refusalOf(outcome));
+        void this.showStartFailure(outcome);
         break;
       case 'stopped':
         this.stoppedNote.set(stoppedMessage(outcome.prepared));
@@ -1778,20 +1773,72 @@ export class BuildPageViewModel {
     return outcome.kind;
   }
 
-  closeRefusal(): void {
-    this.refusal.set(null);
+  /**
+   * A start stopped: the page shows it once, from the backend's answer about the repository's checks, so read that answer now. A start
+   * the answer does not explain (nothing to show) is told in a toast, so it never goes unsaid.
+   */
+  private async showStartFailure(outcome: StartOutcome): Promise<void> {
+    const ctx = this.ctx;
+    await this.readChecks();
+    if (!this.shows(ctx) || this.failures().length > 0) return;
+    const problems = startProblemsOf(outcome);
+    if (problems !== null) this.refuse(ctx, problems);
   }
 
   /** The check being asked about; the accept dialog is open exactly while this is set. */
   readonly acceptRequest = signal<AcceptRequest | null>(null);
+  /** The workflow's reasons for refusing the last acceptance. */
+  private readonly acceptRefusal = signal<AcceptRefusal | null>(null);
 
-  askAccept(_repo: string, _check: string): void {}
+  /** The repositories whose start failed, each shown once on the page: a failure on the base, all of them accepted, or another reason. */
+  private readonly failures = computed<BuildFailureView[]>(() => {
+    if (this.preparing()) return [];
+    const refusal = this.acceptRefusal();
+    return this.startChecks()
+      .filter((s) => s.shown.kind === 'baseFailure' || s.shown.kind === 'allAccepted' || s.shown.kind === 'otherReason')
+      .map((s) => ({ start: s, refusal: refusal !== null && refusal.repo === s.repo ? refusal : null }));
+  });
 
-  cancelAccept(): void {}
+  /** Why starting the build is not offered as ready, as the backend worded it; null when it is. */
+  private readonly startHold = computed(() => this.startChecks().find((s) => s.startHeld !== null)?.startHeld ?? null);
 
-  async confirmAccept(): Promise<void> {}
+  /** Ask once more before a check is accepted: nothing is recorded until it is confirmed. */
+  askAccept(repo: string, check: string): void {
+    const start = this.startChecks().find((s) => s.repo === repo);
+    if (start === undefined) return;
+    this.acceptRefusal.set(null);
+    this.acceptRequest.set({ repo, check, base: start.base });
+  }
 
-  copyOutput(_text: string): void {}
+  /** The engineer cancelled: nothing is recorded and the check stays failed on the base. */
+  cancelAccept(): void {
+    this.acceptRequest.set(null);
+  }
+
+  /** Record the acceptance through the workflow, then read the checks again; its refusal is shown as it is. */
+  async confirmAccept(): Promise<void> {
+    const request = this.acceptRequest();
+    const ref = this.ref();
+    if (request === null || ref === null) return;
+    this.acceptRequest.set(null);
+    let problems: string[];
+    try {
+      const answer = await this.transport.sdlcAcceptBaseCheck(ref, request.repo, request.check);
+      problems = answer.approved === null ? (answer.problems.length > 0 ? answer.problems : ['The workflow did not accept the check']) : [];
+    } catch (e) {
+      problems = [message(e)];
+    }
+    this.acceptRefusal.set(problems.length === 0 ? null : { repo: request.repo, check: request.check, problems });
+    await this.readChecks();
+  }
+
+  /** Put a check's output on the clipboard. */
+  copyOutput(text: string): void {
+    void this.transport.copyText(text).then(
+      () => this.toasts.info('Output copied'),
+      (e: unknown) => this.toasts.error(`Could not copy the output: ${message(e)}`),
+    );
+  }
 
   /** True from the click on a preview or the round until its dialog opens or fails; a click in between is ignored. */
   private opening = false;
