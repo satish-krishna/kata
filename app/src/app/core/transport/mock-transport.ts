@@ -525,7 +525,7 @@ export class MockTransport extends KataTransport {
     this.announceStep(change, kind, progress);
     if (demoParam() !== 'steps-hold') return settled(run).finally(() => this.endStep(change));
     return new Promise<T>((resolve) => {
-      const step: RunningStep = { change: mockChangeKey(change), kind, doing, progress, liveChecks: [] };
+      const step: RunningStep = { change: mockChangeKey(change), kind, doing, progress, liveChecks: [], stopQuestion: null };
       this.heldSteps.set(change.change, { step, stop: () => resolve(stopped) });
     }).finally(() => this.endStep(change));
   }
@@ -600,11 +600,11 @@ export class MockTransport extends KataTransport {
     return id;
   }
   async sdlcBuildStart(change: ChangeRef, form: StartForm): Promise<StartOutcome> {
-    return this.longStep(change, 'preparingBuild', 'Checking the base', () => this.host.start(change, form), { kind: 'stopped', prepared: [] });
+    return this.longStep(change, 'preparingBuild', 'Checking the base', () => this.host.start(change, form), { kind: 'stopped', prepared: [], note: null });
   }
   // The scripted host runs no agent, so the choices a continue or review carries change nothing it shows.
   async sdlcBuildContinue(change: ChangeRef, repo: string, _off?: string[]): Promise<StartOutcome> {
-    return this.longStep(change, 'preparingBuild', 'Preparing ' + repo, () => this.host.continueRepo(change, repo), { kind: 'stopped', prepared: [] });
+    return this.longStep(change, 'preparingBuild', 'Preparing ' + repo, () => this.host.continueRepo(change, repo), { kind: 'stopped', prepared: [], note: null });
   }
   async sdlcBuildState(change: ChangeRef): Promise<BuildState | null> { return this.host.state(change); }
   async sdlcChangeKey(change: ChangeRef): Promise<ChangeKey> { return mockChangeKey(change); }
@@ -649,7 +649,7 @@ export class MockTransport extends KataTransport {
     return mockReviewView(this.sdlc.reviewRecord(), this.reviewRepos(change));
   }
   async sdlcReviewStart(change: ChangeRef, _off?: string[]): Promise<StartOutcome> {
-    return this.longStep(change, 'preparingReview', 'Checking every repository before the review', () => this.host.reviewStart(change), { kind: 'stopped', prepared: [] });
+    return this.longStep(change, 'preparingReview', 'Checking every repository before the review', () => this.host.reviewStart(change), { kind: 'stopped', prepared: [], note: null });
   }
   async sdlcReviewWaiting(change: ChangeRef): Promise<HeldRepo[]> { return this.host.reviewWaiting(change); }
   /** The repositories a round may go to: the change's own, then the master. */

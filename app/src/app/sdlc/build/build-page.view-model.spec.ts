@@ -1265,8 +1265,8 @@ describe('the build page reads the backend\'s build and starts it through the ho
       { name: 'refused', outcome: { kind: 'refused', problems: ['kata: the plan is not accepted'] }, stopped: null, refusal: { reason: 'The plugin refused to start the build', problems: ['kata: the plan is not accepted'] } },
       { name: 'failed', outcome: { kind: 'failed', problems: ['hook deps failed'], hook: { id: 'deps', onFailure: 'stop', output: 'boom' }, needsApproval: [] }, stopped: null, refusal: { reason: "The team's hook deps failed", problems: ['hook deps failed', 'boom'] } },
       { name: 'could not run', outcome: { kind: 'couldNotRun', output: 'no node', repo: null }, stopped: null, refusal: { reason: "This machine could not run the plugin's step", problems: ['no node'] } },
-      { name: 'stopped during the check of every repository', outcome: { kind: 'stopped', prepared: [] }, stopped: 'Preparation stopped', refusal: null },
-      { name: 'stopped during one repository', outcome: { kind: 'stopped', prepared: ['kata', 'bob'] }, stopped: 'Preparation stopped. Prepared: kata, bob', refusal: null },
+      { name: 'stopped during the check of every repository', outcome: { kind: 'stopped', prepared: [], note: null }, stopped: 'Preparation stopped', refusal: null },
+      { name: 'stopped during one repository', outcome: { kind: 'stopped', prepared: ['kata', 'bob'], note: null }, stopped: 'Preparation stopped. Prepared: kata, bob', refusal: null },
     ];
     for (const c of cases) {
       it(c.name, async () => {
@@ -1305,7 +1305,7 @@ describe('the build page reads the backend\'s build and starts it through the ho
     expect(update).toHaveBeenCalledWith('Preparing kata: running base-tests', 'build');
     await vm.stopPreparing();
     expect(stop).toHaveBeenCalledWith(REF);
-    release({ kind: 'stopped', prepared: [] });
+    release({ kind: 'stopped', prepared: [], note: null });
     await starting;
     expect(vm.preparing()).toBe(false);
   });
@@ -1317,6 +1317,7 @@ describe('the build page reads the backend\'s build and starts it through the ho
       doing: 'preparing',
       progress: { kind: 'repository', label: 'Preparing commerce-core: running base-tests', repo: 'commerce-core', check: 'base-tests', phase: 'other' },
       liveChecks: [],
+      stopQuestion: null,
     });
 
     it('a page opened while the preparation runs shows it and offers Stop, which stops that change (R6.1)', async () => {

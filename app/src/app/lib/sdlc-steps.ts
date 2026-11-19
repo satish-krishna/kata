@@ -98,6 +98,8 @@ export function stopWords(kind: StepKind): string {
         return 'Stop rejecting the fix';
       case 'declaringDone':
         return 'Stop declaring the change done';
+      case 'rerunningFinishChecks':
+        return 'Stop running the checks again';
     }
   }
   if ('preparationHook' in kind) return 'Stop preparing the build';

@@ -1931,6 +1931,7 @@ describe('a start or a removal the backend runs is the home\'s, whoever started 
     doing: 'doing',
     progress: { kind: 'repository', label, repo: null, check: null, phase: 'other' },
     liveChecks: [],
+    stopQuestion: null,
   });
 
   it.each<[string, StepKind, string]>([

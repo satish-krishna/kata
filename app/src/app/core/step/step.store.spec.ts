@@ -14,6 +14,7 @@ const running = (change: string, kind: StepKind, label: string): RunningStep => 
   doing: 'doing',
   progress: { kind: 'repository', label, repo: null, check: null, phase: 'other' },
   liveChecks: [],
+  stopQuestion: null,
 });
 
 function setup() {
@@ -47,7 +48,7 @@ describe('StepStore', () => {
 
   it('falls back to what the step is doing when the backend has no line yet', async () => {
     const { store, transport } = setup();
-    vi.spyOn(transport, 'steps').mockResolvedValue([{ change: keyOf('a'), kind: 'starting', doing: 'starting', progress: null, liveChecks: [] }]);
+    vi.spyOn(transport, 'steps').mockResolvedValue([{ change: keyOf('a'), kind: 'starting', doing: 'starting', progress: null, liveChecks: [], stopQuestion: null }]);
     await store.follow();
     expect(store.running()[0].label).toBe('starting');
   });

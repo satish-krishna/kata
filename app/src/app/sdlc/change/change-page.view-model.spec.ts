@@ -2156,6 +2156,7 @@ describe('a step the backend runs is the page\x27s, whoever started it (F3, F5)'
     doing: 'accepting its spec',
     progress: { kind: 'verifying', label: 'Accepting the spec: running docs-lint', repo: null, check: 'docs-lint', phase: 'other' },
     liveChecks: [],
+    stopQuestion: null,
   });
 
   it('a page opened while the spec is being accepted shows the label and Stop, and Stop stops that change', async () => {
