@@ -53,6 +53,16 @@ describe('RunningStrip', () => {
     expect(picked).toEqual([{ row: r, choice }]);
   });
 
+  // The group holds the list of changes with activity, which may be only finished ones, so it is never named running as a whole.
+  it('the group is never named running as a whole r13.1', async () => {
+    const r = row('c-one');
+    const { container } = await render(RunningStrip, { shown: [r], all: [r], allLabel: 'All running (1)' });
+    const group = container.querySelector('[role="group"]')!;
+    expect(group.getAttribute('aria-label')).toBe('Changes with activity');
+    const names = Array.from(container.querySelectorAll('[aria-label]')).map((e) => e.getAttribute('aria-label') ?? '');
+    expect(names.some((n) => n.includes('Running changes'))).toBe(false);
+  });
+
   // The label is the view-model's word for what the list holds; the strip draws it on the button and as the popover title.
   describe('the label of the list', () => {
     const entry = (n: number): RunningEntry => ({
