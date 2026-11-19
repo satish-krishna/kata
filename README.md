@@ -276,10 +276,11 @@ Driving Kata from your own software — a GUI, an orchestrator, a CI step — is
 
 ## The family
 
-Kata sits in a small family of craft-named tools. The shared visual language should let them read as siblings:
+Kata sits in a small family of craft-named tools. The ones with a screen share a visual language, so they read as siblings:
 
 - **Shokunin** (職人, "craftsman") — the orchestrator. Runs many forms.
 - **Kata** (型, "form") — this product. Defines and performs one exact form.
+- **Hoshin** (方針, "direction", from hoshin kanri, the practice of turning one direction into aligned plans) — the change workflow. A Claude Code plugin that takes a change from intent to spec to plan, then through a test-driven build, review and pull requests. Kata's AI-SDLC mode drives it: hoshin decides the workflow, Kata runs its agents and shows its answers. It has no screen of its own; Kata is its face.
 - **Andon** (行灯 / アンドン) — the line monitor. The factory andon is a stack light (green / amber / red) that signals line status and the cord you pull to stop the line. Kata borrows the andon's stack-light palette for its run-status semantics — that visual rhyme ties the family together.
 
 ## Project status & contributing
