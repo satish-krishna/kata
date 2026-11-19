@@ -17,13 +17,13 @@ export interface ChangeStep {
   label: string;
 }
 
-/** The long steps the pages show a label and Stop for; `preparing` is a build's or a review's preparation. */
+/** The long steps the pages show a label and Stop for; `preparing` is a build's or a review's preparation, or the rerun of a repository's finish checks, which the page shows the same way. */
 export type StepWant = 'preparing' | 'starting' | 'renaming' | 'removingCopy' | 'accepting' | 'rejecting' | 'declaringDone';
 
 /** Whether a step report is about the kind of step `want` (the document of an accepting or rejecting step does not matter: a change runs one at a time). */
 export function isStep(kind: StepKind, want: StepWant): boolean {
   // A rejected fix is its own kind of step, so the backend can say "fix" in its words; it is still a rejecting step.
-  if (want === 'preparing') return kind === 'preparingBuild' || kind === 'preparingReview';
+  if (want === 'preparing') return kind === 'preparingBuild' || kind === 'preparingReview' || kind === 'rerunningFinishChecks';
   if (typeof kind === 'string') return kind === want || (kind === 'rejectingFix' && want === 'rejecting');
   return want in kind;
 }

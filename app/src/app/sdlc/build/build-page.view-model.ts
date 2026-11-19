@@ -42,12 +42,12 @@ import { RunLandingStore } from '../../core/run/run-landing.store';
 import { pendingKind, type AskRecord, type MessageRecord, type MessageRefusal, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
 import { activityFor, linksOfFollowedRuns, outcomeOf, recordOutcome, repoSessions, sessionsFor, tabOf, type Chosen, type LiveRun, type Pick, type SessionRef, type SessionTab } from '../../lib/build-sessions';
 import { sameChange } from '../../lib/build-host';
-import { sameStepChange, stepOf, stepRef } from '../../lib/sdlc-steps';
+import { isStep, sameStepChange, stepOf, stepRef } from '../../lib/sdlc-steps';
 import { StepStore } from '../../core/step/step.store';
 import { buildStage, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
 import { hms, ms, situationView, type Situation, type SituationView, type TaskState } from '../../lib/build-state';
 import { layoutStage as layoutStageOf, type LayoutStage } from '../../lib/build-layout-stage';
-import { progressLabels, type ProgressStepId } from '../../lib/progress-steps';
+import { PROGRESS_NAMES, progressLabels, type ProgressStepId } from '../../lib/progress-steps';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { REVIEW_MISSING_TEXT } from '../../lib/sdlc-done';
@@ -1752,7 +1752,7 @@ export class BuildPageViewModel {
     if (ctx === null) return () => undefined;
     try {
       return await this.transport.onStep((event) => {
-        if (sameStepChange(event.change, ctx) && (event.kind === 'preparingBuild' || event.kind === 'preparingReview')) this.progress.update(event.progress.label, 'build');
+        if (sameStepChange(event.change, ctx) && isStep(event.kind, 'preparing')) this.progress.update(event.progress.label, 'build');
       });
     } catch {
       return () => undefined;
@@ -1883,7 +1883,7 @@ export class BuildPageViewModel {
     const ref = this.ref();
     if (ref === null || this.preparing()) return;
     const ctx = this.ctx;
-    this.progress.begin('running-checks', 'Running the checks again', 'build');
+    this.progress.begin('running-checks', PROGRESS_NAMES['running-checks'], 'build');
     this.startedPreparing.set(ctx);
     this.lineFor = ctx === null ? null : `${ctx.system}/${ctx.change}`;
     this.stoppedNote.set(null);
