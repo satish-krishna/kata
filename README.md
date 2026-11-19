@@ -55,8 +55,8 @@ The workspace home lists your workspaces (add or remove one, switch between them
 | ![The build page in Watch mode](docs/images/sdlc-build.png) | ![The build page in Review mode](docs/images/sdlc-review.png) |
 | **A run paused on a question** | **Done, with one pull request per repository** |
 | ![A spec run paused on a question](docs/images/sdlc-lock-ask.png) | ![A finished change with its pull requests](docs/images/sdlc-done-pr.png) |
-| **Did each test fail first?** | |
-| ![A task whose test passed before its code, with the recorded run](docs/images/sdlc-red.png) | |
+| **Did each test fail first?** | **The spec's requirements as Gherkin scenarios** |
+| ![A task whose test passed before its code, with the recorded run](docs/images/sdlc-red.png) | ![A spec requirement with its scenarios and an examples table](docs/images/sdlc-spec-scenarios.png) |
 
 ### Building a change
 

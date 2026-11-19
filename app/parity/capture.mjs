@@ -125,6 +125,13 @@ export const VIEWS = [
       await p.getByRole('button', { name: 'Re-run plan' }).click();
       await p.getByRole('dialog').getByRole('textbox', { name: 'What should change?' }).fill('R2 is wrong: team leads can reassign too.');
     } },
+  // The spec tab's Requirements view with R2 picked: its Scenario Outline and Examples table show the Gherkin scenarios as cards.
+  { name: 'sdlc-spec-scenarios', path: BUILD_CHANGE, ready: 'button:has-text("Start build")',
+    act: async (p) => {
+      await p.getByRole('tab', { name: /^Spec/ }).click();
+      await p.locator('.k-list__row--req', { hasText: 'R2' }).click();
+      await p.locator('[data-testid="requirement"][aria-label="R2"] .k-scenario').first().waitFor();
+    } },
   { name: 'sdlc-run-settings', path: BUILD_CHANGE, ready: 'button:has-text("Start build")',
     act: async (p) => { await p.getByRole('button', { name: 'Start build' }).click(); await p.getByRole('region', { name: 'Run settings' }).waitFor(); } },
   { name: 'sdlc-build', path: BUILD_CHANGE, ready: 'button:has-text("Start build")',

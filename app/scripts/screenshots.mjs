@@ -5,7 +5,7 @@
 // captures the key views in browser/fixtures mode (outside Tauri the transport
 // is the mock one — deterministic, no live engine): the Workbench (compose, observe, library), then
 // every `sdlc-*` view of parity/capture.mjs — the AI-SDLC mode screens (home, change documents, run
-// preview, build page, changes diff, review findings, pull requests, red verdicts, start triage, light-track fix).
+// preview, spec scenarios, build page, changes diff, review findings, pull requests, red verdicts, start triage, light-track fix).
 //
 //   npm run screenshots                 # serve with ng serve, capture all views
 //   npm run screenshots -- --url URL    # capture against an already-running server
