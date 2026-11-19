@@ -30,6 +30,8 @@ pwsh scripts/release.ps1 X.Y.Z -NotesFile notes.md -Publish
 
 It refuses to start unless the version is newer than the current one, `main` matches `origin/main`, the tag is free locally and on origin, and `gh` is signed in. It bumps and commits, builds, checks that the CLI reports the new version, then asks before it pushes `main` and the tag and creates the release (`-Yes` skips the question). The release is a draft unless `-Publish` is given, so the notes can be edited on GitHub first; a version containing `-` is marked a pre-release and ships no MSI. If the build fails, fix it and rerun the same command: it sees the bump already committed and skips it.
 
+The release pushes straight to `main`, without a pull request. This is deliberate. `main` has a "Changes must be made through a pull request" rule, and the maintainer's admin bypass lets the version bump through, so the push prints "Bypassed rule violations for refs/heads/main". That message is expected for a release and needs no action. Every other change still goes through a pull request.
+
 The manual steps, for when a step needs doing by hand:
 
 1. Merge the feature PR(s) into `main` and pull.
