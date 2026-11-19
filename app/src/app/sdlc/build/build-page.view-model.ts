@@ -345,8 +345,10 @@ function startProblemsOf(outcome: StartOutcome): string[] | null {
 }
 
 /** How a stopped preparation is worded: which repositories were prepared when it stopped, if any. */
-function stoppedMessage(prepared: string[]): string {
-  return prepared.length === 0 ? 'Preparation stopped' : `Preparation stopped. Prepared: ${prepared.join(', ')}`;
+function stoppedMessage(prepared: string[], note: string | null): string {
+  const message = prepared.length === 0 ? 'Preparation stopped' : `Preparation stopped. Prepared: ${prepared.join(', ')}`;
+  // The note is the backend's own sentence about where the copy was left; it follows the message as sent.
+  return note === null ? message : `${message}. ${note}`;
 }
 
 const REVIEW = 'review';
@@ -1713,7 +1715,7 @@ export class BuildPageViewModel {
     const held = outcome.kind === 'held' ? ['The build waits for other changes', ...outcome.held.map((h) => `${h.repo}: ${h.holder.change}`)] : null;
     const problems = held ?? startProblemsOf(outcome);
     if (problems !== null) this.refuse(ctx, problems);
-    if (outcome.kind === 'stopped') this.toasts.info(`${ctx?.change ?? 'The build'}: ${stoppedMessage(outcome.prepared)}`);
+    if (outcome.kind === 'stopped') this.toasts.info(`${ctx?.change ?? 'The build'}: ${stoppedMessage(outcome.prepared, outcome.note)}`);
     return outcome.kind;
   }
 
@@ -1788,7 +1790,7 @@ export class BuildPageViewModel {
         void this.showStartFailure(outcome);
         break;
       case 'stopped':
-        this.stoppedNote.set(stoppedMessage(outcome.prepared));
+        this.stoppedNote.set(stoppedMessage(outcome.prepared, outcome.note));
         break;
     }
     return outcome.kind;
