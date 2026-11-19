@@ -20,6 +20,7 @@ import type { StartChecks } from '@bindings/StartChecks';
 import type { StartForm } from '@bindings/StartForm';
 import type { StartOutcome } from '@bindings/StartOutcome';
 import type { RunningStep } from '@bindings/RunningStep';
+import type { RerunOutcome } from '@bindings/RerunOutcome';
 import type { StepEvent } from '@bindings/StepEvent';
 import type { TaskLink } from '@bindings/TaskLink';
 import { toastState } from '@spartan-ng/brain/sonner';
@@ -1381,6 +1382,29 @@ describe('the build page reads the backend\'s build and starts it through the ho
       await advance(100);
       expect(vm.preparing()).toBe(false);
     });
+  });
+
+  // R7.2: a rerun of the checks at finish names the running check as R2 does, in the backend's words.
+  it('a rerun at finish names the running check r7.2', async () => {
+    const { vm, transport, load } = await opened();
+    const rerun: RunningStep = {
+      change: keyOf(MOCK_BUILD_CHANGE),
+      kind: 'rerunningFinishChecks',
+      doing: 'running its checks again',
+      progress: { kind: 'hook', label: 'Running the checks again: running app-unit', repo: 'commerce-core', check: 'app-unit', phase: 'finishCheck' },
+      liveChecks: [],
+      stopQuestion: null,
+    };
+    vi.spyOn(transport, 'steps').mockResolvedValue([rerun]);
+    let release!: (o: RerunOutcome) => void;
+    vi.spyOn(transport, 'sdlcRerunFinishChecks').mockReturnValue(new Promise<RerunOutcome>((resolve) => (release = resolve)));
+    await load();
+    const running = vm.rerunFinish('commerce-core');
+    await advance(1000);
+    expect(vm.preparing()).toBe(true);
+    expect(TestBed.inject(ProgressStore).view('build')()?.label).toBe('Running the checks again: running app-unit');
+    release({ kind: 'stopped' });
+    await running;
   });
 
   it('the round dialog shows the backend\'s plan for the picks', async () => {

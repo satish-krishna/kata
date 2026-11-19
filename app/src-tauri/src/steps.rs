@@ -667,6 +667,35 @@ mod tests {
         assert_eq!(in_repo.label, "Preparing kata: running install");
     }
 
+    // R2.2: in a repository, the base check keeps the step's words and names the repository; a build.start hook
+    // line reads as a preparation step, never as a check.
+    #[test]
+    fn preparing_line_names_the_base_check_r2_2() {
+        let hook = |when: &str, id: &str| {
+            progress_of(&format!(
+                r#"{{"type":"hook-start","id":"{id}","when":"{when}"}}"#
+            ))
+        };
+        let check = progress_line(
+            StepKind::PreparingBuild,
+            Some("kata"),
+            hook("build.finish", "app-unit").as_ref(),
+        );
+        assert_eq!(check.label, "Checking the base of kata: running app-unit");
+        assert_eq!(check.repo.as_deref(), Some("kata"));
+        let alone = progress_line(StepKind::PreparingBuild, Some("kata"), None);
+        assert_eq!(alone.label, "Checking the base of kata");
+        let step = progress_line(
+            StepKind::PreparingBuild,
+            Some("kata"),
+            hook("build.start", "install").as_ref(),
+        );
+        assert_eq!(step.label, "Preparing kata: running install");
+        assert_eq!(step.phase, StepPhase::Preparation);
+        let review = progress_line(StepKind::PreparingReview, Some("kata"), None);
+        assert_eq!(review.label, "Preparing kata");
+    }
+
     fn base_check(name: &str, state: BaseCheckState) -> BaseCheck {
         BaseCheck {
             check: name.into(),
