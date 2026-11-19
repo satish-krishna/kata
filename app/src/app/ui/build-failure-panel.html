@@ -38,8 +38,8 @@
           }
           @if (r.canAccept) {
             @if (acceptOff(); as why) {
-              <button hlmBtn variant="secondary" size="sm" type="button" disabled data-accept [attr.aria-describedby]="'accept-off-' + $index">Accept for this build…<span class="sr-only"> {{ r.name }}</span></button>
-              <span class="bfp__off" [id]="'accept-off-' + $index" data-accept-off>{{ why }}</span>
+              <button hlmBtn variant="secondary" size="sm" type="button" disabled data-accept [attr.aria-describedby]="acceptOffId($index)">Accept for this build…<span class="sr-only"> {{ r.name }}</span></button>
+              <span class="bfp__off" [id]="acceptOffId($index)" data-accept-off>{{ why }}</span>
             } @else {
               <button hlmBtn variant="secondary" size="sm" type="button" data-accept (click)="accept.emit(r.name)">Accept for this build…<span class="sr-only"> {{ r.name }}</span></button>
             }

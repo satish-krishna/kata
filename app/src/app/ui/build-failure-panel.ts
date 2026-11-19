@@ -17,6 +17,7 @@ interface FailureRow {
 
 const WORDS = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'];
 const wordFor = (n: number): string => WORDS[n] ?? String(n);
+let panels = 0;
 const lineCount = (text: string): number => (text === '' ? 0 : text.split('\n').length);
 
 /* Why the build did not start, shown once on the Build tab: a failure on the base that a check does not name, a check that could not
@@ -38,6 +39,14 @@ export class BuildFailurePanel {
   readonly accept = output<string>();
   /** The output text the engineer asked to copy. */
   readonly copy = output<string>();
+
+  /** Tells this panel's element ids from every other panel's on the page. */
+  private readonly uid = ++panels;
+
+  /** The id of the reason a disabled accept points at, unique across panels. */
+  protected acceptOffId(index: number): string {
+    return `accept-off-${this.uid}-${index}`;
+  }
 
   /** The rows whose output is open. */
   protected readonly open = signal<ReadonlySet<string>>(new Set());
