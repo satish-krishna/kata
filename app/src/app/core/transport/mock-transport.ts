@@ -504,6 +504,7 @@ export class MockTransport extends KataTransport {
       startedAt: startedAgo === null ? null : at(startedAgo), endedAt: endedAgo === null ? null : at(endedAgo),
     });
     const demo = demoParam();
+    if (demo === 'checks-base' || demo === 'checks-base-moved' || demo === 'checks-base-many') return Promise.resolve([this.baseFailure(demo === 'checks-base-many' ? 9 : 1, check)]);
     const cut = demo === 'checks-cutoff';
     const elsewhere = demo === 'checks-elsewhere';
     if (!cut && !elsewhere) {
@@ -519,7 +520,29 @@ export class MockTransport extends KataTransport {
     ];
     return Promise.resolve([{ repo: 'kata', shown: { kind: cut ? 'startable' : 'underWay' }, base: '3c504eb', checks, passed: 2, setupHint: false, startHeld: null, finish: null }]);
   }
-  sdlcAcceptBaseCheck(_change: ChangeRef, _repo: string, _check: string): Promise<BaselineApproved> { throw new Error('not implemented'); }
+  /** The checks the engineer accepted in this session, so `?demo=checks-base` marks them and settles the start. */
+  private readonly acceptedChecks = new Set<string>();
+  /** The workflow records the acceptance at the base commit; the demo base `?demo=checks-base-moved` refuses it as a moved base would. */
+  sdlcAcceptBaseCheck(_change: ChangeRef, _repo: string, check: string): Promise<BaselineApproved> {
+    if (demoParam() === 'checks-base-moved') return Promise.resolve({ approved: null, problems: ['The base moved since the checks ran: the check was not accepted.'] });
+    this.acceptedChecks.add(check);
+    return Promise.resolve({ approved: { hook: check, base: '3c504eb' }, problems: [] });
+  }
+  /** A start that stopped on the base: `failing` checks fail without saying what failed, three others passed; accepted ones are marked and settle the start. */
+  private baseFailure(failing: number, check: (name: string, state: BaseCheck['state'], startedAgo: number | null, endedAgo: number | null) => BaseCheck): StartChecks {
+    const failed = Array.from({ length: failing }, (_, i) => (failing === 1 ? 'app-speed' : `app-check-${i + 1}`));
+    const checks = [
+      ...failed.map((name) => {
+        const accepted = this.acceptedChecks.has(name);
+        return { ...check(name, 'failed', 300, 290), exitCode: 101, output: `running 1 test
+speed_targets: every open change's name took 1.2s (limit 1 s)
+test result: FAILED. 0 passed; 1 failed`, lineCount: 3, canAccept: !accepted, accepted };
+      }),
+      ...['app-lint', 'rust-fmt', 'app-unit'].map((name) => check(name, 'passed', 200, 190)),
+    ];
+    const left = failed.some((name) => !this.acceptedChecks.has(name));
+    return { repo: 'kata', shown: { kind: left ? 'baseFailure' : 'allAccepted' }, base: '3c504eb', checks, passed: 3, setupHint: failing >= 3, startHeld: left ? 'Accept or fix the failing checks first' : null, finish: null };
+  }
   sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]> { return Promise.resolve(this.sdlc.checksView(change.change)); }
   /** The plugin's answer to declaring the change done, with the steps it reports on the way; `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` give each of the other answers. */
   async sdlcDeclareDone(change: ChangeRef): Promise<DeclareView> {
