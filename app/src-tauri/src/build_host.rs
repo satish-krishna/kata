@@ -5,7 +5,7 @@
 //! sits behind [`Tools`] and [`Launcher`], so the tests need no Tauri app.
 
 use crate::runs::{self, Lane};
-use crate::steps::{StepGuard, StepKind, StepTable};
+use crate::steps::{stopped_note, StepGuard, StepKind, StepTable};
 use kata_core::proc::{CancelToken, LineSink};
 use kata_core::spec::PermissionMode;
 use kata_core::RunSpec;
@@ -183,7 +183,11 @@ pub enum StartOutcome {
     },
     /// The engineer stopped the preparation; nothing was launched. `prepared` names the repositories the
     /// plugin had prepared before the stop, in plan order.
-    Stopped { prepared: Vec<String> },
+    Stopped {
+        prepared: Vec<String>,
+        /// Where the copy was left, when the stop came while the checks on the base ran.
+        note: Option<String>,
+    },
 }
 
 /// What running the checks of a repository's build finish again came to.
@@ -644,6 +648,7 @@ fn failure(outcome: StepOutcome, prepared: &[String]) -> Option<StartOutcome> {
             repo,
         }),
         StepOutcome::Stopped => Some(StartOutcome::Stopped {
+            note: None,
             prepared: prepared.to_vec(),
         }),
     }
@@ -1917,6 +1922,7 @@ impl BuildHost {
         let key = key_of(change);
         let token = step.token();
         let stopped = |prepared: &[String]| StartOutcome::Stopped {
+            note: None,
             prepared: prepared.to_vec(),
         };
         let mut uncommitted = BTreeMap::new();
@@ -1961,7 +1967,14 @@ impl BuildHost {
                 self.tools.step_long(&command, place, token, Some(sink))
             });
             if let Some(outcome) = failure_of(&answer, &prepared) {
-                return Err(outcome);
+                // A stop that came after the checks on the base were read says where the copy was left.
+                return Err(match outcome {
+                    StartOutcome::Stopped { prepared, .. } => StartOutcome::Stopped {
+                        prepared,
+                        note: stopped_note(self.steps.has_live_checks(&key)),
+                    },
+                    other => other,
+                });
             }
             prepared.push(repo.clone());
             let files = strings(&answer.json["details"]["uncommitted"]);
@@ -4489,6 +4502,7 @@ mod tests {
         assert_eq!(
             r.host.start(&cref("A"), form()),
             StartOutcome::Stopped {
+                note: None,
                 prepared: Vec::new()
             }
         );
@@ -4579,6 +4593,7 @@ mod tests {
                 label: "check stopped",
                 set: |r| *r.tools.stop_in.lock().unwrap() = Some("check".into()),
                 want: StartOutcome::Stopped {
+                    note: None,
                     prepared: Vec::new(),
                 },
                 real_starts: &[],
@@ -4643,6 +4658,7 @@ mod tests {
                 label: "repository 1 stopped",
                 set: |r| *r.tools.stop_in.lock().unwrap() = Some("kata".into()),
                 want: StartOutcome::Stopped {
+                    note: None,
                     prepared: Vec::new(),
                 },
                 real_starts: &[],
@@ -4653,6 +4669,7 @@ mod tests {
                 label: "repository 2 stopped",
                 set: |r| *r.tools.stop_in.lock().unwrap() = Some("bob".into()),
                 want: StartOutcome::Stopped {
+                    note: None,
                     prepared: strs(&["kata"]),
                 },
                 real_starts: &["kata"],
@@ -4663,6 +4680,7 @@ mod tests {
                 label: "token cancelled between the check and repository 1",
                 set: |r| *r.tools.stop_after.lock().unwrap() = Some("check".into()),
                 want: StartOutcome::Stopped {
+                    note: None,
                     prepared: Vec::new(),
                 },
                 real_starts: &[],
@@ -4673,6 +4691,7 @@ mod tests {
                 label: "token cancelled between repository 1 and repository 2",
                 set: |r| *r.tools.stop_after.lock().unwrap() = Some("kata".into()),
                 want: StartOutcome::Stopped {
+                    note: None,
                     prepared: strs(&["kata"]),
                 },
                 real_starts: &["kata"],
@@ -5014,6 +5033,53 @@ mod tests {
         assert!(live[0].started_at.is_some() && live[0].ended_at.is_none());
         assert!(live[1].ended_at.is_some() && live[2].ended_at.is_some());
         assert!(live[4].started_at.is_none());
+    }
+
+    // R10.1, R10.2: a stop while the checks run carries the question on the step and the note on the outcome.
+    #[test]
+    fn stopping_during_the_checks_asks_and_notes_where_the_copy_was_left() {
+        let r = rig();
+        r.simple("A", &["kata"]);
+        r.host.set_checks_poll(std::time::Duration::from_millis(5));
+        *r.tools.hang_in.lock().unwrap() = Some("kata".into());
+        script_checks(
+            &r,
+            &["c-one", "c-two"],
+            &[
+                ("c-one", "ended", Some("passed")),
+                ("c-two", "running", None),
+            ],
+        );
+        let host = r.host.clone();
+        let starter = std::thread::spawn(move || host.start(&cref("A"), form()));
+        let began = std::time::Instant::now();
+        let question = loop {
+            let q = r
+                .steps
+                .running()
+                .first()
+                .and_then(|s| s.stop_question.clone());
+            if let Some(q) = q {
+                break q;
+            }
+            assert!(
+                began.elapsed() < std::time::Duration::from_secs(3),
+                "no stop question"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert!(
+            question.starts_with("1 of 2 checks already ran."),
+            "{question}"
+        );
+        assert!(r.steps.stop(&key("A")));
+        assert_eq!(
+            starter.join().unwrap(),
+            StartOutcome::Stopped {
+                prepared: Vec::new(),
+                note: stopped_note(true),
+            }
+        );
     }
 
     #[test]

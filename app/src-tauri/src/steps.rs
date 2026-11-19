@@ -190,15 +190,26 @@ pub struct RunningStep {
 /// The question to ask before stopping the preparation while the checks on the base run: how many ended, and
 /// that the next start runs them all again. None when `live` is empty (no checks are running on the base).
 pub fn stop_question(live: &[BaseCheck]) -> Option<String> {
-    let _ = live;
-    None
+    if live.is_empty() {
+        return None;
+    }
+    let ended = live
+        .iter()
+        .filter(|c| matches!(c.state, BaseCheckState::Passed | BaseCheckState::Failed))
+        .count();
+    Some(format!(
+        "{ended} of {} checks already ran. Stopping now runs every check on the base again at the next start, because none is kept until the last one ends.",
+        live.len()
+    ))
 }
 
 /// What the page says after a stop that came while the checks on the base ran: where the copy was left.
 /// None for any other stop.
 pub fn stopped_note(during_checks: bool) -> Option<String> {
-    let _ = during_checks;
-    None
+    during_checks.then(|| {
+        "The copy may stay on the base commit until the build starts again; the work is safe on the change's branch, and the next start puts it back first."
+            .to_string()
+    })
 }
 
 /// The change already has a long step running.
@@ -329,6 +340,15 @@ impl StepTable {
         if let Some(entry) = self.entries.lock().unwrap().get_mut(change) {
             entry.live_checks = checks;
         }
+    }
+
+    /// Whether the change's step has read any checks on the base for the repository it is preparing.
+    pub fn has_live_checks(&self, change: &ChangeKey) -> bool {
+        self.entries
+            .lock()
+            .unwrap()
+            .get(change)
+            .is_some_and(|entry| !entry.live_checks.is_empty())
     }
 
     /// Cancel the change's step; whether there was one.

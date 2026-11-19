@@ -11,4 +11,8 @@ export type RunningStep = { change: ChangeKey, kind: StepKind, doing: string, pr
 /**
  * The checks on the base while this Workbench's own preparation runs them; empty otherwise.
  */
-liveChecks: Array<BaseCheck>, };
+liveChecks: Array<BaseCheck>, 
+/**
+ * What to ask before stopping the checks on the base; None when no checks are running there.
+ */
+stopQuestion: string | null, };
