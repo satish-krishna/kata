@@ -1624,7 +1624,7 @@ mod tests {
             got.outside,
             Some(StartedOutside {
                 at: "2026-11-16T14:54:00.000Z".into(),
-                words: "Started outside this Workbench".into()
+                words: "May have been started outside this Workbench".into()
             })
         );
         for live in [

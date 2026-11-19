@@ -2314,7 +2314,7 @@ describe('the change page reads where the change stands again', () => {
   const check = (name: string, state: BaseCheck['state']): BaseCheck => ({ check: name, state, exitCode: state === 'failed' ? 1 : null, output: 'boom', lineCount: 1, canAccept: state === 'failed', accepted: false, startedAt: null, endedAt: null });
   const stopped = (): StartChecks[] => [{ repo: 'kata', shown: { kind: 'baseFailure' }, base: '3c504eb', checks: [check('app-speed', 'failed')], passed: 0, setupHint: false, startHeld: 'Accept or fix the failing checks first', finish: null, elsewhere: false, listed: null, outside: null }];
   // R8.2's Given: the build is under way, its checks on the base ended, and it was not started here.
-  const outside = { at: '2026-11-16T14:54:00.000Z', words: 'Started outside this Workbench' };
+  const outside = { at: '2026-11-16T14:54:00.000Z', words: 'May have been started outside this Workbench' };
   const underWay = (): StartChecks[] => [{ repo: 'kata', shown: { kind: 'underWay' }, base: '', checks: [check('app-speed', 'passed')], passed: 1, setupHint: false, startHeld: null, finish: null, elsewhere: false, listed: null, outside }];
 
   it('a failure the change no longer holds is cleared on focus r8.2', async () => {

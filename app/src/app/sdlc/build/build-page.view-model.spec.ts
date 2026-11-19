@@ -2132,7 +2132,7 @@ describe('the checks list takes the backend decision on where the checks run', (
   });
 
   it('an under way build started elsewhere says so r8.2', async () => {
-    const outside = { at: '2026-11-16T14:54:00.000Z', words: 'Started outside this Workbench' };
+    const outside = { at: '2026-11-16T14:54:00.000Z', words: 'May have been started outside this Workbench' };
     const { vm } = await readAs({ ...read('underWay', false), checks: [], outside });
     expect(vm.view().outside).toEqual([{ repo: 'commerce-core', ...outside }]);
     expect(vm.view().baseChecks ?? null).toBeNull();
