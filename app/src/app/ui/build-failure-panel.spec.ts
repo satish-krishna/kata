@@ -1,5 +1,6 @@
 import type { BaseCheck } from '@bindings/BaseCheck';
 import type { StartChecks } from '@bindings/StartChecks';
+import { TestBed } from '@angular/core/testing';
 import { render } from '../../testing/render';
 import { AcceptCheckDialog } from './accept-check-dialog';
 import { BuildFailurePanel } from './build-failure-panel';
@@ -212,5 +213,24 @@ describe('BuildFailurePanel while the build is being prepared (R11.1)', () => {
     const accept = button(container, 'Accept for this build…') as HTMLButtonElement;
     expect(accept.disabled).toBe(false);
     expect(accept.getAttribute('aria-describedby')).toBeNull();
+  });
+
+  it('accept-off ids are unique across panels r12.2', async () => {
+    const off = 'The build is being prepared';
+    const { container } = await render(BuildFailurePanel, { start: start(['app-speed'], 1, { repo: 'kata' }), acceptOff: off });
+    const second = TestBed.createComponent(BuildFailurePanel);
+    second.componentRef.setInput('start', start(['app-speed', 'lint'], 1, { repo: 'hoshin' }));
+    second.componentRef.setInput('acceptOff', off);
+    await second.whenStable();
+    for (const el of [container, second.nativeElement as HTMLElement]) if (!el.isConnected) document.body.appendChild(el);
+    const panels = [container, second.nativeElement as HTMLElement];
+    const buttons = panels.flatMap((p) => Array.from(p.querySelectorAll('button[data-accept]')));
+    expect(buttons.length).toBe(3);
+    for (const b of buttons) {
+      const id = b.getAttribute('aria-describedby')!;
+      expect(document.querySelectorAll(`[id="${id}"]`).length).toBe(1);
+      expect(text(document.getElementById(id)!)).toBe(off);
+      expect(b.closest('[data-failure-panel]')!.contains(document.getElementById(id))).toBe(true);
+    }
   });
 });
