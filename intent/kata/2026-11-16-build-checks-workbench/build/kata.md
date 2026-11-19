@@ -296,3 +296,20 @@ notes: |
   The review start does not take the flag (sdlcReviewStart has none), so it never asks.
   R12.2: only the dialog's Cancel and Start anyway buttons and Escape apply here; the dialog spec covers them.
 ```
+
+### T18
+
+```yaml
+task: T18
+commits: ["926c773", "3868178", "acb6a3a", "130017f"]
+departure: |
+  T18 files: app/src/app/sdlc/build/build-page.view-model.ts, in the task's list, is unchanged: its failures and startHold already follow each fresh read, so nothing there kept a failure in memory.
+  R8.2: a focus read updates the change view, the build status, the review record, the open notices and the build page's checks, but not the shown document's text or the Pull requests and copy state, which are still refreshed on opening and after actions.
+red: observed
+notes: |
+  The first check failed: windowFocused() called the full load(), which reset the picked task, the open document and the page state on every focus; acb6a3a adds "a focus read keeps what the engineer is looking at r8.2" and 130017f replaces it with a lighter read.
+  windowFocused() marks the change seen, then calls the private readStanding(), which calls sdlcOpenChange for the open document's stem and gives the build page a fresh input, so it reads sdlcStartChecks again; a failed read, or one a full reload overtakes, changes nothing.
+  The new focus test asserts the state stays ready, the shown document is unchanged, sdlcStartChecks is read again and sdlcWorkspaces is not; the private picked tab is not observable through the public API.
+  "reads on opening and after actions, not on its own r8.3" passed before the change, since the page already read on opening and after actions.
+  red show's record is at the first test commit (926c773); the second test commit came after a production commit, so red record was not run for it.
+```
