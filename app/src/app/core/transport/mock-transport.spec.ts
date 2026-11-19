@@ -229,6 +229,19 @@ describe('MockTransport', () => {
       expect(await t.sdlcBuildState(ref('2026-01-01-never-started'))).toBeNull();
     });
 
+    it('under ?demo=checks-elsewhere a start and a continue say the build may be running elsewhere, and start with the flag', async () => {
+      window.history.replaceState({}, '', '/?demo=checks-elsewhere');
+      try {
+        const t = new MockTransport();
+        expect(await t.sdlcBuildStart(ref(MOCK_BUILD_CHANGE), FORM)).toMatchObject({ kind: 'mayBeRunningElsewhere', repos: ['kata'], runningCheck: 'app-unit' });
+        expect(await t.sdlcBuildContinue(ref(MOCK_BUILD_CHANGE), 'commerce-core')).toMatchObject({ kind: 'mayBeRunningElsewhere' });
+        expect((await t.sdlcBuildStart(ref(MOCK_BUILD_CHANGE), FORM, true)).kind).toBe('started');
+        expect((await t.sdlcBuildContinue(ref(MOCK_BUILD_SECOND), 'commerce-core', undefined, true)).kind).not.toBe('mayBeRunningElsewhere');
+      } finally {
+        window.history.replaceState({}, '', '/');
+      }
+    });
+
     it('a build that needs a repository another change holds starts held, and says who holds it', async () => {
       const t = new MockTransport();
       await t.sdlcBuildStart(ref(MOCK_BUILD_CHANGE), FORM);

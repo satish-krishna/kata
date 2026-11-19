@@ -118,9 +118,9 @@ export abstract class KataTransport {
   /** Start a document run (intent, spec, plan, triage or fix) of a change that exists. The backend composes the run-spec with the change's deny rules and claims the change's own lane. Resolves to the run id. */
   abstract sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm): Promise<string>;
   /** Start a change's build; nothing starts unless every repository it needs is free. */
-  abstract sdlcBuildStart(change: ChangeRef, form: StartForm): Promise<StartOutcome>;
+  abstract sdlcBuildStart(change: ChangeRef, form: StartForm, evenIfElsewhere?: boolean): Promise<StartOutcome>;
   /** Continue a change's build in one repository. */
-  abstract sdlcBuildContinue(change: ChangeRef, repo: string, off?: string[]): Promise<StartOutcome>;
+  abstract sdlcBuildContinue(change: ChangeRef, repo: string, off?: string[], evenIfElsewhere?: boolean): Promise<StartOutcome>;
   /** Where a change's build stands, or null when this session hosts no build of it. */
   abstract sdlcBuildState(change: ChangeRef): Promise<BuildState | null>;
   /** The key the backend gives the change, which its build announcements carry. */

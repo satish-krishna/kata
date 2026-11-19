@@ -296,6 +296,9 @@ export type BuildPageView = {
 /** The check the engineer asked to accept for this build, with the base commit it failed on. */
 export type AcceptRequest = { repo: string; check: string; base: string };
 
+/** What the dialog that asks before a build that may be running elsewhere starts shows: the repositories, when the workflow recorded the start, and the check it reports running now. */
+export type ElsewhereRequest = { repos: string[]; since: string; runningCheck: string | null };
+
 /** The workflow's reasons for refusing an acceptance, as it worded them. */
 export type AcceptRefusal = { repo: string; check: string; problems: string[] };
 
@@ -1790,6 +1793,15 @@ export class BuildPageViewModel {
 
   /** The check being asked about; the accept dialog is open exactly while this is set. */
   readonly acceptRequest = signal<AcceptRequest | null>(null);
+  /** The start that may be running elsewhere, asked about; the dialog is open exactly while this is set. */
+  readonly elsewhereRequest = signal<ElsewhereRequest | null>(null);
+
+  /** Start anyway. */
+  async confirmElsewhere(): Promise<void> {}
+
+  /** Start nothing. */
+  cancelElsewhere(): void {}
+
   /** The workflow's reasons for refusing the last acceptance. */
   private readonly acceptRefusal = signal<AcceptRefusal | null>(null);
 
