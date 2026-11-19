@@ -37,6 +37,31 @@ pub struct Elsewhere {
     pub running_check: Option<String>,
 }
 
+impl LiveFacts {
+    /// This Workbench runs a build of the change, or ran one since it was opened, so it knows where that build
+    /// stands and nothing it finds in the record is another session's.
+    fn known_here(&self) -> bool {
+        self.build_live || self.stopped_here
+    }
+}
+
+/// The check on the base that the latest `baseline` run of `repo` in `checks` reports running, when one is.
+fn running_base_check(checks: &[ChecksAnswer], repo: &str) -> Option<String> {
+    checks
+        .iter()
+        .flat_map(|a| a.runs.iter())
+        .rfind(|run| run.phase == "baseline" && run.repo == repo)
+        .and_then(|run| run.checks.iter().find(|c| c.state == CheckState::Running))
+        .map(|c| c.check.clone())
+}
+
+/// Whether the checks on the base of `repo` are running in another session now (R2.5): the latest `baseline`
+/// run in `checks` has a check running, and this Workbench neither runs nor ran a build of the change. The
+/// start record does not enter: a build of this Workbench that started and has no finish is its own.
+pub fn checks_running_elsewhere(checks: &ChecksAnswer, live: &LiveFacts, repo: &str) -> bool {
+    !live.known_here() && running_base_check(std::slice::from_ref(checks), repo).is_some()
+}
+
 /// Whether a start of the build may be running elsewhere.
 ///
 /// It may when, for a repository the next start needs, the record shows a `build.start` that passed with no
@@ -49,7 +74,7 @@ pub fn may_be_running_elsewhere(
     live: &LiveFacts,
     repos: &[String],
 ) -> Option<Elsewhere> {
-    if live.build_live || live.stopped_here {
+    if live.known_here() {
         return None;
     }
     let mut open: Vec<String> = Vec::new();
@@ -79,14 +104,9 @@ pub fn may_be_running_elsewhere(
     if open.is_empty() {
         return None;
     }
-    let running_check = open.iter().find_map(|repo| {
-        checks
-            .iter()
-            .flat_map(|a| a.runs.iter())
-            .rfind(|run| run.phase == "baseline" && &run.repo == repo)
-            .and_then(|run| run.checks.iter().find(|c| c.state == CheckState::Running))
-            .map(|c| c.check.clone())
-    });
+    let running_check = open
+        .iter()
+        .find_map(|repo| running_base_check(checks, repo));
     Some(Elsewhere {
         repos: open,
         since: since.unwrap_or_default(),

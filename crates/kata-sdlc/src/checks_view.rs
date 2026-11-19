@@ -6,7 +6,7 @@ use crate::hoshin::status::{Hooks, OnFailure, RunRecord, Status};
 use crate::hoshin::{BaselineShow, CheckRun, CheckState, ChecksAnswer};
 use crate::hoshin::{Place, Program, ProgramError};
 use crate::layout::Layout;
-use crate::offer::LiveFacts;
+use crate::offer::{self, LiveFacts};
 use serde::Serialize;
 
 /// The event whose hooks are a repository's checks.
@@ -522,7 +522,6 @@ pub fn start_checks(
     repos: &[String],
     live: &LiveFacts,
 ) -> Result<Vec<StartChecks>, ProgramError> {
-    let _ = live;
     let status = program.status(place, change)?;
     let hooks = program.hooks(place, system, Some(EVENT))?;
     repos
@@ -555,7 +554,7 @@ pub fn start_checks(
                     setup_hint: false,
                     start_held: None,
                     finish: None,
-                    elsewhere: false,
+                    elsewhere: offer::checks_running_elsewhere(&answer, live, repo),
                 }
             };
             let Some(start_at) = start_at else {
@@ -1111,9 +1110,16 @@ mod tests {
     }
 
     fn read_with(s: &Scripted, live: &LiveFacts) -> StartChecks {
-        start_checks(&s.program, &s.place, "demo", "c", &["app".to_string()], live)
-            .unwrap()
-            .remove(0)
+        start_checks(
+            &s.program,
+            &s.place,
+            "demo",
+            "c",
+            &["app".to_string()],
+            live,
+        )
+        .unwrap()
+        .remove(0)
     }
 
     fn check_of<'a>(checks: &'a [BaseCheck], id: &str) -> &'a BaseCheck {

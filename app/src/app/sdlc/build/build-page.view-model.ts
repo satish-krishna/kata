@@ -969,9 +969,9 @@ export class BuildPageViewModel {
       const checks = live.length > 0 ? live : (from?.checks ?? []);
       return checks.length === 0 ? null : { repo: from?.repo ?? '', base: from?.base ?? '', checks, now, elsewhere: false };
     }
-    const shown = read.find((r) => r.shown.kind === 'underWay' || r.checks.some((c) => c.state === 'cutOff'));
+    const shown = read.find((r) => r.elsewhere || r.checks.some((c) => c.state === 'cutOff'));
     if (shown === undefined || shown.checks.length === 0) return null;
-    return { repo: shown.repo, base: shown.base, checks: shown.checks, now, elsewhere: shown.shown.kind === 'underWay' };
+    return { repo: shown.repo, base: shown.base, checks: shown.checks, now, elsewhere: shown.elsewhere };
   });
 
   /** While the preparation runs, tick the clock and read the live checks from the backend once a second. */

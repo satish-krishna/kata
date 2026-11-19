@@ -520,7 +520,7 @@ export class MockTransport extends KataTransport {
       check('rust-clippy', 'notRun', null, null),
       check('rust-test', 'notRun', null, null),
     ];
-    return Promise.resolve([{ repo: 'kata', shown: { kind: cut ? 'startable' : 'underWay' }, base: '3c504eb', checks, passed: 2, setupHint: false, startHeld: null, finish: null, elsewhere: false }]);
+    return Promise.resolve([{ repo: 'kata', shown: { kind: 'startable' }, base: '3c504eb', checks, passed: 2, setupHint: false, startHeld: null, finish: null, elsewhere: !cut }]);
   }
   /** The checks the engineer accepted in this session, so `?demo=checks-base` marks them and settles the start. */
   private readonly acceptedChecks = new Set<string>();

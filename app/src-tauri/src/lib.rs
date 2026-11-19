@@ -2096,6 +2096,8 @@ fn sdlc_checks_view(
 /// record each time it is asked (R8.1): the decision is `checks_view::start_checks`, never the page's.
 #[tauri::command(async)]
 fn sdlc_start_checks(
+    control: State<'_, RunControl>,
+    host: State<'_, Arc<build_host::BuildHost>>,
     change: build_host::ChangeRef,
 ) -> Result<Vec<sdlc::checks_view::StartChecks>, String> {
     let program = sdlc::hoshin::Program::locate(&change_plugin_dir(&change.workspace)?);
@@ -2106,7 +2108,13 @@ fn sdlc_start_checks(
         .as_ref()
         .map(|tasks| tasks.keys().cloned().collect())
         .unwrap_or_default();
-    let live = sdlc::offer::LiveFacts::default();
+    let live = live_facts(
+        &control,
+        &host,
+        &change.workspace,
+        &change.system,
+        &change.change,
+    );
     sdlc::checks_view::start_checks(
         &program,
         &place,
