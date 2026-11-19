@@ -370,6 +370,7 @@
   <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />
   <app-feedback-dialog [action]="vm.feedbackFor()" [required]="vm.feedbackRequired()" (run)="vm.runWithFeedback($event)" (cancel)="vm.cancelFeedback()" />
   <app-accept-check-dialog [request]="build.acceptRequest()" (confirm)="build.confirmAccept()" (cancel)="build.cancelAccept()" />
+  <app-build-elsewhere-dialog [request]="build.elsewhereRequest()" (confirm)="build.confirmElsewhere()" (cancel)="build.cancelElsewhere()" />
   <app-done-dialog
     [report]="vm.doneReport()"
     [change]="vm.changeName()"

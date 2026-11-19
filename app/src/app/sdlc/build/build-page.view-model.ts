@@ -1665,7 +1665,10 @@ export class BuildPageViewModel {
     const ref = this.ref();
     if (ref === null) return 'couldNotRun';
     this.lastForm = form;
-    return this.begin('checking-base', progressLabels.checkingBase(), () => this.transport.sdlcBuildStart(ref, this.withOff(form, this.buildOff())));
+    return this.begin('checking-base', progressLabels.checkingBase(), (even) => {
+      const started = this.withOff(form, this.buildOff());
+      return even ? this.transport.sdlcBuildStart(ref, started, true) : this.transport.sdlcBuildStart(ref, started);
+    });
   }
 
   /** Start the held build again, as a fresh start of the same form. */
@@ -1683,7 +1686,7 @@ export class BuildPageViewModel {
    * Run one of the host's slow starts under the page's progress line and tell what it came to: the plugin checks every repository
    * (and prepares each) before anything starts, which takes seconds.
    */
-  private async begin(step: ProgressStepId, label: string, call: () => Promise<StartOutcome>): Promise<StartKind> {
+  private async begin(step: ProgressStepId, label: string, call: (evenIfElsewhere: boolean) => Promise<StartOutcome>, evenIfElsewhere = false): Promise<StartKind> {
     this.progress.begin(step, label, 'build');
     const ctx = this.ctx;
     this.startedPreparing.set(ctx);
@@ -1692,7 +1695,7 @@ export class BuildPageViewModel {
     const unlisten = await this.listenToSteps(ctx);
     let outcome: StartOutcome;
     try {
-      outcome = await call();
+      outcome = await call(evenIfElsewhere);
     } catch (e) {
       this.endLine(ctx, true);
       this.refuse(ctx, [message(e)]);
@@ -1704,12 +1707,24 @@ export class BuildPageViewModel {
     }
     if (outcome.kind === 'refused' || outcome.kind === 'failed' || outcome.kind === 'couldNotRun' || outcome.kind === 'stopped') this.endLine(ctx, true);
     else this.endLine(ctx, false);
+    if (outcome.kind === 'mayBeRunningElsewhere') return this.askElsewhere(ctx, outcome, () => this.begin(step, label, call, true));
     if (this.shows(ctx)) return this.settle(outcome);
     // The page moved to another change while the start ran: what it came to is not shown on that change, it is said once.
     const held = outcome.kind === 'held' ? ['The build waits for other changes', ...outcome.held.map((h) => `${h.repo}: ${h.holder.change}`)] : null;
     const problems = held ?? startProblemsOf(outcome);
     if (problems !== null) this.refuse(ctx, problems);
     if (outcome.kind === 'stopped') this.toasts.info(`${ctx?.change ?? 'The build'}: ${stoppedMessage(outcome.prepared)}`);
+    return outcome.kind;
+  }
+
+  /** A start the workflow's record says may be running elsewhere: ask first; the page has no say when it moved to another change, so that is said once. */
+  private askElsewhere(ctx: BuildContext | null, outcome: Extract<StartOutcome, { kind: 'mayBeRunningElsewhere' }>, again: () => Promise<StartKind>): StartKind {
+    if (this.shows(ctx)) {
+      this.elsewhereAgain = again;
+      this.elsewhereRequest.set({ repos: outcome.repos, since: outcome.since, runningCheck: outcome.runningCheck });
+    } else {
+      this.toasts.info(`${ctx?.change ?? 'The build'}: The build may be running in another session, so it was not started`);
+    }
     return outcome.kind;
   }
 
@@ -1796,11 +1811,21 @@ export class BuildPageViewModel {
   /** The start that may be running elsewhere, asked about; the dialog is open exactly while this is set. */
   readonly elsewhereRequest = signal<ElsewhereRequest | null>(null);
 
-  /** Start anyway. */
-  async confirmElsewhere(): Promise<void> {}
+  /** The start the question is about, run again with the flag; set exactly while the question is. */
+  private elsewhereAgain: (() => Promise<StartKind>) | null = null;
+
+  /** Start anyway: the same start again, told that the engineer knows it may be running elsewhere. */
+  async confirmElsewhere(): Promise<void> {
+    const again = this.elsewhereAgain;
+    this.cancelElsewhere();
+    if (again !== null) await again();
+  }
 
   /** Start nothing. */
-  cancelElsewhere(): void {}
+  cancelElsewhere(): void {
+    this.elsewhereAgain = null;
+    this.elsewhereRequest.set(null);
+  }
 
   /** The workflow's reasons for refusing the last acceptance. */
   private readonly acceptRefusal = signal<AcceptRefusal | null>(null);
@@ -2074,8 +2099,7 @@ export class BuildPageViewModel {
     if (result === null) return;
     const choices: BuildChoices = { off: result.off };
     this.givens.setBuild(this.buildKey(), choices);
-    await this.begin('preparing-build', key === REVIEW ? progressLabels.preparingReview() : progressLabels.preparingBuild(), () =>
-      key === REVIEW ? this.transport.sdlcReviewStart(ref, [...choices.off]) : this.transport.sdlcBuildContinue(ref, key, [...choices.off]),
+    await this.begin('preparing-build', key === REVIEW ? progressLabels.preparingReview() : progressLabels.preparingBuild(), (even) => (key === REVIEW ? this.transport.sdlcReviewStart(ref, [...choices.off]) : even ? this.transport.sdlcBuildContinue(ref, key, [...choices.off], true) : this.transport.sdlcBuildContinue(ref, key, [...choices.off])),
     );
   }
 

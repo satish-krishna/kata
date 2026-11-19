@@ -142,8 +142,8 @@ export class TauriTransport extends KataTransport {
   sdlcDiscard(target: SnapshotTarget, before: Snapshot, paths: string[], build?: BuildScope) { return this.ipc.invoke<void>('sdlc_discard', { target, before, paths, build }); }
   sdlcRunHistory(runId: string) { return this.ipc.invoke<HistoryEntry[]>('sdlc_run_history', { runId }); }
   sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm) { return this.ipc.invoke<string>('sdlc_run_change', { change, kind, form }); }
-  sdlcBuildStart(change: ChangeRef, form: StartForm, _evenIfElsewhere?: boolean) { return this.ipc.invoke<StartOutcome>('sdlc_build_start', { change, form }); }
-  sdlcBuildContinue(change: ChangeRef, repo: string, off?: string[], _evenIfElsewhere?: boolean) { return this.ipc.invoke<StartOutcome>('sdlc_build_continue', { change, repo, ...(off === undefined ? {} : { off }) }); }
+  sdlcBuildStart(change: ChangeRef, form: StartForm, evenIfElsewhere?: boolean) { return this.ipc.invoke<StartOutcome>('sdlc_build_start', { change, form, ...(evenIfElsewhere === true ? { evenIfElsewhere } : {}) }); }
+  sdlcBuildContinue(change: ChangeRef, repo: string, off?: string[], evenIfElsewhere?: boolean) { return this.ipc.invoke<StartOutcome>('sdlc_build_continue', { change, repo, ...(off === undefined ? {} : { off }), ...(evenIfElsewhere === true ? { evenIfElsewhere } : {}) }); }
   sdlcBuildState(change: ChangeRef) { return this.ipc.invoke<BuildState | null>('sdlc_build_state', { change }); }
   sdlcChangeKey(change: ChangeRef) { return this.ipc.invoke<ChangeKey>('sdlc_change_key', { change }); }
   sdlcBuildCancel(change: ChangeRef, repo: string | null) { return this.ipc.invoke<void>('sdlc_build_cancel', { change, repo }); }

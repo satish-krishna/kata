@@ -663,11 +663,20 @@ test result: FAILED. 0 passed; 1 failed`, lineCount: 3, canAccept: !accepted, ac
     this.changeRunsLive.set(id, change.change);
     return id;
   }
-  async sdlcBuildStart(change: ChangeRef, form: StartForm, _evenIfElsewhere?: boolean): Promise<StartOutcome> {
+  /** `?demo=checks-elsewhere` shows a build another session runs, so a start asks first unless it is told to go on. */
+  private maybeElsewhere(evenIfElsewhere: boolean | undefined): boolean {
+    return demoParam() === 'checks-elsewhere' && evenIfElsewhere !== true;
+  }
+  private elsewhereOutcome(): StartOutcome {
+    return { kind: 'mayBeRunningElsewhere', repos: ['kata'], since: new Date(Date.now() - 300_000).toISOString(), runningCheck: 'app-unit' };
+  }
+  async sdlcBuildStart(change: ChangeRef, form: StartForm, evenIfElsewhere?: boolean): Promise<StartOutcome> {
+    if (this.maybeElsewhere(evenIfElsewhere)) return this.elsewhereOutcome();
     return this.longStep(change, 'preparingBuild', 'Checking the base', () => this.host.start(change, form), { kind: 'stopped', prepared: [], note: null });
   }
   // The scripted host runs no agent, so the choices a continue or review carries change nothing it shows.
-  async sdlcBuildContinue(change: ChangeRef, repo: string, _off?: string[], _evenIfElsewhere?: boolean): Promise<StartOutcome> {
+  async sdlcBuildContinue(change: ChangeRef, repo: string, _off?: string[], evenIfElsewhere?: boolean): Promise<StartOutcome> {
+    if (this.maybeElsewhere(evenIfElsewhere)) return this.elsewhereOutcome();
     return this.longStep(change, 'preparingBuild', 'Preparing ' + repo, () => this.host.continueRepo(change, repo), { kind: 'stopped', prepared: [], note: null });
   }
   async sdlcBuildState(change: ChangeRef): Promise<BuildState | null> { return this.host.state(change); }
