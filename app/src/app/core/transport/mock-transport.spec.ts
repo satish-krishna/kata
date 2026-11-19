@@ -1050,9 +1050,9 @@ describe('MockTransport stopping a step', () => {
         { outcome: 'stopped', rejected: false },
         { outcome: 'stopped', kept: [] },
         { kind: 'stopped', pullRequests: [] },
-        { kind: 'stopped', prepared: [] },
-        { kind: 'stopped', prepared: [] },
-        { kind: 'stopped', prepared: [] },
+        { kind: 'stopped', prepared: [], note: null },
+        { kind: 'stopped', prepared: [], note: null },
+        { kind: 'stopped', prepared: [], note: null },
         { outcome: 'stopped', answer: [] },
       ];
       for (const [i, call] of calls.entries()) {
