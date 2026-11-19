@@ -841,6 +841,13 @@ describe('MockTransport answers every call the backend gained on this branch (F2
     expect(views.every((v) => v.summary !== '')).toBe(true);
   });
 
+  it('sdlcStartChecks gives each repository its checks on the base with their states', async () => {
+    const [shown] = await new MockTransport().sdlcStartChecks(ref(MOCK_DONE_CHANGE));
+    expect(shown.repo).not.toBe('');
+    expect(shown.checks.length).toBeGreaterThan(0);
+    expect(shown.checks.every((c) => c.check !== '')).toBe(true);
+  });
+
   it('sdlcOldChecks says nothing without ?demo=old-checks, and sdlcOldChecksSeen resolves', async () => {
     const t = new MockTransport();
     expect(await t.sdlcOldChecks(MOCK_WORKSPACE_FOLDER, ['commerce'])).toEqual([]);

@@ -45,6 +45,7 @@ import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
+import type { StartChecks } from '@bindings/StartChecks';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { DeclareView } from '@bindings/DeclareView';
@@ -493,6 +494,7 @@ export class MockTransport extends KataTransport {
   sdlcDiffBase(_repoPath: string): Promise<BaseInfo> { return Promise.resolve(this.sdlc.diffBase()); }
   sdlcOldChecks(_folder: string, systems: string[]): Promise<OldChecksNotice[]> { return Promise.resolve(this.sdlc.oldChecks(systems)); }
   sdlcOldChecksSeen(systems: string[]): Promise<void> { this.sdlc.oldChecksSeen(systems); return Promise.resolve(); }
+  sdlcStartChecks(_change: ChangeRef): Promise<StartChecks[]> { return Promise.resolve([]); }
   sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]> { return Promise.resolve(this.sdlc.checksView(change.change)); }
   /** The plugin's answer to declaring the change done, with the steps it reports on the way; `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` give each of the other answers. */
   async sdlcDeclareDone(change: ChangeRef): Promise<DeclareView> {

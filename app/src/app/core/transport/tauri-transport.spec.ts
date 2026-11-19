@@ -141,6 +141,7 @@ const rows: Row[] = [
   ['sdlcDiffPair', (t) => t.sdlcDiffPair('/r', 'committed', 'a.ts'), 'sdlc_diff_pair', { repoPath: '/r', part: 'committed', path: 'a.ts' }],
   ['sdlcDiffBase', (t) => t.sdlcDiffBase('/r'), 'sdlc_diff_base', { repoPath: '/r' }],
   ['sdlcAppRows', (t) => t.sdlcAppRows('/w', 's'), 'sdlc_app_rows', { folder: '/w', system: 's' }],
+  ['sdlcStartChecks', (t) => t.sdlcStartChecks(change), 'sdlc_start_checks', { change }],
   ['sdlcChecksView', (t) => t.sdlcChecksView(change), 'sdlc_checks_view', { change }],
   ['sdlcOldChecks', (t) => t.sdlcOldChecks('/w', ['s', 't']), 'sdlc_old_checks', { folder: '/w', systems: ['s', 't'] }],
   ['sdlcOldChecksSeen', (t) => t.sdlcOldChecksSeen(['s']), 'sdlc_old_checks_seen', { systems: ['s'] }],

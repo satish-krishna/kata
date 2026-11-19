@@ -44,6 +44,7 @@ import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
+import type { StartChecks } from '@bindings/StartChecks';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { RunningStep } from '@bindings/RunningStep';
@@ -261,6 +262,8 @@ export abstract class KataTransport {
   abstract sdlcDiffBase(repoPath: string): Promise<BaseInfo>;
   /** What each repository of the change's checks came to, as the plugin recorded it. */
   abstract sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]>;
+  /** Each repository's start and its checks on the base, as the plugin's ledger and hook list read now (R2.4, R2.5). */
+  abstract sdlcStartChecks(change: ChangeRef): Promise<StartChecks[]>;
   /** The old per-machine checks files of the systems the engineer has not been told about yet, in the order asked; empty when none. */
   abstract sdlcOldChecks(folder: string, systems: string[]): Promise<OldChecksNotice[]>;
   /** Record that the engineer has been told about the old checks files of these systems. */
