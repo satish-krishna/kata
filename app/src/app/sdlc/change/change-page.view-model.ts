@@ -1678,10 +1678,33 @@ export class ChangePageViewModel {
   /**
    * The window regained focus while this page is shown: the engineer is looking at the change, so it counts as seen, and where the change
    * stands is read again (R8.2), since a build may have started or a check been accepted from a session outside this Workbench.
-   * The read ends by telling the backend the change was opened, so the seen mark is not sent twice.
+   * Only the change's state and its checks are read: the picked tab, the open document and the page state stay as they are.
    */
   windowFocused(): void {
-    if (this.state() === 'ready') void this.load();
+    if (this.state() !== 'ready') return;
+    this.markSeen();
+    void this.readStanding();
+  }
+
+  /**
+   * Read where the change stands again, without reloading the page: the change view, the build status and the review record, then the
+   * build page reads its checks again from the new input. A read that fails, or one a reload overtakes, changes nothing.
+   */
+  private async readStanding(): Promise<void> {
+    const seq = this.loadSeq;
+    const w = this.current();
+    const master = this.scan();
+    const repo = master === null ? null : masterRepo(master);
+    if (w === null || repo === null) return;
+    const ref: ChangeRef = { workspace: w.folder, system: this.system(), change: this.changeName() };
+    const opened = await this.transport.sdlcOpenChange(ref, this.openStem()).catch(() => null);
+    if (opened === null || seq !== this.loadSeq || opened.view === null) return;
+    this.change.set(opened.view);
+    this.status.set(opened.status);
+    this.reviewRecord.set(opened.review);
+    this.openNotices.set(opened.notices);
+    const context = this.buildContext();
+    if (context !== null) this.build.loaded.set({ ctx: context, masterRepo: repo, change: opened.view, status: opened.status, done: this.done(), review: opened.review });
   }
 
   /** Tell the backend the engineer is looking at this change now. Every moment of looking is told; the backend's marks decide what it means. */
