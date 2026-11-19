@@ -999,7 +999,7 @@ describe('SdlcHomeViewModel changes list', () => {
     expect(vm.startChangeReason()).toBe(BLOCKED.message);
     vm.openNewChange();
     expect(vm.newChangeOpen()).toBe(false);
-    expect(toastText()).toContain('1.0.0');
+    expect(toastText()).toContain('1.1.0');
   });
 
   it('reads every system in one call and shows whether a change may start as the backend decided for the set (F11)', async () => {
