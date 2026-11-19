@@ -303,7 +303,7 @@ export type ElsewhereRequest = { repos: string[]; since: string; runningCheck: s
 export type AcceptRefusal = { repo: string; check: string; problems: string[] };
 
 /** One repository's start failure to show on the page, with the refusal of its last acceptance, if any. */
-export type BuildFailureView = { start: StartChecks; refusal: AcceptRefusal | null };
+export type BuildFailureView = { start: StartChecks; refusal: AcceptRefusal | null; acceptOff: string | null };
 
 /** What the checks list shows: the repository's checks on the base, the clock for the running one and whether another session runs them. */
 export type BaseChecksView = { repo: string; base: string; checks: BaseCheck[]; now: number; elsewhere: boolean };
@@ -1838,7 +1838,7 @@ export class BuildPageViewModel {
     const refusal = this.acceptRefusal();
     return this.startChecks()
       .filter((s) => s.shown.kind === 'baseFailure' || s.shown.kind === 'allAccepted' || s.shown.kind === 'otherReason')
-      .map((s) => ({ start: s, refusal: refusal !== null && refusal.repo === s.repo ? refusal : null }));
+      .map((s) => ({ start: s, refusal: refusal !== null && refusal.repo === s.repo ? refusal : null, acceptOff: null }));
   });
 
   /** Why starting the build is not offered as ready, as the backend worded it; null when it is. */

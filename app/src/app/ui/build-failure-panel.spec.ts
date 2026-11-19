@@ -195,3 +195,22 @@ describe('AcceptCheckDialog confirms one acceptance', () => {
     expect(n).toBe(1);
   });
 });
+
+describe('BuildFailurePanel while the build is being prepared (R11.1)', () => {
+  it('accept is off while the build is being prepared r11.1', async () => {
+    const { container } = await render(BuildFailurePanel, { start: start(['app-speed'], 1), acceptOff: 'The build is being prepared' });
+    expect(rows(container).length).toBe(1);
+    const accept = button(container, 'Accept for this build…') as HTMLButtonElement;
+    expect(accept.disabled).toBe(true);
+    expect(accept.getAttribute('aria-describedby')).not.toBeNull();
+    expect(text(container.querySelector(`#${accept.getAttribute('aria-describedby')}`)!)).toBe('The build is being prepared');
+    expect(text(accept)).toContain('app-speed');
+  });
+
+  it('accept is on again once the build is not being prepared r11.1', async () => {
+    const { container } = await render(BuildFailurePanel, { start: start(['app-speed'], 1), acceptOff: null });
+    const accept = button(container, 'Accept for this build…') as HTMLButtonElement;
+    expect(accept.disabled).toBe(false);
+    expect(accept.getAttribute('aria-describedby')).toBeNull();
+  });
+});

@@ -2044,6 +2044,52 @@ describe('a start that stopped on the base is shown on the page, once', () => {
   });
 });
 
+describe('accept is off while the build is being prepared (R11.1)', () => {
+  const failing = (name: string): BaseCheck => ({ check: name, state: 'failed', exitCode: 101, output: 'boom', lineCount: 1, canAccept: true, accepted: false, startedAt: null, endedAt: null });
+  const stoppedStart = (): StartChecks => ({ repo: 'commerce-core', shown: { kind: 'baseFailure' }, base: '3c504eb', checks: [failing('app-speed')], passed: 0, setupHint: false, startHeld: 'Accept or fix the failing checks first', finish: null, elsewhere: false });
+  const step = (kind: RunningStep['kind']): RunningStep => ({
+    change: keyOf(MOCK_BUILD_CHANGE),
+    kind,
+    doing: 'preparing',
+    progress: { kind: 'repository', label: 'Preparing commerce-core: running base-tests', repo: 'commerce-core', check: 'base-tests', phase: 'other' },
+    liveChecks: [],
+    stopQuestion: null,
+  });
+
+  async function withStep(running: RunningStep[]) {
+    const s = await opened(setup());
+    vi.spyOn(s.transport, 'sdlcStartChecks').mockResolvedValue([stoppedStart()]);
+    vi.spyOn(s.transport, 'steps').mockResolvedValue(running);
+    let ended: (c: ChangeKey) => void = () => undefined;
+    vi.spyOn(s.transport, 'onStepEnd').mockImplementation(async (cb) => {
+      ended = cb;
+      return () => undefined;
+    });
+    await s.load();
+    await advance(1000);
+    return { ...s, end: () => ended(keyOf(MOCK_BUILD_CHANGE)) };
+  }
+
+  it('accept is off while the build is being prepared r11.1', async () => {
+    const { vm, transport, end } = await withStep([step('preparingBuild')]);
+    const accept = vi.spyOn(transport, 'sdlcAcceptBaseCheck');
+    expect(vm.preparing()).toBe(true);
+    expect(vm.view().failures?.map((f) => f.start.repo)).toEqual(['commerce-core']);
+    expect(vm.view().failures?.[0].acceptOff).toBe('The build is being prepared');
+    vm.askAccept('commerce-core', 'app-speed');
+    expect(vm.acceptRequest()).toBeNull();
+    expect(accept).not.toHaveBeenCalled();
+    end();
+    await advance(100);
+    expect(vm.view().failures?.[0].acceptOff).toBeNull();
+  });
+
+  it('a rerun at finish does not turn accept off r11.1', async () => {
+    const { vm } = await withStep([step('rerunningFinishChecks')]);
+    expect(vm.view().failures?.[0].acceptOff).toBeNull();
+  });
+});
+
 describe('the checks list takes the backend decision on where the checks run', () => {
   const running = (name: string): BaseCheck => ({ check: name, state: 'running', exitCode: null, output: '', lineCount: 0, canAccept: false, accepted: false, startedAt: '2026-11-16T10:00:00.000Z', endedAt: null });
   const read = (kind: 'underWay' | 'startable', elsewhere: boolean): StartChecks => ({ repo: 'commerce-core', shown: { kind }, base: '3c504eb', checks: [running('app-speed')], passed: 0, setupHint: false, startHeld: null, finish: null, elsewhere });

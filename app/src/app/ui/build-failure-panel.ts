@@ -32,6 +32,8 @@ export class BuildFailurePanel {
   readonly start = input.required<StartChecks>();
   /** The workflow's reasons for refusing the last acceptance, shown under the check they were for. */
   readonly refusal = input<AcceptRefusal | null>(null);
+  /** Why accepting is off, as the backend words it; null while accepting is on. */
+  readonly acceptOff = input<string | null>(null);
   /** The check the engineer asked to accept. */
   readonly accept = output<string>();
   /** The output text the engineer asked to copy. */
