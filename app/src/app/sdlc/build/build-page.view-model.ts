@@ -518,6 +518,38 @@ export class BuildPageViewModel {
   /** Whether the preparation of the change on screen is running now. */
   readonly preparing = computed(() => this.shownPreparation() !== null);
 
+  /** What the Workbench asks before it stops the checks on the base; null while it asks nothing. The confirm dialog is open exactly while this is set. */
+  readonly stopAsked = signal<string | null>(null);
+
+  /**
+   * Stop was pressed: ask the question the backend holds for the running checks, read fresh because no report carries it. A preparation with
+   * no question (nothing is running on the base) stops at once.
+   */
+  async askStop(): Promise<void> {
+    const shown = this.shownPreparation();
+    if (shown === null) return;
+    let question: string | null;
+    try {
+      const running = await this.transport.steps();
+      question = running.find((s) => sameStepChange(s.change, shown.ref))?.stopQuestion ?? null;
+    } catch {
+      question = null;
+    }
+    if (question === null) await this.stopPreparing();
+    else this.stopAsked.set(question);
+  }
+
+  /** The engineer confirmed the question: stop the preparation. */
+  async confirmStop(): Promise<void> {
+    this.stopAsked.set(null);
+    await this.stopPreparing();
+  }
+
+  /** The engineer declined or pressed Escape: the checks keep running and nothing changes. */
+  keepChecking(): void {
+    this.stopAsked.set(null);
+  }
+
   /** Stop the running preparation the page shows: that change's own, never the one that is current when the button is pressed. */
   async stopPreparing(): Promise<void> {
     const shown = this.shownPreparation();

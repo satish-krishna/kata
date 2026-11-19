@@ -37,7 +37,7 @@ async function mount(stopQuestion: string | null) {
     { provide: KataTransport, useValue: transport },
     { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'commerce', change: MOCK_BUILD_CHANGE })), snapshot: { queryParamMap: convertToParamMap({}) } } },
   ]);
-  await vi.waitFor(() => expect(out.container.querySelector('[data-testid="stop-preparing"]')).not.toBeNull());
+  await vi.waitFor(() => expect(out.container.querySelector('app-progress-line [data-testid="stop-preparing"]')).not.toBeNull(), { timeout: 4000 });
   await settle();
   return { ...out, stop };
 }

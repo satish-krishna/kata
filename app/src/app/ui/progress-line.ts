@@ -5,6 +5,7 @@ import type { ProgressView } from '../core/progress/progress.store';
 @Component({
   selector: 'app-progress-line',
   templateUrl: './progress-line.html',
+  host: { class: 'contents' },
 })
 export class ProgressLine {
   readonly entry = input.required<ProgressView>();

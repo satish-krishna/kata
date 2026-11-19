@@ -157,14 +157,15 @@
             <ng-container *ngTemplateOutlet="stageActions" />
           </div>
         }
-        @if (vm.preparingBuild(); as entry) {
-          <div class="k-change__missing" data-testid="build-progress"><app-progress-line [entry]="entry" /></div>
-        }
-        @if (build.preparing()) {
-          <div class="k-change__missing">
-            <button hlmBtn variant="secondary" type="button" aria-label="Stop preparing the build" data-testid="stop-preparing" (click)="build.stopPreparing()">
-              <ng-icon name="lucideSquare" />Stop
-            </button>
+        @if (vm.preparingBuild() || build.preparing()) {
+          <div class="k-change__missing k-progress-run" data-testid="build-progress">
+            @if (vm.preparingBuild(); as entry) {
+              <app-progress-line [entry]="entry">
+                <ng-container *ngTemplateOutlet="stopPreparing" />
+              </app-progress-line>
+            } @else {
+              <ng-container *ngTemplateOutlet="stopPreparing" />
+            }
           </div>
         }
         @if (build.stoppedNote(); as note) {
@@ -332,6 +333,20 @@
     }
   </ng-template>
 
+  <ng-template #stopPreparing>
+    @if (build.preparing()) {
+      <button hlmBtn variant="ghost" size="sm" type="button" aria-label="Stop preparing the build" data-testid="stop-preparing" (click)="build.askStop()">
+        <ng-icon name="lucideSquare" />Stop
+      </button>
+    }
+  </ng-template>
+  <app-confirm-dialog
+    [open]="build.stopAsked() !== null"
+    [message]="build.stopAsked() ?? ''"
+    confirmLabel="Stop"
+    (confirm)="build.confirmStop()"
+    (cancel)="build.keepChecking()"
+  />
   <app-lock-overlay
     [view]="vm.lockView()"
     [elapsed]="vm.lockElapsed()"
