@@ -1675,9 +1675,13 @@ export class ChangePageViewModel {
     }
   }
 
-  /** The window regained focus while this page is shown: the engineer is looking at the change, so it counts as seen. */
+  /**
+   * The window regained focus while this page is shown: the engineer is looking at the change, so it counts as seen, and where the change
+   * stands is read again (R8.2), since a build may have started or a check been accepted from a session outside this Workbench.
+   * The read ends by telling the backend the change was opened, so the seen mark is not sent twice.
+   */
   windowFocused(): void {
-    if (this.state() === 'ready') this.markSeen();
+    if (this.state() === 'ready') void this.load();
   }
 
   /** Tell the backend the engineer is looking at this change now. Every moment of looking is told; the backend's marks decide what it means. */
