@@ -46,17 +46,27 @@ The workspace home lists your workspaces (add or remove one, switch between them
 - **Review.** One reviewer per repository plus one across them. Findings are grouped by repository and read from the change's `build/review.md`.
 - **Done.** Declaring a change done is the plugin's step: it verifies the change, pushes every touched repository and opens one pull request per repository through `gh`, the master last, and records them in the change. A change declared done before the plugin recorded pull requests is shown as done, read only.
 
-| The workspace's changes | Triage routes a new change |
+| Pick the mode | The workspace's changes |
 | --- | --- |
-| ![AI-SDLC workspace home](docs/images/sdlc-home.png) | ![Start triage recommending the light track](docs/images/sdlc-start-triage.png) |
+| ![Choosing between the Workbench and AI-SDLC modes](docs/images/sdlc-mode.png) | ![AI-SDLC workspace home](docs/images/sdlc-home.png) |
+| **Switch between workspaces** | **Adding a workspace checks it step by step** |
+| ![The workspace switcher open](docs/images/sdlc-switcher-open.png) | ![The steps that check a workspace being added](docs/images/sdlc-add-workspace-steps.png) |
+| **Triage routes a new change** | **The intent, in the product owner's words** |
+| ![Start triage recommending the light track](docs/images/sdlc-start-triage.png) | ![A change's intent document](docs/images/sdlc-change-intent.png) |
+| **The spec, with its diagrams drawn** | **The spec's requirements as Gherkin scenarios** |
+| ![A spec awaiting acceptance, with its flow diagram](docs/images/sdlc-change-spec.png) | ![A spec requirement with its scenarios and an examples table](docs/images/sdlc-spec-scenarios.png) |
+| **The plan, awaiting acceptance** | **Send feedback and run the step again** |
+| ![A plan awaiting acceptance](docs/images/sdlc-change-plan.png) | ![Feedback on a plan before it runs again](docs/images/sdlc-feedback.png) |
 | **A light-track fix awaiting acceptance** | **What a run will start with** |
 | ![A light-track fix awaiting acceptance](docs/images/sdlc-fix.png) | ![The run settings preview before a build](docs/images/sdlc-run-settings.png) |
-| **Watch the build, one agent per repository** | **Review findings by repository, beside the diff** |
-| ![The build page in Watch mode](docs/images/sdlc-build.png) | ![The build page in Review mode](docs/images/sdlc-review.png) |
-| **A run paused on a question** | **Done, with one pull request per repository** |
-| ![A spec run paused on a question](docs/images/sdlc-lock-ask.png) | ![A finished change with its pull requests](docs/images/sdlc-done-pr.png) |
-| **Did each test fail first?** | **The spec's requirements as Gherkin scenarios** |
-| ![A task whose test passed before its code, with the recorded run](docs/images/sdlc-red.png) | ![A spec requirement with its scenarios and an examples table](docs/images/sdlc-spec-scenarios.png) |
+| **A run paused on a question** | **What a cancelled run left behind** |
+| ![A spec run paused on a question](docs/images/sdlc-lock-ask.png) | ![The files a cancelled run left behind, before they are discarded](docs/images/sdlc-leftovers.png) |
+| **Watch the build, one agent per repository** | **Each changed file, diffed against the base** |
+| ![The build page in Watch mode](docs/images/sdlc-build.png) | ![A changed file in the side-by-side diff](docs/images/sdlc-changes.png) |
+| **Review findings by repository, beside the diff** | **Did each test fail first?** |
+| ![The build page in Review mode](docs/images/sdlc-review.png) | ![A task whose test passed before its code, with the recorded run](docs/images/sdlc-red.png) |
+| **Done, with one pull request per repository** | |
+| ![A finished change with its pull requests](docs/images/sdlc-done-pr.png) | |
 
 ### Building a change
 
