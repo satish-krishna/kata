@@ -1,6 +1,7 @@
 #!/usr/bin/env pwsh
-# Cut a Kata release end to end: bump the version, commit it on main, build the
-# CLI and the Workbench installers, smoke-check the CLI, push main and the tag,
+# Cut a Kata release end to end: bump the version, capture the README
+# screenshots, commit both on main, build the CLI and the Workbench installers,
+# smoke-check the CLI, push main and the tag,
 # and create the GitHub release with the artifacts attached. Wraps
 # bump-version.ps1 and build-release.ps1; see docs/releasing.md.
 #
@@ -70,8 +71,9 @@ try {
     if (git tag --list $tag) { throw "tag $tag already exists locally" }
     if (git ls-remote --tags origin "refs/tags/$tag") { throw "tag $tag already exists on origin" }
 
-    # 2. Bump and commit, unless an earlier attempt already did.
+    # 2. Bump, unless an earlier attempt already did.
     $step = 'bump'
+    $bumped = $false
     if ($target -eq $current) {
         Write-Host "Version is already $Version; skipping the bump."
     }
@@ -83,15 +85,49 @@ try {
         $unexpected = $changed | Where-Object { $_ -notin $expected }
         if ($unexpected) { throw "the bump touched unexpected files: $($unexpected -join ', ')" }
         Invoke-Checked 'git add' { git add -- $expected }
-        Invoke-Checked 'git commit' { git commit --quiet -m "chore: bump version to $Version" }
-        Write-Host "Committed: chore: bump version to $Version"
+        $bumped = $true
     }
 
-    # 3. Build the CLI and the installers.
+    # 3. Capture the README screenshots. They run after the bump because their
+    #    footer shows the version from app/package.json.
+    $step = 'screenshots'
+    Push-Location (Join-Path $repoRoot 'app')
+    try { Invoke-Checked 'npm run screenshots' { npm run screenshots } }
+    finally { Pop-Location }
+    # Everything not staged by the bump: tracked files changed and new files.
+    $touched = @(git diff --name-only) + @(git ls-files --others --exclude-standard)
+    $images = @($touched | Where-Object { $_ -like 'docs/images/*' })
+    $stray = $touched | Where-Object { $_ -notlike 'docs/images/*' }
+    if ($stray) { throw "the screenshots touched files outside docs/images: $($stray -join ', ')" }
+    if ($images) { Invoke-Checked 'git add images' { git add -- docs/images } }
+
+    # 4. Commit the bump and the screenshots together. On a rerun whose bump is
+    #    still unpushed, refreshed screenshots join that commit; once the bump is
+    #    on origin they go in a commit of their own.
+    $step = 'commit'
+    if ($bumped) {
+        Invoke-Checked 'git commit' { git commit --quiet -m "chore: bump version to $Version" }
+        Write-Host "Committed: chore: bump version to $Version ($($images.Count) screenshot(s) changed)"
+    }
+    elseif ($images) {
+        if ((git rev-list --count origin/main..HEAD) -eq '1') {
+            Invoke-Checked 'git commit --amend' { git commit --quiet --amend --no-edit }
+            Write-Host "Added $($images.Count) refreshed screenshot(s) to the unpushed bump commit"
+        }
+        else {
+            Invoke-Checked 'git commit' { git commit --quiet -m "docs: refresh screenshots for $Version" }
+            Write-Host "Committed: docs: refresh screenshots for $Version"
+        }
+    }
+    else {
+        Write-Host 'Screenshots unchanged.'
+    }
+
+    # 5. Build the CLI and the installers.
     $step = 'build'
     Invoke-Checked 'build-release.ps1' { pwsh -NoProfile -File (Join-Path $PSScriptRoot 'build-release.ps1') }
 
-    # 4. Collect the artifacts and smoke-check the CLI.
+    # 6. Collect the artifacts and smoke-check the CLI.
     $step = 'smoke'
     $releaseDir = Join-Path $repoRoot 'target/release'
     $cli = Join-Path $releaseDir "kata_${Version}_x64.exe"
@@ -109,7 +145,7 @@ try {
     }
     Write-Host "CLI smoke check: $reported"
 
-    # 5. Confirm before anything leaves this machine.
+    # 7. Confirm before anything leaves this machine.
     $step = 'confirm'
     $kind = if ($Publish) { 'published' } else { 'draft' }
     if ($isPrerelease) { $kind += ' pre-release' }
@@ -124,13 +160,13 @@ try {
         }
     }
 
-    # 6. Push the bump commit, then tag it and push the tag.
+    # 8. Push the bump commit, then tag it and push the tag.
     $step = 'push'
     Invoke-Checked 'git push main' { git push --quiet origin main }
     Invoke-Checked 'git tag' { git tag $tag }
     Invoke-Checked 'git push tag' { git push --quiet origin $tag }
 
-    # 7. Create the GitHub release.
+    # 9. Create the GitHub release.
     $step = 'release'
     $ghArgs = @('release', 'create', $tag) + $assets + @('--title', $tag, '--verify-tag')
     if ($NotesFile) { $ghArgs += @('--notes-file', $NotesFile) } else { $ghArgs += '--generate-notes' }
