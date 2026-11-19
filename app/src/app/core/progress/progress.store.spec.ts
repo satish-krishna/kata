@@ -141,7 +141,7 @@ describe('ProgressStore', () => {
 
   it('preparing a build is longer than usual only past its usual time', () => {
     // A build start's base check: usual 8.5 minutes, so longer than usual at 25.5 minutes.
-    store.begin('checking-base', 'Checking the base before building', 'build');
+    store.begin('checking-base', 'Checking the base', 'build');
     vi.advanceTimersByTime(2 * 60_000);
     expect(store.view('build')()?.long).toBe(false);
     vi.advanceTimersByTime(28 * 60_000);

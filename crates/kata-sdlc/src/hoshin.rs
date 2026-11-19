@@ -17,7 +17,7 @@ use crate::process::CapturedExit;
 use kata_core::proc::{
     run_limited, run_limited_streaming, Bound, CancelToken, Limited, LineSink, Outcome, StartError,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -75,6 +75,8 @@ const PLACED: &[&str] = &[
     "change",
     "red",
     "migrate",
+    "baseline",
+    "checks",
 ];
 
 /// Where an hoshin command works: the master repository and the workspace around it.
@@ -656,6 +658,20 @@ pub enum StepProgressKind {
     Repository,
 }
 
+/// Which part of the build a team hook line belongs to.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum StepPhase {
+    /// A hook of `build.start`: a preparation step, never counted as a check.
+    Preparation,
+    /// A check of `build.finish` (the line carries `"check": true`).
+    FinishCheck,
+    /// Any other line.
+    Other,
+}
+
 /// A progress line: what the plugin is doing, named for the engineer, with the repository and the team
 /// check it names when the line names them.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -667,6 +683,7 @@ pub struct StepProgress {
     pub label: String,
     pub repo: Option<String>,
     pub check: Option<String>,
+    pub phase: StepPhase,
 }
 
 /// The progress line a `--stream` line stands for, if it stands for a step.
@@ -721,12 +738,180 @@ pub fn progress_of(line: &str) -> Option<StepProgress> {
         ),
         _ => return None,
     };
+    // A hook line says which event it ran for: the team's `build.start` hooks are preparation steps, and a
+    // `build.finish` hook the plugin marks `"check": true` is a finish check.
+    let phase = match (line["when"].as_str(), line["check"].as_bool()) {
+        (Some("build.start"), _) => StepPhase::Preparation,
+        (Some("build.finish"), Some(true)) => StepPhase::FinishCheck,
+        _ => StepPhase::Other,
+    };
     Some(StepProgress {
         kind,
         label,
         repo,
         check,
+        phase,
     })
+}
+
+/// Where one check stands, exactly as hoshin's `checks` reports it. Kata never decides a check abandoned.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CheckState {
+    /// A start line with no end line that no rule has abandoned.
+    Running,
+    /// An end line exists.
+    Ended,
+    /// The program that ran it ended without a result.
+    Abandoned,
+}
+
+/// One check of a run, from its start and end lines.
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckEvent {
+    pub check: String,
+    pub state: CheckState,
+    pub started_at: Option<String>,
+    pub ended_at: Option<String>,
+    /// The hook's timeout in seconds.
+    pub timeout: Option<u64>,
+    /// `passed`, `failed` or `could-not-run`; null until the end line.
+    pub outcome: Option<String>,
+    pub ids: Option<Vec<String>>,
+    /// The verdict at head; null on a baseline run.
+    pub blocks: Option<bool>,
+}
+
+/// One pass over a repository's checks: on the base (`phase` `baseline`) or on the head (`head`).
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckRun {
+    pub run: String,
+    pub event: String,
+    pub repo: String,
+    pub phase: String,
+    pub checks: Vec<CheckEvent>,
+}
+
+/// What `checks --json` answered: the runs in the order they were written.
+#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChecksAnswer {
+    pub system: String,
+    pub change: String,
+    pub runs: Vec<CheckRun>,
+}
+
+/// One check of a stored baseline.
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BaselineHook {
+    pub id: String,
+    pub outcome: String,
+    pub exit_code: Option<i32>,
+    pub ids: Option<Vec<String>>,
+    /// The stored last 200 lines of the check's output.
+    #[serde(default)]
+    pub output: String,
+}
+
+/// What `baseline show --json` answered.
+#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BaselineShow {
+    pub base: String,
+    pub hooks: Vec<BaselineHook>,
+    /// The checks that failed on the base without IDs and are not approved yet.
+    pub needs_approval: Vec<String>,
+    pub approved: Vec<String>,
+}
+
+/// The acceptance `baseline approve` recorded.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct Approval {
+    pub hook: String,
+    pub base: String,
+}
+
+/// What `baseline approve --json` answered: the approval, or the program's reasons for refusing it.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct BaselineApproved {
+    pub approved: Option<Approval>,
+    #[serde(default)]
+    pub problems: Vec<String>,
+}
+
+/// Fails with the program's problems when it listed any: a read with problems is no answer.
+fn no_problems(answer: &Value, what: &str) -> Result<(), ProgramError> {
+    let problems = strings(&answer["problems"]);
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(could_not_run(format!("{what}: {}", problems.join("; "))))
+    }
+}
+
+fn unreadable(what: &str, e: serde_json::Error) -> ProgramError {
+    could_not_run(format!(
+        "the {what} answer is not what this version reads: {e}"
+    ))
+}
+
+impl Program {
+    /// Reads the check events of `change` in `repo`. A non-empty `problems` is an error.
+    pub fn checks(
+        &self,
+        place: &Place,
+        change: &str,
+        repo: &str,
+    ) -> Result<ChecksAnswer, ProgramError> {
+        let answer = self.run(
+            &["checks", "--json", "--change", change, "--repo", repo],
+            place,
+        )?;
+        no_problems(&answer, "checks")?;
+        serde_json::from_value(answer).map_err(|e| unreadable("checks", e))
+    }
+
+    /// Reads the stored baseline of `repo` for `change`; runs nothing. A non-empty `problems` is an error.
+    pub fn baseline_show(
+        &self,
+        place: &Place,
+        change: &str,
+        repo: &str,
+    ) -> Result<BaselineShow, ProgramError> {
+        let answer = self.run(
+            &[
+                "baseline", "show", "--json", "--change", change, "--repo", repo,
+            ],
+            place,
+        )?;
+        no_problems(&answer, "baseline show")?;
+        serde_json::from_value(answer).map_err(|e| unreadable("baseline show", e))
+    }
+
+    /// Accepts the failing check `hook` on the base for `change` in `repo`. The answer carries the
+    /// program's problems as they are.
+    pub fn baseline_approve(
+        &self,
+        place: &Place,
+        change: &str,
+        repo: &str,
+        hook: &str,
+    ) -> Result<BaselineApproved, ProgramError> {
+        let answer = self.run(
+            &[
+                "baseline", "approve", "--json", "--change", change, "--repo", repo, "--hook", hook,
+            ],
+            place,
+        )?;
+        serde_json::from_value(answer).map_err(|e| unreadable("baseline approve", e))
+    }
 }
 
 #[cfg(test)]
@@ -789,6 +974,17 @@ mod tests {
         match program().run(&["resolve"], &place) {
             Err(ProgramError::CouldNotRun { message }) => assert!(!message.is_empty()),
             other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn placed_commands_include_baseline_and_checks() {
+        for command in ["checks", "baseline"] {
+            let args = with_place(&[command, "--json"], "/m", "/w");
+            assert_eq!(
+                args,
+                [command, "--json", "--master", "/m", "--workspace", "/w"]
+            );
         }
     }
 
@@ -1180,11 +1376,22 @@ mod tests {
         repo: Option<&str>,
         check: Option<&str>,
     ) -> Option<StepProgress> {
+        phased(kind, label, repo, check, StepPhase::Other)
+    }
+
+    fn phased(
+        kind: StepProgressKind,
+        label: &str,
+        repo: Option<&str>,
+        check: Option<&str>,
+        phase: StepPhase,
+    ) -> Option<StepProgress> {
         Some(StepProgress {
             kind,
             label: label.to_string(),
             repo: repo.map(str::to_string),
             check: check.map(str::to_string),
+            phase,
         })
     }
 
@@ -1233,6 +1440,36 @@ mod tests {
                     None,
                 ),
             ),
+            (
+                r#"{"type":"hook-start","id":"install","when":"build.start"}"#,
+                phased(
+                    Hook,
+                    "Running install",
+                    None,
+                    Some("install"),
+                    StepPhase::Preparation,
+                ),
+            ),
+            (
+                r#"{"type":"hook-end","id":"install","when":"build.start","outcome":"passed","repo":"kata"}"#,
+                phased(
+                    Hook,
+                    "install passed in kata",
+                    Some("kata"),
+                    Some("install"),
+                    StepPhase::Preparation,
+                ),
+            ),
+            (
+                r#"{"type":"hook-start","id":"unit","when":"build.finish","check":true,"repo":"kata"}"#,
+                phased(
+                    Hook,
+                    "Running unit in kata",
+                    Some("kata"),
+                    Some("unit"),
+                    StepPhase::FinishCheck,
+                ),
+            ),
             (r#"{"type":"outcome","outcome":"passed"}"#, None),
             (r#"{"type":"something-new"}"#, None),
             (r#"{"id":"no-type"}"#, None),
@@ -1249,5 +1486,196 @@ mod tests {
         let found = program().run(&["resolve", "--json"], &place).unwrap();
         assert!(same_path(&found["master"], &place.master), "{found}");
         assert!(same_path(&found["workspace"], &place.workspace), "{found}");
+    }
+
+    #[test]
+    fn checks_answer_reads_a_base_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = serde_json::json!({"system": "kata", "change": "c1", "problems": [], "runs": [
+            {"run": "r1", "event": "build.finish", "repo": "kata", "phase": "baseline", "checks": [
+                {"check": "lint", "state": "ended", "startedAt": "2026-11-18T10:00:00Z", "endedAt": "2026-11-18T10:00:05Z",
+                 "timeout": 600, "outcome": "passed", "ids": null, "blocks": null},
+                {"check": "unit", "state": "running", "startedAt": "2026-11-18T10:00:05Z", "endedAt": null,
+                 "timeout": 600, "outcome": null, "ids": null, "blocks": null},
+                {"check": "e2e", "state": "abandoned", "startedAt": "2026-11-18T09:00:00Z", "endedAt": null,
+                 "timeout": 60, "outcome": null, "ids": null, "blocks": null}]}]});
+        let (program, place) = answering(dir.path(), 0, &json);
+        let answer = program.checks(&place, "c1", "kata").unwrap();
+        assert_eq!(answer.change, "c1");
+        assert_eq!(answer.runs.len(), 1);
+        let run = &answer.runs[0];
+        assert_eq!((run.run.as_str(), run.phase.as_str()), ("r1", "baseline"));
+        let states: Vec<CheckState> = run.checks.iter().map(|c| c.state).collect();
+        assert_eq!(
+            states,
+            [
+                CheckState::Ended,
+                CheckState::Running,
+                CheckState::Abandoned
+            ]
+        );
+        assert_eq!(run.checks[0].outcome.as_deref(), Some("passed"));
+        assert_eq!(run.checks[0].timeout, Some(600));
+        assert_eq!(run.checks[1].ended_at, None);
+        assert_eq!(
+            run.checks[2].started_at.as_deref(),
+            Some("2026-11-18T09:00:00Z")
+        );
+    }
+
+    #[test]
+    fn checks_with_problems_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = serde_json::json!({"system": "kata", "change": "c1", "runs": [],
+            "problems": ["line 1 of f is not a check event"]});
+        let (program, place) = answering(dir.path(), 1, &json);
+        let err = program.checks(&place, "c1", "kata").unwrap_err();
+        assert!(err.to_string().contains("not a check event"), "{err}");
+    }
+
+    #[test]
+    fn baseline_show_reads_each_hook_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = serde_json::json!({"base": "abc123", "taken": false, "reused": true, "problems": [],
+            "hooks": [
+                {"id": "lint", "outcome": "passed", "exitCode": 0, "ids": null, "output": ""},
+                {"id": "unit", "outcome": "failed", "exitCode": 1, "ids": null, "output": "line 1\nline 2"}],
+            "needsApproval": ["unit"], "approved": []});
+        let (program, place) = answering(dir.path(), 0, &json);
+        let shown = program.baseline_show(&place, "c1", "kata").unwrap();
+        assert_eq!(shown.base, "abc123");
+        assert_eq!(shown.hooks.len(), 2);
+        assert_eq!(shown.hooks[1].exit_code, Some(1));
+        assert_eq!(shown.hooks[1].output, "line 1\nline 2");
+        assert_eq!(shown.needs_approval, ["unit"]);
+        assert!(shown.approved.is_empty());
+    }
+
+    #[test]
+    fn baseline_show_with_problems_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = serde_json::json!({"base": "", "hooks": [], "needsApproval": [], "approved": [],
+            "problems": ["uncommitted files"]});
+        let (program, place) = answering(dir.path(), 1, &json);
+        let err = program.baseline_show(&place, "c1", "kata").unwrap_err();
+        assert!(err.to_string().contains("uncommitted files"), "{err}");
+    }
+
+    #[test]
+    fn baseline_approve_returns_problems_as_the_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let refused = serde_json::json!({"approved": null, "problems": ["the base commit moved"]});
+        let (program, place) = answering(dir.path(), 1, &refused);
+        let answer = program
+            .baseline_approve(&place, "c1", "kata", "unit")
+            .unwrap();
+        assert_eq!(answer.approved, None);
+        assert_eq!(answer.problems, ["the base commit moved"]);
+
+        let dir2 = tempfile::tempdir().unwrap();
+        let done =
+            serde_json::json!({"approved": {"hook": "unit", "base": "abc123"}, "problems": []});
+        let (program, place) = answering(dir2.path(), 0, &done);
+        let answer = program
+            .baseline_approve(&place, "c1", "kata", "unit")
+            .unwrap();
+        assert_eq!(
+            answer.approved,
+            Some(Approval {
+                hook: "unit".into(),
+                base: "abc123".into()
+            })
+        );
+        assert!(answer.problems.is_empty());
+    }
+
+    /// R5.7: the vendored program's guard refuses `baseline approve` from an agent's shell, so the protection
+    /// Kata relies on is in the plugin floor.
+    #[test]
+    fn guard_refuses_baseline_approve_to_an_agent_r5_7() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let entry = program().entry;
+        let ask = |command: &str| -> String {
+            let mut child = Command::new("node")
+                .arg(&entry)
+                .arg("guard")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let call = serde_json::json!({"tool_name": "Bash", "tool_input": {"command": command}});
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(call.to_string().as_bytes())
+                .unwrap();
+            let out = child.wait_with_output().unwrap();
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        };
+        let refused =
+            ask("node hoshin.ts baseline approve --json --change c --repo kata --hook unit");
+        assert!(
+            refused.contains("\"permissionDecision\":\"deny\""),
+            "{refused}"
+        );
+        assert!(refused.contains("Only the engineer"), "{refused}");
+        let allowed = ask("node hoshin.ts baseline show --json --change c --repo kata");
+        assert!(allowed.trim().is_empty(), "{allowed}");
+    }
+
+    /// R5.8: an acceptance holds for one base commit: with the base commit moved, the check is not approved.
+    #[test]
+    fn acceptance_holds_for_one_base_commit_r5_8() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_path_buf();
+        let master = testutil::repo(&ws, "hub");
+        let marker = serde_json::json!({"version": 1, "systems": {"demo": {"repos": ["app"]}},
+            "hooks": {"build.finish": [{"id": "unit", "run": ["node", "-e", "process.exit(1)"], "repos": ["app"]}]}});
+        testutil::commit_file(&master, ".hoshin.json", &marker.to_string(), "marker");
+        let app = testutil::repo(&ws, "app");
+        let place = Place {
+            layout: crate::layout::Layout::Workspace,
+            master,
+            workspace: ws,
+        };
+        let program = program();
+        let change = "2026-11-01-greeting";
+        let started = program
+            .step_long(
+                &[
+                    "change", "start", "--json", "--system", "demo", "--change", change, "--type",
+                    "feat", "--scope", "demo", "--title", "Greeting",
+                ],
+                &place,
+                &kata_core::proc::CancelToken::new(),
+                None,
+            )
+            .json;
+        assert_eq!(started["outcome"], "passed", "{started}");
+        // Take the baseline: the check fails on the base without saying what failed.
+        let _ = program.run(
+            &[
+                "baseline", "retake", "--json", "--change", change, "--repo", "app",
+            ],
+            &place,
+        );
+        let before = program.baseline_show(&place, change, "app").unwrap();
+        assert_eq!(before.needs_approval, ["unit"], "{before:?}");
+
+        let approved = program
+            .baseline_approve(&place, change, "app", "unit")
+            .unwrap();
+        assert_eq!(approved.problems, Vec::<String>::new());
+        let held = program.baseline_show(&place, change, "app").unwrap();
+        assert_eq!(held.approved, ["unit"], "{held:?}");
+        assert!(held.needs_approval.is_empty(), "{held:?}");
+
+        // The base branch moves: the acceptance was for the old base commit.
+        testutil::commit_file(&app, "more.txt", "x\n", "move the base");
+        let moved = program.baseline_show(&place, change, "app").unwrap();
+        assert_ne!(moved.base, held.base);
+        assert!(moved.approved.is_empty(), "{moved:?}");
     }
 }

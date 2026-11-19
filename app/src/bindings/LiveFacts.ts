@@ -15,4 +15,8 @@ buildStopped: boolean,
 /**
  * Its build is live.
  */
-buildLive: boolean, };
+buildLive: boolean, 
+/**
+ * This Workbench has run a build of this change since it was opened, so it knows where that build stands.
+ */
+stoppedHere: boolean, };

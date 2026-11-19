@@ -1,0 +1,58 @@
+<div class="bcl">
+  @if (prep().length > 0) {
+    <section class="bcl__list" data-preparation aria-label="Preparation">
+      <h3 class="bcl__head k-left__head">Preparation</h3>
+      @for (p of prep(); track p.id) {
+        <div class="bcl__row" [attr.data-prep-row]="p.id">
+          <span class="bcl__name k-mono">{{ p.id }}</span>
+          <span class="bcl__what">{{ p.what }}</span>
+          <span class="bcl__result">
+            @if (p.time !== '') {
+              <span class="bcl__time k-mono">{{ p.time }}</span>
+            }
+            <span [class]="'k-status k-status--' + p.tone"><span class="k-status__dot"></span>{{ p.state }}</span>
+          </span>
+        </div>
+      }
+    </section>
+  }
+
+  <section class="bcl__list" data-checks aria-label="Checks on the base">
+    <div class="bcl__head">
+      <h3 class="k-left__head">
+        Checks on the base
+        @if (base() !== '') {
+          <span class="k-mono">{{ base() }}</span>
+        }
+      </h3>
+      <span class="bcl__count k-mono" aria-live="polite" data-progress>{{ progress() }}</span>
+      @if (elsewhere()) {
+        <span class="bcl__elsewhere" data-elsewhere>
+          <span class="k-status k-status--warning"><span class="k-status__dot"></span>running in another session</span>
+          as last read
+        </span>
+      }
+    </div>
+    @if (cutOff()) {
+      <p class="bcl__note" data-cutoff-note role="note">
+        <span class="k-status k-status--warning"><span class="k-status__dot"></span>Cut off</span>
+        The checks stopped before they ended, because the program running them was closed or crashed. Nothing was kept, and the next start runs every check on the base again.
+      </p>
+    }
+    @for (r of rows(); track r.name) {
+      <div class="bcl__row" data-check-row [attr.data-state]="r.state" [class.bcl__row--now]="r.state === 'running'" [class.bcl__row--cut]="r.state === 'cutOff'">
+        <span class="bcl__name k-mono">{{ r.name }}</span>
+        <span class="bcl__result">
+          @if (r.time !== '') {
+            <span class="bcl__time k-mono" [attr.data-elapsed]="r.ticking ? '' : null">{{ r.time }}</span>
+          }
+          @if (r.tone !== null) {
+            <span [class]="'k-status k-status--' + r.tone"><span class="k-status__dot"></span>{{ r.word }}</span>
+          } @else {
+            <span class="bcl__faint">{{ r.word }}</span>
+          }
+        </span>
+      </div>
+    }
+  </section>
+</div>

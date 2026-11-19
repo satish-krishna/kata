@@ -511,6 +511,15 @@ impl build_host::Launcher for AppLauncher {
     fn announce_running(&self) {
         announce_running(&self.app);
     }
+
+    fn change_live(&self, system: &str, change: &str) -> bool {
+        self.app
+            .state::<RunControl>()
+            .state
+            .lock()
+            .unwrap()
+            .change_live(system, change)
+    }
 }
 
 /// Start a change's build. The decision is the host's; see `BuildHost::start`.
@@ -520,8 +529,9 @@ fn sdlc_build_start(
     host: State<Arc<build_host::BuildHost>>,
     change: build_host::ChangeRef,
     form: build_host::StartForm,
+    even_if_elsewhere: Option<bool>,
 ) -> build_host::StartOutcome {
-    let outcome = host.start(&change, form);
+    let outcome = host.start_with(&change, form, even_if_elsewhere.unwrap_or(false));
     announce_running(&app);
     outcome
 }
@@ -534,8 +544,23 @@ fn sdlc_build_continue(
     change: build_host::ChangeRef,
     repo: String,
     off: Option<Vec<String>>,
+    even_if_elsewhere: Option<bool>,
 ) -> build_host::StartOutcome {
-    let outcome = host.continue_with(&change, &repo, off);
+    let outcome = host.continue_repo(&change, &repo, off, even_if_elsewhere.unwrap_or(false));
+    announce_running(&app);
+    outcome
+}
+
+/// Run the checks of a repository's build finish again on the change, after one failed. A stoppable step
+/// of the change; the host decides what the build does with a pass.
+#[tauri::command(async)]
+fn sdlc_rerun_finish_checks(
+    app: AppHandle,
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    repo: String,
+) -> build_host::RerunOutcome {
+    let outcome = host.rerun_finish_checks(&change, &repo);
     announce_running(&app);
     outcome
 }
@@ -1467,8 +1492,16 @@ fn sdlc_build_heads(
 
 /// What the run table knows about a change: any of its runs (build, review or document) makes it live, and
 /// only a build or review run makes its build live. `build_stopped` is false here.
-fn live_facts(control: &RunControl, system: &str, change: &str) -> sdlc::offer::LiveFacts {
-    live_facts_of(&control.state.lock().unwrap(), system, change)
+fn live_facts(
+    control: &RunControl,
+    host: &build_host::BuildHost,
+    folder: &str,
+    system: &str,
+    change: &str,
+) -> sdlc::offer::LiveFacts {
+    let mut facts = live_facts_of(&control.state.lock().unwrap(), system, change);
+    facts.stopped_here = host.ran_here(folder, system, change);
+    facts
 }
 
 /// The live facts of a change in `table`.
@@ -1477,6 +1510,7 @@ fn live_facts_of<C>(table: &RunTable<C>, system: &str, change: &str) -> sdlc::of
         run_live: table.change_live(system, change),
         build_stopped: false,
         build_live: table.group_live(&format!("build:{system}/{change}")),
+        stopped_here: false,
     }
 }
 
@@ -1506,11 +1540,13 @@ fn state_inputs(folder: &str) -> (Option<sdlc::hoshin::Program>, sdlc::plugin::R
 #[tauri::command(async)]
 fn sdlc_state(
     control: State<'_, RunControl>,
+    host: State<'_, Arc<build_host::BuildHost>>,
     folder: String,
     systems: Vec<String>,
 ) -> Result<sdlc_state::WorkspaceView, String> {
     let (program, readiness) = state_inputs(&folder);
     let control: &RunControl = &control;
+    let host: &build_host::BuildHost = &host;
     let views = std::thread::scope(|scope| {
         let reads: Vec<_> = systems
             .iter()
@@ -1521,7 +1557,7 @@ fn sdlc_state(
                     sdlc_state::system_view(
                         source,
                         readiness,
-                        &|s, c| live_facts(control, s, c),
+                        &|s, c| live_facts(control, host, folder, s, c),
                         Path::new(folder),
                         system,
                     )
@@ -1584,6 +1620,7 @@ fn sdlc_home_pick(
 #[tauri::command(async)]
 fn sdlc_home_open(
     control: State<'_, RunControl>,
+    host: State<'_, Arc<build_host::BuildHost>>,
     memory: State<'_, sdlc_home::HomeMemory>,
     folder: String,
     system: String,
@@ -1597,7 +1634,7 @@ fn sdlc_home_open(
     sdlc_home::home_open(
         &program,
         &readiness,
-        &|s, c| live_facts(&control, s, c),
+        &|s, c| live_facts(&control, &host, &folder, s, c),
         Path::new(&folder),
         layout,
         &system,
@@ -1624,6 +1661,7 @@ fn sdlc_home_pull_requests(
 #[tauri::command(async)]
 fn sdlc_change_state(
     control: State<'_, RunControl>,
+    host: State<'_, Arc<build_host::BuildHost>>,
     folder: String,
     system: String,
     change: String,
@@ -1633,7 +1671,7 @@ fn sdlc_change_state(
     let mut view = sdlc_state::change_view(
         source,
         &readiness,
-        &|s, c| live_facts(&control, s, c),
+        &|s, c| live_facts(&control, &host, &folder, s, c),
         Path::new(&folder),
         &system,
         &change,
@@ -1942,6 +1980,7 @@ fn resolved(
 #[tauri::command(async)]
 fn sdlc_open_change(
     control: State<'_, RunControl>,
+    host: State<'_, Arc<build_host::BuildHost>>,
     change: build_host::ChangeRef,
     doc: String,
 ) -> Result<OpenedChange, String> {
@@ -1949,7 +1988,13 @@ fn sdlc_open_change(
     let plugin_dir = plugin_of(&readiness).map_err(|e| e.to_string())?;
     let program = sdlc::hoshin::Program::locate(&plugin_dir);
     let home = change_home(&program, &change)?;
-    let live = live_facts(&control, &change.system, &change.change);
+    let live = live_facts(
+        &control,
+        &host,
+        &change.workspace,
+        &change.system,
+        &change.change,
+    );
     let mut opened = open_change_in(&home, &plugin_dir, &readiness, live, &change.system, &doc)?;
     drop_declare_done_after_earlier_declaration(
         &program,
@@ -2044,6 +2089,86 @@ fn sdlc_checks_view(
         .map(|tasks| tasks.keys().cloned().collect())
         .unwrap_or_default();
     sdlc::checks_view::for_change(&program, &place, &change.system, &change.change, &repos)
+        .map_err(|e| e.to_string())
+}
+
+/// What the Build tab shows for each repository's start and its checks on the base, read from the plugin's
+/// record each time it is asked (R8.1): the decision is `checks_view::start_checks`, never the page's.
+#[tauri::command(async)]
+fn sdlc_start_checks(
+    control: State<'_, RunControl>,
+    host: State<'_, Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+) -> Result<Vec<sdlc::checks_view::StartChecks>, String> {
+    let program = sdlc::hoshin::Program::locate(&change_plugin_dir(&change.workspace)?);
+    let home = change_home(&program, &change)?;
+    let (place, state) = (home.place, home.state);
+    let repos: Vec<String> = state
+        .tasks
+        .as_ref()
+        .map(|tasks| tasks.keys().cloned().collect())
+        .unwrap_or_default();
+    let live = live_facts(
+        &control,
+        &host,
+        &change.workspace,
+        &change.system,
+        &change.change,
+    );
+    sdlc::checks_view::start_checks(
+        &program,
+        &place,
+        &change.system,
+        &change.change,
+        &repos,
+        &live,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Accept one failing check of a repository on the base for this build, through the plugin (R5.4: one check per
+/// call). The answer is the plugin's approval or its problems as they are (R5.6). Only the engineer's own action
+/// calls this; the plugin's guard refuses the agent (R5.7).
+#[tauri::command(async)]
+fn sdlc_accept_base_check(
+    steps: State<'_, steps::StepTable>,
+    change: build_host::ChangeRef,
+    repo: String,
+    check: String,
+) -> Result<sdlc::hoshin::BaselineApproved, String> {
+    let program = sdlc::hoshin::Program::locate(&change_plugin_dir(&change.workspace)?);
+    accept_base_check_in(&steps, &program, &change, &repo, &check)
+}
+
+/// Why accepting a check is off while the build of the change is being prepared (R11.1).
+const BUILD_BEING_PREPARED: &str = "The build is being prepared";
+
+/// The accept step of `sdlc_accept_base_check`, with the program given. It is refused while this change's
+/// build is being prepared; another repository's live run of the change, and another change's preparation,
+/// do not refuse it, and it changes no file and stops no run.
+fn accept_base_check_in(
+    steps: &steps::StepTable,
+    program: &sdlc::hoshin::Program,
+    change: &build_host::ChangeRef,
+    repo: &str,
+    check: &str,
+) -> Result<sdlc::hoshin::BaselineApproved, String> {
+    let key = build_host::key_of(change);
+    let preparing = steps.running().iter().any(|s| {
+        s.change == key
+            && matches!(
+                s.kind,
+                steps::StepKind::PreparingBuild
+                    | steps::StepKind::CheckingBase
+                    | steps::StepKind::PreparationHook { .. }
+            )
+    });
+    if preparing {
+        return Err(BUILD_BEING_PREPARED.to_string());
+    }
+    let home = change_home(program, change)?;
+    program
+        .baseline_approve(&home.place, &change.change, repo, check)
         .map_err(|e| e.to_string())
 }
 
@@ -2637,6 +2762,9 @@ pub fn run() {
             sdlc_diff_pair,
             sdlc_diff_base,
             sdlc_checks_view,
+            sdlc_start_checks,
+            sdlc_accept_base_check,
+            sdlc_rerun_finish_checks,
             sdlc_declare_done,
             sdlc_pull_requests_view,
             sdlc_copy_removal,
@@ -3569,6 +3697,106 @@ name: build
             item.lock
         );
     }
+
+    /// A program that answers `baseline approve` itself and logs each such call's arguments, one JSON line each;
+    /// every other command goes to the real program.
+    fn approving_program(dir: &Path) -> (sdlc::hoshin::Program, std::path::PathBuf) {
+        let log = dir.join("approvals.log");
+        let real = steps_commands::real_program().entry;
+        let script = format!(
+            "import {{ spawnSync }} from 'node:child_process';
+import {{ appendFileSync }} from 'node:fs';
+const args = process.argv.slice(2);
+if (args[0] === 'baseline' && args[1] === 'approve') {{
+  appendFileSync({log:?}, JSON.stringify(args) + '\\n');
+  const hook = args[args.indexOf('--hook') + 1];
+  console.log(JSON.stringify({{ approved: {{ hook, base: 'abc123' }}, problems: [] }}));
+}} else {{
+  const r = spawnSync(process.execPath, [{real:?}, ...args], {{ stdio: 'inherit' }});
+  process.exit(r.status ?? 2);
+}}
+",
+            log = log.display().to_string(),
+            real = real.display().to_string(),
+        );
+        let entry = dir.join("approving-hoshin.mjs");
+        std::fs::write(&entry, script).unwrap();
+        (
+            sdlc::hoshin::Program {
+                node: "node".into(),
+                entry,
+            },
+            log,
+        )
+    }
+
+    /// R11.1, row by row: accepting a failing check is recorded when no run of the change is live and when
+    /// another repository's run of it is, and is refused while the build of this change is being prepared.
+    #[test]
+    fn accept_base_check_while_work_is_live_r11_1() {
+        let fx = steps_commands::fixture();
+        let dir = tempfile::tempdir().unwrap();
+        let (program, log) = approving_program(dir.path());
+        let calls = || std::fs::read_to_string(&log).unwrap_or_default();
+        let steps = steps::StepTable::new(Arc::new(|_| {}));
+
+        // Row 1: no run of the change is live. The acceptance is recorded, for this one check.
+        let answer = accept_base_check_in(&steps, &program, &fx.change, "app", "unit").unwrap();
+        assert_eq!(
+            answer.approved.as_ref().map(|a| a.hook.as_str()),
+            Some("unit")
+        );
+        assert!(answer.problems.is_empty(), "{answer:?}");
+        let logged = calls();
+        assert_eq!(logged.lines().count(), 1, "{logged}");
+        assert!(logged.contains("\"--repo\",\"app\""), "{logged}");
+        assert!(logged.contains("\"--hook\",\"unit\""), "{logged}");
+
+        // Row 2: a build run of this same change, for another repository, is live in the run table. The
+        // acceptance is recorded, it changes no file, and the run is still live afterwards.
+        let control = RunControl::default();
+        let key = build_host::key_of(&fx.change);
+        let workdir = dir.path().join("web");
+        control.state.lock().unwrap().insert(LiveRun {
+            id: 7,
+            workdir,
+            group: Some(format!("build:{}/{}", key.system, key.change)),
+            lane: runs::Lane::Change {
+                key: key.clone(),
+                build: true,
+            },
+            kind: runs::RunKind::Build,
+            repo: Some("web".into()),
+            child: None,
+        });
+        let before = control.state.lock().unwrap().live();
+        let answer = accept_base_check_in(&steps, &program, &fx.change, "web", "lint").unwrap();
+        assert_eq!(
+            answer.approved.as_ref().map(|a| a.hook.as_str()),
+            Some("lint")
+        );
+        assert_eq!(calls().lines().count(), 2);
+        {
+            let table = control.state.lock().unwrap();
+            assert!(table.is_live(7), "the run was stopped");
+            assert!(table.change_live(&key.system, &key.change));
+            assert_eq!(table.live(), before, "the run table changed");
+        }
+        assert!(steps.running().is_empty(), "a step was begun");
+
+        // Row 3: the build of this change is being prepared. The accept action is off and says so, and the
+        // program is not asked.
+        let _preparing = steps
+            .begin(
+                build_host::key_of(&fx.change),
+                steps::StepKind::PreparingBuild,
+            )
+            .unwrap();
+        let refused =
+            accept_base_check_in(&steps, &program, &fx.change, "app", "unit").unwrap_err();
+        assert_eq!(refused, "The build is being prepared");
+        assert_eq!(calls().lines().count(), 2, "the program was asked");
+    }
 }
 
 /// Every long-step command takes part in the step table: it begins a step of its kind, a stop ends the call
@@ -3591,7 +3819,7 @@ mod steps_commands {
     const CHANGE: &str = "2026-11-01-password-reset";
     const MARKER: &str = r#"{"version":1,"systems":{"demo":{"repos":["app"]}}}"#;
 
-    fn real_program() -> Program {
+    pub(super) fn real_program() -> Program {
         Program {
             node: "node".into(),
             entry: Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -3611,12 +3839,12 @@ mod steps_commands {
 
     /// A workspace with a master, a product repository and a change the plugin started in its own copy, with
     /// an intent in it.
-    struct Fx {
+    pub(super) struct Fx {
         _dir: tempfile::TempDir,
-        change: build_host::ChangeRef,
+        pub(super) change: build_host::ChangeRef,
     }
 
-    fn fixture() -> Fx {
+    pub(super) fn fixture() -> Fx {
         fixture_with("")
     }
 

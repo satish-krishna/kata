@@ -5,4 +5,13 @@ import type { HookFailure } from "./HookFailure";
 /**
  * What starting or continuing a build came to.
  */
-export type StartOutcome = { "kind": "started", uncommitted: { [key in string]?: Array<string> }, } | { "kind": "alreadyRunning" } | { "kind": "held", held: Array<HeldRepo>, } | { "kind": "refused", problems: Array<string>, } | { "kind": "failed", problems: Array<string>, hook: HookFailure | null, } | { "kind": "couldNotRun", output: string, repo: string | null, } | { "kind": "stopped", prepared: Array<string>, };
+export type StartOutcome = { "kind": "started", uncommitted: { [key in string]?: Array<string> }, } | { "kind": "alreadyRunning" } | { "kind": "held", held: Array<HeldRepo>, } | { "kind": "refused", problems: Array<string>, } | { "kind": "failed", problems: Array<string>, hook: HookFailure | null, 
+/**
+ * The checks that failed on the base without saying what failed and are not accepted for this
+ * build, when that is why the start failed.
+ */
+needsApproval: Array<string>, } | { "kind": "couldNotRun", output: string, repo: string | null, } | { "kind": "mayBeRunningElsewhere", repos: Array<string>, since: string, runningCheck: string | null, } | { "kind": "stopped", prepared: Array<string>, 
+/**
+ * Where the copy was left, when the stop came while the checks on the base ran.
+ */
+note: string | null, };

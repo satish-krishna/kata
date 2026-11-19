@@ -113,9 +113,9 @@ describe('ChangePage document notices', () => {
     expect(newer.tasks()).toBe(NUMBERS.tasks);
     TestBed.resetTestingModule();
 
-    const old = await open({ readiness: { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.6.0.' } });
+    const old = await open({ readiness: { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.6.0.' } });
     await old.tab('Spec');
-    expect(text(old.notice())).toContain('The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.6.0.');
+    expect(text(old.notice())).toContain('The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.6.0.');
     expect(old.requirements()).toBe(0);
   });
 

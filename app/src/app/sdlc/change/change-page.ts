@@ -13,7 +13,8 @@ import { BuildPage } from '../build/build-page';
 import { BuildDialog } from '../../ui/build-dialog';
 import { ConfirmDialog } from '../../ui/confirm-dialog';
 import { BranchNameDialog } from '../../ui/branch-name-dialog';
-import { BuildRefusalDialog } from '../../ui/build-refusal-dialog';
+import { AcceptCheckDialog } from '../../ui/accept-check-dialog';
+import { BuildElsewhereDialog } from '../../ui/build-elsewhere-dialog';
 import { NewChangeDialog } from '../../ui/new-change-dialog';
 import { DocLayout } from '../../ui/doc-layout';
 import { DoneDialog } from '../../ui/done-dialog';
@@ -37,8 +38,9 @@ import { ChangePageViewModel } from './change-page.view-model';
 @Component({
   selector: 'app-change-page',
   providers: [ChangePageViewModel, BuildPageViewModel, BuildLayoutViewModel,RunPreviewViewModel, provideIcons({ lucideChevronDown, lucideSquare, lucideTriangleAlert })],
-  imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, HlmTabsImports, SdlcToolbar, RunningChanges, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, BranchNameDialog, ConfirmDialog, NewChangeDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildPage, RunPreviewDialog, ProgressLine, StoppedNote],
+  imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, HlmTabsImports, SdlcToolbar, RunningChanges, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, BranchNameDialog, ConfirmDialog, NewChangeDialog, FeedbackDialog, BuildDialog, AcceptCheckDialog, BuildElsewhereDialog, DoneDialog, PrListDialog, SdlcSession, BuildPage, RunPreviewDialog, ProgressLine, StoppedNote],
   templateUrl: './change-page.html',
+  host: { '(window:focus)': 'vm.windowFocused()' },
 })
 export class ChangePage {
   protected readonly vm = inject(ChangePageViewModel);

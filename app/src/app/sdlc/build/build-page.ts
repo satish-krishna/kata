@@ -1,4 +1,4 @@
-import { NgTemplateOutlet } from '@angular/common';
+import { DatePipe, NgTemplateOutlet } from '@angular/common';
 import { Component, DestroyRef, ElementRef, Injector, afterEveryRender, afterNextRender, effect, inject, input, output, untracked, viewChild } from '@angular/core';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { RedRecord } from '@bindings/RedRecord';
@@ -24,6 +24,9 @@ import { actionLabel, primaryAction, type Finding, type Severity, type StageActi
 import { FindingsList } from '../../ui/findings-list';
 import { HeldPanel } from '../../ui/held-panel';
 import { ObservePane } from '../../ui/observe-pane';
+import { BuildChecksList } from '../../ui/build-checks-list';
+import { BuildFailurePanel } from '../../ui/build-failure-panel';
+import { BuildFinishPanel } from '../../ui/build-finish-panel';
 import { CheckResults } from '../../ui/check-results';
 import { Segmented } from '../../ui/segmented';
 import { WaitingNotice } from '../../ui/waiting-notice';
@@ -75,7 +78,7 @@ const TUCK_NOTE = 'The page always shows at least one area.';
   selector: 'app-build-page',
   host: { class: 'block h-full min-h-0' },
   providers: [provideIcons({ lucideCheck, lucideChevronDown, lucideChevronRight, lucideEllipsis, lucideMaximize2, lucideMinus })],
-  imports: [HlmButtonImports, HlmDropdownMenuImports, NgIcon, NgTemplateOutlet, CheckResults, FindingsList, HeldPanel, ObservePane, Segmented, WaitingNotice, ChangesView],
+  imports: [HlmButtonImports, HlmDropdownMenuImports, NgIcon, NgTemplateOutlet, DatePipe, BuildChecksList, BuildFailurePanel, BuildFinishPanel, CheckResults, FindingsList, HeldPanel, ObservePane, Segmented, WaitingNotice, ChangesView],
   templateUrl: './build-page.html',
   styleUrl: './build-page.css',
 })
@@ -103,6 +106,12 @@ export class BuildPage {
   readonly cancelBuild = output<void>();
   /** The engineer asked to start the held build again. */
   readonly startAgain = output<void>();
+  /** The engineer asked to accept this failing check of this repository for the build. */
+  readonly acceptCheck = output<{ repo: string; check: string }>();
+  /** The engineer asked to copy a check's output. */
+  readonly copyOutput = output<string>();
+  /** The engineer asked to run the checks of this repository's finish again. */
+  readonly rerunFinish = output<string>();
   /** The engineer asked to start the review that waited for other changes again. */
   readonly startReviewAgain = output<void>();
   readonly answer = output<{ runId: string; id: string; answers: string[][] }>();

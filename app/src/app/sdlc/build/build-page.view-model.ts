@@ -1,9 +1,11 @@
 import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
+import type { BaseCheck } from '@bindings/BaseCheck';
 import type { BuildPhase } from '@bindings/BuildPhase';
 import type { BuildPreviewKind } from '@bindings/BuildPreviewKind';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { BuildRunRef } from '@bindings/BuildRunRef';
 import type { BuildState } from '@bindings/BuildState';
+import type { StartChecks } from '@bindings/StartChecks';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { RepoBoard } from '@bindings/RepoBoard';
 import type { ReviewStanding } from '@bindings/ReviewStanding';
@@ -40,12 +42,12 @@ import { RunLandingStore } from '../../core/run/run-landing.store';
 import { pendingKind, type AskRecord, type MessageRecord, type MessageRefusal, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
 import { activityFor, linksOfFollowedRuns, outcomeOf, recordOutcome, repoSessions, sessionsFor, tabOf, type Chosen, type LiveRun, type Pick, type SessionRef, type SessionTab } from '../../lib/build-sessions';
 import { sameChange } from '../../lib/build-host';
-import { sameStepChange, stepOf, stepRef } from '../../lib/sdlc-steps';
+import { isStep, sameStepChange, stepOf, stepRef } from '../../lib/sdlc-steps';
 import { StepStore } from '../../core/step/step.store';
 import { buildStage, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
 import { hms, ms, situationView, type Situation, type SituationView, type TaskState } from '../../lib/build-state';
 import { layoutStage as layoutStageOf, type LayoutStage } from '../../lib/build-layout-stage';
-import { progressLabels, type ProgressStepId } from '../../lib/progress-steps';
+import { PROGRESS_NAMES, progressLabels, type ProgressStepId } from '../../lib/progress-steps';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { REVIEW_MISSING_TEXT } from '../../lib/sdlc-done';
@@ -210,7 +212,11 @@ export type FindingsView = { notice: DocNotice | null; groups: FindingGroup[]; f
 const READING_REVIEW = 'Reading the review…';
 const REVIEW_NOT_RUN = 'The review runs by itself once the last task is recorded.';
 const REVIEW_RUNNING = 'The review is running. Its findings appear here when it ends.';
+/** Why accepting a check is off while the build is being prepared: the words of the backend's refusal in `sdlc_accept_base_check`, which sends them only when it refuses. */
+const BUILD_BEING_PREPARED = 'The build is being prepared';
 const NO_DEPARTURES = 'No departures from the plan.';
+/** No live checks: no preparation runs, or its step has none to list. */
+const NO_LIVE_CHECKS: { repo: string; checks: BaseCheck[] } = { repo: '', checks: [] };
 
 /** A task's recorded departure from the plan. */
 export type Departure = { repo: string; task: string | null; text: string };
@@ -281,7 +287,35 @@ export type BuildPageView = {
   areas: { activity: boolean; files: boolean };
   /** The counts the area tabs show: changed files and findings. */
   counts: { files: number; findings: number };
+  /** The checks on the base to list while they run, were cut off or run in another session; absent or null when there is nothing to list. */
+  baseChecks?: BaseChecksView | null;
+  /** Each repository whose build is under way and was started outside this Workbench (R8.2), in the backend's words, with when the start was recorded. */
+  outside?: OutsideView[];
+  /** The repositories whose start failed, each shown once on the page. */
+  failures?: BuildFailureView[];
+  /** The repositories whose build finished with a check failing at finish, each shown once on the page. */
+  finishes?: StartChecks[];
+  /** Why starting the build is not offered as ready; null when it is. */
+  startHold?: string | null;
 };
+
+/** The check the engineer asked to accept for this build, with the base commit it failed on. */
+export type AcceptRequest = { repo: string; check: string; base: string };
+
+/** What the dialog that asks before a build that may be running elsewhere starts shows: the repositories, when the workflow recorded the start, and the check it reports running now. */
+export type ElsewhereRequest = { repos: string[]; since: string; runningCheck: string | null };
+
+/** The workflow's reasons for refusing an acceptance, as it worded them. */
+export type AcceptRefusal = { repo: string; check: string; problems: string[] };
+
+/** One repository's start failure to show on the page, with the refusal of its last acceptance, if any. */
+export type BuildFailureView = { start: StartChecks; refusal: AcceptRefusal | null; acceptOff: string | null };
+
+/** What the checks list shows: the repository's checks on the base, the clock for the running one and whether another session runs them. */
+export type BaseChecksView = { repo: string; base: string; checks: BaseCheck[]; now: number; elsewhere: boolean };
+
+/** A repository whose build is under way and was started outside this Workbench: the backend's words and when the start was recorded. */
+export type OutsideView = { repo: string; at: string; words: string };
 
 /** The two views of a running build: what the agents say and do, and what they changed. */
 export type BuildTab = 'activity' | 'changes';
@@ -291,9 +325,6 @@ export type BuildChanges = { ref: ChangeRef; masterRepo: string };
 
 /** What starting a build came to, as the page needs to tell it. */
 export type StartKind = StartOutcome['kind'];
-
-/** Why a start did not go on: the reason and, one line each, what the plugin found. */
-export type StartRefusal = { reason: string; problems: string[] };
 
 /**
  * A run the page follows: which row it belongs to, when the page first saw it, and the change it is a run of, with that change's master
@@ -308,26 +339,25 @@ type Clock = { work: number; paused: number; current: number };
 /** A review of the whole change: one section of its review document, or the closing text of its run. */
 type Review = { at: number | null; label: string | null; number: number | null; repos: string[]; findings: Finding[] };
 
-/** Why a start that was refused, failed or could not run did not go on, as the page says it; null for any other outcome. */
-function refusalOf(outcome: StartOutcome): StartRefusal | null {
+/** What a start that was refused, failed or could not run found, one line each, for a toast; null for any other outcome. */
+function startProblemsOf(outcome: StartOutcome): string[] | null {
   switch (outcome.kind) {
     case 'refused':
-      return { reason: 'The plugin refused to start the build', problems: outcome.problems };
+      return ['The plugin refused to start the build', ...outcome.problems];
     case 'failed':
-      return {
-        reason: outcome.hook === null ? "The plugin's build start failed" : `The team's hook ${outcome.hook.id} failed`,
-        problems: [...outcome.problems, ...(outcome.hook === null || outcome.hook.output.trim() === '' ? [] : [outcome.hook.output.trim()])],
-      };
+      return [outcome.hook === null ? "The plugin's build start failed" : `The team's hook ${outcome.hook.id} failed`, ...outcome.problems, ...(outcome.hook === null || outcome.hook.output.trim() === '' ? [] : [outcome.hook.output.trim()])];
     case 'couldNotRun':
-      return { reason: outcome.repo === null ? "This machine could not run the plugin's step" : `This machine could not run the plugin's step in ${outcome.repo}`, problems: [outcome.output] };
+      return [outcome.repo === null ? "This machine could not run the plugin's step" : `This machine could not run the plugin's step in ${outcome.repo}`, outcome.output];
     default:
       return null;
   }
 }
 
 /** How a stopped preparation is worded: which repositories were prepared when it stopped, if any. */
-function stoppedMessage(prepared: string[]): string {
-  return prepared.length === 0 ? 'Preparation stopped' : `Preparation stopped. Prepared: ${prepared.join(', ')}`;
+function stoppedMessage(prepared: string[], note: string | null): string {
+  const message = prepared.length === 0 ? 'Preparation stopped' : `Preparation stopped. Prepared: ${prepared.join(', ')}`;
+  // The note is the backend's own sentence about where the copy was left; it follows the message as sent.
+  return note === null ? message : `${message}. ${note}`;
 }
 
 const REVIEW = 'review';
@@ -494,8 +524,6 @@ export class BuildPageViewModel {
   /** When each open question or approval first showed, in clock seconds, keyed by run and pause id. */
   private readonly pendingSince = signal<Readonly<Record<string, number>>>({});
 
-  /** Why a start did not go on, with what the plugin found; the refusal dialog is open exactly while this is set. */
-  readonly refusal = signal<StartRefusal | null>(null);
   /** How a stopped preparation is worded on the page; null while there is none. */
   readonly stoppedNote = signal<string | null>(null);
   /** The change whose preparation this page started and waits for; null while it waits for none. */
@@ -517,6 +545,38 @@ export class BuildPageViewModel {
   });
   /** Whether the preparation of the change on screen is running now. */
   readonly preparing = computed(() => this.shownPreparation() !== null);
+
+  /** What the Workbench asks before it stops the checks on the base; null while it asks nothing. The confirm dialog is open exactly while this is set. */
+  readonly stopAsked = signal<string | null>(null);
+
+  /**
+   * Stop was pressed: ask the question the backend holds for the running checks, read fresh because no report carries it. A preparation with
+   * no question (nothing is running on the base) stops at once.
+   */
+  async askStop(): Promise<void> {
+    const shown = this.shownPreparation();
+    if (shown === null) return;
+    let question: string | null;
+    try {
+      const running = await this.transport.steps();
+      question = running.find((s) => sameStepChange(s.change, shown.ref))?.stopQuestion ?? null;
+    } catch {
+      question = null;
+    }
+    if (question === null) await this.stopPreparing();
+    else this.stopAsked.set(question);
+  }
+
+  /** The engineer confirmed the question: stop the preparation. */
+  async confirmStop(): Promise<void> {
+    this.stopAsked.set(null);
+    await this.stopPreparing();
+  }
+
+  /** The engineer declined or pressed Escape: the checks keep running and nothing changes. */
+  keepChecking(): void {
+    this.stopAsked.set(null);
+  }
 
   /** Stop the running preparation the page shows: that change's own, never the one that is current when the button is pressed. */
   async stopPreparing(): Promise<void> {
@@ -900,6 +960,52 @@ export class BuildPageViewModel {
 
   /** Every repository's checks as the plugin recorded them: read when the page opens and again whenever the host announces the build moved. */
   private readonly checkViews = signal<RepoCheckView[]>([]);
+  /** Each repository's start and its checks on the base, as the last read found them. */
+  private readonly startChecks = signal<StartChecks[]>([]);
+  /** The checks of this Workbench's own preparation, read from the backend's running step while it runs. */
+  private readonly liveChecks = signal<{ repo: string; checks: BaseCheck[] }>(NO_LIVE_CHECKS);
+  /** The clock for the running check's elapsed time, ticked once a second while the page lists checks. */
+  private readonly checksNow = signal(Date.now());
+
+  /**
+   * The checks list for the page: while this Workbench prepares something, only the running step's live checks, which the backend fills for a
+   * build's check of the base; otherwise the repository the backend lists (R2.4, R2.5). Null when there is nothing to list.
+   */
+  private readonly baseChecks = computed<BaseChecksView | null>(() => {
+    const now = this.checksNow();
+    if (this.preparing()) {
+      const live = this.liveChecks();
+      return live.checks.length === 0 ? null : { repo: live.repo, base: '', checks: live.checks, now, elsewhere: false };
+    }
+    const shown = this.startChecks().find((r) => r.listed !== null);
+    return shown === undefined ? null : { repo: shown.repo, base: shown.base, checks: shown.checks, now, elsewhere: shown.listed === 'elsewhere' };
+  });
+
+  /** The repositories whose build the backend says is under way and was started outside this Workbench (R8.2). */
+  private readonly outside = computed<OutsideView[]>(() => this.startChecks().flatMap((s) => (s.outside === null ? [] : [{ repo: s.repo, ...s.outside }])));
+
+  /** While the preparation runs, tick the clock and read the live checks from the backend once a second. */
+  private readonly followLiveChecks = effect((onCleanup) => {
+    if (!this.preparing()) {
+      untracked(() => this.liveChecks.set(NO_LIVE_CHECKS));
+      return;
+    }
+    const tick = (): void => {
+      this.checksNow.set(Date.now());
+      const shown = untracked(() => this.shownPreparation());
+      if (shown === null) return;
+      void this.transport
+        .steps()
+        .then((running) => {
+          const step = running.find((s) => sameStepChange(s.change, shown.ref));
+          this.liveChecks.set(step === undefined ? NO_LIVE_CHECKS : { repo: step.progress?.repo ?? '', checks: step.liveChecks });
+        })
+        .catch(() => undefined);
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    onCleanup(() => clearInterval(timer));
+  });
   private checksReading = false;
   private checksAgain = false;
 
@@ -919,6 +1025,8 @@ export class BuildPageViewModel {
         try {
           const views = await this.transport.sdlcChecksView(this.ref()!);
           if (this.shows(ctx)) this.checkViews.set(views);
+          const started = await this.transport.sdlcStartChecks(this.ref()!).catch(() => [] as StartChecks[]);
+          if (this.shows(ctx)) this.startChecks.set(started);
         } catch (e) {
           this.toasts.error(`Could not read the checks: ${message(e)}`);
         }
@@ -969,11 +1077,14 @@ export class BuildPageViewModel {
     this.chosen.set(null);
     this.startHeld.set([]);
     this.lastForm = null;
-    this.refusal.set(null);
+    this.acceptRequest.set(null);
+    this.acceptRefusal.set(null);
     this.buildState.set(null);
     this.reviewHeld.set([]);
     this.runRefs.set([]);
     this.checkViews.set([]);
+    this.startChecks.set([]);
+    this.liveChecks.set(NO_LIVE_CHECKS);
     this.changedFiles.set(false);
     this.changedFileTotal.set(0);
     this.reviews.set([]);
@@ -1352,6 +1463,11 @@ export class BuildPageViewModel {
       findingPlace: this.findingPlace(),
       waiting: this.waitingNotices(),
       announcement: this.announcement(),
+      baseChecks: this.baseChecks(),
+      outside: this.outside(),
+      failures: this.failures(),
+      finishes: this.finishes(),
+      startHold: this.startHold(),
       areas: shownAreas({ stage, hasSessions, hasChanges }),
       counts: { files: this.changedFileTotal(), findings: findingsArea.review === null ? 0 : findingsArea.review.findings.length },
     };
@@ -1563,7 +1679,10 @@ export class BuildPageViewModel {
     const ref = this.ref();
     if (ref === null) return 'couldNotRun';
     this.lastForm = form;
-    return this.begin('checking-base', progressLabels.checkingBase(), () => this.transport.sdlcBuildStart(ref, this.withOff(form, this.buildOff())));
+    return this.begin('checking-base', progressLabels.checkingBase(), (even) => {
+      const started = this.withOff(form, this.buildOff());
+      return even ? this.transport.sdlcBuildStart(ref, started, true) : this.transport.sdlcBuildStart(ref, started);
+    });
   }
 
   /** Start the held build again, as a fresh start of the same form. */
@@ -1581,7 +1700,7 @@ export class BuildPageViewModel {
    * Run one of the host's slow starts under the page's progress line and tell what it came to: the plugin checks every repository
    * (and prepares each) before anything starts, which takes seconds.
    */
-  private async begin(step: ProgressStepId, label: string, call: () => Promise<StartOutcome>): Promise<StartKind> {
+  private async begin(step: ProgressStepId, label: string, call: (evenIfElsewhere: boolean) => Promise<StartOutcome>, evenIfElsewhere = false): Promise<StartKind> {
     this.progress.begin(step, label, 'build');
     const ctx = this.ctx;
     this.startedPreparing.set(ctx);
@@ -1590,10 +1709,10 @@ export class BuildPageViewModel {
     const unlisten = await this.listenToSteps(ctx);
     let outcome: StartOutcome;
     try {
-      outcome = await call();
+      outcome = await call(evenIfElsewhere);
     } catch (e) {
       this.endLine(ctx, true);
-      this.refuse(ctx, { reason: message(e), problems: [] });
+      this.refuse(ctx, [message(e)]);
       return 'couldNotRun';
     } finally {
       unlisten();
@@ -1602,12 +1721,24 @@ export class BuildPageViewModel {
     }
     if (outcome.kind === 'refused' || outcome.kind === 'failed' || outcome.kind === 'couldNotRun' || outcome.kind === 'stopped') this.endLine(ctx, true);
     else this.endLine(ctx, false);
+    if (outcome.kind === 'mayBeRunningElsewhere') return this.askElsewhere(ctx, outcome, () => this.begin(step, label, call, true));
     if (this.shows(ctx)) return this.settle(outcome);
     // The page moved to another change while the start ran: what it came to is not shown on that change, it is said once.
-    const held = outcome.kind === 'held' ? { reason: 'The build waits for other changes', problems: outcome.held.map((h) => `${h.repo}: ${h.holder.change}`) } : null;
-    const refusal = held ?? refusalOf(outcome);
-    if (refusal !== null) this.refuse(ctx, refusal);
-    if (outcome.kind === 'stopped') this.toasts.info(`${ctx?.change ?? 'The build'}: ${stoppedMessage(outcome.prepared)}`);
+    const held = outcome.kind === 'held' ? ['The build waits for other changes', ...outcome.held.map((h) => `${h.repo}: ${h.holder.change}`)] : null;
+    const problems = held ?? startProblemsOf(outcome);
+    if (problems !== null) this.refuse(ctx, problems);
+    if (outcome.kind === 'stopped') this.toasts.info(`${ctx?.change ?? 'The build'}: ${stoppedMessage(outcome.prepared, outcome.note)}`);
+    return outcome.kind;
+  }
+
+  /** A start the workflow's record says may be running elsewhere: ask first; the page has no say when it moved to another change, so that is said once. */
+  private askElsewhere(ctx: BuildContext | null, outcome: Extract<StartOutcome, { kind: 'mayBeRunningElsewhere' }>, again: () => Promise<StartKind>): StartKind {
+    if (this.shows(ctx)) {
+      this.elsewhereAgain = again;
+      this.elsewhereRequest.set({ repos: outcome.repos, since: outcome.since, runningCheck: outcome.runningCheck });
+    } else {
+      this.toasts.info(`${ctx?.change ?? 'The build'}: The build may be running in another session, so it was not started`);
+    }
     return outcome.kind;
   }
 
@@ -1635,24 +1766,24 @@ export class BuildPageViewModel {
     if (ctx === null) return () => undefined;
     try {
       return await this.transport.onStep((event) => {
-        if (sameStepChange(event.change, ctx) && (event.kind === 'preparingBuild' || event.kind === 'preparingReview')) this.progress.update(event.progress.label, 'build');
+        if (sameStepChange(event.change, ctx) && isStep(event.kind, 'preparing')) this.progress.update(event.progress.label, 'build');
       });
     } catch {
       return () => undefined;
     }
   }
 
-  /** Show why a start did not go on, on the change it was for; a start of a change the page moved away from says it in a toast. */
-  private refuse(ctx: BuildContext | null, refusal: StartRefusal): void {
-    if (this.shows(ctx)) this.refusal.set(refusal);
-    else this.toasts.error([`${ctx?.change ?? 'The build'}: ${refusal.reason}`, ...refusal.problems].join('\n'));
+  /** Say in a toast why a start did not go on, when the page has no failure to show for it. */
+  private refuse(ctx: BuildContext | null, lines: string[]): void {
+    const [reason, ...rest] = lines;
+    this.toasts.error([`${ctx?.change ?? 'The build'}: ${reason}`, ...rest].join('\n'));
   }
 
   private settle(outcome: StartOutcome): StartKind {
     switch (outcome.kind) {
       case 'started': {
         this.startHeld.set([]);
-        this.refusal.set(null);
+        this.acceptRefusal.set(null);
         const lines = Object.entries(outcome.uncommitted).flatMap(([repo, files]) => (files ?? []).map((f) => `${repo}: ${f}`));
         if (lines.length > 0) this.toasts.info(`The build goes on over uncommitted files · ${lines.join(' · ')}`);
         const ref = this.ref();
@@ -1668,17 +1799,145 @@ export class BuildPageViewModel {
       case 'refused':
       case 'failed':
       case 'couldNotRun':
-        this.refusal.set(refusalOf(outcome));
+        void this.showStartFailure(outcome);
         break;
       case 'stopped':
-        this.stoppedNote.set(stoppedMessage(outcome.prepared));
+        this.stoppedNote.set(stoppedMessage(outcome.prepared, outcome.note));
         break;
     }
     return outcome.kind;
   }
 
-  closeRefusal(): void {
-    this.refusal.set(null);
+  /**
+   * A start stopped: the page shows it once, from the backend's answer about the repository's checks, so read that answer now. A start
+   * the answer does not explain (nothing to show) is told in a toast, so it never goes unsaid.
+   */
+  private async showStartFailure(outcome: StartOutcome): Promise<void> {
+    const ctx = this.ctx;
+    await this.readChecks();
+    if (!this.shows(ctx) || this.failures().length > 0) return;
+    const problems = startProblemsOf(outcome);
+    if (problems !== null) this.refuse(ctx, problems);
+  }
+
+  /** The check being asked about; the accept dialog is open exactly while this is set. */
+  readonly acceptRequest = signal<AcceptRequest | null>(null);
+  /** The start that may be running elsewhere, asked about; the dialog is open exactly while this is set. */
+  readonly elsewhereRequest = signal<ElsewhereRequest | null>(null);
+
+  /** The start the question is about, run again with the flag; set exactly while the question is. */
+  private elsewhereAgain: (() => Promise<StartKind>) | null = null;
+
+  /** Start anyway: the same start again, told that the engineer knows it may be running elsewhere. */
+  async confirmElsewhere(): Promise<void> {
+    const again = this.elsewhereAgain;
+    this.cancelElsewhere();
+    if (again !== null) await again();
+  }
+
+  /** Start nothing. */
+  cancelElsewhere(): void {
+    this.elsewhereAgain = null;
+    this.elsewhereRequest.set(null);
+  }
+
+  /** The workflow's reasons for refusing the last acceptance. */
+  private readonly acceptRefusal = signal<AcceptRefusal | null>(null);
+
+  /**
+   * Why accepting a check is off, null while it is on: the build of this change is being prepared (R11.1). The words are the backend's refusal in
+   * `sdlc_accept_base_check`, which sends them only when it refuses; a preparation of a review or a rerun of the finish checks does not turn it off.
+   */
+  private readonly acceptOff = computed<string | null>(() => {
+    const ref = this.ref();
+    const preparingBuild = ref !== null && this.steps.running().some((s) => sameStepChange(s.change, ref) && (s.kind === 'preparingBuild' || s.kind === 'checkingBase' || (typeof s.kind === 'object' && 'preparationHook' in s.kind)));
+    return preparingBuild ? BUILD_BEING_PREPARED : null;
+  });
+
+  /** The repositories whose start failed, each shown once on the page: a failure on the base, all of them accepted, or another reason. */
+  private readonly failures = computed<BuildFailureView[]>(() => {
+    const acceptOff = this.acceptOff();
+    const refusal = this.acceptRefusal();
+    return this.startChecks()
+      .filter((s) => s.shown.kind === 'baseFailure' || s.shown.kind === 'allAccepted' || s.shown.kind === 'otherReason')
+      .map((s) => ({ start: s, refusal: refusal !== null && refusal.repo === s.repo ? refusal : null, acceptOff }));
+  });
+
+  /** Why starting the build is not offered as ready, as the backend worded it; null when it is. */
+  /** The repositories whose build finished with a check failing, each shown once on the page; none while a run of the checks is under way. */
+  private readonly finishes = computed<StartChecks[]>(() => (this.preparing() ? [] : this.startChecks().filter((s) => s.finish !== null)));
+
+  private readonly startHold = computed(() => this.startChecks().find((s) => s.startHeld !== null)?.startHeld ?? null);
+
+  /** Ask once more before a check is accepted: nothing is recorded until it is confirmed. */
+  askAccept(repo: string, check: string): void {
+    if (this.acceptOff() !== null) return;
+    const start = this.startChecks().find((s) => s.repo === repo);
+    if (start === undefined) return;
+    this.acceptRefusal.set(null);
+    this.acceptRequest.set({ repo, check, base: start.base });
+  }
+
+  /** The engineer cancelled: nothing is recorded and the check stays failed on the base. */
+  cancelAccept(): void {
+    this.acceptRequest.set(null);
+  }
+
+  /** Record the acceptance through the workflow, then read the checks again; its refusal is shown as it is. */
+  async confirmAccept(): Promise<void> {
+    const request = this.acceptRequest();
+    const ref = this.ref();
+    if (request === null || ref === null) return;
+    this.acceptRequest.set(null);
+    let problems: string[];
+    try {
+      const answer = await this.transport.sdlcAcceptBaseCheck(ref, request.repo, request.check);
+      problems = answer.approved === null ? (answer.problems.length > 0 ? answer.problems : ['The workflow did not accept the check']) : [];
+    } catch (e) {
+      problems = [message(e)];
+    }
+    this.acceptRefusal.set(problems.length === 0 ? null : { repo: request.repo, check: request.check, problems });
+    await this.readChecks();
+  }
+
+  /**
+   * Run the checks of a repository's finish again on the change, under the page's progress line and its Stop. The base results are not
+   * touched; what the run came to is read from the workflow's ledger afterwards, so the page shows it once, here, as it does any other.
+   */
+  async rerunFinish(repo: string): Promise<void> {
+    const ref = this.ref();
+    if (ref === null || this.preparing()) return;
+    const ctx = this.ctx;
+    this.progress.begin('running-checks', PROGRESS_NAMES['running-checks'], 'build');
+    this.startedPreparing.set(ctx);
+    this.lineFor = ctx === null ? null : `${ctx.system}/${ctx.change}`;
+    this.stoppedNote.set(null);
+    let failed = false;
+    try {
+      const outcome = await this.transport.sdlcRerunFinishChecks(ref, repo);
+      if (outcome.kind === 'stopped') this.toasts.info(`${ref.change}: The checks were stopped before they finished`);
+      else if (outcome.kind === 'refused' || outcome.kind === 'failed') failed = outcome.kind === 'refused';
+      else if (outcome.kind === 'held') this.toasts.error([`${ref.change}: The build waits for other changes`, ...outcome.held.map((h) => `${h.repo}: ${h.holder.change}`)].join('\n'));
+      else if (outcome.kind === 'couldNotRun') failed = true;
+      if (outcome.kind === 'refused') this.refuse(ctx, outcome.problems);
+      if (outcome.kind === 'couldNotRun') this.refuse(ctx, [outcome.output]);
+    } catch (e) {
+      failed = true;
+      this.refuse(ctx, [message(e)]);
+    } finally {
+      this.startedPreparing.set(null);
+      if (ctx !== null) this.steps.ended(ctx);
+      this.endLine(ctx, failed);
+    }
+    await this.readChecks();
+  }
+
+  /** Put a check's output on the clipboard. */
+  copyOutput(text: string): void {
+    void this.transport.copyText(text).then(
+      () => this.toasts.info('Output copied'),
+      (e: unknown) => this.toasts.error(`Could not copy the output: ${message(e)}`),
+    );
   }
 
   /** True from the click on a preview or the round until its dialog opens or fails; a click in between is ignored. */
@@ -1865,8 +2124,7 @@ export class BuildPageViewModel {
     if (result === null) return;
     const choices: BuildChoices = { off: result.off };
     this.givens.setBuild(this.buildKey(), choices);
-    await this.begin('preparing-build', key === REVIEW ? progressLabels.preparingReview() : progressLabels.preparingBuild(), () =>
-      key === REVIEW ? this.transport.sdlcReviewStart(ref, [...choices.off]) : this.transport.sdlcBuildContinue(ref, key, [...choices.off]),
+    await this.begin('preparing-build', key === REVIEW ? progressLabels.preparingReview() : progressLabels.preparingBuild(), (even) => (key === REVIEW ? this.transport.sdlcReviewStart(ref, [...choices.off]) : even ? this.transport.sdlcBuildContinue(ref, key, [...choices.off], true) : this.transport.sdlcBuildContinue(ref, key, [...choices.off])),
     );
   }
 

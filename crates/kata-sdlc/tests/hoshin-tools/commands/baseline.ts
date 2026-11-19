@@ -3,7 +3,8 @@
 // The baseline of a repository's checks (the blocking before hooks of build.finish that apply to it): how each did on
 // the base commit, the merge-base of the repository's head and its base branch. `show` runs nothing; `retake` drops
 // the stored baseline for that commit and takes it again, which needs a working tree without uncommitted files. Both
-// print `{ base, taken, reused, hooks: [{ id, outcome, ids }], needsApproval, approved, problems }`; `taken` is false
+// print `{ base, taken, reused, hooks: [{ id, outcome, exitCode, ids, output }], needsApproval, approved, problems }`,
+// where `output` is the check's stored output (its last 200 lines); `taken` is false
 // when there is no baseline (none stored yet, no checks, or the master repository, which never has one).
 // `needsApproval` lists the checks that failed on the base without saying what failed and are not approved for this
 // change; `approve` approves one of them for this change's build of the repository at this base commit and prints
@@ -18,11 +19,11 @@ import { eventContext, type EventContext } from '../events/context.ts';
 import { approve, approvedHooks, ledgerOf, needsApproval } from '../baseline/approvals.ts';
 import { storedBaseline, takeBaseline, type Taken } from '../baseline/take.ts';
 
-function print(ctx: EventContext | null, taken: Taken): number {
-  const hooks = (taken.entry?.hooks ?? []).map(({ id, outcome, ids }) => ({ id, outcome, ids }));
+function print(ctx: EventContext | null, taken: Taken, extra: string[] = []): number {
+  const hooks = (taken.entry?.hooks ?? []).map(({ id, outcome, exitCode, ids, output }) => ({ id, outcome, exitCode, ids, output }));
   const approved = ctx && taken.base ? approvedHooks(ledgerOf(ctx), taken.base) : [];
   const needed = taken.entry ? needsApproval(taken.entry, approved) : [];
-  printJson({ base: taken.base, taken: taken.entry !== null, reused: taken.reused, hooks, needsApproval: needed, approved, problems: taken.problems });
+  printJson({ base: taken.base, taken: taken.entry !== null, reused: taken.reused, hooks, needsApproval: needed, approved, problems: [...taken.problems, ...extra] });
   if (taken.outcome === 'could-not-run') return EXIT.COULD_NOT_RUN;
   return taken.outcome === 'passed' ? EXIT.PASS : EXIT.PROBLEMS;
 }
@@ -42,6 +43,8 @@ export const baseline: Command = {
       options: { ...(o.values.master ? { master: o.values.master } : {}), ...(o.values.workspace ? { workspace: o.values.workspace } : {}) },
       extra: {},
     });
+    // Collects check-log write failures, which takeBaseline passes to its log; they are reported, never fatal.
+    ctx.checkProblems = [];
     const config = readHookConfig(ctx.master, ctx.system);
     if (config.problems.length > 0) return print(null, { base: null, entry: null, reused: false, outcome: 'could-not-run', problems: config.problems.map((p) => `the hook configuration on the base branch: ${p}`) });
     if (verb === 'approve') {
@@ -50,6 +53,7 @@ export const baseline: Command = {
       printJson({ approved: problems.length === 0 && stored.base ? { hook: o.values.hook, base: stored.base } : null, problems });
       return problems.length === 0 ? EXIT.PASS : EXIT.PROBLEMS;
     }
-    return print(ctx, verb === 'retake' ? await takeBaseline(ctx, config, { retake: true }) : storedBaseline(ctx, config));
+    const taken = verb === 'retake' ? await takeBaseline(ctx, config, { retake: true }) : storedBaseline(ctx, config);
+    return print(ctx, taken, ctx.checkProblems);
   },
 };

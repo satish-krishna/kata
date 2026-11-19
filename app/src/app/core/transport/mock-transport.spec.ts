@@ -229,6 +229,19 @@ describe('MockTransport', () => {
       expect(await t.sdlcBuildState(ref('2026-01-01-never-started'))).toBeNull();
     });
 
+    it('under ?demo=checks-elsewhere a start and a continue say the build may be running elsewhere, and start with the flag', async () => {
+      window.history.replaceState({}, '', '/?demo=checks-elsewhere');
+      try {
+        const t = new MockTransport();
+        expect(await t.sdlcBuildStart(ref(MOCK_BUILD_CHANGE), FORM)).toMatchObject({ kind: 'mayBeRunningElsewhere', repos: ['kata'], runningCheck: 'app-unit' });
+        expect(await t.sdlcBuildContinue(ref(MOCK_BUILD_CHANGE), 'commerce-core')).toMatchObject({ kind: 'mayBeRunningElsewhere' });
+        expect((await t.sdlcBuildStart(ref(MOCK_BUILD_CHANGE), FORM, true)).kind).toBe('started');
+        expect((await t.sdlcBuildContinue(ref(MOCK_BUILD_SECOND), 'commerce-core', undefined, true)).kind).not.toBe('mayBeRunningElsewhere');
+      } finally {
+        window.history.replaceState({}, '', '/');
+      }
+    });
+
     it('a build that needs a repository another change holds starts held, and says who holds it', async () => {
       const t = new MockTransport();
       await t.sdlcBuildStart(ref(MOCK_BUILD_CHANGE), FORM);
@@ -841,6 +854,24 @@ describe('MockTransport answers every call the backend gained on this branch (F2
     expect(views.every((v) => v.summary !== '')).toBe(true);
   });
 
+  it('sdlcStartChecks gives each repository its checks on the base with their states', async () => {
+    const [shown] = await new MockTransport().sdlcStartChecks(ref(MOCK_DONE_CHANGE));
+    expect(shown.repo).not.toBe('');
+    expect(shown.checks.length).toBeGreaterThan(0);
+    expect(shown.checks.every((c) => c.check !== '')).toBe(true);
+  });
+
+  it('sdlcAcceptBaseCheck records the check as accepted at the base and answers with the approval', async () => {
+    const t = new MockTransport();
+    const out = await t.sdlcAcceptBaseCheck(ref(MOCK_DONE_CHANGE), 'kata', 'app-unit');
+    expect(out).toEqual({ approved: { hook: 'app-unit', base: '3c504eb' }, problems: [] });
+  });
+
+  it('sdlcRerunFinishChecks passes, so the repository counts as finished', async () => {
+    const out = await new MockTransport().sdlcRerunFinishChecks(ref(MOCK_DONE_CHANGE), 'kata');
+    expect(out).toEqual({ kind: 'passed' });
+  });
+
   it('sdlcOldChecks says nothing without ?demo=old-checks, and sdlcOldChecksSeen resolves', async () => {
     const t = new MockTransport();
     expect(await t.sdlcOldChecks(MOCK_WORKSPACE_FOLDER, ['commerce'])).toEqual([]);
@@ -1043,9 +1074,9 @@ describe('MockTransport stopping a step', () => {
         { outcome: 'stopped', rejected: false },
         { outcome: 'stopped', kept: [] },
         { kind: 'stopped', pullRequests: [] },
-        { kind: 'stopped', prepared: [] },
-        { kind: 'stopped', prepared: [] },
-        { kind: 'stopped', prepared: [] },
+        { kind: 'stopped', prepared: [], note: null },
+        { kind: 'stopped', prepared: [], note: null },
+        { kind: 'stopped', prepared: [], note: null },
         { outcome: 'stopped', answer: [] },
       ];
       for (const [i, call] of calls.entries()) {

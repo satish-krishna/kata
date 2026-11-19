@@ -2,6 +2,21 @@
   <div class="sr-only" aria-live="assertive" aria-atomic="true">{{ view().announcement }}</div>
   <div class="k-bp__notice">
     <app-waiting-notice [items]="view().waiting" (goTo)="goToRepo($event)" />
+    @for (f of view().failures ?? []; track f.start.repo) {
+      <div class="k-bp__failure" data-failure>
+        <app-build-failure-panel [start]="f.start" [refusal]="f.refusal" [acceptOff]="f.acceptOff" (accept)="acceptCheck.emit({ repo: f.start.repo, check: $event })" (copy)="copyOutput.emit($event)" />
+      </div>
+    }
+    @for (s of view().finishes ?? []; track s.repo) {
+      <div class="k-bp__failure" data-finish>
+        <app-build-finish-panel [start]="s" (rerun)="rerunFinish.emit(s.repo)" (copy)="copyOutput.emit($event)" />
+      </div>
+    }
+    @if (view().baseChecks; as checks) {
+      <div class="k-bp__checks" data-base-checks>
+        <app-build-checks-list [checks]="checks.checks" [base]="checks.base" [now]="checks.now" [elsewhere]="checks.elsewhere" />
+      </div>
+    }
   </div>
   @if (view().held; as held) {
     <div class="k-bp__held" data-held-build>
@@ -11,12 +26,24 @@
   <div class="k-bp__bar" data-bar>
     <app-segmented [options]="modes()" [value]="layout().mode" (valueChange)="pickMode.emit($event)" ariaLabel="Layout mode" />
     <span class="k-lock__count">{{ view().facts.tasks }}</span>
+    @for (o of view().outside ?? []; track o.repo) {
+      <span class="k-bp__outside" data-outside><span class="k-mono">{{ o.repo }}</span> {{ o.words }}
+        @if (o.at !== '') {
+          <time class="k-mono" [attr.datetime]="o.at">{{ o.at | date: 'HH:mm' }}</time>
+        }
+      </span>
+    }
     @if (view().facts.elapsed; as elapsed) {
       <span class="k-mono k-bp__elapsed">{{ elapsed }}</span>
     }
     <span class="k-bp__actions">
       @for (a of view().actions; track a) {
-        <button hlmBtn size="sm" type="button" [variant]="primary() === a ? 'primary' : 'secondary'" (click)="press(a)">{{ labelOf(a) }}</button>
+        @if (a === 'start-build' && view().startHold; as hold) {
+          <button hlmBtn size="sm" type="button" variant="primary" disabled aria-describedby="start-hold" data-start-held>{{ labelOf(a) }}</button>
+          <span id="start-hold" class="sr-only">{{ hold }}</span>
+        } @else {
+          <button hlmBtn size="sm" type="button" [variant]="primary() === a ? 'primary' : 'secondary'" (click)="press(a)">{{ labelOf(a) }}</button>
+        }
       }
       @for (e of extras(); track e.action) {
         <button hlmBtn size="sm" type="button" variant="secondary" [disabled]="e.disabled" [attr.title]="e.title" (click)="press(e.action)">{{ labelOf(e.action) }}</button>

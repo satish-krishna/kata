@@ -44,7 +44,11 @@ import type { CommitFiles } from '@bindings/CommitFiles';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
+import type { BaseCheck } from '@bindings/BaseCheck';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
+import type { BaselineApproved } from '@bindings/BaselineApproved';
+import type { RerunOutcome } from '@bindings/RerunOutcome';
+import type { StartChecks } from '@bindings/StartChecks';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
 import type { DeclareView } from '@bindings/DeclareView';
@@ -229,7 +233,8 @@ export class MockTransport extends KataTransport {
       if (v.heldStart.length > 0) return { ...base, state: 'held', holder: v.heldStart[0].holder };
       return { ...base, state: 'finished' };
     });
-    return { shown: entries.slice(0, 3), all: entries };
+    const count = (state: RunningEntry['state']): number => entries.filter((e) => e.state === state).length;
+    return { shown: entries.slice(0, 3), all: entries, counts: { running: count('working'), needsYou: count('needsAnswer') + count('needsPermission') + count('stopped'), waiting: count('held') + count('reviewWaiting'), finished: count('finished') } };
   }
 
   private announceRunning(): void {
@@ -492,6 +497,68 @@ export class MockTransport extends KataTransport {
   sdlcDiffBase(_repoPath: string): Promise<BaseInfo> { return Promise.resolve(this.sdlc.diffBase()); }
   sdlcOldChecks(_folder: string, systems: string[]): Promise<OldChecksNotice[]> { return Promise.resolve(this.sdlc.oldChecks(systems)); }
   sdlcOldChecksSeen(systems: string[]): Promise<void> { this.sdlc.oldChecksSeen(systems); return Promise.resolve(); }
+  /** The checks on the base of the demo change's repository: passed, failed, then one that is running, or cut off under `?demo=checks-cutoff`, then the rest. `?demo=checks-elsewhere` shows them running in another session; with no demo none has run. */
+  sdlcStartChecks(_change: ChangeRef): Promise<StartChecks[]> {
+    const at = (secs: number) => new Date(Date.now() - secs * 1000).toISOString();
+    const check = (name: string, state: BaseCheck['state'], startedAgo: number | null, endedAgo: number | null): BaseCheck => ({
+      check: name, state, exitCode: state === 'passed' ? 0 : state === 'failed' ? 1 : null, output: '', lineCount: 0, canAccept: false, accepted: false,
+      startedAt: startedAgo === null ? null : at(startedAgo), endedAt: endedAgo === null ? null : at(endedAgo),
+    });
+    const demo = demoParam();
+    if (demo === 'checks-base' || demo === 'checks-base-moved' || demo === 'checks-base-many') return Promise.resolve([this.baseFailure(demo === 'checks-base-many' ? 9 : 1, check)]);
+    if (demo === 'checks-finish' && !this.finishRerun) return Promise.resolve([this.finishFailure()]);
+    const cut = demo === 'checks-cutoff';
+    const elsewhere = demo === 'checks-elsewhere';
+    if (!cut && !elsewhere) {
+      const none = ['app-lint', 'rust-fmt', 'app-unit'].map((name) => check(name, 'notRun', null, null));
+      return Promise.resolve([{ repo: 'kata', shown: { kind: 'startable' }, base: '3c504eb', checks: none, passed: 0, setupHint: false, startHeld: null, finish: null, elsewhere: false, listed: null, outside: null }]);
+    }
+    const checks = [
+      check('app-lint', 'passed', 300, 256),
+      check('rust-fmt', 'passed', 256, 250),
+      check('app-unit', cut ? 'cutOff' : 'running', 95, null),
+      check('rust-clippy', 'notRun', null, null),
+      check('rust-test', 'notRun', null, null),
+    ];
+    return Promise.resolve([{ repo: 'kata', shown: { kind: 'startable' }, base: '3c504eb', checks, passed: 2, setupHint: false, startHeld: null, finish: null, elsewhere: !cut, listed: cut ? 'cutOff' : 'elsewhere', outside: null }]);
+  }
+  /** The checks the engineer accepted in this session, so `?demo=checks-base` marks them and settles the start. */
+  private readonly acceptedChecks = new Set<string>();
+  /** The workflow records the acceptance at the base commit; the demo base `?demo=checks-base-moved` refuses it as a moved base would. */
+  sdlcAcceptBaseCheck(_change: ChangeRef, _repo: string, check: string): Promise<BaselineApproved> {
+    if (demoParam() === 'checks-base-moved') return Promise.resolve({ approved: null, problems: ['The base moved since the checks ran: the check was not accepted.'] });
+    this.acceptedChecks.add(check);
+    return Promise.resolve({ approved: { hook: check, base: '3c504eb' }, problems: [] });
+  }
+  /** Whether the engineer ran the finish checks again in this session; `?demo=checks-finish` then shows the repository finished. */
+  private finishRerun = false;
+  /** Running the checks of the finish again passes, so the repository counts as finished; the base results are not touched. */
+  sdlcRerunFinishChecks(_change: ChangeRef, _repo: string): Promise<RerunOutcome> {
+    this.finishRerun = true;
+    return Promise.resolve({ kind: 'passed' });
+  }
+  /** A repository whose build finished and whose check `app-speed` failed at finish, as `?demo=checks-finish` shows it. */
+  private finishFailure(): StartChecks {
+    const output = "running 1 test\nspeed_targets: every open change's name took 1.2s (limit 1 s)\ntest result: FAILED. 0 passed; 1 failed";
+    // The last run on the base passed, so a rerun at finish has a stale base list the page must not show while it runs.
+    const base = ['app-speed', 'app-lint', 'rust-fmt'].map((name): BaseCheck => ({ check: name, state: 'passed', exitCode: 0, output: '', lineCount: 0, canAccept: false, accepted: false, startedAt: null, endedAt: null }));
+    return { repo: 'kata', shown: { kind: 'startable' }, base: '3c504eb', checks: base, passed: base.length, setupHint: false, startHeld: null, finish: { check: 'app-speed', base: 'passed', output, passed: 11, next: 'sentBackNotFixed', canAccept: false }, elsewhere: false, listed: null, outside: null };
+  }
+  /** A start that stopped on the base: `failing` checks fail without saying what failed, three others passed; accepted ones are marked and settle the start. */
+  private baseFailure(failing: number, check: (name: string, state: BaseCheck['state'], startedAgo: number | null, endedAgo: number | null) => BaseCheck): StartChecks {
+    const failed = Array.from({ length: failing }, (_, i) => (failing === 1 ? 'app-speed' : `app-check-${i + 1}`));
+    const checks = [
+      ...failed.map((name) => {
+        const accepted = this.acceptedChecks.has(name);
+        return { ...check(name, 'failed', 300, 290), exitCode: 101, output: `running 1 test
+speed_targets: every open change's name took 1.2s (limit 1 s)
+test result: FAILED. 0 passed; 1 failed`, lineCount: 3, canAccept: !accepted, accepted };
+      }),
+      ...['app-lint', 'rust-fmt', 'app-unit'].map((name) => check(name, 'passed', 200, 190)),
+    ];
+    const left = failed.some((name) => !this.acceptedChecks.has(name));
+    return { repo: 'kata', shown: { kind: left ? 'baseFailure' : 'allAccepted' }, base: '3c504eb', checks, passed: 3, setupHint: failing >= 3, startHeld: left ? 'Accept or fix the failing checks first' : null, finish: null, elsewhere: false, listed: null, outside: null };
+  }
   sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]> { return Promise.resolve(this.sdlc.checksView(change.change)); }
   /** The plugin's answer to declaring the change done, with the steps it reports on the way; `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` give each of the other answers. */
   async sdlcDeclareDone(change: ChangeRef): Promise<DeclareView> {
@@ -520,11 +587,11 @@ export class MockTransport extends KataTransport {
    * `stopped`, so a spec or a browser check can press Stop; otherwise it answers at once.
    */
   private longStep<T>(change: ChangeRef, kind: StepKind, doing: string, run: () => T, stopped: T): Promise<T> {
-    const progress: StepProgress = { kind: 'verifying', label: doing, repo: null, check: null };
+    const progress: StepProgress = { kind: 'verifying', label: doing, repo: null, check: null, phase: 'other' };
     this.announceStep(change, kind, progress);
     if (demoParam() !== 'steps-hold') return settled(run).finally(() => this.endStep(change));
     return new Promise<T>((resolve) => {
-      const step: RunningStep = { change: mockChangeKey(change), kind, doing, progress };
+      const step: RunningStep = { change: mockChangeKey(change), kind, doing, progress, liveChecks: [], stopQuestion: null };
       this.heldSteps.set(change.change, { step, stop: () => resolve(stopped) });
     }).finally(() => this.endStep(change));
   }
@@ -598,12 +665,21 @@ export class MockTransport extends KataTransport {
     this.changeRunsLive.set(id, change.change);
     return id;
   }
-  async sdlcBuildStart(change: ChangeRef, form: StartForm): Promise<StartOutcome> {
-    return this.longStep(change, 'preparingBuild', 'Checking every repository before building', () => this.host.start(change, form), { kind: 'stopped', prepared: [] });
+  /** `?demo=checks-elsewhere` shows a build another session runs, so a start asks first unless it is told to go on. */
+  private maybeElsewhere(evenIfElsewhere: boolean | undefined): boolean {
+    return demoParam() === 'checks-elsewhere' && evenIfElsewhere !== true;
+  }
+  private elsewhereOutcome(): StartOutcome {
+    return { kind: 'mayBeRunningElsewhere', repos: ['kata'], since: new Date(Date.now() - 300_000).toISOString(), runningCheck: 'app-unit' };
+  }
+  async sdlcBuildStart(change: ChangeRef, form: StartForm, evenIfElsewhere?: boolean): Promise<StartOutcome> {
+    if (this.maybeElsewhere(evenIfElsewhere)) return this.elsewhereOutcome();
+    return this.longStep(change, 'preparingBuild', 'Checking the base', () => this.host.start(change, form), { kind: 'stopped', prepared: [], note: null });
   }
   // The scripted host runs no agent, so the choices a continue or review carries change nothing it shows.
-  async sdlcBuildContinue(change: ChangeRef, repo: string, _off?: string[]): Promise<StartOutcome> {
-    return this.longStep(change, 'preparingBuild', 'Preparing ' + repo, () => this.host.continueRepo(change, repo), { kind: 'stopped', prepared: [] });
+  async sdlcBuildContinue(change: ChangeRef, repo: string, _off?: string[], evenIfElsewhere?: boolean): Promise<StartOutcome> {
+    if (this.maybeElsewhere(evenIfElsewhere)) return this.elsewhereOutcome();
+    return this.longStep(change, 'preparingBuild', 'Preparing ' + repo, () => this.host.continueRepo(change, repo), { kind: 'stopped', prepared: [], note: null });
   }
   async sdlcBuildState(change: ChangeRef): Promise<BuildState | null> { return this.host.state(change); }
   async sdlcChangeKey(change: ChangeRef): Promise<ChangeKey> { return mockChangeKey(change); }
@@ -648,7 +724,7 @@ export class MockTransport extends KataTransport {
     return mockReviewView(this.sdlc.reviewRecord(), this.reviewRepos(change));
   }
   async sdlcReviewStart(change: ChangeRef, _off?: string[]): Promise<StartOutcome> {
-    return this.longStep(change, 'preparingReview', 'Checking every repository before the review', () => this.host.reviewStart(change), { kind: 'stopped', prepared: [] });
+    return this.longStep(change, 'preparingReview', 'Checking every repository before the review', () => this.host.reviewStart(change), { kind: 'stopped', prepared: [], note: null });
   }
   async sdlcReviewWaiting(change: ChangeRef): Promise<HeldRepo[]> { return this.host.reviewWaiting(change); }
   /** The repositories a round may go to: the change's own, then the master. */

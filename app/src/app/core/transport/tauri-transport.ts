@@ -47,6 +47,9 @@ import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
+import type { BaselineApproved } from '@bindings/BaselineApproved';
+import type { RerunOutcome } from '@bindings/RerunOutcome';
+import type { StartChecks } from '@bindings/StartChecks';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { RunningStep } from '@bindings/RunningStep';
@@ -139,8 +142,8 @@ export class TauriTransport extends KataTransport {
   sdlcDiscard(target: SnapshotTarget, before: Snapshot, paths: string[], build?: BuildScope) { return this.ipc.invoke<void>('sdlc_discard', { target, before, paths, build }); }
   sdlcRunHistory(runId: string) { return this.ipc.invoke<HistoryEntry[]>('sdlc_run_history', { runId }); }
   sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm) { return this.ipc.invoke<string>('sdlc_run_change', { change, kind, form }); }
-  sdlcBuildStart(change: ChangeRef, form: StartForm) { return this.ipc.invoke<StartOutcome>('sdlc_build_start', { change, form }); }
-  sdlcBuildContinue(change: ChangeRef, repo: string, off?: string[]) { return this.ipc.invoke<StartOutcome>('sdlc_build_continue', { change, repo, ...(off === undefined ? {} : { off }) }); }
+  sdlcBuildStart(change: ChangeRef, form: StartForm, evenIfElsewhere?: boolean) { return this.ipc.invoke<StartOutcome>('sdlc_build_start', { change, form, ...(evenIfElsewhere === true ? { evenIfElsewhere } : {}) }); }
+  sdlcBuildContinue(change: ChangeRef, repo: string, off?: string[], evenIfElsewhere?: boolean) { return this.ipc.invoke<StartOutcome>('sdlc_build_continue', { change, repo, ...(off === undefined ? {} : { off }), ...(evenIfElsewhere === true ? { evenIfElsewhere } : {}) }); }
   sdlcBuildState(change: ChangeRef) { return this.ipc.invoke<BuildState | null>('sdlc_build_state', { change }); }
   sdlcChangeKey(change: ChangeRef) { return this.ipc.invoke<ChangeKey>('sdlc_change_key', { change }); }
   sdlcBuildCancel(change: ChangeRef, repo: string | null) { return this.ipc.invoke<void>('sdlc_build_cancel', { change, repo }); }
@@ -189,6 +192,9 @@ export class TauriTransport extends KataTransport {
   sdlcDiffBase(repoPath: string) { return this.ipc.invoke<BaseInfo>('sdlc_diff_base', { repoPath }); }
   sdlcOldChecks(folder: string, systems: string[]) { return this.ipc.invoke<OldChecksNotice[]>('sdlc_old_checks', { folder, systems }); }
   sdlcOldChecksSeen(systems: string[]) { return this.ipc.invoke<void>('sdlc_old_checks_seen', { systems }); }
+  sdlcStartChecks(change: ChangeRef) { return this.ipc.invoke<StartChecks[]>('sdlc_start_checks', { change }); }
+  sdlcAcceptBaseCheck(change: ChangeRef, repo: string, check: string) { return this.ipc.invoke<BaselineApproved>('sdlc_accept_base_check', { change, repo, check }); }
+  sdlcRerunFinishChecks(change: ChangeRef, repo: string) { return this.ipc.invoke<RerunOutcome>('sdlc_rerun_finish_checks', { change, repo }); }
   sdlcChecksView(change: ChangeRef) { return this.ipc.invoke<RepoCheckView[]>('sdlc_checks_view', { change }); }
   sdlcDeclareDone(change: ChangeRef) { return this.ipc.invoke<DeclareView>('sdlc_declare_done', { change }); }
   sdlcPullRequestsView(folder: string, workspaceId: string, system: string, change: string, refresh: boolean) { return this.ipc.invoke<PullRequestsView>('sdlc_pull_requests_view', { folder, workspaceId, system, change, refresh }); }

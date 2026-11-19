@@ -1,0 +1,29 @@
+<hlm-dialog [state]="request() !== null ? 'open' : 'closed'" (stateChanged)="onState($event)">
+  <hlm-dialog-content *hlmDialogPortal="let ctx">
+    @if (request(); as req) {
+      <div hlmDialogTitle>This build may already be running</div>
+      <div hlmDialogDescription class="grid gap-3">
+        <p>
+          The workflow recorded the build of
+          @for (repo of req.repos; track repo; let last = $last) {
+            <span class="k-mono">{{ repo }}</span
+            >{{ last ? '' : ', ' }}
+          }
+          as started{{ at() === null ? '' : ' at ' + at() }}, with no finish since, and no run of it is open in this Workbench.
+        </p>
+        @if (req.runningCheck; as check) {
+          <p>
+            The build is running in another session now, on <span class="k-mono">{{ check }}</span
+            >. Two sessions in one copy mix their work in one branch.
+          </p>
+        } @else {
+          <p>The build may be running in another session. Two sessions in one copy mix their work in one branch, but starting is safe if that session crashed or was closed.</p>
+        }
+      </div>
+      <hlm-dialog-footer>
+        <button hlmBtn variant="ghost" size="sm" type="button" (click)="cancel.emit()">Cancel</button>
+        <button hlmBtn variant="danger" size="sm" type="button" (click)="confirm.emit()">Start anyway</button>
+      </hlm-dialog-footer>
+    }
+  </hlm-dialog-content>
+</hlm-dialog>

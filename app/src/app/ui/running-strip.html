@@ -20,14 +20,14 @@
 </ng-template>
 
 @if (all().length > 0) {
-  <div #strip class="k-running" role="group" aria-label="Running changes">
+  <div #strip class="k-running" role="group" aria-label="Changes with activity">
     <hlm-popover sideOffset="4" align="end">
       <button hlmPopoverTrigger hlmBtn variant="secondary" size="sm" type="button" class="k-running__all">{{ allLabel() }}</button>
       <hlm-popover-content *hlmPopoverPortal="let ctx" data-testid="running-all">
         <hlm-popover-header>
           <div hlmPopoverTitle>{{ allLabel() }}</div>
         </hlm-popover-header>
-        <ul class="k-running__all-list" aria-label="All running changes">
+        <ul class="k-running__all-list" aria-label="Changes with activity">
           @for (row of all(); track row.id) {
             <li data-testid="running-all-entry">
               <button hlmBtn variant="bare" size="bare" class="k-running__entry" type="button" [attr.title]="row.title" (click)="choose(row, row.direct)">

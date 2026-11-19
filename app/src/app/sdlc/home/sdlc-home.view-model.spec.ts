@@ -616,7 +616,7 @@ describe('SdlcHomeViewModel runs', () => {
 
   it('offers the light track only when the plugin is ready', async () => {
     const { vm, transport } = setup();
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.0.' });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.9.0.' });
     await vm.init();
     expect(vm.lightTrack()).toBe(false);
     vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', plugin: { dir: '/p', version: '1.0.0', layouts: [1] }, gh: 'present' });
@@ -865,9 +865,9 @@ describe('SdlcHomeViewModel plan notice (F20)', () => {
   it('says to update the plugin when it is too old', async () => {
     const { vm, transport } = setup();
     withUnreadablePlan(transport);
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.6.0.' });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.6.0.' });
     await vm.init();
-    expect(noticeOf(vm)?.text).toBe('The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.6.0.');
+    expect(noticeOf(vm)?.text).toBe('The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.6.0.');
   });
 
   it('says a plan could not be read when the plugin is usable but gave no reason', async () => {
@@ -898,7 +898,7 @@ describe('SdlcHomeViewModel workspace instructions', () => {
   it('reads the instructions state only when the plugin supports the light track', async () => {
     const { vm, transport } = setup();
     const read = vi.spyOn(transport, 'sdlcInstructions');
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.0.' });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.9.0.' });
     await vm.init();
     expect(read).not.toHaveBeenCalled();
     expect(vm.instructions()).toBeNull();
@@ -966,11 +966,11 @@ const stateOf = (change: string): ChangeState => ({
 const viewOf = (change: string, text: string, readiness: Readiness): ChangeView => ({
   state: stateOf(change),
   offer: { stage: 'spec-ready', label: { step: 'spec', text, tone: 'muted' }, actions: [] },
-  live: { runLive: false, buildStopped: false, buildLive: false },
+  live: { runLive: false, buildStopped: false, buildLive: false, stoppedHere: false },
   readiness,
 });
 const READY: Readiness = { kind: 'ready', plugin: { dir: '/p', version: '1.0.0', layouts: [1, 2] }, gh: 'present' };
-const BLOCKED: Readiness = { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.0.0 or later; this machine has 0.9.0.' };
+const BLOCKED: Readiness = { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs hoshin 1.1.0 or later; this machine has 0.9.0.' };
 /** The plugin's answer for a system with `n` changes, each labeled by the plugin with words of its own. */
 const systemViewOf = (n: number, readiness: Readiness = READY): SystemView => ({
   system: 'commerce',
@@ -1010,7 +1010,7 @@ describe('SdlcHomeViewModel changes list', () => {
     expect(vm.startChangeReason()).toBe(BLOCKED.message);
     vm.openNewChange();
     expect(vm.newChangeOpen()).toBe(false);
-    expect(toastText()).toContain('1.0.0');
+    expect(toastText()).toContain('1.1.0');
   });
 
   it('reads every system in one call and shows whether a change may start as the backend decided for the set (F11)', async () => {
@@ -1805,7 +1805,7 @@ describe('SdlcHomeViewModel master folder', () => {
 
 describe('New change and copy removal can be stopped', () => {
   const keyOf = (change: string, system = 'commerce'): ChangeKey => ({ workspace: { key: MOCK_WORKSPACE_FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system, change });
-  const progress = (label: string): StepProgress => ({ kind: 'repository', label, repo: null, check: null });
+  const progress = (label: string): StepProgress => ({ kind: 'repository', label, repo: null, check: null, phase: 'other' });
 
   /** The backend's step reports, pushed by hand, and Stop as a spy. */
   function steps(transport: MockTransport) {
@@ -1940,7 +1940,9 @@ describe('a start or a removal the backend runs is the home\'s, whoever started 
     change: keyOf(change, system),
     kind,
     doing: 'doing',
-    progress: { kind: 'repository', label, repo: null, check: null },
+    progress: { kind: 'repository', label, repo: null, check: null, phase: 'other' },
+    liveChecks: [],
+    stopQuestion: null,
   });
 
   it.each<[string, StepKind, string]>([

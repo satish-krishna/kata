@@ -12,6 +12,12 @@
   grid-row: 1;
 }
 
+.k-bp__checks {
+  max-height: 40vh;
+  overflow: auto;
+  padding: var(--space-3) var(--space-5);
+}
+
 .k-bp__held {
   grid-row: 3;
 }
@@ -24,6 +30,10 @@
   gap: var(--space-4);
   padding: var(--space-3) var(--space-5);
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.k-bp__outside {
+  color: var(--text-muted);
 }
 
 .k-bp__elapsed {
@@ -536,4 +546,10 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.k-bp__failure {
+  max-height: 60vh;
+  overflow: auto;
+  padding: var(--space-3) var(--space-5);
 }

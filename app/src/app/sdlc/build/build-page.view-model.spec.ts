@@ -15,9 +15,12 @@ import type { RoundPicks } from '@bindings/RoundPicks';
 import type { RoundPlan } from '@bindings/RoundPlan';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
+import type { BaseCheck } from '@bindings/BaseCheck';
+import type { StartChecks } from '@bindings/StartChecks';
 import type { StartForm } from '@bindings/StartForm';
 import type { StartOutcome } from '@bindings/StartOutcome';
 import type { RunningStep } from '@bindings/RunningStep';
+import type { RerunOutcome } from '@bindings/RerunOutcome';
 import type { StepEvent } from '@bindings/StepEvent';
 import type { TaskLink } from '@bindings/TaskLink';
 import { toastState } from '@spartan-ng/brain/sonner';
@@ -144,7 +147,7 @@ describe('the build page follows the build the backend hosts', () => {
     const progress = TestBed.inject(ProgressStore);
     const starting = s.vm.startBuild({ timeoutSecs: 60 });
     await advance(600);
-    expect(progress.view('build')()?.label).toBe('Checking the base before building');
+    expect(progress.view('build')()?.label).toBe('Checking the base');
     release();
     await starting;
     expect(progress.view('build')()).toBeNull();
@@ -158,7 +161,7 @@ describe('the build page follows the build the backend hosts', () => {
     void s.vm.startBuild({ timeoutSecs: 60 });
     await advance(60_000);
     const entry = progress.view('build')();
-    expect(entry?.label).toBe('Checking the base before building');
+    expect(entry?.label).toBe('Checking the base');
     expect(entry?.long).toBe(false);
   });
 
@@ -1233,8 +1236,10 @@ describe('the build page reads the backend\'s build and starts it through the ho
     await load();
     const problems = ['commerce-core: the plan is not accepted', 'customer-portal: uncommitted files: src/a.ts'];
     vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'refused', problems });
+    const toast = vi.spyOn(TestBed.inject(ToastStore), 'error');
     expect(await vm.startBuild({ timeoutSecs: 60 })).toBe('refused');
-    expect(vm.refusal()).toMatchObject({ problems });
+    await advance(200);
+    for (const p of problems) expect(toast.mock.calls[0][0]).toContain(p);
     expect(vm.view().held).toBeNull();
   });
 
@@ -1245,37 +1250,62 @@ describe('the build page reads the backend\'s build and starts it through the ho
       kind: 'failed',
       problems: ['hook deps failed with exit code 1'],
       hook: { id: 'deps', onFailure: 'stop', output: 'npm ci: lockfile out of date\n' },
+      needsApproval: [],
     });
+    const toast = vi.spyOn(TestBed.inject(ToastStore), 'error');
     expect(await vm.startBuild({ timeoutSecs: 60 })).toBe('failed');
-    expect(vm.refusal()).toEqual({ reason: "The team's hook deps failed", problems: ['hook deps failed with exit code 1', 'npm ci: lockfile out of date'] });
+    await advance(200);
+    expect(toast.mock.calls[0][0]).toContain("The team's hook deps failed\nhook deps failed with exit code 1\nnpm ci: lockfile out of date");
   });
 
   it("a step the machine could not run names the repository the plugin names (F3)", async () => {
     const { vm, transport, load } = await opened();
     await load();
     vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'couldNotRun', output: 'hook prep could not run', repo: 'commerce-core' });
+    const toast = vi.spyOn(TestBed.inject(ToastStore), 'error');
     expect(await vm.startBuild({ timeoutSecs: 60 })).toBe('couldNotRun');
-    expect(vm.refusal()).toEqual({ reason: "This machine could not run the plugin's step in commerce-core", problems: ['hook prep could not run'] });
+    await advance(200);
+    expect(toast.mock.calls[0][0]).toContain("This machine could not run the plugin's step in commerce-core\nhook prep could not run");
   });
 
   describe('the preparation message, by outcome and step', () => {
-    const cases: { name: string; outcome: StartOutcome; stopped: string | null; refusal: object | null }[] = [
-      { name: 'started', outcome: { kind: 'started', uncommitted: {} }, stopped: null, refusal: null },
-      { name: 'refused', outcome: { kind: 'refused', problems: ['kata: the plan is not accepted'] }, stopped: null, refusal: { reason: 'The plugin refused to start the build', problems: ['kata: the plan is not accepted'] } },
-      { name: 'failed', outcome: { kind: 'failed', problems: ['hook deps failed'], hook: { id: 'deps', onFailure: 'stop', output: 'boom' } }, stopped: null, refusal: { reason: "The team's hook deps failed", problems: ['hook deps failed', 'boom'] } },
-      { name: 'could not run', outcome: { kind: 'couldNotRun', output: 'no node', repo: null }, stopped: null, refusal: { reason: "This machine could not run the plugin's step", problems: ['no node'] } },
-      { name: 'stopped during the check of every repository', outcome: { kind: 'stopped', prepared: [] }, stopped: 'Preparation stopped', refusal: null },
-      { name: 'stopped during one repository', outcome: { kind: 'stopped', prepared: ['kata', 'bob'] }, stopped: 'Preparation stopped. Prepared: kata, bob', refusal: null },
+    const cases: { name: string; outcome: StartOutcome; stopped: string | null; toasted: string | null }[] = [
+      { name: 'started', outcome: { kind: 'started', uncommitted: {} }, stopped: null, toasted: null },
+      { name: 'refused', outcome: { kind: 'refused', problems: ['kata: the plan is not accepted'] }, stopped: null, toasted: 'The plugin refused to start the build\nkata: the plan is not accepted' },
+      { name: 'failed', outcome: { kind: 'failed', problems: ['hook deps failed'], hook: { id: 'deps', onFailure: 'stop', output: 'boom' }, needsApproval: [] }, stopped: null, toasted: "The team's hook deps failed\nhook deps failed\nboom" },
+      { name: 'could not run', outcome: { kind: 'couldNotRun', output: 'no node', repo: null }, stopped: null, toasted: "This machine could not run the plugin's step\nno node" },
+      { name: 'stopped during the check of every repository', outcome: { kind: 'stopped', prepared: [], note: null }, stopped: 'Preparation stopped', toasted: null },
+      { name: 'stopped during one repository', outcome: { kind: 'stopped', prepared: ['kata', 'bob'], note: null }, stopped: 'Preparation stopped. Prepared: kata, bob', toasted: null },
     ];
     for (const c of cases) {
       it(c.name, async () => {
         const { vm, transport, load } = await opened();
         await load();
         vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue(c.outcome);
+        const toast = vi.spyOn(TestBed.inject(ToastStore), 'error');
         expect(await vm.startBuild({ timeoutSecs: 60 })).toBe(c.outcome.kind);
+        await advance(200);
         expect(vm.stoppedNote()).toBe(c.stopped);
-        expect(vm.refusal()).toEqual(c.refusal);
+        if (c.toasted === null) expect(toast).not.toHaveBeenCalled();
+        else expect(toast.mock.calls[0][0]).toContain(c.toasted);
         expect(vm.preparing()).toBe(false);
+      });
+    }
+  });
+
+  describe('a stop during the checks says where the copy was left r10.2', () => {
+    const NOTE = "The copy may stay on the base commit. Your work is safe on the change's branch, and the next start puts it back first.";
+    for (const c of [
+      { name: 'the note from the backend follows the stopped message', note: NOTE as string | null, expected: `Preparation stopped. ${NOTE}` },
+      { name: 'no note leaves the stopped message alone', note: null, expected: 'Preparation stopped' },
+    ]) {
+      it(c.name, async () => {
+        const { vm, transport, load } = await opened();
+        await load();
+        vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'stopped', prepared: [], note: c.note });
+        expect(await vm.startBuild({ timeoutSecs: 60 })).toBe('stopped');
+        await advance(200);
+        expect(vm.stoppedNote()).toBe(c.expected);
       });
     }
   });
@@ -1295,7 +1325,7 @@ describe('the build page reads the backend\'s build and starts it through the ho
     const starting = vm.startBuild({ timeoutSecs: 60 });
     await advance(100);
     expect(vm.preparing()).toBe(true);
-    const progress = { kind: 'repository' as const, label: 'Preparing kata: running base-tests', repo: 'kata', check: 'base-tests' };
+    const progress = { kind: 'repository' as const, label: 'Preparing kata: running base-tests', repo: 'kata', check: 'base-tests', phase: 'other' as const };
     push({ change: keyOf('2026-01-01-other'), kind: 'preparingBuild', progress });
     expect(update).not.toHaveBeenCalled();
     push({ change: { ...keyOf(MOCK_BUILD_CHANGE), system: 'other-system' }, kind: 'preparingBuild', progress });
@@ -1304,7 +1334,7 @@ describe('the build page reads the backend\'s build and starts it through the ho
     expect(update).toHaveBeenCalledWith('Preparing kata: running base-tests', 'build');
     await vm.stopPreparing();
     expect(stop).toHaveBeenCalledWith(REF);
-    release({ kind: 'stopped', prepared: [] });
+    release({ kind: 'stopped', prepared: [], note: null });
     await starting;
     expect(vm.preparing()).toBe(false);
   });
@@ -1314,7 +1344,9 @@ describe('the build page reads the backend\'s build and starts it through the ho
       change: keyOf(change),
       kind: 'preparingBuild',
       doing: 'preparing',
-      progress: { kind: 'repository', label: 'Preparing commerce-core: running base-tests', repo: 'commerce-core', check: 'base-tests' },
+      progress: { kind: 'repository', label: 'Preparing commerce-core: running base-tests', repo: 'commerce-core', check: 'base-tests', phase: 'other' },
+      liveChecks: [],
+      stopQuestion: null,
     });
 
     it('a page opened while the preparation runs shows it and offers Stop, which stops that change (R6.1)', async () => {
@@ -1367,6 +1399,29 @@ describe('the build page reads the backend\'s build and starts it through the ho
       await advance(100);
       expect(vm.preparing()).toBe(false);
     });
+  });
+
+  // R7.2: a rerun of the checks at finish names the running check as R2 does, in the backend's words.
+  it('a rerun at finish names the running check r7.2', async () => {
+    const { vm, transport, load } = await opened();
+    const rerun: RunningStep = {
+      change: keyOf(MOCK_BUILD_CHANGE),
+      kind: 'rerunningFinishChecks',
+      doing: 'running its checks again',
+      progress: { kind: 'hook', label: 'Running the checks again: running app-unit', repo: 'commerce-core', check: 'app-unit', phase: 'finishCheck' },
+      liveChecks: [],
+      stopQuestion: null,
+    };
+    vi.spyOn(transport, 'steps').mockResolvedValue([rerun]);
+    let release!: (o: RerunOutcome) => void;
+    vi.spyOn(transport, 'sdlcRerunFinishChecks').mockReturnValue(new Promise<RerunOutcome>((resolve) => (release = resolve)));
+    await load();
+    const running = vm.rerunFinish('commerce-core');
+    await advance(1000);
+    expect(vm.preparing()).toBe(true);
+    expect(TestBed.inject(ProgressStore).view('build')()?.label).toBe('Running the checks again: running app-unit');
+    release({ kind: 'stopped' });
+    await running;
   });
 
   it('the round dialog shows the backend\'s plan for the picks', async () => {
@@ -1916,5 +1971,182 @@ describe('the build page of a single-repo change', () => {
     expect(s.vm.oneAtATime()).toBe(false);
     await s.load({ ...SINGLE_CTX, layout: 'single-repo' });
     expect(s.vm.oneAtATime()).toBe(true);
+  });
+});
+
+describe('a start that stopped on the base is shown on the page, once', () => {
+  const failing = (name: string): BaseCheck => ({ check: name, state: 'failed', exitCode: 101, output: 'boom', lineCount: 1, canAccept: true, accepted: false, startedAt: null, endedAt: null });
+  const stoppedStart = (): StartChecks => ({ repo: 'commerce-core', shown: { kind: 'baseFailure' }, base: '3c504eb', checks: [failing('app-speed')], passed: 0, setupHint: false, startHeld: 'Accept or fix the failing checks first', finish: null, elsewhere: false, listed: null, outside: null });
+  const refused: StartOutcome = { kind: 'failed', problems: ['app-speed failed on the base'], hook: null, needsApproval: ['app-speed'] };
+
+  async function failedStart() {
+    const s = await opened(setup());
+    const reads = vi.spyOn(s.transport, 'sdlcStartChecks').mockResolvedValue([stoppedStart()]);
+    vi.spyOn(s.transport, 'sdlcBuildStart').mockResolvedValue(refused);
+    const toast = vi.spyOn(TestBed.inject(ToastStore), 'error');
+    await s.load();
+    expect(await s.vm.startBuild({ timeoutSecs: 60 })).toBe('failed');
+    await advance(200);
+    return { ...s, reads, toast };
+  }
+
+  it('shows the failure on the page and opens no dialog and no toast r4.1', async () => {
+    const { vm, toast } = await failedStart();
+    expect(vm.view().failures?.map((f) => [f.start.repo, f.start.shown.kind])).toEqual([['commerce-core', 'baseFailure']]);
+    expect(toast).not.toHaveBeenCalled();
+    expect(vm.acceptRequest()).toBeNull();
+  });
+
+  it('holds Start build with the reason the backend gave r6.2', async () => {
+    const { vm } = await failedStart();
+    expect(vm.view().startHold).toBe('Accept or fix the failing checks first');
+  });
+
+  it('asks once more, naming the check and the base commit r5.1', async () => {
+    const { vm, transport } = await failedStart();
+    const accept = vi.spyOn(transport, 'sdlcAcceptBaseCheck');
+    vm.askAccept('commerce-core', 'app-speed');
+    expect(vm.acceptRequest()).toEqual({ repo: 'commerce-core', check: 'app-speed', base: '3c504eb' });
+    expect(accept).not.toHaveBeenCalled();
+  });
+
+  it('records the acceptance with the workflow when confirmed and reads the checks again r5.2', async () => {
+    const { vm, transport, reads } = await failedStart();
+    const accept = vi.spyOn(transport, 'sdlcAcceptBaseCheck').mockResolvedValue({ approved: { hook: 'app-speed', base: '3c504eb' }, problems: [] });
+    const before = reads.mock.calls.length;
+    vm.askAccept('commerce-core', 'app-speed');
+    await vm.confirmAccept();
+    await advance(200);
+    expect(accept).toHaveBeenCalledWith(REF, 'commerce-core', 'app-speed');
+    expect(vm.acceptRequest()).toBeNull();
+    expect(reads.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  it('records nothing when cancelled r5.3', async () => {
+    const { vm, transport } = await failedStart();
+    const accept = vi.spyOn(transport, 'sdlcAcceptBaseCheck');
+    vm.askAccept('commerce-core', 'app-speed');
+    vm.cancelAccept();
+    expect(vm.acceptRequest()).toBeNull();
+    expect(accept).not.toHaveBeenCalled();
+    expect(vm.view().failures?.[0].refusal).toBeNull();
+  });
+
+  it("shows the workflow's refusal as it is and does not mark the check r5.6", async () => {
+    const { vm, transport } = await failedStart();
+    vi.spyOn(transport, 'sdlcAcceptBaseCheck').mockResolvedValue({ approved: null, problems: ['the base moved since the checks ran'] });
+    vm.askAccept('commerce-core', 'app-speed');
+    await vm.confirmAccept();
+    await advance(200);
+    expect(vm.acceptRequest()).toBeNull();
+    expect(vm.view().failures?.[0].refusal).toEqual({ repo: 'commerce-core', check: 'app-speed', problems: ['the base moved since the checks ran'] });
+    expect(vm.view().failures?.[0].start.checks[0].accepted).toBe(false);
+  });
+});
+
+describe('accept is off while the build is being prepared (R11.1)', () => {
+  const failing = (name: string): BaseCheck => ({ check: name, state: 'failed', exitCode: 101, output: 'boom', lineCount: 1, canAccept: true, accepted: false, startedAt: null, endedAt: null });
+  const stoppedStart = (): StartChecks => ({ repo: 'commerce-core', shown: { kind: 'baseFailure' }, base: '3c504eb', checks: [failing('app-speed')], passed: 0, setupHint: false, startHeld: 'Accept or fix the failing checks first', finish: null, elsewhere: false, listed: null, outside: null });
+  const step = (kind: RunningStep['kind']): RunningStep => ({
+    change: keyOf(MOCK_BUILD_CHANGE),
+    kind,
+    doing: 'preparing',
+    progress: { kind: 'repository', label: 'Preparing commerce-core: running base-tests', repo: 'commerce-core', check: 'base-tests', phase: 'other' },
+    liveChecks: [],
+    stopQuestion: null,
+  });
+
+  async function withStep(running: RunningStep[]) {
+    const s = await opened(setup());
+    vi.spyOn(s.transport, 'sdlcStartChecks').mockResolvedValue([stoppedStart()]);
+    vi.spyOn(s.transport, 'steps').mockResolvedValue(running);
+    let ended: (c: ChangeKey) => void = () => undefined;
+    vi.spyOn(s.transport, 'onStepEnd').mockImplementation(async (cb) => {
+      ended = cb;
+      return () => undefined;
+    });
+    await s.load();
+    await advance(1000);
+    return { ...s, end: () => ended(keyOf(MOCK_BUILD_CHANGE)) };
+  }
+
+  it('accept is off while the build is being prepared r11.1', async () => {
+    const { vm, transport, end } = await withStep([step('preparingBuild')]);
+    const accept = vi.spyOn(transport, 'sdlcAcceptBaseCheck');
+    expect(vm.preparing()).toBe(true);
+    expect(vm.view().failures?.map((f) => f.start.repo)).toEqual(['commerce-core']);
+    expect(vm.view().failures?.[0].acceptOff).toBe('The build is being prepared');
+    vm.askAccept('commerce-core', 'app-speed');
+    expect(vm.acceptRequest()).toBeNull();
+    expect(accept).not.toHaveBeenCalled();
+    end();
+    await advance(100);
+    expect(vm.view().failures?.[0].acceptOff).toBeNull();
+  });
+
+  it('a rerun at finish does not turn accept off r11.1', async () => {
+    const { vm } = await withStep([step('rerunningFinishChecks')]);
+    expect(vm.view().failures?.[0].acceptOff).toBeNull();
+  });
+});
+
+describe('the checks list takes the backend decision on where the checks run', () => {
+  const running = (name: string): BaseCheck => ({ check: name, state: 'running', exitCode: null, output: '', lineCount: 0, canAccept: false, accepted: false, startedAt: '2026-11-16T10:00:00.000Z', endedAt: null });
+  const read = (kind: 'underWay' | 'startable', elsewhere: boolean, listed: StartChecks['listed'] = elsewhere ? 'elsewhere' : null): StartChecks => ({ repo: 'commerce-core', shown: { kind }, base: '3c504eb', checks: [running('app-speed')], passed: 0, setupHint: false, startHeld: null, finish: null, elsewhere, listed, outside: null });
+
+  async function readAs(...answer: StartChecks[]) {
+    const s = await opened(setup());
+    vi.spyOn(s.transport, 'sdlcStartChecks').mockResolvedValue(answer);
+    await s.load();
+    await advance(200);
+    return s;
+  }
+
+  it('the listed repository comes from the backend r2.5', async () => {
+    // Both repositories run their checks in another session; the backend lists the second, so the page does.
+    const { vm } = await readAs(read('startable', true, null), { ...read('startable', true, 'elsewhere'), repo: 'commerce-web', base: '9f1e2d3' });
+    const shown = vm.view().baseChecks;
+    expect(shown?.repo).toBe('commerce-web');
+    expect(shown?.base).toBe('9f1e2d3');
+    expect(shown?.elsewhere).toBe(true);
+  });
+
+  it('a rerun at finish shows no stale checks on the base', async () => {
+    const s = await opened(setup());
+    const passed: BaseCheck = { check: 'app-speed', state: 'passed', exitCode: 0, output: '', lineCount: 0, canAccept: false, accepted: false, startedAt: null, endedAt: null };
+    const finishFailure: StartChecks = { repo: 'commerce-core', shown: { kind: 'finishFailure' }, base: '', checks: [passed], passed: 1, setupHint: false, startHeld: null, finish: { check: 'app-speed', base: 'passed', output: 'boom', passed: 0, next: 'stopped', canAccept: false }, elsewhere: false, listed: null, outside: null };
+    vi.spyOn(s.transport, 'sdlcStartChecks').mockResolvedValue([finishFailure]);
+    const rerun: RunningStep = {
+      change: keyOf(MOCK_BUILD_CHANGE),
+      kind: 'rerunningFinishChecks',
+      doing: 'running its checks again',
+      progress: { kind: 'hook', label: 'Running the checks again: running app-speed', repo: 'commerce-core', check: 'app-speed', phase: 'finishCheck' },
+      liveChecks: [],
+      stopQuestion: null,
+    };
+    vi.spyOn(s.transport, 'steps').mockResolvedValue([rerun]);
+    await s.load();
+    await advance(1000);
+    expect(s.vm.preparing()).toBe(true);
+    expect(s.vm.view().baseChecks ?? null).toBeNull();
+  });
+
+  it('an under way build started elsewhere says so r8.2', async () => {
+    const outside = { at: '2026-11-16T14:54:00.000Z', words: 'May have been started outside this Workbench' };
+    const { vm } = await readAs({ ...read('underWay', false), checks: [], outside });
+    expect(vm.view().outside).toEqual([{ repo: 'commerce-core', ...outside }]);
+    expect(vm.view().baseChecks ?? null).toBeNull();
+  });
+
+  it('an underway build of this Workbench shows no checks from another session r2.5', async () => {
+    const { vm } = await readAs(read('underWay', false));
+    expect(vm.view().baseChecks ?? null).toBeNull();
+  });
+
+  it('checks running in another session show as last read r2.5', async () => {
+    const { vm } = await readAs(read('startable', true));
+    const shown = vm.view().baseChecks;
+    expect(shown?.elsewhere).toBe(true);
+    expect(shown?.checks.map((c) => [c.check, c.state])).toEqual([['app-speed', 'running']]);
   });
 });

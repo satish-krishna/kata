@@ -190,7 +190,7 @@ export const MOCK_COPY_CHANGE = '2026-11-02-copy-only';
 export const MOCK_COPY_FIX = '2026-11-02-copy-fix';
 export const MOCK_DONE_CHANGE = '2026-10-18-photo-limits-shipped';
 /** The version the demo's `hoshin` plugin reports. */
-export const MOCK_PLUGIN_VERSION = '1.0.0';
+export const MOCK_PLUGIN_VERSION = '1.1.0';
 /** A fix awaiting acceptance: the light track's three documents are drafted. */
 export const MOCK_FIX_CHANGE = '2026-10-22-photo-retry-fix';
 /** A fix that was rejected, so it is closed. */
@@ -710,7 +710,7 @@ export function changeViewOf(
   refused: Partial<Record<StageAction, string>> = {},
   copy: string | null = null,
 ): ChangeView {
-  const live: LiveFacts = { runLive: false, buildStopped: false, buildLive: false };
+  const live: LiveFacts = { runLive: false, buildStopped: false, buildLive: false, stoppedHere: false };
   // A fix stands at the row of its own table whatever its plan reads as; only the full pipeline has a stage for an unreadable plan.
   const shown: ChangeInfo = c.plan_unreadable && c.track !== 'fix' ? { ...c, stage: 'plan-unreadable' } : c;
   const stop = refused['start-build'] ?? refused['continue-build'] ?? null;
@@ -1443,11 +1443,11 @@ export class SdlcMock {
   declareDone(_changeName: string): { view: DeclareView; steps: StepProgress[] } {
     // What the plugin's --stream prints is a hook-start and a hook-end for each team check, so the mock reports the step, then a check, worded
     // as the backend words it ("<step>: <check line>"); the plugin prints nothing for a push or a pull request.
-    const verifying: StepProgress = { kind: 'verifying', label: 'Declaring the change done', repo: null, check: null };
+    const verifying: StepProgress = { kind: 'verifying', label: 'Declaring the change done', repo: null, check: null, phase: 'other' };
     const reported: StepProgress[] = [
       verifying,
-      { kind: 'hook', label: 'Declaring the change done: running base-tests', repo: null, check: 'base-tests' },
-      { kind: 'hook', label: 'Declaring the change done: base-tests passed', repo: null, check: 'base-tests' },
+      { kind: 'hook', label: 'Declaring the change done: running base-tests', repo: null, check: 'base-tests', phase: 'other' },
+      { kind: 'hook', label: 'Declaring the change done: base-tests passed', repo: null, check: 'base-tests', phase: 'other' },
     ];
     const link = (repo: string, number: number) => ({ repo, url: prUrl(repo), number, source: 'plugin' as const });
     switch (this.demo) {

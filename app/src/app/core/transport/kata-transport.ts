@@ -44,6 +44,9 @@ import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
+import type { BaselineApproved } from '@bindings/BaselineApproved';
+import type { RerunOutcome } from '@bindings/RerunOutcome';
+import type { StartChecks } from '@bindings/StartChecks';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { DeclareView } from '@bindings/DeclareView';
 import type { RunningStep } from '@bindings/RunningStep';
@@ -115,9 +118,9 @@ export abstract class KataTransport {
   /** Start a document run (intent, spec, plan, triage or fix) of a change that exists. The backend composes the run-spec with the change's deny rules and claims the change's own lane. Resolves to the run id. */
   abstract sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm): Promise<string>;
   /** Start a change's build; nothing starts unless every repository it needs is free. */
-  abstract sdlcBuildStart(change: ChangeRef, form: StartForm): Promise<StartOutcome>;
+  abstract sdlcBuildStart(change: ChangeRef, form: StartForm, evenIfElsewhere?: boolean): Promise<StartOutcome>;
   /** Continue a change's build in one repository. */
-  abstract sdlcBuildContinue(change: ChangeRef, repo: string, off?: string[]): Promise<StartOutcome>;
+  abstract sdlcBuildContinue(change: ChangeRef, repo: string, off?: string[], evenIfElsewhere?: boolean): Promise<StartOutcome>;
   /** Where a change's build stands, or null when this session hosts no build of it. */
   abstract sdlcBuildState(change: ChangeRef): Promise<BuildState | null>;
   /** The key the backend gives the change, which its build announcements carry. */
@@ -261,6 +264,12 @@ export abstract class KataTransport {
   abstract sdlcDiffBase(repoPath: string): Promise<BaseInfo>;
   /** What each repository of the change's checks came to, as the plugin recorded it. */
   abstract sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]>;
+  /** Each repository's start and its checks on the base, as the plugin's ledger and hook list read now (R2.4, R2.5). */
+  abstract sdlcStartChecks(change: ChangeRef): Promise<StartChecks[]>;
+  /** Accept one failing check of a repository for this change, through the workflow; its answer is the approval or its problems as they are (R5.2, R5.6). */
+  abstract sdlcAcceptBaseCheck(change: ChangeRef, repo: string, check: string): Promise<BaselineApproved>;
+  /** Run the checks of a repository's build finish again on the change, through the workflow; the base results are not touched (R7.2). */
+  abstract sdlcRerunFinishChecks(change: ChangeRef, repo: string): Promise<RerunOutcome>;
   /** The old per-machine checks files of the systems the engineer has not been told about yet, in the order asked; empty when none. */
   abstract sdlcOldChecks(folder: string, systems: string[]): Promise<OldChecksNotice[]>;
   /** Record that the engineer has been told about the old checks files of these systems. */

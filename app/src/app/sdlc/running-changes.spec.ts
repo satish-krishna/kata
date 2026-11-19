@@ -38,7 +38,7 @@ const working = (change: ChangeKey, run: number): RunningEntry => ({
   repo: 'kata',
   run,
 });
-const strip = (...entries: RunningEntry[]): Strip => ({ shown: entries.slice(0, 3), all: entries });
+const strip = (...entries: RunningEntry[]): Strip => ({ shown: entries.slice(0, 3), all: entries, counts: { running: entries.filter((e) => e.state === 'working').length, needsYou: entries.filter((e) => e.state === 'needsAnswer').length, waiting: 0, finished: 0 } });
 
 /** A transport that reports a strip, and reports the next one when the test says the backend did. */
 class FakeTransport {
@@ -196,7 +196,7 @@ describe('RunningChanges', () => {
     const entries = [asking(A, 'Which branch?'), working(B, 3), working(key('c-three'), 4), working(key('c-four'), 5), working(key('c-five', 'bob'), 6)];
     const { container, fixture } = await mount(strip(...entries));
     expect(container.querySelectorAll('[data-testid="running-entry"]')).toHaveLength(3);
-    const all = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b).includes('All running (5)'))!;
+    const all = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b).includes('4 running · 1 needs you'))!;
     all.click();
     await settle();
     fixture.detectChanges();

@@ -77,6 +77,9 @@ const rows: Row[] = [
   ['sdlcBuildStart', (t) => t.sdlcBuildStart(change, { timeoutSecs: 600 }), 'sdlc_build_start', { change, form: { timeoutSecs: 600 } }],
   ['sdlcBuildContinue', (t) => t.sdlcBuildContinue(change, 'kata'), 'sdlc_build_continue', { change, repo: 'kata' }],
   ['sdlcBuildContinue with choices', (t) => t.sdlcBuildContinue(change, 'kata', ['personal:plugin:x']), 'sdlc_build_continue', { change, repo: 'kata', off: ['personal:plugin:x'] }],
+  ['sdlcBuildStart even if elsewhere', (t) => t.sdlcBuildStart(change, { timeoutSecs: 600 }, true), 'sdlc_build_start', { change, form: { timeoutSecs: 600 }, evenIfElsewhere: true }],
+  ['sdlcBuildContinue even if elsewhere', (t) => t.sdlcBuildContinue(change, 'kata', undefined, true), 'sdlc_build_continue', { change, repo: 'kata', evenIfElsewhere: true }],
+  ['sdlcBuildContinue with choices even if elsewhere', (t) => t.sdlcBuildContinue(change, 'kata', ['x'], true), 'sdlc_build_continue', { change, repo: 'kata', off: ['x'], evenIfElsewhere: true }],
   ['sdlcBuildState', (t) => t.sdlcBuildState(change), 'sdlc_build_state', { change }],
   ['sdlcChangeKey', (t) => t.sdlcChangeKey(change), 'sdlc_change_key', { change }],
   ['sdlcBuildCancel one run', (t) => t.sdlcBuildCancel(change, 'kata'), 'sdlc_build_cancel', { change, repo: 'kata' }],
@@ -141,6 +144,9 @@ const rows: Row[] = [
   ['sdlcDiffPair', (t) => t.sdlcDiffPair('/r', 'committed', 'a.ts'), 'sdlc_diff_pair', { repoPath: '/r', part: 'committed', path: 'a.ts' }],
   ['sdlcDiffBase', (t) => t.sdlcDiffBase('/r'), 'sdlc_diff_base', { repoPath: '/r' }],
   ['sdlcAppRows', (t) => t.sdlcAppRows('/w', 's'), 'sdlc_app_rows', { folder: '/w', system: 's' }],
+  ['sdlcStartChecks', (t) => t.sdlcStartChecks(change), 'sdlc_start_checks', { change }],
+  ['sdlcAcceptBaseCheck', (t) => t.sdlcAcceptBaseCheck(change, 'r', 'app-speed'), 'sdlc_accept_base_check', { change, repo: 'r', check: 'app-speed' }],
+  ['sdlcRerunFinishChecks', (t) => t.sdlcRerunFinishChecks(change, 'r'), 'sdlc_rerun_finish_checks', { change, repo: 'r' }],
   ['sdlcChecksView', (t) => t.sdlcChecksView(change), 'sdlc_checks_view', { change }],
   ['sdlcOldChecks', (t) => t.sdlcOldChecks('/w', ['s', 't']), 'sdlc_old_checks', { folder: '/w', systems: ['s', 't'] }],
   ['sdlcOldChecksSeen', (t) => t.sdlcOldChecksSeen(['s']), 'sdlc_old_checks_seen', { systems: ['s'] }],
@@ -224,14 +230,14 @@ describe('TauriTransport', () => {
     await t.onStep((step) => seen.push(step));
     const [event, handler] = ipc.listen.mock.calls[0] as unknown as [string, (e: { payload: StepEvent }) => void];
     expect(event).toBe('sdlc://step');
-    const payload: StepEvent = { change: { workspace: { key: 'w', name: 'w' }, system: 's', change: 'c' }, kind: 'declaringDone', progress: { kind: 'push', label: 'Pushing commerce-core', repo: 'commerce-core', check: null } };
+    const payload: StepEvent = { change: { workspace: { key: 'w', name: 'w' }, system: 's', change: 'c' }, kind: 'declaringDone', progress: { kind: 'push', label: 'Pushing commerce-core', repo: 'commerce-core', check: null, phase: 'other' } };
     handler({ payload });
     expect(seen).toEqual([payload]);
   });
 
   it.each([
     ['onBuildState', 'sdlc://build', { change: { workspace: { key: 'w', name: 'w' }, system: 's', change: 'c' }, state: { phase: 'building', going: [], stopped: {}, rounds: {}, waiting: [], report: null, appTurn: null }, reviewWaiting: [], runs: [] } as BuildEvent],
-    ['onRunning', 'sdlc://running', { shown: [], all: [] } as RunningStrip],
+    ['onRunning', 'sdlc://running', { shown: [], all: [], counts: { running: 0, needsYou: 0, waiting: 0, finished: 0 } } as RunningStrip],
     ['onCloseAsked', 'sdlc://close-asked', { type: 'ask', running: [{ change: 'c', what: 'building in kata' }] } as CloseOutcome],
   ] as const)('%s hands the payload of %s over as it is', async (method, channel, payload) => {
     const ipc = fakeIpc();

@@ -1,8 +1,11 @@
 import { Injector, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { ToastStore } from '../../core/toast/toast.store';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import type { ChangeInfo } from '../../lib/sdlc-mock-types';
 import type { AcceptOutcome } from '@bindings/AcceptOutcome';
+import type { BaseCheck } from '@bindings/BaseCheck';
+import type { StartChecks } from '@bindings/StartChecks';
 import type { ChangeKey } from '@bindings/ChangeKey';
 import type { CopyRemoval } from '@bindings/CopyRemoval';
 import type { DeclareView } from '@bindings/DeclareView';
@@ -32,7 +35,7 @@ import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/g
 import { safetyRules, type StageAction } from '../../lib/sdlc';
 import { MOCK_BUILD_CHANGE, MOCK_COPY_CHANGE, MOCK_COPY_FIX, MOCK_DONE_CHANGE, MOCK_NOT_LISTED, MOCK_REFUSED_CHANGE, MOCK_SINGLE_CHANGE, MOCK_SINGLE_SYSTEM, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
-import { ChangePageViewModel } from './change-page.view-model';
+import { ChangePageViewModel, WindowFocus } from './change-page.view-model';
 
 /** Hold the lock the way Kata's own checks do, and never finish: the screen stays locked for the rest of the test. */
 const holdLock = (lock: LockStore): void => void lock.runSteps('Checking', [{ label: 'Check', run: () => new Promise<string | null>(() => undefined) }]);
@@ -692,8 +695,9 @@ describe('ChangePageViewModel', () => {
       await settleBuild();
     });
 
-    it('a refusal by the plugin lists its problems for every repository, starts nothing and leaves the tab alone (R8.1)', async () => {
+    it('a refusal by the plugin says its problems for every repository in a toast, starts nothing and leaves the tab alone (R8.1)', async () => {
       const { vm, transport, preview } = setup(BUILD, new MockTransport(), 'real');
+      const toast = vi.spyOn(TestBed.inject(ToastStore), 'error');
       const problems = ['commerce-core: a build log does not pass the check', 'customer-portal: uncommitted files: a.txt'];
       vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'refused', problems });
       await ready(vm);
@@ -701,11 +705,10 @@ describe('ChangePageViewModel', () => {
       await vm.act('start-build');
       await previewReady(preview);
       preview.start();
-      await vi.waitFor(() => expect(build().refusal()).toMatchObject({ problems }));
+      await vi.waitFor(() => expect(toast).toHaveBeenCalled());
+      for (const p of problems) expect(toast.mock.calls[0][0]).toContain(p);
       expect(build().started()).toBe(false);
       expect(vm.shownDoc()).toBe(tab);
-      build().closeRefusal();
-      expect(build().refusal()).toBeNull();
     });
 
     it('names the workspace, folder, system, change and every product repository of the system for the build view (R18.5)', async () => {
@@ -1692,6 +1695,41 @@ describe('ChangePageViewModel: the change copy', () => {
     await vi.waitFor(() => expect(mark).toHaveBeenCalledWith(REF));
   });
 
+  // R14.1, the rows on the change's own page; on another page this page is not shown and calls nothing.
+  describe('a run that ends on its page counts as seen when focused r14.1', () => {
+    const runEnds = async (focused: boolean) => {
+      const transport = new MockTransport();
+      const mark = vi.spyOn(transport, 'sdlcMarkOpened');
+      const { vm, runAgent } = setup(PHOTOS_CHANGE, transport);
+      runAgent.mockRestore();
+      vi.spyOn(TestBed.inject(WindowFocus), 'has').mockReturnValue(focused);
+      await ready(vm);
+      await vi.waitFor(() => expect(mark).toHaveBeenCalledTimes(1));
+      mark.mockClear();
+      const runs = TestBed.inject(ChangeRunStore);
+      const key = changeRunKey(REF);
+      void vm.act('start-spec');
+      await vi.waitFor(() => expect(runs.session(key)?.runId).toBeTruthy());
+      const id = runs.session(key)!.runId!;
+      (transport as unknown as { emit(id: string, ev: unknown): void }).emit(id, { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 1, cost_usd: 0, duration_ms: 1, result: 'done' });
+      await vi.waitFor(() => expect(runs.session(key)?.finished).not.toBeNull());
+      TestBed.tick();
+      return { vm, mark };
+    };
+
+    it('on that change\'s page with focus: seen at once', async () => {
+      const { mark } = await runEnds(true);
+      await vi.waitFor(() => expect(mark).toHaveBeenCalledWith(REF));
+    });
+
+    it('on that change\'s page without focus: not seen until the window regains focus', async () => {
+      const { vm, mark } = await runEnds(false);
+      expect(mark).not.toHaveBeenCalled();
+      vm.windowFocused();
+      await vi.waitFor(() => expect(mark).toHaveBeenCalledWith(REF));
+    });
+  });
+
   it('Open folder opens the change copy folder through the backend', async () => {
     const { transport, opened } = inCopy({ outcome: 'notOffered' });
     const { vm } = setup(PHOTOS_CHANGE, transport);
@@ -1953,7 +1991,7 @@ describe('each long step shows Stop and says it was stopped', () => {
   const REF = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: PHOTOS_CHANGE };
   const keyOf = (change: string, system = 'commerce'): ChangeKey => ({ workspace: { key: MOCK_WORKSPACE_FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system, change });
   const pr = (repo: string): RecordedPullRequest => ({ repo, url: `https://github.com/acme/${repo}/pull/1`, number: 1, source: 'plugin' });
-  const progress = (label: string): StepProgress => ({ kind: 'repository', label, repo: null, check: null });
+  const progress = (label: string): StepProgress => ({ kind: 'repository', label, repo: null, check: null, phase: 'other' });
 
   /** A call the test releases when it likes, and the backend's step reports the test pushes by hand. */
   function hold<T>(transport: MockTransport) {
@@ -2119,7 +2157,9 @@ describe('a step the backend runs is the page\x27s, whoever started it (F3, F5)'
     change: keyOf(change),
     kind: { accepting: 'spec' },
     doing: 'accepting its spec',
-    progress: { kind: 'verifying', label: 'Accepting the spec: running docs-lint', repo: null, check: 'docs-lint' },
+    progress: { kind: 'verifying', label: 'Accepting the spec: running docs-lint', repo: null, check: 'docs-lint', phase: 'other' },
+    liveChecks: [],
+    stopQuestion: null,
   });
 
   it('a page opened while the spec is being accepted shows the label and Stop, and Stop stops that change', async () => {
@@ -2266,5 +2306,73 @@ describe('ChangePageViewModel: the run pane shows only the run in front of it (R
     expect(JSON.stringify(again.events())).not.toContain(EARLIER_SAYS);
     expect(again.events().slice(0, whole.length)).toEqual(whole.slice(0, again.events().length));
     TestBed.inject(ChangeRunStore).cancel(KEY);
+  });
+});
+
+// R8: the change page reads where the change stands on opening, after any action and when the window regains focus.
+describe('the change page reads where the change stands again', () => {
+  const check = (name: string, state: BaseCheck['state']): BaseCheck => ({ check: name, state, exitCode: state === 'failed' ? 1 : null, output: 'boom', lineCount: 1, canAccept: state === 'failed', accepted: false, startedAt: null, endedAt: null });
+  const stopped = (): StartChecks[] => [{ repo: 'kata', shown: { kind: 'baseFailure' }, base: '3c504eb', checks: [check('app-speed', 'failed')], passed: 0, setupHint: false, startHeld: 'Accept or fix the failing checks first', finish: null, elsewhere: false, listed: null, outside: null }];
+  // R8.2's Given: the build is under way, its checks on the base ended, and it was not started here.
+  const outside = { at: '2026-11-16T14:54:00.000Z', words: 'May have been started outside this Workbench' };
+  const underWay = (): StartChecks[] => [{ repo: 'kata', shown: { kind: 'underWay' }, base: '', checks: [check('app-speed', 'passed')], passed: 1, setupHint: false, startHeld: null, finish: null, elsewhere: false, listed: null, outside }];
+
+  it('a failure the change no longer holds is cleared on focus r8.2', async () => {
+    const transport = new MockTransport();
+    const reads = vi.spyOn(transport, 'sdlcStartChecks').mockResolvedValue(stopped());
+    const { vm } = setup(MOCK_BUILD_CHANGE, transport);
+    await ready(vm);
+    const build = TestBed.inject(BuildPageViewModel);
+    await vi.waitFor(() => expect(build.view().failures?.map((f) => f.start.shown.kind)).toEqual(['baseFailure']));
+    const before = reads.mock.calls.length;
+    // Since then the check was accepted and the build started from a Claude Code session in the change's copy, and is under way.
+    reads.mockResolvedValue(underWay());
+    vm.windowFocused();
+    await vi.waitFor(() => expect(build.view().failures).toEqual([]));
+    expect(reads.mock.calls.length).toBeGreaterThan(before);
+    // The page shows the build under way, started outside this Workbench.
+    expect(build.view().outside).toEqual([{ repo: 'kata', ...outside }]);
+  });
+
+  it('a focus read keeps what the engineer is looking at r8.2', async () => {
+    const transport = new MockTransport();
+    const reads = vi.spyOn(transport, 'sdlcStartChecks');
+    const workspaces = vi.spyOn(transport, 'sdlcWorkspaces');
+    const { vm } = setup(MOCK_BUILD_CHANGE, transport);
+    await ready(vm);
+    await vm.showDoc('intent');
+    const doc = vm.doc();
+    expect(doc).not.toBeNull();
+    const states: string[] = [];
+    const seen = () => states.push(vm.state());
+    const checksBefore = reads.mock.calls.length;
+    const workspacesBefore = workspaces.mock.calls.length;
+    vm.windowFocused();
+    seen();
+    await vi.waitFor(() => expect(reads.mock.calls.length).toBeGreaterThan(checksBefore));
+    seen();
+    expect(states.every((s) => s === 'ready')).toBe(true);
+    expect(vm.shownDoc()).toBe('intent');
+    expect(vm.doc()).toBe(doc);
+    expect(workspaces.mock.calls.length).toBe(workspacesBefore);
+  });
+
+  it('reads on opening and after actions, not on its own r8.3', async () => {
+    const transport = new MockTransport();
+    const reads = vi.spyOn(transport, 'sdlcStartChecks');
+    const { vm } = setup(MOCK_BUILD_CHANGE, transport);
+    await ready(vm);
+    await vi.waitFor(() => expect(reads).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+    const opened = reads.mock.calls.length;
+    vi.useFakeTimers();
+    try {
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(reads.mock.calls.length).toBe(opened);
+    } finally {
+      vi.useRealTimers();
+    }
+    await vm.act('accept-spec');
+    await vi.waitFor(() => expect(reads.mock.calls.length).toBeGreaterThan(opened));
   });
 });

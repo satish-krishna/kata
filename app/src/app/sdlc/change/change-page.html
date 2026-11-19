@@ -157,14 +157,15 @@
             <ng-container *ngTemplateOutlet="stageActions" />
           </div>
         }
-        @if (vm.preparingBuild(); as entry) {
-          <div class="k-change__missing" data-testid="build-progress"><app-progress-line [entry]="entry" /></div>
-        }
-        @if (build.preparing()) {
-          <div class="k-change__missing">
-            <button hlmBtn variant="secondary" type="button" aria-label="Stop preparing the build" data-testid="stop-preparing" (click)="build.stopPreparing()">
-              <ng-icon name="lucideSquare" />Stop
-            </button>
+        @if (vm.preparingBuild() || build.preparing()) {
+          <div class="k-change__missing k-progress-run" data-testid="build-progress">
+            @if (vm.preparingBuild(); as entry) {
+              <app-progress-line [entry]="entry">
+                <ng-container *ngTemplateOutlet="stopPreparing" />
+              </app-progress-line>
+            } @else {
+              <ng-container *ngTemplateOutlet="stopPreparing" />
+            }
           </div>
         }
         @if (build.stoppedNote(); as note) {
@@ -279,6 +280,9 @@
                 (act)="vm.act($event)"
                 (cancelBuild)="build.cancelBuild()"
                 (startAgain)="build.startAgain()"
+                (acceptCheck)="build.askAccept($event.repo, $event.check)"
+                (copyOutput)="build.copyOutput($event)"
+                (rerunFinish)="build.rerunFinish($event)"
                 (startReviewAgain)="build.startReviewAgain()"
                 (answer)="build.answer($event.runId, $event)"
                 [drafts]="build.messageDrafts()"
@@ -332,6 +336,20 @@
     }
   </ng-template>
 
+  <ng-template #stopPreparing>
+    @if (build.preparing()) {
+      <button hlmBtn variant="ghost" size="sm" type="button" aria-label="Stop preparing the build" data-testid="stop-preparing" (click)="build.askStop()">
+        <ng-icon name="lucideSquare" />Stop
+      </button>
+    }
+  </ng-template>
+  <app-confirm-dialog
+    [open]="build.stopAsked() !== null"
+    [message]="build.stopAsked() ?? ''"
+    confirmLabel="Stop"
+    (confirm)="build.confirmStop()"
+    (cancel)="build.keepChecking()"
+  />
   <app-lock-overlay
     [view]="vm.lockView()"
     [elapsed]="vm.lockElapsed()"
@@ -351,7 +369,8 @@
   <app-branch-name-dialog [request]="vm.nameRequest()" [step]="vm.step()" (accept)="vm.acceptName($event)" (cancel)="vm.closeName()" (stop)="vm.stopStep()" />
   <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />
   <app-feedback-dialog [action]="vm.feedbackFor()" [required]="vm.feedbackRequired()" (run)="vm.runWithFeedback($event)" (cancel)="vm.cancelFeedback()" />
-  <app-build-refusal-dialog [reason]="build.refusal()?.reason ?? null" [problems]="build.refusal()?.problems ?? []" (close)="build.closeRefusal()" />
+  <app-accept-check-dialog [request]="build.acceptRequest()" (confirm)="build.confirmAccept()" (cancel)="build.cancelAccept()" />
+  <app-build-elsewhere-dialog [request]="build.elsewhereRequest()" (confirm)="build.confirmElsewhere()" (cancel)="build.cancelElsewhere()" />
   <app-done-dialog
     [report]="vm.doneReport()"
     [change]="vm.changeName()"
