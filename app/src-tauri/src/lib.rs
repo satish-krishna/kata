@@ -511,6 +511,10 @@ impl build_host::Launcher for AppLauncher {
     fn announce_running(&self) {
         announce_running(&self.app);
     }
+
+    fn change_live(&self, _system: &str, _change: &str) -> bool {
+        false
+    }
 }
 
 /// Start a change's build. The decision is the host's; see `BuildHost::start`.

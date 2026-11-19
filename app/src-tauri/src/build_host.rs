@@ -186,6 +186,33 @@ pub enum StartOutcome {
     Stopped { prepared: Vec<String> },
 }
 
+/// What running the checks of a repository's build finish again came to.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum RerunOutcome {
+    /// Every check passed.
+    Passed,
+    /// A check failed again, or the step did: the plugin's reasons and the hook that failed.
+    Failed {
+        problems: Vec<String>,
+        hook: Option<HookFailure>,
+    },
+    /// The engineer stopped the checks.
+    Stopped,
+    /// Nothing ran: a run of the change is live, or the change has another step.
+    Refused { problems: Vec<String> },
+    /// Another change holds the repository.
+    Held { held: Vec<HeldRepo> },
+    /// The machine could not run the plugin's step.
+    CouldNotRun { output: String },
+}
+
 /// A change's build state, announced on [`BUILD_EVENT`].
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -313,6 +340,8 @@ pub trait Launcher: Send + Sync {
     fn emit(&self, event: &BuildEvent);
     /// Announce the running changes. Called with no host lock held, so it may read the host.
     fn announce_running(&self);
+    /// Whether any run of the change is live, of any kind.
+    fn change_live(&self, system: &str, change: &str) -> bool;
 }
 
 /// [`Tools`] over one hoshin program.
@@ -1543,6 +1572,11 @@ impl BuildHost {
         StartOutcome::Started { uncommitted }
     }
 
+    /// Run the checks of `repo`'s build finish again on the change.
+    pub fn rerun_finish_checks(self: &Arc<Self>, _change: &ChangeRef, _repo: &str) -> RerunOutcome {
+        RerunOutcome::Stopped
+    }
+
     /// Whether this Workbench has run a build of the change since it was opened. It only reads.
     pub fn ran_here(&self, workspace: &str, system: &str, change: &str) -> bool {
         let key = ChangeKey {
@@ -2396,6 +2430,8 @@ mod tests {
         status_answer: Mutex<Option<Value>>,
         hooks_answer: Mutex<Option<Value>>,
         check_reads: std::sync::atomic::AtomicUsize,
+        /// What a repository's `build.finish` answers; none passes.
+        finish_answer: Mutex<Option<Value>>,
     }
 
     impl FakeTools {
@@ -2424,6 +2460,7 @@ mod tests {
                 status_answer: Mutex::new(None),
                 hooks_answer: Mutex::new(None),
                 check_reads: std::sync::atomic::AtomicUsize::new(0),
+                finish_answer: Mutex::new(None),
             })
         }
 
@@ -2532,6 +2569,13 @@ mod tests {
                     Some(answer) => answer,
                     None => Ok(Reply::json(0, &passed_check(&repos))),
                 };
+            }
+            if command.contains(&"build.finish") {
+                let answer = self.finish_answer.lock().unwrap().clone().unwrap_or_else(
+                    || json!({"event": "build.finish", "repo": repos[0], "outcome": "passed", "problems": [], "details": {}}),
+                );
+                let code = if answer["outcome"] == "passed" { 0 } else { 1 };
+                return Ok(Reply::json(code, &answer));
             }
             match self.starts.lock().unwrap().get(&repos[0]).cloned() {
                 Some(answer) => answer,
@@ -2769,6 +2813,9 @@ mod tests {
                 self.announcements
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
+        }
+        fn change_live(&self, system: &str, change: &str) -> bool {
+            self.table.lock().unwrap().change_live(system, change)
         }
     }
 
@@ -4111,6 +4158,206 @@ mod tests {
         );
         assert_eq!(r.tools.real_starts("A"), ["kata"]);
         assert_eq!(r.launcher.launched("kata").len(), 1);
+    }
+
+    /// How the plugin answers a repository's finish checks run again.
+    #[derive(Clone, Copy, Debug)]
+    enum Rerun {
+        Passed,
+        Failed,
+        Stopped,
+    }
+
+    /// A build of `A` in `kata` and `bob` whose runs have all ended and which waits: `kata` stopped, and
+    /// `bob` either finished (`last`) or stopped too.
+    fn waiting_build(last: bool) -> Rig {
+        let r = rig();
+        r.simple("A", &["kata", "bob"]);
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        let (kata, bob) = (
+            r.launcher.launched("kata")[0],
+            r.launcher.launched("bob")[0],
+        );
+        if last {
+            r.tools.log("A", "bob", "T2");
+            r.launcher.finish(bob, 0);
+        } else {
+            r.launcher.finish(bob, 1);
+        }
+        r.launcher.finish(kata, 1);
+        assert_eq!(r.phase("A"), BuildPhase::Stopped);
+        r
+    }
+
+    // R7.2: every row of what ends the checks run again at finish.
+    #[test]
+    fn rerun_finish_checks_counts_as_the_finish_r7_2() {
+        let rows = [
+            // a Build of the change is live (waiting between runs)
+            (true, Rerun::Passed, Some(true)),
+            (true, Rerun::Passed, Some(false)),
+            (true, Rerun::Failed, Some(false)),
+            (true, Rerun::Failed, Some(true)),
+            (true, Rerun::Stopped, Some(false)),
+            (true, Rerun::Stopped, Some(true)),
+            // no Build of the change is live
+            (false, Rerun::Passed, None),
+            (false, Rerun::Failed, None),
+            (false, Rerun::Stopped, None),
+        ];
+        for (build, how, last) in rows {
+            let label = format!("build live {build}, {how:?}, last {last:?}");
+            let r = match last {
+                Some(last) => waiting_build(last),
+                None => {
+                    let r = rig();
+                    r.simple("A", &["kata", "bob"]);
+                    r
+                }
+            };
+            let before = r.host.state(&cref("A"));
+            let launched = r.launcher.count();
+            let calls = r.tools.calls_for("A").len();
+            match how {
+                Rerun::Passed => r.tools.log("A", "kata", "T1"),
+                Rerun::Failed => {
+                    *r.tools.finish_answer.lock().unwrap() = Some(
+                        json!({"event": "build.finish", "repo": "kata", "outcome": "failed",
+                        "problems": ["app-speed failed"], "hooks": [], "failed": null, "details": {}}),
+                    );
+                }
+                Rerun::Stopped => {
+                    r.arm_stop("A");
+                    *r.tools.stop_in.lock().unwrap() = Some("kata".into());
+                }
+            }
+            let outcome = r.host.rerun_finish_checks(&cref("A"), "kata");
+            let step_calls = r.tools.calls_for("A").len() - calls;
+            assert_eq!(step_calls, 1, "{label}: one step ran");
+            let ran = r.tools.calls_for("A").pop().unwrap();
+            for word in [
+                "run",
+                "build.finish",
+                "--json",
+                "--stream",
+                "--again",
+                "kata",
+            ] {
+                assert!(ran.contains(&word.to_string()), "{label}: {ran:?}");
+            }
+            assert!(
+                !ran.contains(&"build.start".to_string()),
+                "{label}: the base results are not touched"
+            );
+            assert!(r.steps.running().is_empty(), "{label}: the step ended");
+            match how {
+                Rerun::Passed => assert_eq!(outcome, RerunOutcome::Passed, "{label}"),
+                Rerun::Failed => assert!(
+                    matches!(&outcome, RerunOutcome::Failed { problems, .. } if problems == &strs(&["app-speed failed"])),
+                    "{label}: {outcome:?}"
+                ),
+                Rerun::Stopped => assert_eq!(outcome, RerunOutcome::Stopped, "{label}"),
+            }
+            let after = r.host.state(&cref("A"));
+            match (last, how) {
+                (Some(true), Rerun::Passed) => {
+                    let state = after.unwrap();
+                    assert!(
+                        !state.stopped.contains_key("kata"),
+                        "{label}: counted finished"
+                    );
+                    assert_eq!(state.phase, BuildPhase::Reviewing, "{label}");
+                    assert_eq!(r.launcher.reviews().len(), 1, "{label}: the review started");
+                    assert_eq!(r.launcher.launched("kata").len(), 1, "{label}");
+                }
+                (Some(false), Rerun::Passed) => {
+                    let state = after.unwrap();
+                    assert_eq!(
+                        state.stopped.keys().cloned().collect::<Vec<_>>(),
+                        strs(&["bob"]),
+                        "{label}: kata counted finished, bob still stopped"
+                    );
+                    assert_eq!(state.phase, BuildPhase::Stopped, "{label}");
+                    assert!(r.launcher.reviews().is_empty(), "{label}: no review yet");
+                    assert_eq!(r.launcher.count(), launched, "{label}: nothing launched");
+                    assert_eq!(r.holder("kata"), None, "{label}: the hold is released");
+                }
+                (Some(_), _) => {
+                    assert_eq!(after, before, "{label}: nothing changes");
+                    assert_eq!(r.launcher.count(), launched, "{label}: nothing launched");
+                    assert_eq!(r.holder("kata"), None, "{label}: the hold is released");
+                }
+                (None, _) => {
+                    assert_eq!(after, None, "{label}: no build starts");
+                    assert_eq!(r.launcher.count(), 0, "{label}: nothing launched");
+                    assert_eq!(r.holder("kata"), None, "{label}: the hold is released");
+                }
+            }
+        }
+
+        // The checks run as a stoppable step with the progress line naming the running check, and take
+        // the repository's hold while they do.
+        let r = rig();
+        r.simple("A", &["kata"]);
+        r.tools.lines.lock().unwrap().insert(
+            "kata".into(),
+            vec![
+                r#"{"type":"hook-start","id":"app-speed","when":"build.finish","check":true,"repo":null}"#
+                    .into(),
+            ],
+        );
+        let seen = r.probe_steps();
+        let held: Arc<Mutex<Vec<Option<ChangeKey>>>> = Arc::default();
+        let (host, sink) = (r.host.clone(), held.clone());
+        *r.tools.probe.lock().unwrap() = Some(Box::new(move || {
+            let holder = host
+                .inner
+                .lock()
+                .unwrap()
+                .holds
+                .holder(&RepoKey::of(&Path::new(WS).join("kata")))
+                .cloned();
+            sink.lock().unwrap().push(holder);
+        }));
+        assert_eq!(
+            r.host.rerun_finish_checks(&cref("A"), "kata"),
+            RerunOutcome::Passed
+        );
+        let _ = seen;
+        assert_eq!(*held.lock().unwrap(), vec![Some(key("A"))]);
+        let labels = r.labels.lock().unwrap();
+        let named = labels
+            .iter()
+            .find(|e| e.progress.label == "Running the checks again: running app-speed")
+            .expect("the running check is named");
+        assert_eq!(named.kind, StepKind::RerunningFinishChecks);
+        assert_eq!(
+            named.progress.phase,
+            kata_sdlc::hoshin::StepPhase::FinishCheck
+        );
+        drop(labels);
+
+        // Refused while a run of the change is live, and while another change holds the repository.
+        let r = rig();
+        r.simple("A", &["kata"]);
+        r.simple("B", &["kata"]);
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        assert!(matches!(
+            r.host.rerun_finish_checks(&cref("A"), "kata"),
+            RerunOutcome::Refused { .. }
+        ));
+        r.launcher.finish(r.launcher.launched("kata")[0], 1);
+        r.hold_as("B", "kata");
+        assert!(matches!(
+            r.host.rerun_finish_checks(&cref("A"), "kata"),
+            RerunOutcome::Held { .. }
+        ));
     }
 
     // R6.1

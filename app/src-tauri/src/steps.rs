@@ -39,6 +39,8 @@ pub enum StepKind {
     Rejecting(ChangeDocument),
     RejectingFix,
     DeclaringDone,
+    /// The checks of a repository's build finish, run again on the change after one failed.
+    RerunningFinishChecks,
 }
 
 impl StepKind {
@@ -61,6 +63,7 @@ impl StepKind {
             StepKind::Rejecting(d) => format!("rejecting its {}", doc(d)),
             StepKind::RejectingFix => "rejecting its fix".into(),
             StepKind::DeclaringDone => "being declared done".into(),
+            StepKind::RerunningFinishChecks => String::new(),
         }
     }
 }
@@ -100,6 +103,7 @@ impl StepKind {
             StepKind::Rejecting(ChangeDocument::Plan) => "Rejecting the plan",
             StepKind::RejectingFix => "Rejecting the fix",
             StepKind::DeclaringDone => "Declaring the change done",
+            StepKind::RerunningFinishChecks => "",
         }
     }
 }
