@@ -592,6 +592,12 @@ fn held_repos(held: kata_sdlc::holds::Held) -> Vec<HeldRepo> {
         .collect()
 }
 
+/// Why the checks of a build finish do not run again while a run of the change is live.
+const RERUN_RUN_LIVE: &str = "A run of this change is live. Wait for it, or stop it.";
+
+/// Why the checks of a build finish do not run again while the change has another step.
+const RERUN_STEP_BUSY: &str = "This change already has a step running. Wait for it, or stop it.";
+
 /// Why nothing starts while the Workbench is closing.
 const CLOSING: &str = "The Workbench is closing.";
 
@@ -1573,8 +1579,117 @@ impl BuildHost {
     }
 
     /// Run the checks of `repo`'s build finish again on the change.
-    pub fn rerun_finish_checks(self: &Arc<Self>, _change: &ChangeRef, _repo: &str) -> RerunOutcome {
-        RerunOutcome::Stopped
+    ///
+    /// It is a stoppable step of the change, takes the repository's hold as a build run does, and is refused
+    /// while any run of the change is live. The base results are not touched. When every check passes and a
+    /// build of the change waits between runs, the coordinator reads the status again, so it counts the
+    /// repository finished and, for the last one, starts the review; a failed or stopped rerun changes nothing.
+    pub fn rerun_finish_checks(self: &Arc<Self>, change: &ChangeRef, repo: &str) -> RerunOutcome {
+        let place = match self.tools.resolve(Path::new(&change.workspace)) {
+            Ok(p) => p,
+            Err(e) => {
+                return RerunOutcome::CouldNotRun {
+                    output: error_text(&e),
+                }
+            }
+        };
+        let key = key_of(change);
+        let refused = |why: &str| RerunOutcome::Refused {
+            problems: vec![why.to_string()],
+        };
+        let live_build = {
+            let guard = self.inner.lock().unwrap();
+            if guard.stopped {
+                return RerunOutcome::CouldNotRun {
+                    output: CLOSING.into(),
+                };
+            }
+            guard.builds.get(&key).is_some_and(|b| !b.live.is_empty())
+        };
+        if live_build || self.launcher.change_live(&change.system, &change.change) {
+            return refused(RERUN_RUN_LIVE);
+        }
+        let Ok(step) = self
+            .steps
+            .begin(key.clone(), StepKind::RerunningFinishChecks)
+        else {
+            return refused(RERUN_STEP_BUSY);
+        };
+        let folders = keys_for(
+            place.layout,
+            &place.master,
+            &place.workspace,
+            &[repo.to_string()],
+        );
+        {
+            let mut guard = self.inner.lock().unwrap();
+            let workspace = crate::migration::resolved_key(&place.workspace);
+            if guard.migrating.iter().any(|m| m.contains(&workspace)) {
+                return refused(runs::MIGRATING);
+            }
+            if let Err(held) = guard.holds.take(&key, Purpose::Build, &folders) {
+                return RerunOutcome::Held {
+                    held: held_repos(held),
+                };
+            }
+        }
+        let command = [
+            "run",
+            "build.finish",
+            "--json",
+            "--stream",
+            "--again",
+            "--system",
+            &change.system,
+            "--change",
+            &change.change,
+            "--repo",
+            repo,
+        ];
+        let sink = self.announce(&key, Some(repo));
+        let answer = self
+            .tools
+            .step_long(&command, &place, step.token(), Some(sink));
+        // The step is over when the checks are; what follows is the build's own work.
+        drop(step);
+        let outcome = match answer.outcome {
+            StepOutcome::Passed { .. } => RerunOutcome::Passed,
+            StepOutcome::Refused { problems } => RerunOutcome::Refused { problems },
+            StepOutcome::Failed { problems, hook } => RerunOutcome::Failed { problems, hook },
+            StepOutcome::CouldNotRun { reason, hook, .. } => RerunOutcome::CouldNotRun {
+                output: match hook.map(|h| h.output) {
+                    Some(output) if !output.trim().is_empty() => format!("{reason}\n{output}"),
+                    _ => reason,
+                },
+            },
+            StepOutcome::Stopped => RerunOutcome::Stopped,
+        };
+        if outcome == RerunOutcome::Passed {
+            let generation = self
+                .inner
+                .lock()
+                .unwrap()
+                .builds
+                .get(&key)
+                .map(|b| b.generation);
+            if let Some(generation) = generation {
+                // A look at the status: the repository's stop is released and the coordinator reads where
+                // the change stands, as it does after a run whose finish passed.
+                self.drive(
+                    &key,
+                    Some(generation),
+                    Input::ContinueRepo {
+                        repo: repo.to_string(),
+                    },
+                );
+            }
+        }
+        let mut guard = self.inner.lock().unwrap();
+        if guard.builds.get(&key).is_none_or(|b| b.live.is_empty()) {
+            guard.holds.release(&key, Purpose::Build);
+        }
+        drop(guard);
+        outcome
     }
 
     /// Whether this Workbench has run a build of the change since it was opened. It only reads.
@@ -4235,23 +4350,26 @@ mod tests {
                 }
             }
             let outcome = r.host.rerun_finish_checks(&cref("A"), "kata");
-            let step_calls = r.tools.calls_for("A").len() - calls;
-            assert_eq!(step_calls, 1, "{label}: one step ran");
-            let ran = r.tools.calls_for("A").pop().unwrap();
-            for word in [
-                "run",
-                "build.finish",
-                "--json",
-                "--stream",
-                "--again",
-                "kata",
-            ] {
-                assert!(ran.contains(&word.to_string()), "{label}: {ran:?}");
+            let new_calls: Vec<Vec<String>> = r.tools.calls_for("A").split_off(calls);
+            // A stopped call ends before the fake records it; the others ran one command.
+            let want = if matches!(how, Rerun::Stopped) { 0 } else { 1 };
+            assert_eq!(new_calls.len(), want, "{label}: calls {new_calls:?}");
+            for ran in &new_calls {
+                for word in [
+                    "run",
+                    "build.finish",
+                    "--json",
+                    "--stream",
+                    "--again",
+                    "kata",
+                ] {
+                    assert!(ran.contains(&word.to_string()), "{label}: {ran:?}");
+                }
+                assert!(
+                    !ran.contains(&"build.start".to_string()),
+                    "{label}: the base results are not touched"
+                );
             }
-            assert!(
-                !ran.contains(&"build.start".to_string()),
-                "{label}: the base results are not touched"
-            );
             assert!(r.steps.running().is_empty(), "{label}: the step ended");
             match how {
                 Rerun::Passed => assert_eq!(outcome, RerunOutcome::Passed, "{label}"),

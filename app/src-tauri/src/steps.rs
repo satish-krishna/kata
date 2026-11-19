@@ -63,7 +63,7 @@ impl StepKind {
             StepKind::Rejecting(d) => format!("rejecting its {}", doc(d)),
             StepKind::RejectingFix => "rejecting its fix".into(),
             StepKind::DeclaringDone => "being declared done".into(),
-            StepKind::RerunningFinishChecks => String::new(),
+            StepKind::RerunningFinishChecks => "running its checks again".into(),
         }
     }
 }
@@ -103,7 +103,7 @@ impl StepKind {
             StepKind::Rejecting(ChangeDocument::Plan) => "Rejecting the plan",
             StepKind::RejectingFix => "Rejecting the fix",
             StepKind::DeclaringDone => "Declaring the change done",
-            StepKind::RerunningFinishChecks => "",
+            StepKind::RerunningFinishChecks => "Running the checks again",
         }
     }
 }

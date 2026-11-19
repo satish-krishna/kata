@@ -512,8 +512,13 @@ impl build_host::Launcher for AppLauncher {
         announce_running(&self.app);
     }
 
-    fn change_live(&self, _system: &str, _change: &str) -> bool {
-        false
+    fn change_live(&self, system: &str, change: &str) -> bool {
+        self.app
+            .state::<RunControl>()
+            .state
+            .lock()
+            .unwrap()
+            .change_live(system, change)
     }
 }
 
@@ -542,6 +547,20 @@ fn sdlc_build_continue(
     even_if_elsewhere: Option<bool>,
 ) -> build_host::StartOutcome {
     let outcome = host.continue_repo(&change, &repo, off, even_if_elsewhere.unwrap_or(false));
+    announce_running(&app);
+    outcome
+}
+
+/// Run the checks of a repository's build finish again on the change, after one failed. A stoppable step
+/// of the change; the host decides what the build does with a pass.
+#[tauri::command(async)]
+fn sdlc_rerun_finish_checks(
+    app: AppHandle,
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    repo: String,
+) -> build_host::RerunOutcome {
+    let outcome = host.rerun_finish_checks(&change, &repo);
     announce_running(&app);
     outcome
 }
@@ -2729,6 +2748,7 @@ pub fn run() {
             sdlc_checks_view,
             sdlc_start_checks,
             sdlc_accept_base_check,
+            sdlc_rerun_finish_checks,
             sdlc_declare_done,
             sdlc_pull_requests_view,
             sdlc_copy_removal,
