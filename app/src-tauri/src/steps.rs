@@ -4,7 +4,7 @@
 use crate::build_host::ChangeRef;
 use kata_core::proc::CancelToken;
 use kata_sdlc::accept::ChangeDocument;
-use kata_sdlc::checks_view::BaseCheck;
+use kata_sdlc::checks_view::{BaseCheck, BaseCheckState};
 use kata_sdlc::holds::ChangeKey;
 use kata_sdlc::hoshin::{StepPhase, StepProgress, StepProgressKind};
 use serde::Serialize;
@@ -183,6 +183,22 @@ pub struct RunningStep {
     pub progress: Option<StepProgress>,
     /// The checks on the base while this Workbench's own preparation runs them; empty otherwise.
     pub live_checks: Vec<BaseCheck>,
+    /// What to ask before stopping the checks on the base; None when no checks are running there.
+    pub stop_question: Option<String>,
+}
+
+/// The question to ask before stopping the preparation while the checks on the base run: how many ended, and
+/// that the next start runs them all again. None when `live` is empty (no checks are running on the base).
+pub fn stop_question(live: &[BaseCheck]) -> Option<String> {
+    let _ = live;
+    None
+}
+
+/// What the page says after a stop that came while the checks on the base ran: where the copy was left.
+/// None for any other stop.
+pub fn stopped_note(during_checks: bool) -> Option<String> {
+    let _ = during_checks;
+    None
 }
 
 /// The change already has a long step running.
@@ -339,6 +355,7 @@ impl StepTable {
                 doing: entry.kind.doing(),
                 progress: entry.progress.clone(),
                 live_checks: entry.live_checks.clone(),
+                stop_question: stop_question(&entry.live_checks),
             })
             .collect();
         steps.sort_by(|a, b| order_key(&a.change).cmp(&order_key(&b.change)));
@@ -628,6 +645,69 @@ mod tests {
             hook("build.start").as_ref(),
         );
         assert_eq!(in_repo.label, "Preparing kata: running install");
+    }
+
+    fn base_check(name: &str, state: BaseCheckState) -> BaseCheck {
+        BaseCheck {
+            check: name.into(),
+            state,
+            exit_code: None,
+            output: String::new(),
+            line_count: 0,
+            can_accept: false,
+            accepted: false,
+            started_at: None,
+            ended_at: None,
+        }
+    }
+
+    // R10.1: the question counts the checks that ended, out of every check of the repository.
+    #[test]
+    fn stop_question_counts_the_checks_that_ran_r10_1() {
+        let checks = |ended: usize, total: usize| -> Vec<BaseCheck> {
+            (0..total)
+                .map(|i| {
+                    let state = if i < ended {
+                        BaseCheckState::Passed
+                    } else {
+                        BaseCheckState::Running
+                    };
+                    base_check(&format!("c{i}"), state)
+                })
+                .collect()
+        };
+        let want = |n: usize, m: usize| {
+            format!(
+                "{n} of {m} checks already ran. Stopping now runs every check on the base again at the next start, because none is kept until the last one ends."
+            )
+        };
+        assert_eq!(stop_question(&checks(0, 9)), Some(want(0, 9)));
+        assert_eq!(stop_question(&checks(3, 9)), Some(want(3, 9)));
+        assert_eq!(stop_question(&checks(9, 9)), Some(want(9, 9)));
+        assert_eq!(stop_question(&[]), None);
+        // A failed check ended too; a running or never-started one did not.
+        let mixed = vec![
+            base_check("a", BaseCheckState::Failed),
+            base_check("b", BaseCheckState::NotRun),
+            base_check("c", BaseCheckState::Running),
+        ];
+        assert_eq!(stop_question(&mixed), Some(want(1, 3)));
+        // The running list carries it for a step that has live checks.
+        let t = StepTable::new(Arc::new(|_| {}));
+        let _g = t.begin(key("a"), StepKind::PreparingBuild).unwrap();
+        assert_eq!(t.running()[0].stop_question, None);
+        t.set_live_checks(&key("a"), checks(3, 9));
+        assert_eq!(t.running()[0].stop_question, Some(want(3, 9)));
+    }
+
+    // R10.2: the note after a stop during the checks says where the copy was left.
+    #[test]
+    fn stopped_note_says_where_the_copy_was_left_r10_2() {
+        assert_eq!(
+            stopped_note(true).as_deref(),
+            Some("The copy may stay on the base commit until the build starts again; the work is safe on the change's branch, and the next start puts it back first.")
+        );
+        assert_eq!(stopped_note(false), None);
     }
 
     #[test]

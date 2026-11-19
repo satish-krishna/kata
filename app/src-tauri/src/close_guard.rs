@@ -273,6 +273,7 @@ mod tests {
             kind,
             progress: None,
             live_checks: Vec::new(),
+            stop_question: None,
         }
     }
 
