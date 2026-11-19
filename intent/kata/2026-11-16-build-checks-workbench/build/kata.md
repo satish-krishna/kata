@@ -164,3 +164,24 @@ notes: |
   A review start never asks (even_if_elsewhere passed as true internally).
   live_facts in lib.rs takes the build host and the folder; sdlc_state, sdlc_home_open, sdlc_change_state and sdlc_open_change gained a host state parameter.
 ```
+
+### T11
+
+```yaml
+task: T11
+commits: ["7f5d23d", "9597414"]
+departure: |
+  T11 Change, "the coordinator change goes through its existing Input::Status": the host sends Input::ContinueRepo { repo } after a passed rerun with a build waiting, which releases the repository's stop and makes the coordinator read status and feed Input::Status as usual, because Status is accepted only while the coordinator waits on a status read; coordinator.rs is unchanged. If the status still showed unlogged tasks for the repository, ContinueRepo would launch it again; not guarded, since a finish runs only once its tasks are logged.
+  T11 Change: the run command is run build.finish --json --stream --again --system <s> --change <c> --repo <r>; the plugin's run needs --system and --change, which the plan's shorthand leaves out.
+red: observed
+notes: |
+  sdlc_rerun_finish_checks(change, repo) returns the new RerunOutcome (Passed, Failed, Stopped, Refused, Held, CouldNotRun), through BuildHost::rerun_finish_checks.
+  New StepKind::RerunningFinishChecks, worded "Running the checks again"; the progress line names the running check through T8's progress_of (for example "Running the checks again: running app-speed").
+  The Build-purpose hold is taken before the step and released afterwards unless the coordinator launched something (the review).
+  Refused while any run of the change is live (new Launcher::change_live, backed by RunTable::change_live), while the workspace migrates or while the change has another step; Held when another change holds the repository.
+  The step ends when the checks end, before the coordinator is driven, so a review that starts is not part of the rerun step.
+  FakeTools gained finish_answer and handles build.finish in exec; a stopped call ends before the fake records it.
+  The test also asserts the hold during the call, the step kind and label, a Refused case with a live run and a Held case.
+  The "finished" rows are modeled by logging the repository's last task before the rerun passes, since the coordinator counts a repository finished from its logged tasks in status.
+  No frontend calls the command yet (T16).
+```
