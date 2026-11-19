@@ -261,3 +261,21 @@ notes: |
   Mock demos ?demo=checks-base, checks-base-many and checks-base-moved; the first two are in the --route lists of check:boot and check:interaction.
   The feat work is split over 5e089b6 (package.json and mock-transport.ts) and 73c3bcd, because a first commit call returned committed false with no reason; the deletions were committed after unstaging them, since the commit command reported nothing changed while they were staged.
 ```
+
+### T16
+
+```yaml
+task: T16
+commits: ["ce8a671", "48cef23"]
+departure: |
+  T16 Change, "next worded from the backend": the next sentence is worded in BuildFinishPanel from T7's FinishNext enum, because the backend sends the enum and no words.
+  T16 Change: the rerun's progress label "Running the checks again" is a literal in the view model, duplicating StepKind::words, which T8 made the one owner of step wording.
+  T16 files: app/src/app/sdlc/change/change-page.html changed, to wire the rerun output to the view model.
+red: observed
+notes: |
+  BuildFinishPanel reuses build-failure-panel.css and has no stylesheet of its own; Run checks again names the repository to a screen reader and Show output names the check.
+  sdlcRerunFinishChecks(change, repo) is on the abstract, Tauri and mock transports, with a spec row each for Tauri and mock; ?demo=checks-finish shows app-speed failing at finish until a rerun passes.
+  The view model has finishes and rerunFinish(repo); the rerun shows the page's progress line with its Stop; the finish panel is hidden while any run is under way; afterwards the page reads the checks again; outcomes other than passed and failed are told once in a toast.
+  No view-model spec for rerunFinish was added.
+  The r7.1 test calls TestBed.resetTestingModule() between rows; that fix was made in the test between the test commit and the feature commit.
+```
