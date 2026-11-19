@@ -356,6 +356,35 @@ pub struct StartChecks {
     /// The checks on the base are running in another session now (R2.5): the latest `baseline` run has a check
     /// running and this Workbench neither runs nor ran a build of the change.
     pub elsewhere: bool,
+    /// Whether the Build tab lists this repository's checks on the base, and as what (R2.4, R2.5). At most one
+    /// repository of a read is listed: the first in plan order whose checks qualify.
+    pub listed: Option<ListedAs>,
+    /// The build is under way and was started outside this Workbench (R8.2), with when the start was recorded.
+    pub outside: Option<StartedOutside>,
+}
+
+/// What the Build tab lists a repository's checks on the base as.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum ListedAs {
+    /// A check of the latest run on the base was cut off (R2.4).
+    CutOff,
+    /// The checks are running in another session, shown as last read (R2.5).
+    Elsewhere,
+}
+
+/// A build under way that this Workbench neither runs nor ran (R8.2).
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct StartedOutside {
+    /// When the workflow recorded the start, empty when the record carries no time.
+    pub at: String,
+    /// The words the page shows for it.
+    pub words: String,
 }
 
 /// The reason Start is off while a failing check is not accepted (R6.2).
@@ -555,6 +584,8 @@ pub fn start_checks(
                     start_held: None,
                     finish: None,
                     elsewhere: offer::checks_running_elsewhere(&answer, live, repo),
+                    listed: None,
+                    outside: None,
                 }
             };
             let Some(start_at) = start_at else {
@@ -1485,5 +1516,95 @@ mod tests {
         // Nothing running anywhere: nothing is elsewhere.
         let s = answers(started(), vec![]);
         assert!(!read(&s).elsewhere);
+    }
+
+    /// R2.4 and R2.5: of the repositories whose checks qualify, only the first in plan order is listed, as cut
+    /// off or as running in another session; a repository with neither is never listed.
+    #[test]
+    fn start_checks_lists_one_repository_r2_4_r2_5() {
+        let run = |repo: &str, second: &str| {
+            let outcome = if second == "ended" {
+                json!("passed")
+            } else {
+                Value::Null
+            };
+            json!({"run": format!("r-{repo}"), "event": "build.finish", "repo": repo, "phase": "baseline",
+                "checks": [event("a", "ended", json!("passed")), event("b", second, outcome)]})
+        };
+        let hook = |id: &str| {
+            json!({"id": id, "event": "build.finish", "when": "before", "blocking": true,
+                "onFailure": "stop", "timeout": 600, "repos": ["app", "web", "docs"]})
+        };
+        let s = scripted(json!({"status": {"repos": []},
+            "checks": checks_answer(vec![run("app", "abandoned"), run("web", "running"), run("docs", "ended")]),
+            "hooks": {"hooks": [hook("a"), hook("b")], "problems": []}}));
+        let listed = |repos: &[&str]| -> Vec<(String, Option<ListedAs>)> {
+            let repos: Vec<String> = repos.iter().map(|r| r.to_string()).collect();
+            start_checks(
+                &s.program,
+                &s.place,
+                "demo",
+                "c",
+                &repos,
+                &LiveFacts::default(),
+            )
+            .unwrap()
+            .into_iter()
+            .map(|c| (c.repo, c.listed))
+            .collect()
+        };
+        let row = |repo: &str, as_: Option<ListedAs>| (repo.to_string(), as_);
+        assert_eq!(
+            listed(&["docs", "web", "app"]),
+            [
+                row("docs", None),
+                row("web", Some(ListedAs::Elsewhere)),
+                row("app", None)
+            ]
+        );
+        assert_eq!(
+            listed(&["app", "web"]),
+            [row("app", Some(ListedAs::CutOff)), row("web", None)]
+        );
+        assert_eq!(listed(&["docs"]), [row("docs", None)]);
+    }
+
+    /// R8.2: a build under way that this Workbench neither runs nor ran says it was started outside this
+    /// Workbench, with when the workflow recorded the start; one this Workbench runs or ran does not.
+    #[test]
+    fn start_checks_says_under_way_outside_this_workbench_r8_2() {
+        let mut start = start_run("passed", None, &[]);
+        start["at"] = json!("2026-11-16T14:54:00.000Z");
+        let ended = base_run("r1", "baseline", vec![event("a", "ended", json!("passed"))]);
+        let s = scripted(json!({"status": ledger_of(vec![start.clone()]),
+            "checks": checks_answer(vec![ended.clone()]), "hooks": hook_list(&["a"])}));
+        let got = read(&s);
+        assert_eq!(got.shown, StartShown::UnderWay);
+        assert!(!got.elsewhere);
+        assert_eq!(
+            got.outside,
+            Some(StartedOutside {
+                at: "2026-11-16T14:54:00.000Z".into(),
+                words: "Started outside this Workbench".into()
+            })
+        );
+        for live in [
+            LiveFacts {
+                build_live: true,
+                ..LiveFacts::default()
+            },
+            LiveFacts {
+                stopped_here: true,
+                ..LiveFacts::default()
+            },
+        ] {
+            assert_eq!(read_with(&s, &live).outside, None);
+        }
+        // A finished build is not under way, wherever it started.
+        let s = scripted(json!({"status": ledger_of(vec![start, finish_run("passed")]),
+            "checks": checks_answer(vec![ended]), "hooks": hook_list(&["a"])}));
+        let got = read(&s);
+        assert_eq!(got.shown, StartShown::Finished);
+        assert_eq!(got.outside, None);
     }
 }

@@ -16,7 +16,7 @@ const finish = (over: Partial<FinishFailure> = {}): FinishFailure => ({
   canAccept: false,
   ...over,
 });
-const start = (f: FinishFailure): StartChecks => ({ repo: 'kata', shown: { kind: 'startable' }, base: '3c504eb', checks: [], passed: 0, setupHint: false, startHeld: null, finish: f, elsewhere: false });
+const start = (f: FinishFailure): StartChecks => ({ repo: 'kata', shown: { kind: 'startable' }, base: '3c504eb', checks: [], passed: 0, setupHint: false, startHeld: null, finish: f, elsewhere: false, listed: null, outside: null });
 
 describe('BuildFinishPanel shows a failure at finish, once', () => {
   const rowsOfR71: { check: string; base: FinishFailure['base']; next: FinishFailure['next']; title: string; why: string }[] = [

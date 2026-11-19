@@ -2312,8 +2312,10 @@ describe('ChangePageViewModel: the run pane shows only the run in front of it (R
 // R8: the change page reads where the change stands on opening, after any action and when the window regains focus.
 describe('the change page reads where the change stands again', () => {
   const check = (name: string, state: BaseCheck['state']): BaseCheck => ({ check: name, state, exitCode: state === 'failed' ? 1 : null, output: 'boom', lineCount: 1, canAccept: state === 'failed', accepted: false, startedAt: null, endedAt: null });
-  const stopped = (): StartChecks[] => [{ repo: 'kata', shown: { kind: 'baseFailure' }, base: '3c504eb', checks: [check('app-speed', 'failed')], passed: 0, setupHint: false, startHeld: 'Accept or fix the failing checks first', finish: null, elsewhere: false }];
-  const underWay = (): StartChecks[] => [{ repo: 'kata', shown: { kind: 'underWay' }, base: '3c504eb', checks: [check('app-speed', 'running')], passed: 0, setupHint: false, startHeld: null, finish: null, elsewhere: true }];
+  const stopped = (): StartChecks[] => [{ repo: 'kata', shown: { kind: 'baseFailure' }, base: '3c504eb', checks: [check('app-speed', 'failed')], passed: 0, setupHint: false, startHeld: 'Accept or fix the failing checks first', finish: null, elsewhere: false, listed: null, outside: null }];
+  // R8.2's Given: the build is under way, its checks on the base ended, and it was not started here.
+  const outside = { at: '2026-11-16T14:54:00.000Z', words: 'Started outside this Workbench' };
+  const underWay = (): StartChecks[] => [{ repo: 'kata', shown: { kind: 'underWay' }, base: '', checks: [check('app-speed', 'passed')], passed: 1, setupHint: false, startHeld: null, finish: null, elsewhere: false, listed: null, outside }];
 
   it('a failure the change no longer holds is cleared on focus r8.2', async () => {
     const transport = new MockTransport();
@@ -2323,12 +2325,13 @@ describe('the change page reads where the change stands again', () => {
     const build = TestBed.inject(BuildPageViewModel);
     await vi.waitFor(() => expect(build.view().failures?.map((f) => f.start.shown.kind)).toEqual(['baseFailure']));
     const before = reads.mock.calls.length;
-    // Since then the check was accepted and the build started from another session in the change's copy, where its check runs (the backend says elsewhere).
+    // Since then the check was accepted and the build started from a Claude Code session in the change's copy, and is under way.
     reads.mockResolvedValue(underWay());
     vm.windowFocused();
     await vi.waitFor(() => expect(build.view().failures).toEqual([]));
     expect(reads.mock.calls.length).toBeGreaterThan(before);
-    expect(build.view().baseChecks?.elsewhere).toBe(true);
+    // The page shows the build under way, started outside this Workbench.
+    expect(build.view().outside).toEqual([{ repo: 'kata', ...outside }]);
   });
 
   it('a focus read keeps what the engineer is looking at r8.2', async () => {

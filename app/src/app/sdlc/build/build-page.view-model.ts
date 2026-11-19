@@ -287,6 +287,8 @@ export type BuildPageView = {
   counts: { files: number; findings: number };
   /** The checks on the base to list while they run, were cut off or run in another session; absent or null when there is nothing to list. */
   baseChecks?: BaseChecksView | null;
+  /** Each repository whose build is under way and was started outside this Workbench (R8.2), in the backend's words, with when the start was recorded. */
+  outside?: OutsideView[];
   /** The repositories whose start failed, each shown once on the page. */
   failures?: BuildFailureView[];
   /** The repositories whose build finished with a check failing at finish, each shown once on the page. */
@@ -309,6 +311,9 @@ export type BuildFailureView = { start: StartChecks; refusal: AcceptRefusal | nu
 
 /** What the checks list shows: the repository's checks on the base, the clock for the running one and whether another session runs them. */
 export type BaseChecksView = { repo: string; base: string; checks: BaseCheck[]; now: number; elsewhere: boolean };
+
+/** A repository whose build is under way and was started outside this Workbench: the backend's words and when the start was recorded. */
+export type OutsideView = { repo: string; at: string; words: string };
 
 /** The two views of a running build: what the agents say and do, and what they changed. */
 export type BuildTab = 'activity' | 'changes';

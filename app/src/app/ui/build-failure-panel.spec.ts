@@ -25,7 +25,7 @@ const failing = (name: string, over: Partial<BaseCheck> = {}): BaseCheck =>
 /** `failed` checks that do not say what failed, then `passed` others, as the backend answers a start that stopped on the base. */
 function start(failedNames: string[], passed: number, over: Partial<StartChecks> = {}): StartChecks {
   const checks = [...failedNames.map((n) => failing(n)), ...Array.from({ length: passed }, (_, i) => check(`ok-${i}`))];
-  return { repo: 'kata', shown: { kind: 'baseFailure' }, base: BASE, checks, passed, setupHint: failedNames.length >= 3, startHeld: 'Accept or fix the failing checks first', finish: null, elsewhere: false, ...over };
+  return { repo: 'kata', shown: { kind: 'baseFailure' }, base: BASE, checks, passed, setupHint: failedNames.length >= 3, startHeld: 'Accept or fix the failing checks first', finish: null, elsewhere: false, listed: null, outside: null, ...over };
 }
 
 const dialogOpen = () => document.body.querySelector('[role="dialog"], [role="alertdialog"]') !== null;
