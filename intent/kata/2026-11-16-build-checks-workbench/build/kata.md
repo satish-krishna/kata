@@ -240,3 +240,24 @@ notes: |
   The mock sdlcStartChecks returns three notRun checks by default, so the list stays hidden; ?demo=checks-cutoff and ?demo=checks-elsewhere show the other states, and both routes are in check:boot and check:interaction in package.json.
   The progress sentence "Running X, n of m done" is in aria-live="polite" with no time in it; the elapsed time sits outside it (R12.1).
 ```
+
+### T15
+
+```yaml
+task: T15
+commits: ["0228f5b", "5e089b6", "73c3bcd", "56a2b4e"]
+departure: |
+  R4.1, R4.5: when a start is refused or fails and sdlcStartChecks shows nothing (no baseFailure, allAccepted or otherReason), the view-model falls back to an error toast with the plugin's problems, so a start never fails silently; R4.1 says no toast, and if the backend always explains a stopped start the fallback is dead code.
+  R4.5: a start that stops on a failed hook or a refusal reaches the page only after the view-model reads the checks again; that read was added in settle.
+  rule 5: tests that read vm.refusal() or looked for the refusal dialog were rewritten to assert a toast and no dialog: the refused, failed-hook and couldNotRun tests and the outcome table in build-page.view-model.spec.ts, "a refused build opens the refusal dialog" in change-page.spec.ts, and "a refusal by the plugin lists its problems" in change-page.view-model.spec.ts.
+  rule 5: build-refusal-dialog.spec.ts was deleted with the component, which nothing else used.
+  T15 files: change-page.spec.ts, change-page.view-model.spec.ts, sdlc/build/build-page.css (the .k-bp__failure rule) and ui/build-refusal-dialog.* (deleted) are outside the task's list.
+  rule 1: the red commit carried stubs in BuildPageViewModel (askAccept, cancelAccept, confirmAccept, copyOutput and the new types) and in the two transports (throwing "not implemented"), plus the new component and dialog files; they compute nothing the test asserts.
+red: observed
+notes: |
+  The panel is the view-model's failures (one per repository whose shown is baseFailure, allAccepted or otherReason) and startHold (the first non-null startHeld); Start build renders disabled with the hold reason as an sr-only description.
+  BuildPage gained acceptCheck and copyOutput outputs; change-page.html mounts app-accept-check-dialog, a hlm-dialog titled "Accept {check} for this build?", cancelled by Escape and Cancel.
+  A refused acceptance closes the dialog and shows the workflow's problems in a role="alert" block under that check's row; a thrown error becomes the same block; either way the page reads the checks again.
+  Mock demos ?demo=checks-base, checks-base-many and checks-base-moved; the first two are in the --route lists of check:boot and check:interaction.
+  The feat work is split over 5e089b6 (package.json and mock-transport.ts) and 73c3bcd, because a first commit call returned committed false with no reason; the deletions were committed after unstaging them, since the commit command reported nothing changed while they were staged.
+```
