@@ -44,6 +44,7 @@ import type { CommitFiles } from '@bindings/CommitFiles';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
+import type { BaseCheck } from '@bindings/BaseCheck';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { StartChecks } from '@bindings/StartChecks';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
@@ -494,7 +495,29 @@ export class MockTransport extends KataTransport {
   sdlcDiffBase(_repoPath: string): Promise<BaseInfo> { return Promise.resolve(this.sdlc.diffBase()); }
   sdlcOldChecks(_folder: string, systems: string[]): Promise<OldChecksNotice[]> { return Promise.resolve(this.sdlc.oldChecks(systems)); }
   sdlcOldChecksSeen(systems: string[]): Promise<void> { this.sdlc.oldChecksSeen(systems); return Promise.resolve(); }
-  sdlcStartChecks(_change: ChangeRef): Promise<StartChecks[]> { return Promise.resolve([]); }
+  /** The checks on the base of the demo change's repository: passed, failed, then one that is running, or cut off under `?demo=checks-cutoff`, then the rest. `?demo=checks-elsewhere` shows them running in another session; with no demo none has run. */
+  sdlcStartChecks(_change: ChangeRef): Promise<StartChecks[]> {
+    const at = (secs: number) => new Date(Date.now() - secs * 1000).toISOString();
+    const check = (name: string, state: BaseCheck['state'], startedAgo: number | null, endedAgo: number | null): BaseCheck => ({
+      check: name, state, exitCode: state === 'passed' ? 0 : state === 'failed' ? 1 : null, output: '', lineCount: 0, canAccept: false, accepted: false,
+      startedAt: startedAgo === null ? null : at(startedAgo), endedAt: endedAgo === null ? null : at(endedAgo),
+    });
+    const demo = demoParam();
+    const cut = demo === 'checks-cutoff';
+    const elsewhere = demo === 'checks-elsewhere';
+    if (!cut && !elsewhere) {
+      const none = ['app-lint', 'rust-fmt', 'app-unit'].map((name) => check(name, 'notRun', null, null));
+      return Promise.resolve([{ repo: 'kata', shown: { kind: 'startable' }, base: '3c504eb', checks: none, passed: 0, setupHint: false, startHeld: null, finish: null }]);
+    }
+    const checks = [
+      check('app-lint', 'passed', 300, 256),
+      check('rust-fmt', 'passed', 256, 250),
+      check('app-unit', cut ? 'cutOff' : 'running', 95, null),
+      check('rust-clippy', 'notRun', null, null),
+      check('rust-test', 'notRun', null, null),
+    ];
+    return Promise.resolve([{ repo: 'kata', shown: { kind: cut ? 'startable' : 'underWay' }, base: '3c504eb', checks, passed: 2, setupHint: false, startHeld: null, finish: null }]);
+  }
   sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]> { return Promise.resolve(this.sdlc.checksView(change.change)); }
   /** The plugin's answer to declaring the change done, with the steps it reports on the way; `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` give each of the other answers. */
   async sdlcDeclareDone(change: ChangeRef): Promise<DeclareView> {

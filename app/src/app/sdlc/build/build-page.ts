@@ -24,6 +24,7 @@ import { actionLabel, primaryAction, type Finding, type Severity, type StageActi
 import { FindingsList } from '../../ui/findings-list';
 import { HeldPanel } from '../../ui/held-panel';
 import { ObservePane } from '../../ui/observe-pane';
+import { BuildChecksList } from '../../ui/build-checks-list';
 import { CheckResults } from '../../ui/check-results';
 import { Segmented } from '../../ui/segmented';
 import { WaitingNotice } from '../../ui/waiting-notice';
@@ -75,7 +76,7 @@ const TUCK_NOTE = 'The page always shows at least one area.';
   selector: 'app-build-page',
   host: { class: 'block h-full min-h-0' },
   providers: [provideIcons({ lucideCheck, lucideChevronDown, lucideChevronRight, lucideEllipsis, lucideMaximize2, lucideMinus })],
-  imports: [HlmButtonImports, HlmDropdownMenuImports, NgIcon, NgTemplateOutlet, CheckResults, FindingsList, HeldPanel, ObservePane, Segmented, WaitingNotice, ChangesView],
+  imports: [HlmButtonImports, HlmDropdownMenuImports, NgIcon, NgTemplateOutlet, BuildChecksList, CheckResults, FindingsList, HeldPanel, ObservePane, Segmented, WaitingNotice, ChangesView],
   templateUrl: './build-page.html',
   styleUrl: './build-page.css',
 })

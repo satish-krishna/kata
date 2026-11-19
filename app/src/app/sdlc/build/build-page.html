@@ -2,6 +2,11 @@
   <div class="sr-only" aria-live="assertive" aria-atomic="true">{{ view().announcement }}</div>
   <div class="k-bp__notice">
     <app-waiting-notice [items]="view().waiting" (goTo)="goToRepo($event)" />
+    @if (view().baseChecks; as checks) {
+      <div class="k-bp__checks" data-base-checks>
+        <app-build-checks-list [checks]="checks.checks" [base]="checks.base" [now]="checks.now" [elsewhere]="checks.elsewhere" />
+      </div>
+    }
   </div>
   @if (view().held; as held) {
     <div class="k-bp__held" data-held-build>

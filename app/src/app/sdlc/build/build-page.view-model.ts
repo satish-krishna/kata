@@ -1,9 +1,11 @@
 import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
+import type { BaseCheck } from '@bindings/BaseCheck';
 import type { BuildPhase } from '@bindings/BuildPhase';
 import type { BuildPreviewKind } from '@bindings/BuildPreviewKind';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { BuildRunRef } from '@bindings/BuildRunRef';
 import type { BuildState } from '@bindings/BuildState';
+import type { StartChecks } from '@bindings/StartChecks';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { RepoBoard } from '@bindings/RepoBoard';
 import type { ReviewStanding } from '@bindings/ReviewStanding';
@@ -281,7 +283,12 @@ export type BuildPageView = {
   areas: { activity: boolean; files: boolean };
   /** The counts the area tabs show: changed files and findings. */
   counts: { files: number; findings: number };
+  /** The checks on the base to list while they run, were cut off or run in another session; absent or null when there is nothing to list. */
+  baseChecks?: BaseChecksView | null;
 };
+
+/** What the checks list shows: the repository's checks on the base, the clock for the running one and whether another session runs them. */
+export type BaseChecksView = { repo: string; base: string; checks: BaseCheck[]; now: number; elsewhere: boolean };
 
 /** The two views of a running build: what the agents say and do, and what they changed. */
 export type BuildTab = 'activity' | 'changes';
@@ -932,6 +939,50 @@ export class BuildPageViewModel {
 
   /** Every repository's checks as the plugin recorded them: read when the page opens and again whenever the host announces the build moved. */
   private readonly checkViews = signal<RepoCheckView[]>([]);
+  /** Each repository's start and its checks on the base, as the last read found them. */
+  private readonly startChecks = signal<StartChecks[]>([]);
+  /** The checks of this Workbench's own preparation, read from the backend's running step while it runs. */
+  private readonly liveChecks = signal<BaseCheck[]>([]);
+  /** The clock for the running check's elapsed time, ticked once a second while the page lists checks. */
+  private readonly checksNow = signal(Date.now());
+
+  /**
+   * The checks list for the page: the live checks while this Workbench prepares the build (the step's own list, else the last read), and
+   * otherwise the last read when a check was cut off (R2.4) or the build is prepared in another session (R2.5). Null when there is nothing to list.
+   */
+  private readonly baseChecks = computed<BaseChecksView | null>(() => {
+    const now = this.checksNow();
+    const live = this.liveChecks();
+    const read = this.startChecks();
+    if (this.preparing()) {
+      const from = read.find((r) => r.checks.length > 0) ?? read[0];
+      const checks = live.length > 0 ? live : (from?.checks ?? []);
+      return checks.length === 0 ? null : { repo: from?.repo ?? '', base: from?.base ?? '', checks, now, elsewhere: false };
+    }
+    const shown = read.find((r) => r.shown.kind === 'underWay' || r.checks.some((c) => c.state === 'cutOff'));
+    if (shown === undefined || shown.checks.length === 0) return null;
+    return { repo: shown.repo, base: shown.base, checks: shown.checks, now, elsewhere: shown.shown.kind === 'underWay' };
+  });
+
+  /** While the preparation runs, tick the clock and read the live checks from the backend once a second. */
+  private readonly followLiveChecks = effect((onCleanup) => {
+    if (!this.preparing()) {
+      untracked(() => this.liveChecks.set([]));
+      return;
+    }
+    const tick = (): void => {
+      this.checksNow.set(Date.now());
+      const shown = untracked(() => this.shownPreparation());
+      if (shown === null) return;
+      void this.transport
+        .steps()
+        .then((running) => this.liveChecks.set(running.find((s) => sameStepChange(s.change, shown.ref))?.liveChecks ?? []))
+        .catch(() => undefined);
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    onCleanup(() => clearInterval(timer));
+  });
   private checksReading = false;
   private checksAgain = false;
 
@@ -951,6 +1002,8 @@ export class BuildPageViewModel {
         try {
           const views = await this.transport.sdlcChecksView(this.ref()!);
           if (this.shows(ctx)) this.checkViews.set(views);
+          const started = await this.transport.sdlcStartChecks(this.ref()!).catch(() => [] as StartChecks[]);
+          if (this.shows(ctx)) this.startChecks.set(started);
         } catch (e) {
           this.toasts.error(`Could not read the checks: ${message(e)}`);
         }
@@ -1006,6 +1059,8 @@ export class BuildPageViewModel {
     this.reviewHeld.set([]);
     this.runRefs.set([]);
     this.checkViews.set([]);
+    this.startChecks.set([]);
+    this.liveChecks.set([]);
     this.changedFiles.set(false);
     this.changedFileTotal.set(0);
     this.reviews.set([]);
@@ -1384,6 +1439,7 @@ export class BuildPageViewModel {
       findingPlace: this.findingPlace(),
       waiting: this.waitingNotices(),
       announcement: this.announcement(),
+      baseChecks: this.baseChecks(),
       areas: shownAreas({ stage, hasSessions, hasChanges }),
       counts: { files: this.changedFileTotal(), findings: findingsArea.review === null ? 0 : findingsArea.review.findings.length },
     };

@@ -12,6 +12,12 @@
   grid-row: 1;
 }
 
+.k-bp__checks {
+  max-height: 40vh;
+  overflow: auto;
+  padding: var(--space-3) var(--space-5);
+}
+
 .k-bp__held {
   grid-row: 3;
 }
