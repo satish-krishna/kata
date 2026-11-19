@@ -279,3 +279,20 @@ notes: |
   No view-model spec for rerunFinish was added.
   The r7.1 test calls TestBed.resetTestingModule() between rows; that fix was made in the test between the test commit and the feature commit.
 ```
+
+### T17
+
+```yaml
+task: T17
+commits: ["9845e62", "14dc84a"]
+departure: |
+  T17 files: app/package.json is unchanged: the dialog opens only after a click, and ?demo=checks-elsewhere (already in both --route lists) is the route where Start opens it, but neither check:boot nor check:interaction clicks Start, so neither gate exercises the dialog.
+  R9.1: the dialog's sentences are TypeScript literals in build-elsewhere-dialog.html, because the backend sends only repos, since and runningCheck, no words.
+red: observed
+notes: |
+  BuildElsewhereDialog is titled "This build may already be running", with Cancel and Start anyway; it names the repositories and the recorded start time (local HH:MM, left out when it cannot be parsed); with runningCheck it says "running in another session now, on <check>", otherwise that starting is safe if that session crashed or was closed; Escape and the close control cancel.
+  The view model keeps the question in elsewhereRequest; confirming repeats the same start or continue with evenIfElsewhere true; cancel starts nothing; if the page has moved to another change it shows an info toast instead.
+  Both transports send the flag only when true, so existing calls and payloads are unchanged; the mock answers mayBeRunningElsewhere under ?demo=checks-elsewhere unless the flag is set.
+  The review start does not take the flag (sdlcReviewStart has none), so it never asks.
+  R12.2: only the dialog's Cancel and Start anyway buttons and Escape apply here; the dialog spec covers them.
+```
