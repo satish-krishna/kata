@@ -2331,6 +2331,29 @@ describe('the change page reads where the change stands again', () => {
     expect(build.view().baseChecks?.elsewhere).toBe(true);
   });
 
+  it('a focus read keeps what the engineer is looking at r8.2', async () => {
+    const transport = new MockTransport();
+    const reads = vi.spyOn(transport, 'sdlcStartChecks');
+    const workspaces = vi.spyOn(transport, 'sdlcWorkspaces');
+    const { vm } = setup(MOCK_BUILD_CHANGE, transport);
+    await ready(vm);
+    await vm.showDoc('intent');
+    const doc = vm.doc();
+    expect(doc).not.toBeNull();
+    const states: string[] = [];
+    const seen = () => states.push(vm.state());
+    const checksBefore = reads.mock.calls.length;
+    const workspacesBefore = workspaces.mock.calls.length;
+    vm.windowFocused();
+    seen();
+    await vi.waitFor(() => expect(reads.mock.calls.length).toBeGreaterThan(checksBefore));
+    seen();
+    expect(states.every((s) => s === 'ready')).toBe(true);
+    expect(vm.shownDoc()).toBe('intent');
+    expect(vm.doc()).toBe(doc);
+    expect(workspaces.mock.calls.length).toBe(workspacesBefore);
+  });
+
   it('reads on opening and after actions, not on its own r8.3', async () => {
     const transport = new MockTransport();
     const reads = vi.spyOn(transport, 'sdlcStartChecks');
