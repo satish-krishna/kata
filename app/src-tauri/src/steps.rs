@@ -118,8 +118,15 @@ pub fn progress_line(
     line: Option<&StepProgress>,
 ) -> StepProgress {
     let words = match (&kind, repo) {
-        (StepKind::PreparingBuild | StepKind::PreparingReview, Some(repo)) => {
-            format!("Preparing {repo}")
+        // A review's preparation keeps its wording; a build's names the step the line is about (a check on the base,
+        // or a preparation hook) and the repository it is for.
+        (StepKind::PreparingReview, Some(repo)) => format!("Preparing {repo}"),
+        (StepKind::PreparingBuild, Some(repo)) => {
+            let words = kind.of_line(line).words();
+            match words {
+                "Checking the base" => format!("{words} of {repo}"),
+                _ => format!("{words} {repo}"),
+            }
         }
         _ => kind.of_line(line).words().to_string(),
     };
@@ -477,7 +484,7 @@ mod tests {
                 StepKind::PreparingBuild,
                 Some("kata"),
                 None,
-                "Preparing kata",
+                "Checking the base of kata",
             ),
             (
                 StepKind::PreparingReview,
@@ -489,7 +496,7 @@ mod tests {
                 StepKind::PreparingBuild,
                 Some("kata"),
                 line(end),
-                "Preparing kata: base-tests passed",
+                "Checking the base of kata: base-tests passed",
             ),
             (StepKind::Starting, None, None, "Starting the change"),
             (StepKind::Renaming, None, None, "Renaming the change"),
