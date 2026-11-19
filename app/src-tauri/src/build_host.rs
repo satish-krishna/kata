@@ -5775,6 +5775,105 @@ mod tests {
         );
     }
 
+    // R2.1, R3.1, R6.1: a single-repo app's start is the change's preparation step and reads the live checks.
+    #[test]
+    fn single_repo_start_keeps_the_live_checks_on_the_step_r3_1() {
+        let r = single_rig();
+        r.two_apps("A");
+        r.host.set_checks_poll(std::time::Duration::from_millis(5));
+        script_checks(&r, &["lint"], &[("lint", "running", None)]);
+        *r.tools.delay.lock().unwrap() = std::time::Duration::from_millis(150);
+        let (starter, seen) = start_watching(&r);
+        assert!(matches!(
+            starter.join().unwrap(),
+            StartOutcome::Started { .. }
+        ));
+        {
+            let seen = seen.lock().unwrap();
+            let named = seen.iter().any(|list| {
+                list.iter()
+                    .any(|c| c.check == "lint" && c.state == BaseCheckState::Running)
+            });
+            assert!(named, "the first app's start never showed the running check");
+        }
+        assert!(r.steps.running().is_empty(), "the step is gone at launch");
+        assert_eq!(r.launcher.launched("engine").len(), 1);
+        // The next app's start, made when the first app ends, is a step of its own.
+        r.tools.log("A", "engine", "T1");
+        let watching = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let found: Watched = Arc::default();
+        let watcher = {
+            let (steps, flag, sink) = (r.steps.clone(), watching.clone(), found.clone());
+            std::thread::spawn(move || {
+                while !flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    for step in steps.running() {
+                        sink.lock().unwrap().push(step.live_checks);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+            })
+        };
+        r.launcher.finish(r.launcher.launched("engine")[0], 0);
+        watching.store(true, std::sync::atomic::Ordering::SeqCst);
+        watcher.join().unwrap();
+        assert_eq!(r.launcher.launched("workbench").len(), 1);
+        assert!(
+            found.lock().unwrap().iter().any(|list| list
+                .iter()
+                .any(|c| c.check == "lint" && c.state == BaseCheckState::Running)),
+            "the second app's start never showed the running check"
+        );
+        assert!(r.steps.running().is_empty(), "the step is gone at launch");
+    }
+
+    // R10.1, R10.2: a stop while a single-repo app's start runs the checks asks first and notes where the copy is.
+    #[test]
+    fn single_repo_stop_during_the_checks_asks_and_notes_r10_1() {
+        let r = single_rig();
+        r.two_apps("A");
+        r.host.set_checks_poll(std::time::Duration::from_millis(5));
+        *r.tools.hang_in.lock().unwrap() = Some("engine".into());
+        script_checks(
+            &r,
+            &["c-one", "c-two"],
+            &[
+                ("c-one", "ended", Some("passed")),
+                ("c-two", "running", None),
+            ],
+        );
+        let host = r.host.clone();
+        let starter = std::thread::spawn(move || host.start(&cref("A"), form()));
+        let began = std::time::Instant::now();
+        let question = loop {
+            let q = r
+                .steps
+                .running()
+                .first()
+                .and_then(|s| s.stop_question.clone());
+            if let Some(q) = q {
+                break q;
+            }
+            assert!(
+                began.elapsed() < std::time::Duration::from_secs(3),
+                "no stop question"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert!(
+            question.starts_with("1 of 2 checks already ran."),
+            "{question}"
+        );
+        assert!(r.steps.stop(&key("A")));
+        assert_eq!(
+            starter.join().unwrap(),
+            StartOutcome::Stopped {
+                prepared: Vec::new(),
+                note: stopped_note(true),
+            }
+        );
+        assert_eq!(r.launcher.count(), 0, "nothing launches");
+    }
+
     #[test]
     fn a_single_repo_round_offers_only_the_apps() {
         let r = single_rig();
