@@ -7,6 +7,11 @@
         <app-build-failure-panel [start]="f.start" [refusal]="f.refusal" (accept)="acceptCheck.emit({ repo: f.start.repo, check: $event })" (copy)="copyOutput.emit($event)" />
       </div>
     }
+    @for (s of view().finishes ?? []; track s.repo) {
+      <div class="k-bp__failure" data-finish>
+        <app-build-finish-panel [start]="s" (rerun)="rerunFinish.emit(s.repo)" (copy)="copyOutput.emit($event)" />
+      </div>
+    }
     @if (view().baseChecks; as checks) {
       <div class="k-bp__checks" data-base-checks>
         <app-build-checks-list [checks]="checks.checks" [base]="checks.base" [now]="checks.now" [elsewhere]="checks.elsewhere" />

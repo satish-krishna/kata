@@ -45,6 +45,7 @@ import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { BaselineApproved } from '@bindings/BaselineApproved';
+import type { RerunOutcome } from '@bindings/RerunOutcome';
 import type { StartChecks } from '@bindings/StartChecks';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { DeclareView } from '@bindings/DeclareView';
@@ -267,6 +268,8 @@ export abstract class KataTransport {
   abstract sdlcStartChecks(change: ChangeRef): Promise<StartChecks[]>;
   /** Accept one failing check of a repository for this change, through the workflow; its answer is the approval or its problems as they are (R5.2, R5.6). */
   abstract sdlcAcceptBaseCheck(change: ChangeRef, repo: string, check: string): Promise<BaselineApproved>;
+  /** Run the checks of a repository's build finish again on the change, through the workflow; the base results are not touched (R7.2). */
+  abstract sdlcRerunFinishChecks(change: ChangeRef, repo: string): Promise<RerunOutcome>;
   /** The old per-machine checks files of the systems the engineer has not been told about yet, in the order asked; empty when none. */
   abstract sdlcOldChecks(folder: string, systems: string[]): Promise<OldChecksNotice[]>;
   /** Record that the engineer has been told about the old checks files of these systems. */

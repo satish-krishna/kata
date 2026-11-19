@@ -282,6 +282,7 @@
                 (startAgain)="build.startAgain()"
                 (acceptCheck)="build.askAccept($event.repo, $event.check)"
                 (copyOutput)="build.copyOutput($event)"
+                (rerunFinish)="build.rerunFinish($event)"
                 (startReviewAgain)="build.startReviewAgain()"
                 (answer)="build.answer($event.runId, $event)"
                 [drafts]="build.messageDrafts()"

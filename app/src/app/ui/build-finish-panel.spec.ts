@@ -1,3 +1,4 @@
+import { TestBed } from '@angular/core/testing';
 import type { FinishFailure } from '@bindings/FinishFailure';
 import type { StartChecks } from '@bindings/StartChecks';
 import { render } from '../../testing/render';
@@ -26,6 +27,7 @@ describe('BuildFinishPanel shows a failure at finish, once', () => {
 
   it('shows a finish failure once with what happens next r7.1', async () => {
     for (const row of rowsOfR71) {
+      TestBed.resetTestingModule();
       const { fixture, container } = await render(BuildFinishPanel, { start: start(finish({ check: row.check, base: row.base, next: row.next })) });
       expect(container.querySelectorAll('[data-finish-row]').length).toBe(1);
       expect(text(container.querySelector('[data-finish-title]')!)).toBe(row.title);

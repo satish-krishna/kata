@@ -1,1 +1,43 @@
-<section data-finish-panel></section>
+@if (finish(); as f) {
+  <section class="bfp" [attr.aria-label]="'Checks at finish in ' + start().repo" data-finish-panel>
+    <div class="bfp__head">
+      <span class="bfp__pill">
+        <span class="k-status k-status--error"><span class="k-status__dot"></span>Build finished, 1 check failed</span>
+        <span class="bfp__repo k-mono">{{ start().repo }}</span>
+      </span>
+      <h3 class="bfp__title" data-finish-title>{{ title() }}</h3>
+      <p class="bfp__note" data-finish-why>
+        A check that passes on the base and fails now blocks the change: that is what the checks are for, so accepting is not offered. If the failure has nothing to do with the change, for example a timing check on a busy machine, run the checks again.
+      </p>
+    </div>
+
+    <div class="bfp__item" [attr.data-finish-row]="f.check">
+      <div class="bfp__top">
+        <span class="bfp__name k-mono">{{ f.check }}</span>
+        <span [class]="'k-badge k-badge--error'">{{ badge() }}</span>
+        <span class="bfp__actions">
+          @if (f.output !== '') {
+            <button hlmBtn variant="ghost" size="sm" type="button" [attr.aria-expanded]="open()" (click)="toggle()">
+              {{ open() ? 'Hide output' : 'Show output' }}<span class="sr-only"> of {{ f.check }}</span>
+            </button>
+          }
+          <button hlmBtn variant="primary" size="sm" type="button" data-rerun (click)="rerun.emit()">Run checks again<span class="sr-only"> in {{ start().repo }}</span></button>
+        </span>
+      </div>
+      <p class="bfp__why" data-finish-next>{{ next() }}</p>
+      @if (open()) {
+        <pre class="bfp__out k-mono" data-output tabindex="0" [attr.aria-label]="'Output of ' + f.check">{{ f.output }}</pre>
+        <div class="bfp__foot" data-output-foot>
+          <span class="k-mono">{{ lines() }} {{ lines() === 1 ? 'line' : 'lines' }} · the last 200 are kept</span>
+          <button hlmBtn variant="ghost" size="sm" type="button" (click)="copy.emit(f.output)">Copy output<span class="sr-only"> of {{ f.check }}</span></button>
+        </div>
+      }
+    </div>
+
+    @if (f.passed > 0) {
+      <details class="bfp__fold" data-passed-fold>
+        <summary>{{ passedWords() }}</summary>
+      </details>
+    }
+  </section>
+}

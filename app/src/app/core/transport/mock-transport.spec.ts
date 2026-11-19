@@ -854,6 +854,11 @@ describe('MockTransport answers every call the backend gained on this branch (F2
     expect(out).toEqual({ approved: { hook: 'app-unit', base: '3c504eb' }, problems: [] });
   });
 
+  it('sdlcRerunFinishChecks passes, so the repository counts as finished', async () => {
+    const out = await new MockTransport().sdlcRerunFinishChecks(ref(MOCK_DONE_CHANGE), 'kata');
+    expect(out).toEqual({ kind: 'passed' });
+  });
+
   it('sdlcOldChecks says nothing without ?demo=old-checks, and sdlcOldChecksSeen resolves', async () => {
     const t = new MockTransport();
     expect(await t.sdlcOldChecks(MOCK_WORKSPACE_FOLDER, ['commerce'])).toEqual([]);

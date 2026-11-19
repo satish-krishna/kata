@@ -47,6 +47,7 @@ import type { BaseInfo } from '@bindings/BaseInfo';
 import type { BaseCheck } from '@bindings/BaseCheck';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
 import type { BaselineApproved } from '@bindings/BaselineApproved';
+import type { RerunOutcome } from '@bindings/RerunOutcome';
 import type { StartChecks } from '@bindings/StartChecks';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
@@ -505,6 +506,7 @@ export class MockTransport extends KataTransport {
     });
     const demo = demoParam();
     if (demo === 'checks-base' || demo === 'checks-base-moved' || demo === 'checks-base-many') return Promise.resolve([this.baseFailure(demo === 'checks-base-many' ? 9 : 1, check)]);
+    if (demo === 'checks-finish' && !this.finishRerun) return Promise.resolve([this.finishFailure()]);
     const cut = demo === 'checks-cutoff';
     const elsewhere = demo === 'checks-elsewhere';
     if (!cut && !elsewhere) {
@@ -527,6 +529,18 @@ export class MockTransport extends KataTransport {
     if (demoParam() === 'checks-base-moved') return Promise.resolve({ approved: null, problems: ['The base moved since the checks ran: the check was not accepted.'] });
     this.acceptedChecks.add(check);
     return Promise.resolve({ approved: { hook: check, base: '3c504eb' }, problems: [] });
+  }
+  /** Whether the engineer ran the finish checks again in this session; `?demo=checks-finish` then shows the repository finished. */
+  private finishRerun = false;
+  /** Running the checks of the finish again passes, so the repository counts as finished; the base results are not touched. */
+  sdlcRerunFinishChecks(_change: ChangeRef, _repo: string): Promise<RerunOutcome> {
+    this.finishRerun = true;
+    return Promise.resolve({ kind: 'passed' });
+  }
+  /** A repository whose build finished and whose check `app-speed` failed at finish, as `?demo=checks-finish` shows it. */
+  private finishFailure(): StartChecks {
+    const output = "running 1 test\nspeed_targets: every open change's name took 1.2s (limit 1 s)\ntest result: FAILED. 0 passed; 1 failed";
+    return { repo: 'kata', shown: { kind: 'startable' }, base: '3c504eb', checks: [], passed: 0, setupHint: false, startHeld: null, finish: { check: 'app-speed', base: 'passed', output, passed: 11, next: 'sentBackNotFixed', canAccept: false } };
   }
   /** A start that stopped on the base: `failing` checks fail without saying what failed, three others passed; accepted ones are marked and settle the start. */
   private baseFailure(failing: number, check: (name: string, state: BaseCheck['state'], startedAgo: number | null, endedAgo: number | null) => BaseCheck): StartChecks {

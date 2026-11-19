@@ -287,6 +287,8 @@ export type BuildPageView = {
   baseChecks?: BaseChecksView | null;
   /** The repositories whose start failed, each shown once on the page. */
   failures?: BuildFailureView[];
+  /** The repositories whose build finished with a check failing at finish, each shown once on the page. */
+  finishes?: StartChecks[];
   /** Why starting the build is not offered as ready; null when it is. */
   startHold?: string | null;
 };
@@ -1447,6 +1449,7 @@ export class BuildPageViewModel {
       announcement: this.announcement(),
       baseChecks: this.baseChecks(),
       failures: this.failures(),
+      finishes: this.finishes(),
       startHold: this.startHold(),
       areas: shownAreas({ stage, hasSessions, hasChanges }),
       counts: { files: this.changedFileTotal(), findings: findingsArea.review === null ? 0 : findingsArea.review.findings.length },
@@ -1800,6 +1803,9 @@ export class BuildPageViewModel {
   });
 
   /** Why starting the build is not offered as ready, as the backend worded it; null when it is. */
+  /** The repositories whose build finished with a check failing, each shown once on the page; none while a run of the checks is under way. */
+  private readonly finishes = computed<StartChecks[]>(() => (this.preparing() ? [] : this.startChecks().filter((s) => s.finish !== null)));
+
   private readonly startHold = computed(() => this.startChecks().find((s) => s.startHeld !== null)?.startHeld ?? null);
 
   /** Ask once more before a check is accepted: nothing is recorded until it is confirmed. */
@@ -1829,6 +1835,38 @@ export class BuildPageViewModel {
       problems = [message(e)];
     }
     this.acceptRefusal.set(problems.length === 0 ? null : { repo: request.repo, check: request.check, problems });
+    await this.readChecks();
+  }
+
+  /**
+   * Run the checks of a repository's finish again on the change, under the page's progress line and its Stop. The base results are not
+   * touched; what the run came to is read from the workflow's ledger afterwards, so the page shows it once, here, as it does any other.
+   */
+  async rerunFinish(repo: string): Promise<void> {
+    const ref = this.ref();
+    if (ref === null || this.preparing()) return;
+    const ctx = this.ctx;
+    this.progress.begin('running-checks', 'Running the checks again', 'build');
+    this.startedPreparing.set(ctx);
+    this.lineFor = ctx === null ? null : `${ctx.system}/${ctx.change}`;
+    this.stoppedNote.set(null);
+    let failed = false;
+    try {
+      const outcome = await this.transport.sdlcRerunFinishChecks(ref, repo);
+      if (outcome.kind === 'stopped') this.toasts.info(`${ref.change}: The checks were stopped before they finished`);
+      else if (outcome.kind === 'refused' || outcome.kind === 'failed') failed = outcome.kind === 'refused';
+      else if (outcome.kind === 'held') this.toasts.error([`${ref.change}: The build waits for other changes`, ...outcome.held.map((h) => `${h.repo}: ${h.holder.change}`)].join('\n'));
+      else if (outcome.kind === 'couldNotRun') failed = true;
+      if (outcome.kind === 'refused') this.refuse(ctx, outcome.problems);
+      if (outcome.kind === 'couldNotRun') this.refuse(ctx, [outcome.output]);
+    } catch (e) {
+      failed = true;
+      this.refuse(ctx, [message(e)]);
+    } finally {
+      this.startedPreparing.set(null);
+      if (ctx !== null) this.steps.ended(ctx);
+      this.endLine(ctx, failed);
+    }
     await this.readChecks();
   }
 
