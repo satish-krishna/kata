@@ -520,7 +520,7 @@ export class MockTransport extends KataTransport {
       check('rust-clippy', 'notRun', null, null),
       check('rust-test', 'notRun', null, null),
     ];
-    return Promise.resolve([{ repo: 'kata', shown: { kind: 'startable' }, base: '3c504eb', checks, passed: 2, setupHint: false, startHeld: null, finish: null, elsewhere: !cut, listed: null, outside: null }]);
+    return Promise.resolve([{ repo: 'kata', shown: { kind: 'startable' }, base: '3c504eb', checks, passed: 2, setupHint: false, startHeld: null, finish: null, elsewhere: !cut, listed: cut ? 'cutOff' : 'elsewhere', outside: null }]);
   }
   /** The checks the engineer accepted in this session, so `?demo=checks-base` marks them and settles the start. */
   private readonly acceptedChecks = new Set<string>();
@@ -540,7 +540,9 @@ export class MockTransport extends KataTransport {
   /** A repository whose build finished and whose check `app-speed` failed at finish, as `?demo=checks-finish` shows it. */
   private finishFailure(): StartChecks {
     const output = "running 1 test\nspeed_targets: every open change's name took 1.2s (limit 1 s)\ntest result: FAILED. 0 passed; 1 failed";
-    return { repo: 'kata', shown: { kind: 'startable' }, base: '3c504eb', checks: [], passed: 0, setupHint: false, startHeld: null, finish: { check: 'app-speed', base: 'passed', output, passed: 11, next: 'sentBackNotFixed', canAccept: false }, elsewhere: false, listed: null, outside: null };
+    // The last run on the base passed, so a rerun at finish has a stale base list the page must not show while it runs.
+    const base = ['app-speed', 'app-lint', 'rust-fmt'].map((name): BaseCheck => ({ check: name, state: 'passed', exitCode: 0, output: '', lineCount: 0, canAccept: false, accepted: false, startedAt: null, endedAt: null }));
+    return { repo: 'kata', shown: { kind: 'startable' }, base: '3c504eb', checks: base, passed: base.length, setupHint: false, startHeld: null, finish: { check: 'app-speed', base: 'passed', output, passed: 11, next: 'sentBackNotFixed', canAccept: false }, elsewhere: false, listed: null, outside: null };
   }
   /** A start that stopped on the base: `failing` checks fail without saying what failed, three others passed; accepted ones are marked and settle the start. */
   private baseFailure(failing: number, check: (name: string, state: BaseCheck['state'], startedAgo: number | null, endedAgo: number | null) => BaseCheck): StartChecks {

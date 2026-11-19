@@ -32,6 +32,10 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.k-bp__outside {
+  color: var(--text-muted);
+}
+
 .k-bp__elapsed {
   color: var(--text-muted);
 }

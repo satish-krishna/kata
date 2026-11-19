@@ -1,4 +1,4 @@
-import { NgTemplateOutlet } from '@angular/common';
+import { DatePipe, NgTemplateOutlet } from '@angular/common';
 import { Component, DestroyRef, ElementRef, Injector, afterEveryRender, afterNextRender, effect, inject, input, output, untracked, viewChild } from '@angular/core';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { RedRecord } from '@bindings/RedRecord';
@@ -78,7 +78,7 @@ const TUCK_NOTE = 'The page always shows at least one area.';
   selector: 'app-build-page',
   host: { class: 'block h-full min-h-0' },
   providers: [provideIcons({ lucideCheck, lucideChevronDown, lucideChevronRight, lucideEllipsis, lucideMaximize2, lucideMinus })],
-  imports: [HlmButtonImports, HlmDropdownMenuImports, NgIcon, NgTemplateOutlet, BuildChecksList, BuildFailurePanel, BuildFinishPanel, CheckResults, FindingsList, HeldPanel, ObservePane, Segmented, WaitingNotice, ChangesView],
+  imports: [HlmButtonImports, HlmDropdownMenuImports, NgIcon, NgTemplateOutlet, DatePipe, BuildChecksList, BuildFailurePanel, BuildFinishPanel, CheckResults, FindingsList, HeldPanel, ObservePane, Segmented, WaitingNotice, ChangesView],
   templateUrl: './build-page.html',
   styleUrl: './build-page.css',
 })

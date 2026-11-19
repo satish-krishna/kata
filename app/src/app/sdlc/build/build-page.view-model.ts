@@ -215,6 +215,8 @@ const REVIEW_RUNNING = 'The review is running. Its findings appear here when it 
 /** Why accepting a check is off while the build is being prepared: the words of the backend's refusal in `sdlc_accept_base_check`, which sends them only when it refuses. */
 const BUILD_BEING_PREPARED = 'The build is being prepared';
 const NO_DEPARTURES = 'No departures from the plan.';
+/** No live checks: no preparation runs, or its step has none to list. */
+const NO_LIVE_CHECKS: { repo: string; checks: BaseCheck[] } = { repo: '', checks: [] };
 
 /** A task's recorded departure from the plan. */
 export type Departure = { repo: string; task: string | null; text: string };
@@ -961,32 +963,31 @@ export class BuildPageViewModel {
   /** Each repository's start and its checks on the base, as the last read found them. */
   private readonly startChecks = signal<StartChecks[]>([]);
   /** The checks of this Workbench's own preparation, read from the backend's running step while it runs. */
-  private readonly liveChecks = signal<BaseCheck[]>([]);
+  private readonly liveChecks = signal<{ repo: string; checks: BaseCheck[] }>(NO_LIVE_CHECKS);
   /** The clock for the running check's elapsed time, ticked once a second while the page lists checks. */
   private readonly checksNow = signal(Date.now());
 
   /**
-   * The checks list for the page: the live checks while this Workbench prepares the build (the step's own list, else the last read), and
-   * otherwise the last read when a check was cut off (R2.4) or the build is prepared in another session (R2.5). Null when there is nothing to list.
+   * The checks list for the page: while this Workbench prepares something, only the running step's live checks, which the backend fills for a
+   * build's check of the base; otherwise the repository the backend lists (R2.4, R2.5). Null when there is nothing to list.
    */
   private readonly baseChecks = computed<BaseChecksView | null>(() => {
     const now = this.checksNow();
-    const live = this.liveChecks();
-    const read = this.startChecks();
     if (this.preparing()) {
-      const from = read.find((r) => r.checks.length > 0) ?? read[0];
-      const checks = live.length > 0 ? live : (from?.checks ?? []);
-      return checks.length === 0 ? null : { repo: from?.repo ?? '', base: from?.base ?? '', checks, now, elsewhere: false };
+      const live = this.liveChecks();
+      return live.checks.length === 0 ? null : { repo: live.repo, base: '', checks: live.checks, now, elsewhere: false };
     }
-    const shown = read.find((r) => r.elsewhere || r.checks.some((c) => c.state === 'cutOff'));
-    if (shown === undefined || shown.checks.length === 0) return null;
-    return { repo: shown.repo, base: shown.base, checks: shown.checks, now, elsewhere: shown.elsewhere };
+    const shown = this.startChecks().find((r) => r.listed !== null);
+    return shown === undefined ? null : { repo: shown.repo, base: shown.base, checks: shown.checks, now, elsewhere: shown.listed === 'elsewhere' };
   });
+
+  /** The repositories whose build the backend says is under way and was started outside this Workbench (R8.2). */
+  private readonly outside = computed<OutsideView[]>(() => this.startChecks().flatMap((s) => (s.outside === null ? [] : [{ repo: s.repo, ...s.outside }])));
 
   /** While the preparation runs, tick the clock and read the live checks from the backend once a second. */
   private readonly followLiveChecks = effect((onCleanup) => {
     if (!this.preparing()) {
-      untracked(() => this.liveChecks.set([]));
+      untracked(() => this.liveChecks.set(NO_LIVE_CHECKS));
       return;
     }
     const tick = (): void => {
@@ -995,7 +996,10 @@ export class BuildPageViewModel {
       if (shown === null) return;
       void this.transport
         .steps()
-        .then((running) => this.liveChecks.set(running.find((s) => sameStepChange(s.change, shown.ref))?.liveChecks ?? []))
+        .then((running) => {
+          const step = running.find((s) => sameStepChange(s.change, shown.ref));
+          this.liveChecks.set(step === undefined ? NO_LIVE_CHECKS : { repo: step.progress?.repo ?? '', checks: step.liveChecks });
+        })
         .catch(() => undefined);
     };
     tick();
@@ -1080,7 +1084,7 @@ export class BuildPageViewModel {
     this.runRefs.set([]);
     this.checkViews.set([]);
     this.startChecks.set([]);
-    this.liveChecks.set([]);
+    this.liveChecks.set(NO_LIVE_CHECKS);
     this.changedFiles.set(false);
     this.changedFileTotal.set(0);
     this.reviews.set([]);
@@ -1460,6 +1464,7 @@ export class BuildPageViewModel {
       waiting: this.waitingNotices(),
       announcement: this.announcement(),
       baseChecks: this.baseChecks(),
+      outside: this.outside(),
       failures: this.failures(),
       finishes: this.finishes(),
       startHold: this.startHold(),

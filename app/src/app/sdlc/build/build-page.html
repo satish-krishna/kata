@@ -26,6 +26,13 @@
   <div class="k-bp__bar" data-bar>
     <app-segmented [options]="modes()" [value]="layout().mode" (valueChange)="pickMode.emit($event)" ariaLabel="Layout mode" />
     <span class="k-lock__count">{{ view().facts.tasks }}</span>
+    @for (o of view().outside ?? []; track o.repo) {
+      <span class="k-bp__outside" data-outside><span class="k-mono">{{ o.repo }}</span> {{ o.words }}
+        @if (o.at !== '') {
+          <time class="k-mono" [attr.datetime]="o.at">{{ o.at | date: 'HH:mm' }}</time>
+        }
+      </span>
+    }
     @if (view().facts.elapsed; as elapsed) {
       <span class="k-mono k-bp__elapsed">{{ elapsed }}</span>
     }

@@ -40,7 +40,7 @@ pub struct Elsewhere {
 impl LiveFacts {
     /// This Workbench runs a build of the change, or ran one since it was opened, so it knows where that build
     /// stands and nothing it finds in the record is another session's.
-    fn known_here(&self) -> bool {
+    pub fn known_here(&self) -> bool {
         self.build_live || self.stopped_here
     }
 }

@@ -390,6 +390,37 @@ pub struct StartedOutside {
 /// The reason Start is off while a failing check is not accepted (R6.2).
 const HELD: &str = "Accept or fix the failing checks first.";
 
+/// What the Build tab says of a build under way that this Workbench neither runs nor ran (R8.2).
+const STARTED_OUTSIDE: &str = "Started outside this Workbench";
+
+/// What `start` lists its checks on the base as, when they qualify: running in another session (R2.5) before a
+/// check cut off (R2.4). A repository with no checks to list never qualifies.
+fn listed_as(start: &StartChecks) -> Option<ListedAs> {
+    if start.checks.is_empty() {
+        None
+    } else if start.elsewhere {
+        Some(ListedAs::Elsewhere)
+    } else if start
+        .checks
+        .iter()
+        .any(|c| c.state == BaseCheckState::CutOff)
+    {
+        Some(ListedAs::CutOff)
+    } else {
+        None
+    }
+}
+
+/// Marks the one repository of `read` whose checks the Build tab lists: the first, in plan order, that
+/// qualifies. Every other repository is not listed.
+fn list_one(read: &mut [StartChecks]) {
+    let mut listed = false;
+    for start in read.iter_mut() {
+        start.listed = if listed { None } else { listed_as(start) };
+        listed |= start.listed.is_some();
+    }
+}
+
 /// Three or more checks failing together without saying what failed point at the setup (R4.3).
 const SETUP_HINT_AT: usize = 3;
 
@@ -553,7 +584,7 @@ pub fn start_checks(
 ) -> Result<Vec<StartChecks>, ProgramError> {
     let status = program.status(place, change)?;
     let hooks = program.hooks(place, system, Some(EVENT))?;
-    repos
+    let mut read = repos
         .iter()
         .map(|repo| {
             let runs: &[RunRecord] = status
@@ -605,6 +636,12 @@ pub fn start_checks(
                 if shown.shown == StartShown::FinishFailure {
                     shown.finish = finish.map(|f| finish_failure(f, &shown.checks));
                 }
+                if shown.shown == StartShown::UnderWay && !live.known_here() {
+                    shown.outside = Some(StartedOutside {
+                        at: start.at.clone().unwrap_or_default(),
+                        words: STARTED_OUTSIDE.to_string(),
+                    });
+                }
                 return Ok(shown);
             }
             let recorded = start
@@ -636,7 +673,9 @@ pub fn start_checks(
             }
             Ok(shown)
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    list_one(&mut read);
+    Ok(read)
 }
 
 #[cfg(test)]
@@ -1601,8 +1640,10 @@ mod tests {
             assert_eq!(read_with(&s, &live).outside, None);
         }
         // A finished build is not under way, wherever it started.
-        let s = scripted(json!({"status": ledger_of(vec![start, finish_run("passed")]),
-            "checks": checks_answer(vec![ended]), "hooks": hook_list(&["a"])}));
+        let s = scripted(
+            json!({"status": ledger_of(vec![start, finish_run("passed")]),
+            "checks": checks_answer(vec![ended]), "hooks": hook_list(&["a"])}),
+        );
         let got = read(&s);
         assert_eq!(got.shown, StartShown::Finished);
         assert_eq!(got.outside, None);
