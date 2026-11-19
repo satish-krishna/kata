@@ -221,3 +221,22 @@ notes: |
   No --route was added to check:boot or check:interaction: the dialog is the existing confirm overlay.
   An extra test, "confirming the question stops the preparation r10.1", asserts the stop is called once on confirm.
 ```
+
+### T14
+
+```yaml
+task: T14
+commits: ["220cd9c", "bd35b18", "892ec41"]
+departure: |
+  R2.2: the checks list's Preparation section renders from a preparation input that the page leaves empty, because no frontend data lists a step's preparation hooks (RunningStep carries none); on the real page a preparation hook is named only on the progress line, through T8's StepKind::PreparationHook ("Preparing"), never counted as a check.
+  T14 files: the checks list sits in the notice area of build-page.html (grid row 1), since the page grid has fixed row numbers.
+  T14 files: app/src/app/sdlc/build/build-page.css gained a .k-bp__checks rule (max-height 40vh, overflow auto, padding from tokens), so a long checks list does not push the build grid off the page.
+  rule 5: mock-transport.spec.ts "stopping a step answers Stopped" now expects note: null on its three build and review entries, the wire shape since T12; nothing weakened.
+red: observed
+notes: |
+  The first check failed on part 1: the done-when's mock-transport.spec.ts was red on the note: null expectation; 892ec41 fixes it.
+  BuildPageView.baseChecks is optional, since a required field would break the base() fixture in build-page.spec.ts.
+  The list shows while this Workbench prepares, from steps().liveChecks polled with the clock ticking once a second; otherwise only for a cut off check (R2.4) or a start under way in another session (R2.5).
+  The mock sdlcStartChecks returns three notRun checks by default, so the list stays hidden; ?demo=checks-cutoff and ?demo=checks-elsewhere show the other states, and both routes are in check:boot and check:interaction in package.json.
+  The progress sentence "Running X, n of m done" is in aria-live="polite" with no time in it; the elapsed time sits outside it (R12.1).
+```
