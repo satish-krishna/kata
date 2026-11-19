@@ -81,6 +81,7 @@
   margin-left: auto;
   display: inline-flex;
   gap: var(--space-2);
+  align-items: center;
 }
 
 .bfp__refusal {
@@ -146,4 +147,9 @@
 .bfp__ok {
   padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--border-subtle);
+}
+
+.bfp__off {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
 }

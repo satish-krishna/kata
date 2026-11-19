@@ -4,7 +4,7 @@
     <app-waiting-notice [items]="view().waiting" (goTo)="goToRepo($event)" />
     @for (f of view().failures ?? []; track f.start.repo) {
       <div class="k-bp__failure" data-failure>
-        <app-build-failure-panel [start]="f.start" [refusal]="f.refusal" (accept)="acceptCheck.emit({ repo: f.start.repo, check: $event })" (copy)="copyOutput.emit($event)" />
+        <app-build-failure-panel [start]="f.start" [refusal]="f.refusal" [acceptOff]="f.acceptOff" (accept)="acceptCheck.emit({ repo: f.start.repo, check: $event })" (copy)="copyOutput.emit($event)" />
       </div>
     }
     @for (s of view().finishes ?? []; track s.repo) {

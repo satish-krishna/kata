@@ -212,6 +212,8 @@ export type FindingsView = { notice: DocNotice | null; groups: FindingGroup[]; f
 const READING_REVIEW = 'Reading the review…';
 const REVIEW_NOT_RUN = 'The review runs by itself once the last task is recorded.';
 const REVIEW_RUNNING = 'The review is running. Its findings appear here when it ends.';
+/** Why accepting a check is off while the build is being prepared: the words of the backend's refusal in `sdlc_accept_base_check`, which sends them only when it refuses. */
+const BUILD_BEING_PREPARED = 'The build is being prepared';
 const NO_DEPARTURES = 'No departures from the plan.';
 
 /** A task's recorded departure from the plan. */
@@ -1832,13 +1834,23 @@ export class BuildPageViewModel {
   /** The workflow's reasons for refusing the last acceptance. */
   private readonly acceptRefusal = signal<AcceptRefusal | null>(null);
 
+  /**
+   * Why accepting a check is off, null while it is on: the build of this change is being prepared (R11.1). The words are the backend's refusal in
+   * `sdlc_accept_base_check`, which sends them only when it refuses; a preparation of a review or a rerun of the finish checks does not turn it off.
+   */
+  private readonly acceptOff = computed<string | null>(() => {
+    const ref = this.ref();
+    const preparingBuild = ref !== null && this.steps.running().some((s) => sameStepChange(s.change, ref) && (s.kind === 'preparingBuild' || s.kind === 'checkingBase' || (typeof s.kind === 'object' && 'preparationHook' in s.kind)));
+    return preparingBuild ? BUILD_BEING_PREPARED : null;
+  });
+
   /** The repositories whose start failed, each shown once on the page: a failure on the base, all of them accepted, or another reason. */
   private readonly failures = computed<BuildFailureView[]>(() => {
-    if (this.preparing()) return [];
+    const acceptOff = this.acceptOff();
     const refusal = this.acceptRefusal();
     return this.startChecks()
       .filter((s) => s.shown.kind === 'baseFailure' || s.shown.kind === 'allAccepted' || s.shown.kind === 'otherReason')
-      .map((s) => ({ start: s, refusal: refusal !== null && refusal.repo === s.repo ? refusal : null, acceptOff: null }));
+      .map((s) => ({ start: s, refusal: refusal !== null && refusal.repo === s.repo ? refusal : null, acceptOff }));
   });
 
   /** Why starting the build is not offered as ready, as the backend worded it; null when it is. */
@@ -1849,6 +1861,7 @@ export class BuildPageViewModel {
 
   /** Ask once more before a check is accepted: nothing is recorded until it is confirmed. */
   askAccept(repo: string, check: string): void {
+    if (this.acceptOff() !== null) return;
     const start = this.startChecks().find((s) => s.repo === repo);
     if (start === undefined) return;
     this.acceptRefusal.set(null);
