@@ -4,3 +4,8 @@ branch: "change/2026-11-16-build-checks-workbench"
 type: feat
 scope: "kata"
 base: "main"
+pullRequests:
+  - repo: "master"
+    url: "https://github.com/satish-krishna/kata/pull/89"
+    number: 89
+    pushed: "e45119b0fd8badba0ad0c5e8fcce9ac67e33a988"
