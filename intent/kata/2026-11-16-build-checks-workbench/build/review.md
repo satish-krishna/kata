@@ -299,3 +299,132 @@ line: 16
 ```
 
 Review 1's F11 still stands: the new screen states `?demo=checks-finish` (T16) and `?demo=checks-base-moved` (T15) are missing from the `--route` lists of `check:boot` (line 16) and `check:interaction` (line 19), which the rule requires for a new screen state.
+
+## Review 3
+
+```yaml
+review: 3
+reviewed_at: 2026-11-19
+commits: { kata: "ac2e515" }
+```
+
+### F1
+
+```yaml
+id: F1
+severity: medium
+repo: kata
+concern: spec
+file: intent/kata/2026-11-16-build-checks-workbench/build/kata.md
+line: 217
+```
+
+Still stands from review 1 (F4) and review 2 (F1): T13's red is not observed. The red record was refused because a production commit (b81cca0) came before the test commit, and no stored red output exists, so nothing on record shows that T13's test failed before its code.
+
+### F2
+
+```yaml
+id: F2
+severity: medium
+repo: kata
+concern: convention
+rule: CONTRIBUTING.md:122
+file: CONTRIBUTING.md
+line: 122
+```
+
+Still stands from review 2 (F2): the subjects of 4d8ea24 and 88a297a carry the Conventional Commits prefix twice (`test(kata): test(kata): …`, `fix(kata): fix(kata): …`), so the summary does not start with an imperative verb. Rewording them rewrites the branch's history from 4d8ea24 on.
+
+### F3
+
+```yaml
+id: F3
+severity: low
+repo: kata
+concern: bug
+file: crates/kata-sdlc/src/checks_view.rs
+line: 639
+```
+
+`outside` is set whenever the build is under way and `!live.known_here()`. `known_here` rests on `ran_here`, which the build host keeps in memory only (`app/src-tauri/src/build_host.rs:540`). After the Workbench restarts, a build this Workbench started and left under way therefore reads "Started outside this Workbench" (`STARTED_OUTSIDE`, line 394). The spec's risk 3 accepts this inference for R9 only with "may" wording; this text states it as a fact.
+
+### F4
+
+```yaml
+id: F4
+severity: low
+repo: kata
+concern: spec
+file: app/src/app/sdlc/build/build-page.view-model.ts
+line: 978
+```
+
+While this Workbench prepares the build, `baseChecks` passes `base: ''`, so the "Checks on the base" heading no longer shows the base commit the spec's Design asks for (`spec.md:429`). The R8.2 words render in the build page bar (`build-page.html:30`) as "<repo> Started outside this Workbench HH:mm", where the prototype's "Moved on since" screen (`spec.md:409`) puts "started 14:54 outside this Workbench" on the Build strip's progress line. Both were reported to the engineer as departures of the fix in 2c60b7f, but no change document records them. The spec's Design and the prototype decide it.
+
+### F5
+
+```yaml
+id: F5
+severity: low
+repo: kata
+concern: convention
+rule: .claude/skills/kata-architecture/SKILL.md:13
+file: app/src/app/sdlc/build/build-page.view-model.ts
+line: 1851
+```
+
+Still stands from review 2 (F6): `acceptOff` decides in TypeScript that accepting is off by matching the step kinds `preparingBuild`, `checkingBase` and `preparationHook` (lines 1851 to 1855), and restates the backend's refusal as `BUILD_BEING_PREPARED` (line 216). The same decision is made in `accept_base_check_in` (`app/src-tauri/src/lib.rs`). What blocks an action is a rule that belongs in Rust, and a preview and its action use the same Rust call.
+
+### F6
+
+```yaml
+id: F6
+severity: low
+repo: kata
+concern: spec
+file: app/src/app/lib/progress-steps.ts
+line: 150
+```
+
+Still stands from review 2 (F8): the plan makes `StepKind::words` (T8) the one owner of the step wording, and T8's Change says the frontend's "Checking the base" wording in `progress-steps.ts` goes, but it stayed. The rerun at finish's starting label is also TypeScript wording, `PROGRESS_NAMES['running-checks']` (`build-page.view-model.ts:1911`). The shared decision "Which words name each preparation step and the checks on the base" decides it.
+
+### F7
+
+```yaml
+id: F7
+severity: low
+repo: kata
+concern: spec
+file: app/src/app/sdlc/build/build-page.view-model.ts
+line: 1000
+```
+
+Still stands from review 2 (F9): during a preparation the page calls `transport.steps()` every second (the `followLiveChecks` effect, lines 988 to 1006). The spec's Design says the build host's check read is the only timed read, and the page reads where the change stands only on opening, after actions and on focus (D7, R8.3).
+
+### F8
+
+```yaml
+id: F8
+severity: low
+repo: kata
+concern: convention
+rule: docs/adding-a-feature.md:81
+file: app/package.json
+line: 16
+```
+
+Still stands from review 2 (F10): the new screen states `?demo=checks-finish` (T16) and `?demo=checks-base-moved` (T15) are missing from the `--route` lists of `check:boot` (line 16) and `check:interaction` (line 19), which the rule requires for a new screen state.
+
+### F9
+
+```yaml
+id: F9
+severity: low
+repo: kata
+concern: convention
+rule: CONTRIBUTING.md:122
+file: CONTRIBUTING.md
+line: 122
+```
+
+The rule caps a commit summary at about 72 characters. The fix commits 2c60b7f (127 characters) and 9ae4410 (117) go well past it, as do earlier commits in the range: 88a297a (113), 73c3bcd (122), bd35b18 (115), 220cd9c (110), 0228f5b (110) and 9845e62 (105).
