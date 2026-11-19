@@ -390,8 +390,10 @@ pub struct StartedOutside {
 /// The reason Start is off while a failing check is not accepted (R6.2).
 const HELD: &str = "Accept or fix the failing checks first.";
 
-/// What the Build tab says of a build under way that this Workbench neither runs nor ran (R8.2).
-const STARTED_OUTSIDE: &str = "Started outside this Workbench";
+/// What the Build tab says of a build under way that this Workbench neither runs nor ran (R8.2). It says "may"
+/// because the Workbench knows only what it ran in memory: a build this Workbench started before a restart reads
+/// the same way (spec risk 3), so the words state an inference, not a fact.
+const STARTED_OUTSIDE: &str = "May have been started outside this Workbench";
 
 /// What `start` lists its checks on the base as, when they qualify: running in another session (R2.5) before a
 /// check cut off (R2.4). A repository with no checks to list never qualifies.
