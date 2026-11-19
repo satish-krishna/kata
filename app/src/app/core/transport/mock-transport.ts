@@ -46,6 +46,7 @@ import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { BaseCheck } from '@bindings/BaseCheck';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
+import type { BaselineApproved } from '@bindings/BaselineApproved';
 import type { StartChecks } from '@bindings/StartChecks';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { RenameOutcome } from '@bindings/RenameOutcome';
@@ -518,6 +519,7 @@ export class MockTransport extends KataTransport {
     ];
     return Promise.resolve([{ repo: 'kata', shown: { kind: cut ? 'startable' : 'underWay' }, base: '3c504eb', checks, passed: 2, setupHint: false, startHeld: null, finish: null }]);
   }
+  sdlcAcceptBaseCheck(_change: ChangeRef, _repo: string, _check: string): Promise<BaselineApproved> { throw new Error('not implemented'); }
   sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]> { return Promise.resolve(this.sdlc.checksView(change.change)); }
   /** The plugin's answer to declaring the change done, with the steps it reports on the way; `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` give each of the other answers. */
   async sdlcDeclareDone(change: ChangeRef): Promise<DeclareView> {

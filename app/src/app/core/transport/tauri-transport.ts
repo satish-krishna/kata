@@ -47,6 +47,7 @@ import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
+import type { BaselineApproved } from '@bindings/BaselineApproved';
 import type { StartChecks } from '@bindings/StartChecks';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { DeclareView } from '@bindings/DeclareView';
@@ -191,6 +192,7 @@ export class TauriTransport extends KataTransport {
   sdlcOldChecks(folder: string, systems: string[]) { return this.ipc.invoke<OldChecksNotice[]>('sdlc_old_checks', { folder, systems }); }
   sdlcOldChecksSeen(systems: string[]) { return this.ipc.invoke<void>('sdlc_old_checks_seen', { systems }); }
   sdlcStartChecks(change: ChangeRef) { return this.ipc.invoke<StartChecks[]>('sdlc_start_checks', { change }); }
+  sdlcAcceptBaseCheck(_change: ChangeRef, _repo: string, _check: string): Promise<BaselineApproved> { throw new Error('not implemented'); }
   sdlcChecksView(change: ChangeRef) { return this.ipc.invoke<RepoCheckView[]>('sdlc_checks_view', { change }); }
   sdlcDeclareDone(change: ChangeRef) { return this.ipc.invoke<DeclareView>('sdlc_declare_done', { change }); }
   sdlcPullRequestsView(folder: string, workspaceId: string, system: string, change: string, refresh: boolean) { return this.ipc.invoke<PullRequestsView>('sdlc_pull_requests_view', { folder, workspaceId, system, change, refresh }); }

@@ -285,7 +285,20 @@ export type BuildPageView = {
   counts: { files: number; findings: number };
   /** The checks on the base to list while they run, were cut off or run in another session; absent or null when there is nothing to list. */
   baseChecks?: BaseChecksView | null;
+  /** The repositories whose start failed, each shown once on the page. */
+  failures?: BuildFailureView[];
+  /** Why starting the build is not offered as ready; null when it is. */
+  startHold?: string | null;
 };
+
+/** The check the engineer asked to accept for this build, with the base commit it failed on. */
+export type AcceptRequest = { repo: string; check: string; base: string };
+
+/** The workflow's reasons for refusing an acceptance, as it worded them. */
+export type AcceptRefusal = { repo: string; check: string; problems: string[] };
+
+/** One repository's start failure to show on the page, with the refusal of its last acceptance, if any. */
+export type BuildFailureView = { start: StartChecks; refusal: AcceptRefusal | null };
 
 /** What the checks list shows: the repository's checks on the base, the clock for the running one and whether another session runs them. */
 export type BaseChecksView = { repo: string; base: string; checks: BaseCheck[]; now: number; elsewhere: boolean };
@@ -1768,6 +1781,17 @@ export class BuildPageViewModel {
   closeRefusal(): void {
     this.refusal.set(null);
   }
+
+  /** The check being asked about; the accept dialog is open exactly while this is set. */
+  readonly acceptRequest = signal<AcceptRequest | null>(null);
+
+  askAccept(_repo: string, _check: string): void {}
+
+  cancelAccept(): void {}
+
+  async confirmAccept(): Promise<void> {}
+
+  copyOutput(_text: string): void {}
 
   /** True from the click on a preview or the round until its dialog opens or fails; a click in between is ignored. */
   private opening = false;

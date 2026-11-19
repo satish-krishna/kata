@@ -15,6 +15,8 @@ import type { RoundPicks } from '@bindings/RoundPicks';
 import type { RoundPlan } from '@bindings/RoundPlan';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
+import type { BaseCheck } from '@bindings/BaseCheck';
+import type { StartChecks } from '@bindings/StartChecks';
 import type { StartForm } from '@bindings/StartForm';
 import type { StartOutcome } from '@bindings/StartOutcome';
 import type { RunningStep } from '@bindings/RunningStep';
@@ -1919,5 +1921,75 @@ describe('the build page of a single-repo change', () => {
     expect(s.vm.oneAtATime()).toBe(false);
     await s.load({ ...SINGLE_CTX, layout: 'single-repo' });
     expect(s.vm.oneAtATime()).toBe(true);
+  });
+});
+
+describe('a start that stopped on the base is shown on the page, once', () => {
+  const failing = (name: string): BaseCheck => ({ check: name, state: 'failed', exitCode: 101, output: 'boom', lineCount: 1, canAccept: true, accepted: false, startedAt: null, endedAt: null });
+  const stoppedStart = (): StartChecks => ({ repo: 'commerce-core', shown: { kind: 'baseFailure' }, base: '3c504eb', checks: [failing('app-speed')], passed: 0, setupHint: false, startHeld: 'Accept or fix the failing checks first', finish: null });
+  const refused: StartOutcome = { kind: 'failed', problems: ['app-speed failed on the base'], hook: null, needsApproval: ['app-speed'] };
+
+  async function failedStart() {
+    const s = await opened(setup());
+    const reads = vi.spyOn(s.transport, 'sdlcStartChecks').mockResolvedValue([stoppedStart()]);
+    vi.spyOn(s.transport, 'sdlcBuildStart').mockResolvedValue(refused);
+    const toast = vi.spyOn(TestBed.inject(ToastStore), 'error');
+    await s.load();
+    expect(await s.vm.startBuild({ timeoutSecs: 60 })).toBe('failed');
+    await advance(200);
+    return { ...s, reads, toast };
+  }
+
+  it('shows the failure on the page and opens no dialog and no toast r4.1', async () => {
+    const { vm, toast } = await failedStart();
+    expect(vm.view().failures?.map((f) => [f.start.repo, f.start.shown.kind])).toEqual([['commerce-core', 'baseFailure']]);
+    expect(toast).not.toHaveBeenCalled();
+    expect(vm.acceptRequest()).toBeNull();
+  });
+
+  it('holds Start build with the reason the backend gave r6.2', async () => {
+    const { vm } = await failedStart();
+    expect(vm.view().startHold).toBe('Accept or fix the failing checks first');
+  });
+
+  it('asks once more, naming the check and the base commit r5.1', async () => {
+    const { vm, transport } = await failedStart();
+    const accept = vi.spyOn(transport, 'sdlcAcceptBaseCheck');
+    vm.askAccept('commerce-core', 'app-speed');
+    expect(vm.acceptRequest()).toEqual({ repo: 'commerce-core', check: 'app-speed', base: '3c504eb' });
+    expect(accept).not.toHaveBeenCalled();
+  });
+
+  it('records the acceptance with the workflow when confirmed and reads the checks again r5.2', async () => {
+    const { vm, transport, reads } = await failedStart();
+    const accept = vi.spyOn(transport, 'sdlcAcceptBaseCheck').mockResolvedValue({ approved: { hook: 'app-speed', base: '3c504eb' }, problems: [] });
+    const before = reads.mock.calls.length;
+    vm.askAccept('commerce-core', 'app-speed');
+    await vm.confirmAccept();
+    await advance(200);
+    expect(accept).toHaveBeenCalledWith(REF, 'commerce-core', 'app-speed');
+    expect(vm.acceptRequest()).toBeNull();
+    expect(reads.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  it('records nothing when cancelled r5.3', async () => {
+    const { vm, transport } = await failedStart();
+    const accept = vi.spyOn(transport, 'sdlcAcceptBaseCheck');
+    vm.askAccept('commerce-core', 'app-speed');
+    vm.cancelAccept();
+    expect(vm.acceptRequest()).toBeNull();
+    expect(accept).not.toHaveBeenCalled();
+    expect(vm.view().failures?.[0].refusal).toBeNull();
+  });
+
+  it("shows the workflow's refusal as it is and does not mark the check r5.6", async () => {
+    const { vm, transport } = await failedStart();
+    vi.spyOn(transport, 'sdlcAcceptBaseCheck').mockResolvedValue({ approved: null, problems: ['the base moved since the checks ran'] });
+    vm.askAccept('commerce-core', 'app-speed');
+    await vm.confirmAccept();
+    await advance(200);
+    expect(vm.acceptRequest()).toBeNull();
+    expect(vm.view().failures?.[0].refusal).toEqual({ repo: 'commerce-core', check: 'app-speed', problems: ['the base moved since the checks ran'] });
+    expect(vm.view().failures?.[0].start.checks[0].accepted).toBe(false);
   });
 });

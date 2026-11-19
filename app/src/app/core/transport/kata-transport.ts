@@ -44,6 +44,7 @@ import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { RepoCheckView } from '@bindings/RepoCheckView';
+import type { BaselineApproved } from '@bindings/BaselineApproved';
 import type { StartChecks } from '@bindings/StartChecks';
 import type { OldChecksNotice } from '@bindings/OldChecksNotice';
 import type { DeclareView } from '@bindings/DeclareView';
@@ -264,6 +265,8 @@ export abstract class KataTransport {
   abstract sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]>;
   /** Each repository's start and its checks on the base, as the plugin's ledger and hook list read now (R2.4, R2.5). */
   abstract sdlcStartChecks(change: ChangeRef): Promise<StartChecks[]>;
+  /** Accept one failing check of a repository for this change, through the workflow; its answer is the approval or its problems as they are (R5.2, R5.6). */
+  abstract sdlcAcceptBaseCheck(change: ChangeRef, repo: string, check: string): Promise<BaselineApproved>;
   /** The old per-machine checks files of the systems the engineer has not been told about yet, in the order asked; empty when none. */
   abstract sdlcOldChecks(folder: string, systems: string[]): Promise<OldChecksNotice[]>;
   /** Record that the engineer has been told about the old checks files of these systems. */

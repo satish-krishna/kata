@@ -848,6 +848,12 @@ describe('MockTransport answers every call the backend gained on this branch (F2
     expect(shown.checks.every((c) => c.check !== '')).toBe(true);
   });
 
+  it('sdlcAcceptBaseCheck records the check as accepted at the base and answers with the approval', async () => {
+    const t = new MockTransport();
+    const out = await t.sdlcAcceptBaseCheck(ref(MOCK_DONE_CHANGE), 'kata', 'app-unit');
+    expect(out).toEqual({ approved: { hook: 'app-unit', base: '3c504eb' }, problems: [] });
+  });
+
   it('sdlcOldChecks says nothing without ?demo=old-checks, and sdlcOldChecksSeen resolves', async () => {
     const t = new MockTransport();
     expect(await t.sdlcOldChecks(MOCK_WORKSPACE_FOLDER, ['commerce'])).toEqual([]);
