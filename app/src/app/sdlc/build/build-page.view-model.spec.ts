@@ -1935,7 +1935,7 @@ describe('the build page of a single-repo change', () => {
 
 describe('a start that stopped on the base is shown on the page, once', () => {
   const failing = (name: string): BaseCheck => ({ check: name, state: 'failed', exitCode: 101, output: 'boom', lineCount: 1, canAccept: true, accepted: false, startedAt: null, endedAt: null });
-  const stoppedStart = (): StartChecks => ({ repo: 'commerce-core', shown: { kind: 'baseFailure' }, base: '3c504eb', checks: [failing('app-speed')], passed: 0, setupHint: false, startHeld: 'Accept or fix the failing checks first', finish: null });
+  const stoppedStart = (): StartChecks => ({ repo: 'commerce-core', shown: { kind: 'baseFailure' }, base: '3c504eb', checks: [failing('app-speed')], passed: 0, setupHint: false, startHeld: 'Accept or fix the failing checks first', finish: null, elsewhere: false });
   const refused: StartOutcome = { kind: 'failed', problems: ['app-speed failed on the base'], hook: null, needsApproval: ['app-speed'] };
 
   async function failedStart() {
@@ -2000,5 +2000,30 @@ describe('a start that stopped on the base is shown on the page, once', () => {
     expect(vm.acceptRequest()).toBeNull();
     expect(vm.view().failures?.[0].refusal).toEqual({ repo: 'commerce-core', check: 'app-speed', problems: ['the base moved since the checks ran'] });
     expect(vm.view().failures?.[0].start.checks[0].accepted).toBe(false);
+  });
+});
+
+describe('the checks list takes the backend decision on where the checks run', () => {
+  const running = (name: string): BaseCheck => ({ check: name, state: 'running', exitCode: null, output: '', lineCount: 0, canAccept: false, accepted: false, startedAt: '2026-11-16T10:00:00.000Z', endedAt: null });
+  const read = (kind: 'underWay' | 'startable', elsewhere: boolean): StartChecks => ({ repo: 'commerce-core', shown: { kind }, base: '3c504eb', checks: [running('app-speed')], passed: 0, setupHint: false, startHeld: null, finish: null, elsewhere });
+
+  async function readAs(answer: StartChecks) {
+    const s = await opened(setup());
+    vi.spyOn(s.transport, 'sdlcStartChecks').mockResolvedValue([answer]);
+    await s.load();
+    await advance(200);
+    return s;
+  }
+
+  it('an underway build of this Workbench shows no checks from another session r2.5', async () => {
+    const { vm } = await readAs(read('underWay', false));
+    expect(vm.view().baseChecks ?? null).toBeNull();
+  });
+
+  it('checks running in another session show as last read r2.5', async () => {
+    const { vm } = await readAs(read('startable', true));
+    const shown = vm.view().baseChecks;
+    expect(shown?.elsewhere).toBe(true);
+    expect(shown?.checks.map((c) => [c.check, c.state])).toEqual([['app-speed', 'running']]);
   });
 });

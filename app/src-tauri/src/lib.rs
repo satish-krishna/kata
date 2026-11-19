@@ -2106,8 +2106,16 @@ fn sdlc_start_checks(
         .as_ref()
         .map(|tasks| tasks.keys().cloned().collect())
         .unwrap_or_default();
-    sdlc::checks_view::start_checks(&program, &place, &change.system, &change.change, &repos)
-        .map_err(|e| e.to_string())
+    let live = sdlc::offer::LiveFacts::default();
+    sdlc::checks_view::start_checks(
+        &program,
+        &place,
+        &change.system,
+        &change.change,
+        &repos,
+        &live,
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Accept one failing check of a repository on the base for this build, through the plugin (R5.4: one check per

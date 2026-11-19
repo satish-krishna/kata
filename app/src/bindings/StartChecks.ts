@@ -26,4 +26,9 @@ setupHint: boolean,
 /**
  * Why starting the build is not offered as ready (R6.2).
  */
-startHeld: string | null, finish: FinishFailure | null, };
+startHeld: string | null, finish: FinishFailure | null, 
+/**
+ * The checks on the base are running in another session now (R2.5): the latest `baseline` run has a check
+ * running and this Workbench neither runs nor ran a build of the change.
+ */
+elsewhere: boolean, };

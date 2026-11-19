@@ -2312,8 +2312,8 @@ describe('ChangePageViewModel: the run pane shows only the run in front of it (R
 // R8: the change page reads where the change stands on opening, after any action and when the window regains focus.
 describe('the change page reads where the change stands again', () => {
   const check = (name: string, state: BaseCheck['state']): BaseCheck => ({ check: name, state, exitCode: state === 'failed' ? 1 : null, output: 'boom', lineCount: 1, canAccept: state === 'failed', accepted: false, startedAt: null, endedAt: null });
-  const stopped = (): StartChecks[] => [{ repo: 'kata', shown: { kind: 'baseFailure' }, base: '3c504eb', checks: [check('app-speed', 'failed')], passed: 0, setupHint: false, startHeld: 'Accept or fix the failing checks first', finish: null }];
-  const underWay = (): StartChecks[] => [{ repo: 'kata', shown: { kind: 'underWay' }, base: '3c504eb', checks: [check('app-speed', 'running')], passed: 0, setupHint: false, startHeld: null, finish: null }];
+  const stopped = (): StartChecks[] => [{ repo: 'kata', shown: { kind: 'baseFailure' }, base: '3c504eb', checks: [check('app-speed', 'failed')], passed: 0, setupHint: false, startHeld: 'Accept or fix the failing checks first', finish: null, elsewhere: false }];
+  const underWay = (): StartChecks[] => [{ repo: 'kata', shown: { kind: 'underWay' }, base: '3c504eb', checks: [check('app-speed', 'running')], passed: 0, setupHint: false, startHeld: null, finish: null, elsewhere: false }];
 
   it('a failure the change no longer holds is cleared on focus r8.2', async () => {
     const transport = new MockTransport();

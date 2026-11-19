@@ -511,7 +511,7 @@ export class MockTransport extends KataTransport {
     const elsewhere = demo === 'checks-elsewhere';
     if (!cut && !elsewhere) {
       const none = ['app-lint', 'rust-fmt', 'app-unit'].map((name) => check(name, 'notRun', null, null));
-      return Promise.resolve([{ repo: 'kata', shown: { kind: 'startable' }, base: '3c504eb', checks: none, passed: 0, setupHint: false, startHeld: null, finish: null }]);
+      return Promise.resolve([{ repo: 'kata', shown: { kind: 'startable' }, base: '3c504eb', checks: none, passed: 0, setupHint: false, startHeld: null, finish: null, elsewhere: false }]);
     }
     const checks = [
       check('app-lint', 'passed', 300, 256),
@@ -520,7 +520,7 @@ export class MockTransport extends KataTransport {
       check('rust-clippy', 'notRun', null, null),
       check('rust-test', 'notRun', null, null),
     ];
-    return Promise.resolve([{ repo: 'kata', shown: { kind: cut ? 'startable' : 'underWay' }, base: '3c504eb', checks, passed: 2, setupHint: false, startHeld: null, finish: null }]);
+    return Promise.resolve([{ repo: 'kata', shown: { kind: cut ? 'startable' : 'underWay' }, base: '3c504eb', checks, passed: 2, setupHint: false, startHeld: null, finish: null, elsewhere: false }]);
   }
   /** The checks the engineer accepted in this session, so `?demo=checks-base` marks them and settles the start. */
   private readonly acceptedChecks = new Set<string>();
@@ -540,7 +540,7 @@ export class MockTransport extends KataTransport {
   /** A repository whose build finished and whose check `app-speed` failed at finish, as `?demo=checks-finish` shows it. */
   private finishFailure(): StartChecks {
     const output = "running 1 test\nspeed_targets: every open change's name took 1.2s (limit 1 s)\ntest result: FAILED. 0 passed; 1 failed";
-    return { repo: 'kata', shown: { kind: 'startable' }, base: '3c504eb', checks: [], passed: 0, setupHint: false, startHeld: null, finish: { check: 'app-speed', base: 'passed', output, passed: 11, next: 'sentBackNotFixed', canAccept: false } };
+    return { repo: 'kata', shown: { kind: 'startable' }, base: '3c504eb', checks: [], passed: 0, setupHint: false, startHeld: null, finish: { check: 'app-speed', base: 'passed', output, passed: 11, next: 'sentBackNotFixed', canAccept: false }, elsewhere: false };
   }
   /** A start that stopped on the base: `failing` checks fail without saying what failed, three others passed; accepted ones are marked and settle the start. */
   private baseFailure(failing: number, check: (name: string, state: BaseCheck['state'], startedAgo: number | null, endedAgo: number | null) => BaseCheck): StartChecks {
@@ -555,7 +555,7 @@ test result: FAILED. 0 passed; 1 failed`, lineCount: 3, canAccept: !accepted, ac
       ...['app-lint', 'rust-fmt', 'app-unit'].map((name) => check(name, 'passed', 200, 190)),
     ];
     const left = failed.some((name) => !this.acceptedChecks.has(name));
-    return { repo: 'kata', shown: { kind: left ? 'baseFailure' : 'allAccepted' }, base: '3c504eb', checks, passed: 3, setupHint: failing >= 3, startHeld: left ? 'Accept or fix the failing checks first' : null, finish: null };
+    return { repo: 'kata', shown: { kind: left ? 'baseFailure' : 'allAccepted' }, base: '3c504eb', checks, passed: 3, setupHint: failing >= 3, startHeld: left ? 'Accept or fix the failing checks first' : null, finish: null, elsewhere: false };
   }
   sdlcChecksView(change: ChangeRef): Promise<RepoCheckView[]> { return Promise.resolve(this.sdlc.checksView(change.change)); }
   /** The plugin's answer to declaring the change done, with the steps it reports on the way; `?demo=done-refused`, `done-partial`, `done-cannot`, `done-gh` and `done-warnings` give each of the other answers. */

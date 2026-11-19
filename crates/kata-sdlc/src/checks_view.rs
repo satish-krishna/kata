@@ -6,6 +6,7 @@ use crate::hoshin::status::{Hooks, OnFailure, RunRecord, Status};
 use crate::hoshin::{BaselineShow, CheckRun, CheckState, ChecksAnswer};
 use crate::hoshin::{Place, Program, ProgramError};
 use crate::layout::Layout;
+use crate::offer::LiveFacts;
 use serde::Serialize;
 
 /// The event whose hooks are a repository's checks.
@@ -352,6 +353,9 @@ pub struct StartChecks {
     /// Why starting the build is not offered as ready (R6.2).
     pub start_held: Option<String>,
     pub finish: Option<FinishFailure>,
+    /// The checks on the base are running in another session now (R2.5): the latest `baseline` run has a check
+    /// running and this Workbench neither runs nor ran a build of the change.
+    pub elsewhere: bool,
 }
 
 /// The reason Start is off while a failing check is not accepted (R6.2).
@@ -516,7 +520,9 @@ pub fn start_checks(
     system: &str,
     change: &str,
     repos: &[String],
+    live: &LiveFacts,
 ) -> Result<Vec<StartChecks>, ProgramError> {
+    let _ = live;
     let status = program.status(place, change)?;
     let hooks = program.hooks(place, system, Some(EVENT))?;
     repos
@@ -549,6 +555,7 @@ pub fn start_checks(
                     setup_hint: false,
                     start_held: None,
                     finish: None,
+                    elsewhere: false,
                 }
             };
             let Some(start_at) = start_at else {
@@ -1100,7 +1107,11 @@ mod tests {
     }
 
     fn read(s: &Scripted) -> StartChecks {
-        start_checks(&s.program, &s.place, "demo", "c", &["app".to_string()])
+        read_with(s, &LiveFacts::default())
+    }
+
+    fn read_with(s: &Scripted, live: &LiveFacts) -> StartChecks {
+        start_checks(&s.program, &s.place, "demo", "c", &["app".to_string()], live)
             .unwrap()
             .remove(0)
     }
@@ -1425,5 +1436,48 @@ mod tests {
             assert_eq!(check_of(&got.checks, "b").ended_at, None);
             assert_eq!(got.passed, 1);
         }
+    }
+
+    /// R2.5: checks running on the base are in another session only when this Workbench runs no build of the
+    /// change. A start that passed with no finish is this Workbench's own build, never another session's.
+    #[test]
+    fn start_checks_marks_checks_running_elsewhere_r2_5() {
+        let running = base_run(
+            "r1",
+            "baseline",
+            vec![
+                event("a", "ended", json!("passed")),
+                event("b", "running", Value::Null),
+            ],
+        );
+        let answers = |ledger: Value, runs: Vec<Value>| {
+            scripted(json!({"status": ledger,
+                "checks": checks_answer(runs), "hooks": hook_list(&["a", "b"])}))
+        };
+        let here = LiveFacts {
+            build_live: true,
+            ..LiveFacts::default()
+        };
+        let ran = LiveFacts {
+            stopped_here: true,
+            ..LiveFacts::default()
+        };
+        // No start passed and a check running, nothing of this Workbench: another session prepares the build.
+        let s = answers(ledger_of(vec![]), vec![running.clone()]);
+        let got = read(&s);
+        assert_eq!(got.shown, StartShown::Startable);
+        assert!(got.elsewhere);
+        // The same record while this Workbench runs or ran the build of the change is its own.
+        assert!(!read_with(&s, &here).elsewhere);
+        assert!(!read_with(&s, &ran).elsewhere);
+        // An under-way build of this Workbench is not another session's, whatever the last read of the base says.
+        let started = || ledger_of(vec![start_run("passed", None, &[])]);
+        let s = answers(started(), vec![running]);
+        let got = read_with(&s, &here);
+        assert_eq!(got.shown, StartShown::UnderWay);
+        assert!(!got.elsewhere);
+        // Nothing running anywhere: nothing is elsewhere.
+        let s = answers(started(), vec![]);
+        assert!(!read(&s).elsewhere);
     }
 }
