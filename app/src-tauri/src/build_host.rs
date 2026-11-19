@@ -2238,15 +2238,40 @@ impl BuildHost {
         instance: u64,
         app: &str,
     ) -> Result<Vec<String>, StartOutcome> {
-        let token = self
-            .inner
-            .lock()
-            .unwrap()
-            .builds
-            .get(key)
-            .and_then(|b| b.live.get(&instance))
-            .map(|run| run.token.clone())
-            .unwrap_or_default();
+        // The start of the change's first app runs inside the start's own step. Any later app's start is a
+        // preparation step of its own, so the page names the running check and offers Stop as in a workspace.
+        let own = self.steps.begin(key.clone(), StepKind::PreparingBuild).ok();
+        let token = match &own {
+            Some(step) => {
+                let token = step.token().clone();
+                if let Some(run) = self
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .builds
+                    .get_mut(key)
+                    .and_then(|b| b.live.get_mut(&instance))
+                {
+                    // The run's own cancel reaches the step's call too.
+                    run.token = token.clone();
+                }
+                token
+            }
+            None => self
+                .inner
+                .lock()
+                .unwrap()
+                .builds
+                .get(key)
+                .and_then(|b| b.live.get(&instance))
+                .map(|run| run.token.clone())
+                .unwrap_or_default(),
+        };
+        let change = ChangeRef {
+            workspace: exec.place.workspace.display().to_string(),
+            system: exec.system.clone(),
+            change: exec.change.clone(),
+        };
         let command = [
             "run",
             "build.start",
@@ -2258,8 +2283,22 @@ impl BuildHost {
             "--repo",
             app,
         ];
-        let answer = self.tools.step_long(&command, &exec.place, &token, None);
-        match failure_of(&answer, &[]) {
+        let sink = self.announce(key, Some(app));
+        let answer = self.while_reading_checks(&exec.place, &change, app, || {
+            self.tools
+                .step_long(&command, &exec.place, &token, Some(sink))
+        });
+        let outcome = failure_of(&answer, &[]);
+        // The step ends here, whatever the call came to, before the app launches.
+        let stopped_with_checks = self.steps.has_live_checks(key);
+        self.steps.set_live_checks(key, Vec::new());
+        drop(own);
+        match outcome {
+            // A stop that came after the checks on the base were read says where the copy was left.
+            Some(StartOutcome::Stopped { prepared, .. }) => Err(StartOutcome::Stopped {
+                prepared,
+                note: stopped_note(stopped_with_checks),
+            }),
             Some(outcome) => Err(outcome),
             None => Ok(strings(&answer.json["details"]["uncommitted"])),
         }
@@ -5775,13 +5814,30 @@ mod tests {
         );
     }
 
+    /// `script_checks` for a single-repo build: the latest run on the base is there for each app.
+    fn script_app_checks(r: &Rig, ids: &[&str], events: &[(&str, &str, Option<&str>)]) {
+        script_checks(r, ids, events);
+        let mut answer = r.tools.checks_answer.lock().unwrap();
+        let answer = answer.as_mut().unwrap();
+        let base = answer["runs"][0].clone();
+        let runs: Vec<Value> = ["engine", "workbench"]
+            .iter()
+            .map(|app| {
+                let mut run = base.clone();
+                run["repo"] = json!(app);
+                run
+            })
+            .collect();
+        answer["runs"] = json!(runs);
+    }
+
     // R2.1, R3.1, R6.1: a single-repo app's start is the change's preparation step and reads the live checks.
     #[test]
     fn single_repo_start_keeps_the_live_checks_on_the_step_r3_1() {
         let r = single_rig();
         r.two_apps("A");
         r.host.set_checks_poll(std::time::Duration::from_millis(5));
-        script_checks(&r, &["lint"], &[("lint", "running", None)]);
+        script_app_checks(&r, &["lint"], &[("lint", "running", None)]);
         *r.tools.delay.lock().unwrap() = std::time::Duration::from_millis(150);
         let (starter, seen) = start_watching(&r);
         assert!(matches!(
@@ -5794,7 +5850,10 @@ mod tests {
                 list.iter()
                     .any(|c| c.check == "lint" && c.state == BaseCheckState::Running)
             });
-            assert!(named, "the first app's start never showed the running check");
+            assert!(
+                named,
+                "the first app's start never showed the running check"
+            );
         }
         assert!(r.steps.running().is_empty(), "the step is gone at launch");
         assert_eq!(r.launcher.launched("engine").len(), 1);
@@ -5833,7 +5892,7 @@ mod tests {
         r.two_apps("A");
         r.host.set_checks_poll(std::time::Duration::from_millis(5));
         *r.tools.hang_in.lock().unwrap() = Some("engine".into());
-        script_checks(
+        script_app_checks(
             &r,
             &["c-one", "c-two"],
             &[
